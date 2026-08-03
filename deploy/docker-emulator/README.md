@@ -58,8 +58,8 @@ sudo systemctl status alcor-device-host-agent.service
 
 ## 镜像基线说明
 
-当前 Provider 对齐 `budtmo/docker-android` 的公开运行契约：容器内 Emulator serial 为 `emulator-5554`，Host ADB 使用容器端口 `5555`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 指定。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。
+当前 Provider 对齐 `budtmo/docker-android` 的公开运行契约：容器内 Emulator serial 为 `emulator-5554`，Host ADB 使用容器端口 `5555`，内置 Appium 使用容器端口 `4723`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 指定。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。
 
 部署时必须填写固定 tag 或 digest，不能使用 `latest`。DF-016 会在真实 Host 上记录最终镜像 digest 并完成 Image validation；在此之前不要把未验证镜像加入正式设备池。
 
-DF-014 明确关闭镜像内 `APPIUM` 和 `WEB_VNC`。Appium Endpoint 在 DF-015 管理，远控在 DF-017/DF-018 复用 STF，避免提前形成第二套入口。
+Host Agent 会开启镜像内置 Appium、关闭 `WEB_VNC`，并为每个 Emulator 随机发布独立 Host Appium 端口。Appium 必须通过 `/status` 健康检查后设备才能 ready；远控仍在 DF-017/DF-018 复用 STF，不使用镜像自带 VNC 形成第二套入口。

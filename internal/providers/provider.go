@@ -52,6 +52,7 @@ type ConnectionInfo struct {
 	Serial         string
 	ADBEndpoint    string
 	AppiumEndpoint string
+	AppiumUDID     string
 }
 
 type Snapshot struct {

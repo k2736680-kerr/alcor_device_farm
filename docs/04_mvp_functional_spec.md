@@ -218,6 +218,7 @@ Reconciler：
 只负责：
 
 - 记录每台设备的 Endpoint；
+- 区分容器外 ADB `serial/adb_endpoint` 和容器内 `appium_udid`，并把两者固化到 Device Session 连接快照；
 - 检查 `/status` 或等价健康接口；
 - 验证端口隔离和可达性；
 - 将 Endpoint 随 active reservation 返回。

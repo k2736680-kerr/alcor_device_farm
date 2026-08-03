@@ -63,6 +63,8 @@ func TestOneHundredConcurrentReservationsUseTwoDevicesWithoutDoubleAllocation(t 
 	assertCount(t, db, `SELECT count(*) FROM device_sessions s
         JOIN device_reservations r ON r.id=s.reservation_id AND r.device_id=s.device_id
         WHERE r.status='active'`, 2)
+	assertCount(t, db, `SELECT count(*) FROM device_sessions
+		WHERE connection_metadata->>'appium_udid'=connection_metadata->>'serial'`, 2)
 }
 
 func TestConcurrentIdempotencyCreatesOneReservation(t *testing.T) {

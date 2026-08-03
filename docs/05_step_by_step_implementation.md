@@ -35,7 +35,7 @@
 | DF-012 | Agent 内部协议和 Host Command | completed | DF-003、DF-006 |
 | DF-013 | Host Agent 核心程序 | completed | DF-012、DF-007 |
 | DF-014 | Docker Emulator Provider | blocked | DF-013 |
-| DF-015 | Appium Endpoint 和健康 Adapter | pending | DF-014 |
+| DF-015 | Appium Endpoint 和健康 Adapter | blocked | DF-014 |
 | DF-016 | 镜像验证和固定目标自动补齐 | pending | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | pending | DF-014 |
 | DF-018 | STF Adapter 和远控入口 | pending | DF-009、DF-017 |

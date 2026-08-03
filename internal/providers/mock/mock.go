@@ -137,6 +137,7 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 			Serial:         request.Serial,
 			ADBEndpoint:    fmt.Sprintf("127.0.0.1:%d", provider.baseADBPort+offset*2),
 			AppiumEndpoint: fmt.Sprintf("http://127.0.0.1:%d", provider.baseAppiumPort+offset),
+			AppiumUDID:     request.Serial,
 		},
 	}
 	provider.devices[request.ProviderRef] = value

@@ -36,6 +36,7 @@ erDiagram
 - Pool 默认租期不得超过最大租期；`min_ready` 不得超过 `max_instances`。MVP 默认使用 `min_ready=2/max_instances=2`，Controller 必须锁定配置行后原子登记 provisioning Device、Pool membership 和 Host Command，避免并发超建；
 - Host Command 的 leased 状态必须同时拥有 lease token 和到期时间，完成状态必须有完成时间；
 - active Reservation 和 Session 必须具有完整的设备、开始与到期信息；
+- Docker Emulator 的容器内 `appiumUdid` 保存于 `devices.capabilities`，激活预约时与外部 serial、ADB/Appium Endpoint 一起固化到 `device_sessions.connection_metadata`；不为不同运行环境复制 Device 记录；
 - 外键默认 `RESTRICT` 保留历史，只有纯成员关系随 Pool 删除而级联。
 
 ## 迁移与回滚

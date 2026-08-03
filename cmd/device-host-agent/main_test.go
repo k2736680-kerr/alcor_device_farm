@@ -2,9 +2,9 @@ package main
 
 import "testing"
 
-func TestDockerEnvironmentDisablesOutOfScopeServices(t *testing.T) {
+func TestDockerEnvironmentEnablesAppiumAndDisablesBuiltInVNC(t *testing.T) {
 	values := dockerEnvironment(" Samsung Galaxy S10 ")
-	if values["EMULATOR_DEVICE"] != "Samsung Galaxy S10" || values["WEB_VNC"] != "false" || values["APPIUM"] != "false" {
+	if values["EMULATOR_DEVICE"] != "Samsung Galaxy S10" || values["WEB_VNC"] != "false" || values["APPIUM"] != "true" {
 		t.Fatalf("docker environment=%#v", values)
 	}
 	values = dockerEnvironment(" ")

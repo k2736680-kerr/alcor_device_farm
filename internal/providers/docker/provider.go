@@ -36,20 +36,21 @@ type AppiumProbe interface {
 }
 
 type Config struct {
-	Binary             string
-	Image              string
-	AdvertiseHost      string
-	BindAddress        string
-	KVMDevice          string
-	ContainerADBPort   int
-	ContainerADBSerial string
-	ADBPath            string
-	DataMountPath      string
-	CPUs               float64
-	Memory             string
-	PidsLimit          int
-	Environment        map[string]string
-	AppiumProbe        AppiumProbe
+	Binary              string
+	Image               string
+	AdvertiseHost       string
+	BindAddress         string
+	KVMDevice           string
+	ContainerADBPort    int
+	ContainerAppiumPort int
+	ContainerADBSerial  string
+	ADBPath             string
+	DataMountPath       string
+	CPUs                float64
+	Memory              string
+	PidsLimit           int
+	Environment         map[string]string
+	AppiumProbe         AppiumProbe
 }
 
 type Provider struct {
@@ -149,7 +150,8 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		Name: name, Hostname: name, Image: provider.config.Image, Network: networkName, Volume: volumeName,
 		DataMountPath: provider.config.DataMountPath, KVMDevice: provider.config.KVMDevice,
 		BindAddress: provider.config.BindAddress, ContainerADBPort: provider.config.ContainerADBPort,
-		CPUs: provider.config.CPUs, Memory: provider.config.Memory, PidsLimit: provider.config.PidsLimit,
+		ContainerAppiumPort: provider.config.ContainerAppiumPort,
+		CPUs:                provider.config.CPUs, Memory: provider.config.Memory, PidsLimit: provider.config.PidsLimit,
 		Labels: labels, Environment: cloneStringMap(provider.config.Environment),
 	})
 	if err != nil {
@@ -236,7 +238,7 @@ func (provider *Provider) GetConnectionInfo(ctx context.Context, providerRef str
 	}
 	connection, err := provider.connection(value)
 	if err != nil {
-		return providers.ConnectionInfo{}, providerError(providers.OperationConnectionInfo, "ADB_PORT_UNAVAILABLE", "emulator ADB port is not published", true, err)
+		return connection, providerError(providers.OperationConnectionInfo, "DEVICE_ENDPOINT_UNAVAILABLE", "emulator ADB or Appium port is not published", true, err)
 	}
 	return connection, nil
 }
@@ -303,7 +305,7 @@ func (provider *Provider) inspectContainerHealth(ctx context.Context, value cont
 	if provider.config.AppiumProbe != nil {
 		connection, connectionErr := provider.connection(value)
 		if connectionErr != nil {
-			return health, providerError(providers.OperationInspectHealth, "ADB_PORT_UNAVAILABLE", "emulator connection is unavailable", true, connectionErr)
+			return health, providerError(providers.OperationInspectHealth, "DEVICE_ENDPOINT_UNAVAILABLE", "emulator connection is unavailable", true, connectionErr)
 		}
 		health.AppiumHealthy, err = provider.config.AppiumProbe.Healthy(ctx, connection)
 		if err != nil {
@@ -348,12 +350,20 @@ func (provider *Provider) snapshot(value container) (providers.Snapshot, error) 
 }
 
 func (provider *Provider) connection(value container) (providers.ConnectionInfo, error) {
-	hostPort := value.Ports[provider.config.ContainerADBPort]
-	if hostPort == 0 {
-		return providers.ConnectionInfo{}, errors.New("ADB host port is missing")
+	connection := providers.ConnectionInfo{}
+	adbHostPort := value.Ports[provider.config.ContainerADBPort]
+	if adbHostPort == 0 {
+		return connection, errors.New("ADB host port is missing")
 	}
-	endpoint := net.JoinHostPort(provider.config.AdvertiseHost, strconv.Itoa(hostPort))
-	return providers.ConnectionInfo{Serial: endpoint, ADBEndpoint: endpoint}, nil
+	adbEndpoint := net.JoinHostPort(provider.config.AdvertiseHost, strconv.Itoa(adbHostPort))
+	connection.Serial, connection.ADBEndpoint = adbEndpoint, adbEndpoint
+	appiumHostPort := value.Ports[provider.config.ContainerAppiumPort]
+	if appiumHostPort == 0 {
+		return connection, errors.New("Appium host port is missing")
+	}
+	connection.AppiumEndpoint = "http://" + net.JoinHostPort(provider.config.AdvertiseHost, strconv.Itoa(appiumHostPort))
+	connection.AppiumUDID = provider.config.ContainerADBSerial
+	return connection, nil
 }
 
 func (provider *Provider) cleanup(providerRef string) {
@@ -416,6 +426,9 @@ func withDefaults(config Config) Config {
 	if config.ContainerADBPort == 0 {
 		config.ContainerADBPort = 5555
 	}
+	if config.ContainerAppiumPort == 0 {
+		config.ContainerAppiumPort = 4723
+	}
 	if config.ContainerADBSerial == "" {
 		config.ContainerADBSerial = "emulator-5554"
 	}
@@ -447,7 +460,8 @@ func validateConfig(config Config) error {
 	if net.ParseIP(config.BindAddress) == nil {
 		return errors.New("docker bind address must be an IP address")
 	}
-	if config.ContainerADBPort < 1 || config.ContainerADBPort > 65535 || strings.TrimSpace(config.ContainerADBSerial) == "" ||
+	if config.ContainerADBPort < 1 || config.ContainerADBPort > 65535 || config.ContainerAppiumPort < 1 || config.ContainerAppiumPort > 65535 ||
+		config.ContainerADBPort == config.ContainerAppiumPort || strings.TrimSpace(config.ContainerADBSerial) == "" ||
 		strings.TrimSpace(config.ADBPath) == "" || !path.IsAbs(config.KVMDevice) || config.CPUs <= 0 ||
 		strings.TrimSpace(config.Memory) == "" || config.PidsLimit < 1 || !path.IsAbs(config.DataMountPath) {
 		return errors.New("invalid Docker emulator resource configuration")

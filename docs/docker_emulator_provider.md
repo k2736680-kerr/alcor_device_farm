@@ -46,7 +46,9 @@ alcor-df-<可读短名>-<provider_ref 哈希>-data
 - 默认只绑定 `127.0.0.1`。STF/Appium 位于其他主机时，必须把 bind address 配置为设备内网地址或 `0.0.0.0`，并用防火墙限制来源；
 - 每台容器默认限制为 2 CPU、4 GiB 内存和 512 PID；
 - 每台设备使用独立 bridge network 和独立 data volume；
-- DF-015 再分配独立 Appium Endpoint。本阶段健康检查只确认容器 running、ADB online 和 `sys.boot_completed=1`，不会伪造 Appium healthy。
+- 容器内 Appium 端口 `4723` 也由 Docker 随机映射到独立 Host 端口，Endpoint 使用 `http://<advertise_host>:<随机端口>`；
+- Appium Adapter 只请求每台设备自己的 `/status`，`value.ready=true` 后才把 `AppiumHealthy` 标记为真；
+- 每个 Appium Server 与 Emulator 位于同一容器，内部只连接本容器的 `emulator-5554`，避免两台设备共用一个 Appium 进程导致 UDID 串线。
 
 ## 5. 生命周期和幂等
 
@@ -60,7 +62,7 @@ alcor-df-<可读短名>-<provider_ref 哈希>-data
 Agent 心跳发现结果按以下规则回写 Server：
 
 - 只更新已经登记且同时匹配 `host_id + provider_ref` 的 Device；未知设备和其他 Host 的同名引用不会自动注册或串绑；
-- `serial`、ADB/Appium Endpoint 和 `last_seen_at` 使用 Server 数据库事务更新；唯一标识冲突时整笔心跳回滚并返回 `DEVICE_IDENTITY_CONFLICT`；
+- `serial`、ADB/Appium Endpoint、容器内 `appium_udid` 和 `last_seen_at` 使用 Server 数据库事务更新；`appium_udid` 放入 Device capabilities 和 Session 连接快照，不新增第二套 Device；唯一标识冲突时整笔心跳回滚并返回 `DEVICE_IDENTITY_CONFLICT`；
 - `provisioning → booting → ready`、`stopped → booting` 等变化必须通过 Device 状态机，进入 `ready` 前先确认健康为 `healthy`；
 - `reserved/busy/recycling` 的预约生命周期不被 Agent 覆盖，`quarantined/deleted` 也不会因心跳自动恢复；
 - 自动补齐所需的新 Device 必须由 DF-016 Controller 先登记，再创建 Host Command，不能把 Agent 自报设备当作创建入口。
@@ -75,7 +77,9 @@ DEVICE_FARM_DOCKER_ADVERTISE_HOST=<ADB 客户端可访问的 Host 地址>
 DEVICE_FARM_DOCKER_BIND_ADDRESS=127.0.0.1
 DEVICE_FARM_DOCKER_KVM_DEVICE=/dev/kvm
 DEVICE_FARM_DOCKER_ADB_PORT=5555
+DEVICE_FARM_DOCKER_APPIUM_PORT=4723
 DEVICE_FARM_DOCKER_ADB_SERIAL=emulator-5554
+DEVICE_FARM_APPIUM_HEALTH_TIMEOUT=5s
 DEVICE_FARM_DOCKER_DATA_MOUNT_PATH=/home/androidusr
 DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Samsung Galaxy S10
 DEVICE_FARM_DOCKER_CPUS=2
@@ -83,7 +87,7 @@ DEVICE_FARM_DOCKER_MEMORY=4g
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
 
-Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。真实部署的镜像 digest 和镜像验证状态在 DF-016 固定。
+Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。真实部署的镜像 digest 和镜像验证状态在 DF-016 固定。
 
 Linux Host 的 systemd 配置和安装步骤见 [部署包](../deploy/docker-emulator/README.md)。
 

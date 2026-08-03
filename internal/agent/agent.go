@@ -137,7 +137,8 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 		devices = append(devices, hostcommand.DiscoveredDevice{
 			ProviderRef: snapshot.ProviderRef, Serial: snapshot.Connection.Serial,
 			LifecycleStatus: providerLifecycle(snapshot), HealthStatus: providerHealth(snapshot),
-			Connection: map[string]any{"adb_endpoint": snapshot.Connection.ADBEndpoint, "appium_endpoint": snapshot.Connection.AppiumEndpoint},
+			Connection: map[string]any{"adb_endpoint": snapshot.Connection.ADBEndpoint, "appium_endpoint": snapshot.Connection.AppiumEndpoint,
+				"appium_udid": snapshot.Connection.AppiumUDID},
 		})
 	}
 	return agent.client.Heartbeat(ctx, agent.config.HostID, hostcommand.HeartbeatInput{
@@ -275,7 +276,7 @@ func snapshotResult(snapshot providers.Snapshot) map[string]any {
 		"capabilities": snapshot.Capabilities,
 		"connection": map[string]any{
 			"serial": snapshot.Connection.Serial, "adb_endpoint": snapshot.Connection.ADBEndpoint,
-			"appium_endpoint": snapshot.Connection.AppiumEndpoint,
+			"appium_endpoint": snapshot.Connection.AppiumEndpoint, "appium_udid": snapshot.Connection.AppiumUDID,
 		},
 		"health": healthResult(snapshot.Health),
 	}

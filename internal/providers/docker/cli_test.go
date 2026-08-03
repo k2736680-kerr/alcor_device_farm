@@ -12,7 +12,7 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 	err := client.CreateContainer(context.Background(), containerSpec{
 		Name: "alcor-df-device", Hostname: "alcor-df-device", Image: "android:2026.08",
 		Network: "device-net", Volume: "device-data", DataMountPath: "/home/androidusr",
-		KVMDevice: "/dev/kvm", BindAddress: "127.0.0.1", ContainerADBPort: 5555,
+		KVMDevice: "/dev/kvm", BindAddress: "127.0.0.1", ContainerADBPort: 5555, ContainerAppiumPort: 4723,
 		CPUs: 2, Memory: "4g", PidsLimit: 512,
 		Labels:      map[string]string{labelManaged: "true", labelProviderRef: "device-1"},
 		Environment: map[string]string{"EMULATOR_DEVICE": "Pixel 7"},
@@ -23,6 +23,7 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 	wantParts := [][]string{
 		{"--device", "/dev/kvm:/dev/kvm"}, {"--cpus", "2"}, {"--memory", "4g"},
 		{"--pids-limit", "512"}, {"--publish", "127.0.0.1::5555/tcp"},
+		{"--publish", "127.0.0.1::4723/tcp"},
 		{"--mount", "type=volume,source=device-data,target=/home/androidusr"},
 		{"--env", "EMULATOR_DEVICE=Pixel 7"},
 	}
@@ -34,13 +35,13 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 }
 
 func TestCLIBackendInspectDecodesPublishedPortAndLabels(t *testing.T) {
-	runner := &recordingRunner{output: `[{"Id":"abc","Name":"/alcor-df-device","Config":{"Image":"android:2026.08","Labels":{"io.alcor.device-farm.managed":"true"}},"State":{"Status":"running"},"NetworkSettings":{"Ports":{"5555/tcp":[{"HostPort":"32771"}]}}}]`}
+	runner := &recordingRunner{output: `[{"Id":"abc","Name":"/alcor-df-device","Config":{"Image":"android:2026.08","Labels":{"io.alcor.device-farm.managed":"true"}},"State":{"Status":"running"},"NetworkSettings":{"Ports":{"5555/tcp":[{"HostPort":"32771"}],"4723/tcp":[{"HostPort":"32772"}]}}}]`}
 	client := newCLIBackend("docker", runner)
 	value, err := client.InspectContainer(context.Background(), "alcor-df-device")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Name != "alcor-df-device" || value.State != "running" || value.Ports[5555] != 32771 || value.Labels[labelManaged] != "true" {
+	if value.Name != "alcor-df-device" || value.State != "running" || value.Ports[5555] != 32771 || value.Ports[4723] != 32772 || value.Labels[labelManaged] != "true" {
 		t.Fatalf("container=%#v", value)
 	}
 }

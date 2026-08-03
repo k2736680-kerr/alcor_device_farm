@@ -124,7 +124,7 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 			(device.LifecycleStatus == string(domain.DeviceReady) && device.HealthStatus != string(domain.HealthHealthy)) {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
-		if _, _, err := discoveredConnection(device.Connection); err != nil {
+		if _, _, _, err := discoveredConnection(device.Connection); err != nil {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
 		seenRefs[device.ProviderRef], seenSerials[device.Serial] = true, true
@@ -196,7 +196,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	if err != nil {
 		return err
 	}
-	adbEndpoint, appiumEndpoint, err := discoveredConnection(discovered.Connection)
+	adbEndpoint, appiumEndpoint, appiumUDID, err := discoveredConnection(discovered.Connection)
 	if err != nil {
 		return err
 	}
@@ -226,8 +226,9 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
-        lifecycle_status=$5::varchar,health_status=$6::varchar,health_reason=$7,last_seen_at=$8,updated_at=$8
-        WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint,
+		capabilities=CASE WHEN $5::text IS NULL THEN capabilities ELSE jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true) END,
+		lifecycle_status=$6::varchar,health_status=$7::varchar,health_reason=$8,last_seen_at=$9,updated_at=$9
+		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID,
 		aggregate.Lifecycle(), aggregate.Health(), healthReason, now)
 	return err
 }
@@ -258,13 +259,17 @@ func applyDiscoveredLifecycle(device *domain.Device, incoming domain.DeviceLifec
 	return nil
 }
 
-func discoveredConnection(connection map[string]any) (*string, *string, error) {
+func discoveredConnection(connection map[string]any) (*string, *string, *string, error) {
 	adb, err := optionalConnectionValue(connection, "adb_endpoint")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	appium, err := optionalConnectionValue(connection, "appium_endpoint")
-	return adb, appium, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	appiumUDID, err := optionalConnectionValue(connection, "appium_udid")
+	return adb, appium, appiumUDID, err
 }
 
 func optionalConnectionValue(connection map[string]any, key string) (*string, error) {

@@ -8,20 +8,21 @@ import (
 var errNotFound = errors.New("docker resource not found")
 
 type containerSpec struct {
-	Name             string
-	Hostname         string
-	Image            string
-	Network          string
-	Volume           string
-	DataMountPath    string
-	KVMDevice        string
-	BindAddress      string
-	ContainerADBPort int
-	CPUs             float64
-	Memory           string
-	PidsLimit        int
-	Labels           map[string]string
-	Environment      map[string]string
+	Name                string
+	Hostname            string
+	Image               string
+	Network             string
+	Volume              string
+	DataMountPath       string
+	KVMDevice           string
+	BindAddress         string
+	ContainerADBPort    int
+	ContainerAppiumPort int
+	CPUs                float64
+	Memory              string
+	PidsLimit           int
+	Labels              map[string]string
+	Environment         map[string]string
 }
 
 type container struct {

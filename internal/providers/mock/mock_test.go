@@ -37,7 +37,8 @@ func TestMockProviderHappyLifecycleCreatesReadyDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if connection.Serial != "mock-mock-device-1" || connection.ADBEndpoint != "127.0.0.1:6000" || connection.AppiumEndpoint != "http://127.0.0.1:7000" {
+	if connection.Serial != "mock-mock-device-1" || connection.ADBEndpoint != "127.0.0.1:6000" ||
+		connection.AppiumEndpoint != "http://127.0.0.1:7000" || connection.AppiumUDID != connection.Serial {
 		t.Fatalf("connection = %#v", connection)
 	}
 

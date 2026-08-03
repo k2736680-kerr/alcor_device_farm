@@ -73,6 +73,7 @@ func (client *cliBackend) CreateContainer(ctx context.Context, spec containerSpe
 		"--memory", spec.Memory,
 		"--pids-limit", strconv.Itoa(spec.PidsLimit),
 		"--publish", fmt.Sprintf("%s::%d/tcp", spec.BindAddress, spec.ContainerADBPort),
+		"--publish", fmt.Sprintf("%s::%d/tcp", spec.BindAddress, spec.ContainerAppiumPort),
 		"--mount", fmt.Sprintf("type=volume,source=%s,target=%s", spec.Volume, spec.DataMountPath),
 	}
 	args = appendLabelArgs(args, spec.Labels)

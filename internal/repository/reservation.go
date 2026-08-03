@@ -61,6 +61,7 @@ type DeviceAssignment struct {
 	Serial         string
 	ADBEndpoint    *string
 	AppiumEndpoint *string
+	AppiumUDID     string
 }
 
 type SessionRecord struct {
@@ -291,10 +292,11 @@ func (ReservationRepository) LockSession(ctx context.Context, tx pgx.Tx, reserva
 func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-        SELECT id,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint
-        FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(
+		SELECT id,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		       COALESCE(capabilities->>'appiumUdid',serial)
+		FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(
 		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
-		&device.ADBEndpoint, &device.AppiumEndpoint,
+		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeviceAssignment{}, ErrNotFound
@@ -434,8 +436,8 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 	}
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-        SELECT d.id, d.lifecycle_status, d.health_status, d.serial,
-               d.adb_endpoint, d.appium_endpoint
+		SELECT d.id, d.lifecycle_status, d.health_status, d.serial,
+		       d.adb_endpoint, d.appium_endpoint, COALESCE(d.capabilities->>'appiumUdid',d.serial)
         FROM devices d
         JOIN device_pool_devices pd ON pd.device_id = d.id
         JOIN device_hosts h ON h.id = d.host_id
@@ -447,7 +449,7 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
         FOR UPDATE OF d SKIP LOCKED
         LIMIT 1`, poolID, capabilities).Scan(
 		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
-		&device.ADBEndpoint, &device.AppiumEndpoint,
+		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeviceAssignment{}, ErrCapacityUnavailable
@@ -502,6 +504,7 @@ func (ReservationRepository) Activate(
 	}
 	metadata, err := json.Marshal(map[string]any{
 		"serial": device.Serial, "adb_endpoint": device.ADBEndpoint, "appium_endpoint": device.AppiumEndpoint,
+		"appium_udid": device.AppiumUDID,
 	})
 	if err != nil {
 		return ReservationRecord{}, SessionRecord{}, fmt.Errorf("encode session metadata: %w", err)

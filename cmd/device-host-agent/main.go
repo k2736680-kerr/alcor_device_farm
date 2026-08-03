@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	appiumadapter "github.com/Ad-Quanta/alcor-device-farm/internal/adapters/appium"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/agent"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
@@ -32,7 +33,9 @@ func main() {
 	dockerBindAddress := flag.String("docker-bind-address", envOr("DEVICE_FARM_DOCKER_BIND_ADDRESS", "127.0.0.1"), "IP used to bind published ADB ports")
 	dockerKVMDevice := flag.String("docker-kvm-device", envOr("DEVICE_FARM_DOCKER_KVM_DEVICE", "/dev/kvm"), "KVM device path")
 	dockerADBPort := flag.Int("docker-adb-port", envInt("DEVICE_FARM_DOCKER_ADB_PORT", 5555), "ADB port exposed by the emulator container")
+	dockerAppiumPort := flag.Int("docker-appium-port", envInt("DEVICE_FARM_DOCKER_APPIUM_PORT", 4723), "Appium port exposed by the emulator container")
 	dockerADBSerial := flag.String("docker-adb-serial", envOr("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"), "ADB serial inside the emulator container")
+	appiumHealthTimeout := flag.Duration("appium-health-timeout", envDuration("DEVICE_FARM_APPIUM_HEALTH_TIMEOUT", 5*time.Second), "Appium status request timeout")
 	dockerDataMountPath := flag.String("docker-data-mount-path", envOr("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"), "container path backed by the per-device data volume")
 	dockerEmulatorDevice := flag.String("docker-emulator-device", envOr("DEVICE_FARM_DOCKER_EMULATOR_DEVICE", "Samsung Galaxy S10"), "docker-android emulator device profile")
 	dockerCPUs := flag.Float64("docker-cpus", envFloat("DEVICE_FARM_DOCKER_CPUS", 2), "CPU limit per emulator")
@@ -51,13 +54,18 @@ func main() {
 		os.Exit(1)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	appiumProbe, err := appiumadapter.NewProbe(*appiumHealthTimeout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Appium probe configuration error: %v\n", err)
+		os.Exit(1)
+	}
 	deviceProvider, err := buildProvider(*providerType, providerdocker.Config{
 		Binary: *dockerBinary, Image: *dockerImage, AdvertiseHost: *dockerAdvertiseHost,
 		BindAddress: *dockerBindAddress, KVMDevice: *dockerKVMDevice,
-		ContainerADBPort: *dockerADBPort, ContainerADBSerial: *dockerADBSerial,
+		ContainerADBPort: *dockerADBPort, ContainerAppiumPort: *dockerAppiumPort, ContainerADBSerial: *dockerADBSerial,
 		DataMountPath: *dockerDataMountPath,
 		CPUs:          *dockerCPUs, Memory: *dockerMemory, PidsLimit: *dockerPidsLimit,
-		Environment: dockerEnvironment(*dockerEmulatorDevice),
+		Environment: dockerEnvironment(*dockerEmulatorDevice), AppiumProbe: appiumProbe,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent provider configuration error: %v\n", err)
@@ -118,8 +126,16 @@ func envFloat(name string, fallback float64) float64 {
 	return value
 }
 
+func envDuration(name string, fallback time.Duration) time.Duration {
+	value, err := time.ParseDuration(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
 func dockerEnvironment(emulatorDevice string) map[string]string {
-	values := map[string]string{"WEB_VNC": "false", "APPIUM": "false"}
+	values := map[string]string{"WEB_VNC": "false", "APPIUM": "true"}
 	if emulatorDevice = strings.TrimSpace(emulatorDevice); emulatorDevice != "" {
 		values["EMULATOR_DEVICE"] = emulatorDevice
 	}

@@ -46,7 +46,9 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	if first.Connection.Serial == second.Connection.Serial || first.Connection.ADBEndpoint == second.Connection.ADBEndpoint {
 		t.Fatalf("duplicate connections: %#v / %#v", first.Connection, second.Connection)
 	}
-	if first.Connection.Serial != "10.20.30.40:31000" || second.Connection.Serial != "10.20.30.40:31001" {
+	if first.Connection.Serial != "10.20.30.40:31000" || second.Connection.Serial != "10.20.30.40:31001" ||
+		first.Connection.AppiumEndpoint != "http://10.20.30.40:32000" || second.Connection.AppiumEndpoint != "http://10.20.30.40:32001" ||
+		first.Connection.AppiumUDID != "emulator-5554" || second.Connection.AppiumUDID != "emulator-5554" {
 		t.Fatalf("unexpected serials: %s / %s", first.Connection.Serial, second.Connection.Serial)
 	}
 	health, err := provider.InspectHealth(context.Background(), "emulator-one")
@@ -71,6 +73,32 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	}
 	if engine.hasResources("emulator-one") {
 		t.Fatal("container, network or volume remained after delete")
+	}
+}
+
+func TestDockerProviderRequiresIndependentHealthyAppiumEndpoints(t *testing.T) {
+	engine := newFakeBackend()
+	probe := &recordingAppiumProbe{}
+	config := testConfig()
+	config.AppiumProbe = probe
+	provider, err := newProvider(context.Background(), config, engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, ref := range []string{"emulator-one", "emulator-two"} {
+		if _, err := provider.Create(context.Background(), dockerCreateRequest(fmt.Sprintf("device_000000000000%d", index+1), ref)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := provider.Start(context.Background(), ref); err != nil {
+			t.Fatal(err)
+		}
+		health, err := provider.InspectHealth(context.Background(), ref)
+		if err != nil || !health.Ready() {
+			t.Fatalf("ref=%s health=%#v error=%v", ref, health, err)
+		}
+	}
+	if !reflect.DeepEqual(probe.endpoints, []string{"http://10.20.30.40:32000", "http://10.20.30.40:32001"}) {
+		t.Fatalf("Appium endpoints=%v", probe.endpoints)
 	}
 }
 
@@ -127,18 +155,27 @@ type staticHostProbe struct{ err error }
 
 func (probe staticHostProbe) ValidateKVM(string) error { return probe.err }
 
+type recordingAppiumProbe struct{ endpoints []string }
+
+func (probe *recordingAppiumProbe) Healthy(_ context.Context, connection providers.ConnectionInfo) (bool, error) {
+	probe.endpoints = append(probe.endpoints, connection.AppiumEndpoint)
+	return true, nil
+}
+
 type fakeBackend struct {
-	containers map[string]container
-	specs      map[string]containerSpec
-	networks   map[string]map[string]string
-	volumes    map[string]map[string]string
-	nextPort   int
+	containers     map[string]container
+	specs          map[string]containerSpec
+	networks       map[string]map[string]string
+	volumes        map[string]map[string]string
+	nextADBPort    int
+	nextAppiumPort int
 }
 
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
 		containers: map[string]container{}, specs: map[string]containerSpec{},
-		networks: map[string]map[string]string{}, volumes: map[string]map[string]string{}, nextPort: 31000,
+		networks: map[string]map[string]string{}, volumes: map[string]map[string]string{},
+		nextADBPort: 31000, nextAppiumPort: 32000,
 	}
 }
 
@@ -198,8 +235,12 @@ func (engine *fakeBackend) StartContainer(_ context.Context, name string) error 
 	}
 	value.State = "running"
 	if value.Ports[engine.specs[name].ContainerADBPort] == 0 {
-		value.Ports[engine.specs[name].ContainerADBPort] = engine.nextPort
-		engine.nextPort++
+		value.Ports[engine.specs[name].ContainerADBPort] = engine.nextADBPort
+		engine.nextADBPort++
+	}
+	if value.Ports[engine.specs[name].ContainerAppiumPort] == 0 {
+		value.Ports[engine.specs[name].ContainerAppiumPort] = engine.nextAppiumPort
+		engine.nextAppiumPort++
 	}
 	engine.containers[name] = value
 	return nil

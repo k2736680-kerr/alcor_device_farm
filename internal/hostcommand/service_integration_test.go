@@ -19,7 +19,7 @@ func TestHeartbeatBringsOfflineHostOnline(t *testing.T) {
 	result, err := service.Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
 		AgentTime: time.Now().UTC(), Capacity: map[string]any{"cpu": 8, "device_slots": 2},
 		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "emulator-5554", LifecycleStatus: "ready", HealthStatus: "healthy",
-			Connection: map[string]any{"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723"}}},
+			Connection: map[string]any{"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -37,13 +37,15 @@ func TestHeartbeatBringsOfflineHostOnline(t *testing.T) {
 		t.Fatalf("host status=%s heartbeat=%v", status, heartbeat)
 	}
 	var lastSeen *time.Time
-	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,last_seen_at
-        FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial, &adbEndpoint, &appiumEndpoint, &lastSeen); err != nil {
+	var appiumUDID string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		COALESCE(capabilities->>'appiumUdid',''),last_seen_at FROM devices WHERE id='device_0000000000001'`).
+		Scan(&lifecycle, &health, &serial, &adbEndpoint, &appiumEndpoint, &appiumUDID, &lastSeen); err != nil {
 		t.Fatal(err)
 	}
 	if lifecycle != "ready" || health != "healthy" || serial != "emulator-5554" || adbEndpoint == nil || *adbEndpoint != "10.0.0.8:31000" ||
-		appiumEndpoint == nil || *appiumEndpoint != "http://10.0.0.8:4723" || lastSeen == nil {
-		t.Fatalf("device lifecycle=%s health=%s serial=%s adb=%v appium=%v last_seen=%v", lifecycle, health, serial, adbEndpoint, appiumEndpoint, lastSeen)
+		appiumEndpoint == nil || *appiumEndpoint != "http://10.0.0.8:4723" || appiumUDID != "emulator-5554" || lastSeen == nil {
+		t.Fatalf("device lifecycle=%s health=%s serial=%s adb=%v appium=%v appium_udid=%s last_seen=%v", lifecycle, health, serial, adbEndpoint, appiumEndpoint, appiumUDID, lastSeen)
 	}
 }
 

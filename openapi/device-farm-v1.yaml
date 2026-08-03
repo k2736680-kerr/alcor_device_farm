@@ -547,7 +547,13 @@ components:
         serial: {type: string}
         lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
         health_status: {$ref: "#/components/schemas/HealthStatus"}
-        connection: {type: object, additionalProperties: true}
+        connection:
+          type: object
+          additionalProperties: false
+          properties:
+            adb_endpoint: {type: string}
+            appium_endpoint: {type: string, format: uri}
+            appium_udid: {type: string}
     CommandClaim:
       type: object
       additionalProperties: false

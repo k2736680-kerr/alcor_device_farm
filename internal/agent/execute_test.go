@@ -38,7 +38,7 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 		t.Fatalf("result=%#v", client.completion.Result)
 	}
 	connection, ok := client.completion.Result["connection"].(map[string]any)
-	if !ok || connection["serial"] != "mock-emulator-1" || connection["adb_endpoint"] == "" {
+	if !ok || connection["serial"] != "mock-emulator-1" || connection["adb_endpoint"] == "" || connection["appium_udid"] != "mock-emulator-1" {
 		t.Fatalf("connection=%#v", client.completion.Result["connection"])
 	}
 }
