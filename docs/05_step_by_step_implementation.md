@@ -36,7 +36,7 @@
 | DF-013 | Host Agent 核心程序 | completed | DF-012、DF-007 |
 | DF-014 | Docker Emulator Provider | blocked | DF-013 |
 | DF-015 | Appium Endpoint 和健康 Adapter | pending | DF-014 |
-| DF-016 | 镜像验证和固定容量配置 | pending | DF-011、DF-014、DF-015 |
+| DF-016 | 镜像验证和固定目标自动补齐 | pending | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | pending | DF-014 |
 | DF-018 | STF Adapter 和远控入口 | pending | DF-009、DF-017 |
 | DF-019 | DaFit Farm 运行适配 | pending | DF-015 |
@@ -190,13 +190,13 @@
 
 验收：两台设备可同时创建独立 Appium Session；错误 UDID 不能连接到其他设备；Appium 不健康时设备不得变为 ready。
 
-### DF-016 镜像验证和固定容量配置
+### DF-016 镜像验证和固定目标自动补齐
 
-实施：实现 digest 验证和镜像 validation；建立一个 `max_concurrency=2` 的默认逻辑设备池，显式关联最多两台已验证设备。保留 `min_ready/max_instances` 兼容字段但固定为 `0/2`，不实现自动补池、预测扩容或自动缩容。
+实施：实现 digest 验证和镜像 validation；建立 `max_concurrency=2` 的默认逻辑设备池；使用 PostgreSQL 行锁按 `min_ready/max_instances` 计算缺口，原子登记 provisioning Device、Pool membership 和 Host Command，由 Agent/Docker 自动创建并在 Appium 健康后转为 ready。失败必须退避且可补偿，不实现负载预测或自动删除缩容。
 
-产出：镜像验证任务、默认池初始化/配置说明和两设备容量检查。
+产出：镜像验证任务、固定目标 Controller、Host Command 编排、默认池配置和两设备容量检查。
 
-验收：未验证镜像不能启动设备；默认池最多调度两台设备；第三个并发预约保持 pending/capacity unavailable；系统不会自动创建或删除 Emulator，也不会形成 Host Command 风暴；后续真机可通过成员关系加入现有池或新逻辑池，不修改核心架构。
+验收：未验证镜像不能启动设备；配置 `min_ready=2/max_instances=2` 后自动创建并加入两台 Emulator；删除或隔离一台后自动补回；两个 Controller 并发运行不超建；Docker/KVM/Appium 持续失败时有退避且不形成命令风暴；第三个并发预约保持 pending/capacity unavailable；降低目标不会自动删除在用设备；真机不被自动创建。
 
 ## 7. 阶段 E：STF 和真实执行
 

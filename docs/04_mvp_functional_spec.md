@@ -21,7 +21,7 @@
 - Scheduler、Reaper、Reconciler；
 - STF inventory、claim、release、remoteConnect Adapter；
 - Appium Endpoint、端口和健康检查；
-- 单一默认逻辑设备池，固定最多两台设备；
+- 单一默认逻辑设备池，参数化自动维持最多两台 Emulator；
 - DaFit 端到端联调 Harness；
 - 服务身份、Agent 身份、审计事件和敏感日志脱敏；
 - OpenAPI、部署说明、故障处理和验收证据。
@@ -138,19 +138,22 @@ stopped → deleted
 
 另设健康状态 `unknown/healthy/degraded/unhealthy`，避免把生命周期和健康原因混成一个字段。所有状态转换必须由领域方法校验并写事件。
 
-### 4.5 设备池与固定容量
+### 4.5 设备池与固定目标自动补齐
 
 设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认/最大租期、最大并发、启停状态和设备成员关系。
 
 MVP 只配置一个默认 Android 设备池：
 
 - `max_concurrency=2`；
-- 最多显式创建并加入两台 Emulator；
-- 设备不足时 Reservation 保持 pending/capacity unavailable，不自动创建第三台；
-- Reconciler 只处理失联、启动超时、健康失败和隔离，不负责扩容或缩容；
-- `device_pool_images.min_ready/max_instances` 保留兼容，MVP 固定为 `0/2`，不启动 warm pool Controller。
+- `device_pool_images.min_ready=2/max_instances=2`；
+- Controller 自动创建缺少的 Emulator，并在同一编排中登记 Device、Host Command 和 Pool membership；
+- 自动创建必须经 Host Agent 执行 Docker Provider，不能由 Server 直连 Docker 或创建 Mock 设备；
+- 多 Server 使用 PostgreSQL 行锁重新计算缺口，避免超额创建；
+- 创建失败按有上限退避重试，设备只有通过 ADB、boot 和 Appium 健康检查后才计入 ready；
+- 两台设备均占用时第三个 Reservation 保持 pending/capacity unavailable，不因请求压力突破 `max_instances`；
+- Controller 不自动删除设备；降低目标后只停止补充，通过 drain/人工删除缩容。
 
-后续接入 USB 真机时，可以把真机加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。两种方式都复用统一 Device、Reservation、Scheduler 和 Provider 模型。
+后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。
 
 ### 4.6 预约与调度
 
@@ -303,7 +306,7 @@ Reconciler：
 | `device_hosts` | id、name、host_type、capabilities、capacity、used_capacity、status、draining、last_heartbeat_at |
 | `device_host_commands` | id、host_id、command_type、payload、status、lease_token、lease_expires_at、attempts、idempotency_key、result |
 | `device_pools` | id、name、default_lease_seconds、max_lease_seconds、status |
-| `device_pool_images` | pool_id、image_id、min_ready、max_instances、enabled；MVP 仅保存固定容量配置，不运行自动补池 |
+| `device_pool_images` | pool_id、image_id、min_ready、max_instances、enabled；驱动固定目标自动补齐 Emulator |
 | `device_pool_devices` | pool_id、device_id、enabled |
 | `devices` | id、host_id、image_id、device_kind、provider_type、provider_ref、serial、stf_serial、adb_endpoint、appium_endpoint、capabilities、lifecycle_status、health_status、health_reason |
 | `device_reservations` | id、pool_id、device_id、owner_type、owner_id、requested_capabilities、status、idempotency_key、starts_at、expires_at、released_at、failure_code |

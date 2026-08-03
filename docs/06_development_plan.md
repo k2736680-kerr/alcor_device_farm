@@ -39,7 +39,7 @@
 
 - STF + RethinkDB 部署；
 - STF inventory、claim、release、remoteConnect；
-- 单一默认逻辑设备池、固定两台设备上限和能力筛选；
+- 单一默认逻辑设备池、参数化固定目标自动补齐和能力筛选；
 - PostgreSQL 事务预约和 active 唯一索引；
 - 续租、主动释放、Reaper 和 Reconciler；
 - 离线、隔离和重建。

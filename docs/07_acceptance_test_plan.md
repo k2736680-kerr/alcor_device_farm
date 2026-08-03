@@ -28,7 +28,7 @@
 - 至少一个通过验证的 Android x86_64 镜像；
 - 资源足以稳定运行两台 Emulator。
 
-用途：真实创建、启动、ADB、boot、清理、重建和固定两设备容量。
+用途：真实创建、启动、ADB、boot、清理、重建和固定目标自动补齐。
 
 ### E2：完整联调环境
 
@@ -106,7 +106,7 @@
 | AT-EMU-003 | P0 | 无 `/dev/kvm` | 明确返回 KVM_UNAVAILABLE，不标记 ready |
 | AT-EMU-004 | P0 | rebuild | 新实例不保留上一次 App 和测试文件 |
 | AT-EMU-005 | P1 | 删除设备 | 容器、网络、端口、卷和数据库引用按策略清理 |
-| AT-EMU-006 | P1 | 两台设备均占用后创建第三个预约 | 第三个预约保持 pending/capacity unavailable，不自动创建第三台设备 |
+| AT-EMU-006 | P1 | `min_ready=2/max_instances=2` 且池为空 | 自动创建并加入两台；两个 Controller 并发不超建；第三个预约不突破上限 |
 
 ### 4.5 STF 和 Appium
 
