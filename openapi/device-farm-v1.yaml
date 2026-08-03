@@ -32,6 +32,18 @@ paths:
       security: []
       responses:
         "200": {$ref: "#/components/responses/Success"}
+        "503": {$ref: "#/components/responses/Error"}
+  /metrics:
+    get:
+      tags: [System]
+      operationId: getMetrics
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema: {type: string}
   /api/v1/device-images:
     get:
       tags: [Images]

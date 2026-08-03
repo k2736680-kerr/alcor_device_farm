@@ -1,0 +1,27 @@
+[Unit]
+Description=Alcor Device Farm Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=device-farm-server
+Group=device-farm-server
+EnvironmentFile=/etc/alcor-device-farm/server.env
+ExecStartPre=/opt/alcor-device-farm/bin/check-server-deployment.sh
+ExecStart=/opt/alcor-device-farm/bin/device-farm-server --config /etc/alcor-device-farm/server.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

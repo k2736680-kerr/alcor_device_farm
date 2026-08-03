@@ -40,6 +40,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 | 用例和数据集 | `cases`、`datasets`、`dataset_snapshots`、ClickHouse `dataset_case_rows` | 本项目不建表、不建 API |
 | 运行与重试 | `runs`、`run_attempts`、`POST /api/v1/runs/:id/attempts` | Alcor 自动执行使用 `owner_type=run_attempt` 和 UUID/ULID `owner_id`；另允许受控 `manual/test_run` 预约 |
 | 运行结果与指标 | PostgreSQL `run_results`、ClickHouse `run_case_results/run_target_metrics` | 本项目不计算、不保存业务结果和用例级指标 |
+| 基础设施运行指标 | Alcor 继续使用自身可观测平台；设备农场只暴露 Prometheus `/metrics` | 仅包含 Server、数据库、设备、Agent、Reservation 和 Host Command 状态，不复制 Run/Result 业务指标 |
 | 业务制品 | PostgreSQL `artifacts` 索引 + Supabase Storage | 正式接入由 Worker 上传；设备农场不保存业务报告 |
 | 业务执行队列 | 独立 Worker + PostgreSQL 租约 | 设备农场不建立第二套 Run 队列；只管理设备 Reservation 租约 |
 | Device Farm 接入 | Worker 的 `Device Farm Adapter（后续）` | 当前固化北向设备契约和 Mock；等待新版 RunAttempt API 后联调 |

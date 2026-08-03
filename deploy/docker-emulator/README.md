@@ -26,6 +26,8 @@ sudo ./scripts/install-device-host-agent.sh
 5. 首次安装时生成权限为 `0600` 的环境配置样例；
 6. 只执行 `daemon-reload`，不会在 Token、Host ID、镜像未配置时自动启动服务。
 
+正式发布时可设置 `DEVICE_FARM_VERSION`、`DEVICE_FARM_COMMIT` 和 `DEVICE_FARM_BUILD_DATE`，安装脚本会把版本信息写入 Agent 二进制，便于回滚核对。
+
 编辑配置：
 
 ```sh

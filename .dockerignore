@@ -1,0 +1,7 @@
+.git
+.workbuddy
+bin
+tmp
+docs/evidence
+*.log
+deploy/**/.env

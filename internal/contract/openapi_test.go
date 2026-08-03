@@ -14,6 +14,7 @@ import (
 var expectedOperations = map[string][]string{
 	"/healthz":                                           {"get"},
 	"/readyz":                                            {"get"},
+	"/metrics":                                           {"get"},
 	"/api/v1/device-images":                              {"get", "post"},
 	"/api/v1/device-images/{id}":                         {"get", "put"},
 	"/api/v1/device-images/{id}/validations":             {"post"},

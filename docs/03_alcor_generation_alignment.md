@@ -25,7 +25,7 @@
 | 大规模明细 | PostgreSQL | PostgreSQL 为主 | ClickHouse 保存数据集明细、用例结果和指标 | 设备农场不复制 ClickHouse 数据 |
 | 用户审计 | 无完整钉钉/RBAC | 后续新增 | 钉钉登录、users、audit_logs | 设备服务只鉴别服务/Agent；操作人由 Alcor 记录 |
 | Device Farm 集成 | 不存在 | 直接在 Alcor 增加 devicefarm/agent/migration | 第六阶段，通过 Worker 的 Device Farm Adapter | 当前独立开发 API；未来 Adapter 对接，不先写死代码迁移 |
-| 可观测性 | 普通服务日志 | 设备事件和审计 | Run/Attempt Header + traceparent + HyperDX MCP | 设备 API 和日志透传三个关联标识 |
+| 可观测性 | 普通服务日志 | 设备事件和审计 | Run/Attempt Header + traceparent + HyperDX MCP | 设备 API 和日志透传三个关联标识；`/metrics` 只输出设备基础设施聚合状态，不复制业务指标 |
 
 ## 3. 对设备农场方案的有效性判断
 

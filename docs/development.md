@@ -73,6 +73,8 @@ bin/device-farm-server.exe --config config/config.example.yaml
 
 管理 API 需要 `DEVICE_FARM_DATABASE_URL`。URL 为空时 Server 只提供健康检查，受保护的管理路径返回 503；不会退化为不持久化的内存管理模式。
 
+`/healthz` 只表示进程存活；`/readyz` 会实际检查 PostgreSQL，未配置或不可连接时返回 503；`/metrics` 提供 Prometheus 文本格式。指标、Dashboard 和告警见 [可观测性和告警](observability.md)。
+
 构建产物位于 `bin/`，已被 `.gitignore` 排除。
 
 ## PostgreSQL migration 验证

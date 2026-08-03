@@ -20,6 +20,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
+	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
@@ -33,6 +34,7 @@ const (
 
 func TestManagementAPICompleteMockFlow(t *testing.T) {
 	environment := newManagementEnvironment(t)
+	assertStatus(t, environment.request(t, http.MethodGet, "/readyz", nil, "", ""), http.StatusOK)
 
 	imageResponse := environment.request(t, http.MethodPost, "/api/v1/device-images", validImageInput(), serviceToken, "image-create-0001")
 	assertStatus(t, imageResponse, http.StatusCreated)
@@ -259,7 +261,9 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	healthService := reconcile.New(db, provider, nil, 3, logger)
 	hostCommands := hostcommand.New(db)
-	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands}))
+	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{
+		Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands, Metrics: farmmetrics.New(db),
+	}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
 	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands, reservations: reservationService}
 }

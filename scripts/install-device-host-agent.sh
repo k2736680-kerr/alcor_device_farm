@@ -14,6 +14,9 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 kvm_device="${DEVICE_FARM_DOCKER_KVM_DEVICE:-/dev/kvm}"
 docker_binary="${DEVICE_FARM_DOCKER_BINARY:-docker}"
 go_binary="${DEVICE_FARM_GO:-go}"
+version="${DEVICE_FARM_VERSION:-dev}"
+commit="${DEVICE_FARM_COMMIT:-$(git -C "$repository_root" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
+build_date="${DEVICE_FARM_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 if [ ! -c "$kvm_device" ] || [ ! -r "$kvm_device" ] || [ ! -w "$kvm_device" ]; then
   echo "$kvm_device must be a readable and writable KVM character device" >&2
@@ -45,7 +48,9 @@ temporary_binary=$(mktemp)
 trap 'rm -f "$temporary_binary"' EXIT HUP INT TERM
 (
   cd "$repository_root"
-  CGO_ENABLED=0 "$go_binary" build -trimpath -o "$temporary_binary" ./cmd/device-host-agent
+  CGO_ENABLED=0 "$go_binary" build -trimpath \
+    -ldflags "-s -w -X github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo.version=$version -X github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo.commit=$commit -X github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo.buildDate=$build_date" \
+    -o "$temporary_binary" ./cmd/device-host-agent
 )
 install -m 0755 "$temporary_binary" /opt/alcor-device-farm/bin/device-host-agent
 

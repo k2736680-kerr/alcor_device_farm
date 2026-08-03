@@ -1,0 +1,59 @@
+groups:
+  - name: alcor-device-farm
+    rules:
+      - alert: DeviceFarmServerDown
+        expr: up{job="alcor-device-farm"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Device Farm Server 无法抓取
+      - alert: DeviceFarmDatabaseNotReady
+        expr: device_farm_database_ready == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Device Farm PostgreSQL 未就绪
+      - alert: DeviceFarmAgentHeartbeatStale
+        expr: device_farm_agent_heartbeat_max_age_seconds > 60
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Host Agent 心跳已过期
+      - alert: DeviceFarmNoReadyDevice
+        expr: (sum(device_farm_devices{lifecycle_status="ready",health_status="healthy"}) or vector(0)) < 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 设备池没有 ready 且 healthy 的设备
+      - alert: DeviceFarmReservationBacklog
+        expr: device_farm_scheduler_oldest_pending_seconds > 60
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: 最老 pending Reservation 等待超过 60 秒
+      - alert: DeviceFarmRecyclingStuck
+        expr: (sum(device_farm_devices{lifecycle_status="recycling"}) or vector(0)) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 设备长时间停留在 recycling
+      - alert: DeviceFarmHealthErrors
+        expr: increase(device_farm_health_events_total{severity="error"}[10m]) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: 设备健康错误正在增长
+      - alert: DeviceFarmHTTP5xx
+        expr: >-
+          sum(rate(device_farm_http_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(device_farm_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Device Farm HTTP 5xx 比例超过 5%
+      - alert: DeviceFarmMetricCollectionError
+        expr: increase(device_farm_metric_collection_errors_total[10m]) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: Device Farm 指标采集不完整

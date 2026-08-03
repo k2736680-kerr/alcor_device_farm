@@ -121,6 +121,10 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "Host command protocol integration tests failed."
             }
+            & $GoExecutable test -count=1 -v ./internal/metrics
+            if ($LASTEXITCODE -ne 0) {
+                throw "Metrics integration tests failed."
+            }
             & $GoExecutable test -count=1 -v ./internal/api
             if ($LASTEXITCODE -ne 0) {
                 throw "Management API integration tests failed."

@@ -50,6 +50,7 @@
 | `internal/providers` | Docker Emulator、Mock、USB 扩展 | 上层统一 Device 模型不变 |
 | `internal/adapters/stf` | STF API 封装 | 由设备农场内部调用 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
+| `internal/metrics` | 设备域 Prometheus 指标和数据库就绪检查 | 只暴露基础设施聚合状态，不保存或计算 Alcor 业务指标 |
 | `migrations` | 设备域表和约束 | 不并入新版 Run/Case migration，不跨库外键 |
 | `deploy` | STF、Agent、模拟器和设备服务部署 | 独立部署细节对 Alcor Adapter 不可见 |
 | `harness/dafit` | Alcor 接入前真实联调 | 不进入 Eval Console 或 Run 业务模型 |

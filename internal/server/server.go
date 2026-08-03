@@ -18,6 +18,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
+	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
@@ -32,6 +33,7 @@ type Services struct {
 	Scheduler    *scheduler.Scheduler
 	Reconcile    *reconcile.Service
 	HostCommands *hostcommand.Service
+	Metrics      *farmmetrics.Registry
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -47,11 +49,15 @@ func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *h
 func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ...Services) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
-	mux.HandleFunc("/readyz", readyHandler)
 	var services Services
 	if len(serviceSets) > 0 {
 		services = serviceSets[0]
 	}
+	if services.Metrics == nil {
+		services.Metrics = farmmetrics.New(nil)
+	}
+	mux.HandleFunc("/readyz", readinessHandler(services.Metrics))
+	mux.Handle("/metrics", services.Metrics)
 	api.RegisterManagement(mux, services.Management)
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
@@ -59,7 +65,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	mux.HandleFunc("/", notFoundHandler)
 
 	protected := auth.RouteMiddleware(security, mux)
-	return correlation.Middleware(recoverMiddleware(logger, requestLogMiddleware(logger, protected)))
+	return correlation.Middleware(requestLogMiddleware(logger, services.Metrics, recoverMiddleware(logger, protected)))
 }
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
@@ -72,6 +78,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer db.Close()
+		services.Metrics = farmmetrics.New(db)
 		provider := providermock.New(providermock.Config{})
 		var stfClient *stf.Client
 		if cfg.STF.Enabled {
@@ -106,6 +113,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
 		warmPoolController := warmpool.New(db, nil, logger)
 		go warmPoolController.Run(ctx, cfg.WarmPool.Interval)
+	}
+	if services.Metrics == nil {
+		services.Metrics = farmmetrics.New(nil)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
 	errorChannel := make(chan error, 1)
@@ -143,12 +153,22 @@ func healthHandler(writer http.ResponseWriter, request *http.Request) {
 	httpx.WriteData(writer, request, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func readyHandler(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet {
-		methodNotAllowed(writer, request)
-		return
+func readinessHandler(registry *farmmetrics.Registry) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			methodNotAllowed(writer, request)
+			return
+		}
+		ctx, cancel := context.WithTimeout(request.Context(), 2*time.Second)
+		defer cancel()
+		if err := registry.Ready(ctx); err != nil {
+			httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{
+				Code: "SERVICE_UNAVAILABLE", Message: "database is not ready", Retryable: true,
+			})
+			return
+		}
+		httpx.WriteData(writer, request, http.StatusOK, map[string]string{"status": "ready"})
 	}
-	httpx.WriteData(writer, request, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func notFoundHandler(writer http.ResponseWriter, request *http.Request) {
@@ -185,11 +205,12 @@ func recoverMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-func requestLogMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func requestLogMiddleware(logger *slog.Logger, registry *farmmetrics.Registry, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		startedAt := time.Now()
 		statusWriter := &responseStatusWriter{ResponseWriter: writer, status: http.StatusOK}
 		next.ServeHTTP(statusWriter, request)
+		registry.ObserveHTTP(request.Method, request.Pattern, statusWriter.status, time.Since(startedAt))
 
 		attrs := correlation.LogAttrs(request.Context())
 		attrs = append(attrs,
