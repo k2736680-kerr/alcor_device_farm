@@ -86,3 +86,5 @@ Server 启用 `DEVICE_FARM_STF_ENABLED=true` 后，Scheduler 会在 Reservation 
 Server 已提供 `/healthz`、数据库感知的 `/readyz` 和 Prometheus `/metrics`。Linux systemd、Docker Compose、备份、升级、告警、运维和回滚入口见 [Server 部署](deploy/server/README.md)、[可观测性](docs/observability.md)、[运维手册](docs/operations_runbook.md) 和 [回滚方案](docs/rollback.md)。
 
 新版 Alcor 接口尚未完成时，可直接使用 [Adapter 契约包](docs/alcor_adapter_contract.md) 独立联调。包内包含冻结的 Device Farm OpenAPI、RunAttempt 示例客户端、可运行 Mock Server、错误映射和契约测试；Mock 不需要 PostgreSQL、Docker 或真实设备。真实 Alcor 接口到位后只需在 Worker 中实现同一调用边界，不改变设备农场内部架构。
+
+DF-003～DF-025 的提交、状态和证据总表见 [实施与证据清单](docs/evidence/implementation_manifest.md)。`scripts/dev.ps1 -Task check` 会同时检查 Go 门禁、全部构建产物和证据目录；`scripts/check-alcor-integration-readiness.ps1` 用于判断新版 Alcor 是否已经满足真实接入条件。

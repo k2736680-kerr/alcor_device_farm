@@ -278,6 +278,8 @@
 
 该任务必须等待新版 Alcor 实际分支和 OpenAPI，不能提前标记完成。
 
+开工门禁：运行 `scripts/check-alcor-integration-readiness.ps1` 必须输出 `ALCOR_DEVICE_FARM_READY=true`。当前 `origin/feature/refactoring@868de61` 只有 RunAttempt/Worker 主体，Swagger、Device Farm Adapter、配置和 `X-Eval-*` Header 尚未齐备，审计见 `docs/evidence/ALCOR-001/readiness.md`。
+
 实施：核对认证、RunAttempt、取消、ArtifactStore 和关联 Header；实现 Worker Device Farm Adapter；执行双方契约和真实 DaFit/Android 冒烟。
 
 验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed。

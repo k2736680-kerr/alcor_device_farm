@@ -51,6 +51,13 @@ function Invoke-FormatCheck {
     }
 }
 
+function Invoke-ImplementationEvidenceCheck {
+    & (Join-Path $PSScriptRoot "verify-implementation-evidence.ps1")
+    if (-not $?) {
+        throw "Implementation evidence gate failed."
+    }
+}
+
 $script:GoExecutable = Resolve-GoExecutable
 $script:GofmtExecutable = Join-Path (Split-Path -Parent $script:GoExecutable) "gofmt.exe"
 if (-not (Test-Path -LiteralPath $script:GofmtExecutable -PathType Leaf)) {
@@ -64,6 +71,7 @@ try {
             Invoke-Go -Arguments @("build", "-o", "bin/device-farm-server.exe", "./cmd/device-farm-server")
             Invoke-Go -Arguments @("build", "-o", "bin/device-host-agent.exe", "./cmd/device-host-agent")
             Invoke-Go -Arguments @("build", "-o", "bin/dafit-farm-harness.exe", "./cmd/dafit-farm-harness")
+            Invoke-Go -Arguments @("build", "-o", "bin/device-farm-adapter-mock.exe", "./cmd/device-farm-adapter-mock")
         }
         "test" {
             Invoke-Go -Arguments @("test", "./...")
@@ -79,6 +87,8 @@ try {
             Invoke-Go -Arguments @("build", "-o", "bin/device-farm-server.exe", "./cmd/device-farm-server")
             Invoke-Go -Arguments @("build", "-o", "bin/device-host-agent.exe", "./cmd/device-host-agent")
             Invoke-Go -Arguments @("build", "-o", "bin/dafit-farm-harness.exe", "./cmd/dafit-farm-harness")
+            Invoke-Go -Arguments @("build", "-o", "bin/device-farm-adapter-mock.exe", "./cmd/device-farm-adapter-mock")
+            Invoke-ImplementationEvidenceCheck
         }
     }
 }
