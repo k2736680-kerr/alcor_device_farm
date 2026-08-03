@@ -61,12 +61,15 @@ bin/device-farm-server.exe --config config/config.example.yaml
 - `DEVICE_FARM_SERVER_WRITE_TIMEOUT`；
 - `DEVICE_FARM_SERVER_IDLE_TIMEOUT`；
 - `DEVICE_FARM_SERVER_SHUTDOWN_TIMEOUT`；
+- `DEVICE_FARM_DATABASE_URL`；
 - `DEVICE_FARM_LOG_LEVEL`；
 - `DEVICE_FARM_LOG_FORMAT`；
 - `DEVICE_FARM_SECURITY_SERVICE_TOKEN`；
 - `DEVICE_FARM_SECURITY_AGENT_TOKEN`。
 
 真实 Token 只能通过部署 Secret 或环境变量注入，不写入已提交 YAML。
+
+管理 API 需要 `DEVICE_FARM_DATABASE_URL`。URL 为空时 Server 只提供健康检查，受保护的管理路径返回 503；不会退化为不持久化的内存管理模式。
 
 构建产物位于 `bin/`，已被 `.gitignore` 排除。
 

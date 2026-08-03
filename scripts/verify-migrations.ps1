@@ -73,20 +73,20 @@ try {
         "--host", "127.0.0.1", "--port", "$Port", "--username", "postgres", $DatabaseName
     )
 
-    $Up = Join-Path $ProjectRoot "migrations/000001_device_domain.up.sql"
-    $Down = Join-Path $ProjectRoot "migrations/000001_device_domain.down.sql"
+    $UpFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "migrations") -Filter "*.up.sql" -File | Sort-Object Name
+    $DownFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "migrations") -Filter "*.down.sql" -File | Sort-Object Name -Descending
     $Constraints = Join-Path $ProjectRoot "migrations/test/constraints.sql"
 
-    Invoke-SQLFile $Up
+    foreach ($Migration in $UpFiles) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQLFile $Constraints
     Write-Output "constraint checks: passed"
 
-    Invoke-SQLFile $Down
+    foreach ($Migration in $DownFiles) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQL "DO `$test`$ BEGIN IF EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%') THEN RAISE EXCEPTION 'down migration left device tables'; END IF; END `$test`$;"
     Write-Output "down migration: passed"
 
-    Invoke-SQLFile $Up
-    Invoke-SQL "DO `$test`$ DECLARE table_count integer; BEGIN SELECT count(*) INTO table_count FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%'; IF table_count <> 11 THEN RAISE EXCEPTION 'expected 11 device tables, got %', table_count; END IF; END `$test`$;"
+    foreach ($Migration in $UpFiles) { Invoke-SQLFile $Migration.FullName }
+    Invoke-SQL "DO `$test`$ DECLARE table_count integer; BEGIN SELECT count(*) INTO table_count FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%'; IF table_count <> 12 THEN RAISE EXCEPTION 'expected 12 device tables, got %', table_count; END IF; END `$test`$;"
     Write-Output "up-down-up migration: passed"
 
     if ($RunRepositoryTests) {
@@ -104,6 +104,10 @@ try {
             & $GoExecutable test -count=1 -v ./internal/repository
             if ($LASTEXITCODE -ne 0) {
                 throw "Repository integration tests failed."
+            }
+            & $GoExecutable test -count=1 -v ./internal/api
+            if ($LASTEXITCODE -ne 0) {
+                throw "Management API integration tests failed."
             }
         }
         finally {

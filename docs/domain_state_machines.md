@@ -39,7 +39,7 @@ stateDiagram-v2
     deleted --> [*]
 ```
 
-健康状态单独流转：`unknown → healthy/degraded/unhealthy`，之后允许在 `healthy`、`degraded`、`unhealthy` 之间按健康检查结果恢复或降级。健康变化不偷偷改写生命周期。
+健康状态单独流转：`unknown → healthy/degraded/unhealthy`，之后允许在 `healthy`、`degraded`、`unhealthy` 之间按健康检查结果恢复或降级；重启/重建健康检查时允许重置为 `unknown`。健康变化不偷偷改写生命周期。
 
 ## 其他资源
 

@@ -41,9 +41,9 @@ var deviceTransitions = map[DeviceLifecycleStatus]map[DeviceLifecycleStatus]stru
 
 var healthTransitions = map[HealthStatus]map[HealthStatus]struct{}{
 	HealthUnknown:   allowed(HealthHealthy, HealthDegraded, HealthUnhealthy),
-	HealthHealthy:   allowed(HealthDegraded, HealthUnhealthy),
-	HealthDegraded:  allowed(HealthHealthy, HealthUnhealthy),
-	HealthUnhealthy: allowed(HealthHealthy, HealthDegraded),
+	HealthHealthy:   allowed(HealthUnknown, HealthDegraded, HealthUnhealthy),
+	HealthDegraded:  allowed(HealthUnknown, HealthHealthy, HealthUnhealthy),
+	HealthUnhealthy: allowed(HealthUnknown, HealthHealthy, HealthDegraded),
 }
 
 type Device struct {

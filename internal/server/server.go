@@ -8,26 +8,36 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/api"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
+	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
+	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
 )
 
-func NewHTTPServer(cfg config.Config, logger *slog.Logger) *http.Server {
+func NewHTTPServer(cfg config.Config, logger *slog.Logger, services ...*management.Service) *http.Server {
 	return &http.Server{
 		Addr:         cfg.Server.Address,
-		Handler:      Handler(cfg.Security, logger),
+		Handler:      Handler(cfg.Security, logger, services...),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 }
 
-func Handler(security config.SecurityConfig, logger *slog.Logger) http.Handler {
+func Handler(security config.SecurityConfig, logger *slog.Logger, services ...*management.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", readyHandler)
+	var managementService *management.Service
+	if len(services) > 0 {
+		managementService = services[0]
+	}
+	api.RegisterManagement(mux, managementService)
 	mux.HandleFunc("/", notFoundHandler)
 
 	protected := auth.RouteMiddleware(security, mux)
@@ -35,7 +45,18 @@ func Handler(security config.SecurityConfig, logger *slog.Logger) http.Handler {
 }
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	httpServer := NewHTTPServer(cfg, logger)
+	var managementService *management.Service
+	var db *database.DB
+	if cfg.Database.URL != "" {
+		var err error
+		db, err = database.Open(ctx, cfg.Database.URL)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		managementService = management.NewService(managementpostgres.New(db), providermock.New(providermock.Config{}), nil)
+	}
+	httpServer := NewHTTPServer(cfg, logger, managementService)
 	errorChannel := make(chan error, 1)
 
 	go func() {

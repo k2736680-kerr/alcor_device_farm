@@ -19,8 +19,13 @@ const envPrefix = "DEVICE_FARM_"
 
 type Config struct {
 	Server   ServerConfig   `yaml:"server" json:"server"`
+	Database DatabaseConfig `yaml:"database" json:"-"`
 	Log      LogConfig      `yaml:"log" json:"log"`
 	Security SecurityConfig `yaml:"security" json:"-"`
+}
+
+type DatabaseConfig struct {
+	URL string `yaml:"url" json:"-"`
 }
 
 type ServerConfig struct {
@@ -110,6 +115,7 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		target *string
 	}{
 		{"SERVER_ADDRESS", &cfg.Server.Address},
+		{"DATABASE_URL", &cfg.Database.URL},
 		{"LOG_LEVEL", &cfg.Log.Level},
 		{"LOG_FORMAT", &cfg.Log.Format},
 		{"SECURITY_SERVICE_TOKEN", &cfg.Security.ServiceToken},

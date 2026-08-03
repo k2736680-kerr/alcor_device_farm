@@ -35,6 +35,7 @@
 - Appium Endpoint、端口和健康状态 Adapter；
 - `/api/v1/device-*` 与 `/internal/v1` 契约；
 - UUID/ULID Owner ID、幂等键和统一错误响应；
+- 设备 API 通用幂等记录，只保存请求哈希和设备资源 ID；
 - `X-Eval-Run-Id`、`X-Eval-Attempt-Id`、`traceparent` 透传；
 - DaFit 端到端 Harness。
 

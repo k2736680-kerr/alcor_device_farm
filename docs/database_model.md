@@ -26,6 +26,8 @@ erDiagram
 
 `device_audit_events` 使用通用 `resource_type/resource_id` 记录技术审计，不对任意资源建多态外键。这样既保留删除/异常历史，也不会把业务域混入设备表。
 
+`device_idempotency_records` 只保存设备 API 的 client、scope、key、请求哈希和设备资源 ID，用于 Image/Host/Pool 等创建请求重放；不保存请求正文、Token 或 Alcor 业务对象。
+
 ## 核心数据库保证
 
 - `devices.serial` 和 `(provider_type, provider_ref)` 唯一；已分配的 STF serial、ADB Endpoint、Appium Endpoint 也分别唯一；
@@ -42,5 +44,7 @@ erDiagram
 
 - `migrations/000001_device_domain.up.sql`
 - `migrations/000001_device_domain.down.sql`
+- `migrations/000002_api_idempotency.up.sql`
+- `migrations/000002_api_idempotency.down.sql`
 
 执行必须使用单事务和 `ON_ERROR_STOP`。生产回滚前先停止 Server、Agent、Scheduler、Reaper 和 Reconciler；down migration 会删除全部设备域数据，只用于空环境演练或已确认恢复点的回滚。

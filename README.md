@@ -64,3 +64,5 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 本地构建和测试入口见 [开发说明](docs/development.md)。
 
 设备接口以 [OpenAPI 契约](openapi/device-farm-v1.yaml) 为准。`/api/v1/device-*` 使用平台服务 Token，`/internal/v1` 使用独立 Agent Token；两类 Token 必须不同，空值不会放行受保护接口。
+
+配置 PostgreSQL URL 后，Server 已可提供 Image、Host、Pool 和 Device 管理 API；当前设备实例由 Mock Provider 支撑，Reservation/Scheduler 从 DF-009 开始接入。

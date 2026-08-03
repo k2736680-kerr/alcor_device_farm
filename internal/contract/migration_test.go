@@ -31,6 +31,15 @@ func TestDeviceDomainMigrationContract(t *testing.T) {
 	assertSQLContains(t, up, `serial\s+varchar\(255\)\s+NOT\s+NULL\s+UNIQUE`)
 }
 
+func TestAPIIdempotencyMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000002_api_idempotency.up.sql"))
+	down := readFile(t, filepath.Join(root, "000002_api_idempotency.down.sql"))
+	assertSQLContains(t, up, `CREATE\s+TABLE\s+device_idempotency_records\b`)
+	assertSQLContains(t, up, `PRIMARY\s+KEY\s*\(client_id,\s*scope,\s*idempotency_key\)`)
+	assertSQLContains(t, down, `DROP\s+TABLE\s+IF\s+EXISTS\s+device_idempotency_records\b`)
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

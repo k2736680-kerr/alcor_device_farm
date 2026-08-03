@@ -40,10 +40,13 @@ log:
 security:
   service_token: yaml-secret
   agent_token: yaml-agent-secret
+database:
+  url: postgres://yaml-database-secret
 `)
 	t.Setenv("DEVICE_FARM_SERVER_ADDRESS", "127.0.0.1:28080")
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
 	t.Setenv("DEVICE_FARM_SECURITY_SERVICE_TOKEN", "environment-secret")
+	t.Setenv("DEVICE_FARM_DATABASE_URL", "postgres://environment-database-secret")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -57,6 +60,9 @@ security:
 	}
 	if cfg.Security.ServiceToken != "environment-secret" {
 		t.Fatal("environment did not override service token")
+	}
+	if cfg.Database.URL != "postgres://environment-database-secret" {
+		t.Fatal("environment did not override database URL")
 	}
 }
 
@@ -102,6 +108,7 @@ func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg := Default()
 	cfg.Security.ServiceToken = "service-token-value"
 	cfg.Security.AgentToken = "agent-token-value"
+	cfg.Database.URL = "postgres://database-secret-value"
 
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
@@ -144,7 +151,7 @@ func clearDeviceFarmEnvironment(t *testing.T) {
 
 func assertNoSecrets(t *testing.T, value string) {
 	t.Helper()
-	for _, secret := range []string{"service-token-value", "agent-token-value"} {
+	for _, secret := range []string{"service-token-value", "agent-token-value", "database-secret-value"} {
 		if strings.Contains(value, secret) {
 			t.Fatalf("serialized value contains secret %q", secret)
 		}

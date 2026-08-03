@@ -312,7 +312,7 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceImageInput"}
-          example: {name: android-14-x86_64, docker_digest: "sha256:0123456789abcdef", api_level: 34, abi: x86_64, resolution: 1080x2400, cpu: 2, memory_mb: 4096}
+          example: {name: android-14-x86_64, docker_digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", api_level: 34, abi: x86_64, resolution: 1080x2400, resource_config: {cpu: 2, memory_mb: 4096}}
     DeviceHostInput:
       required: true
       content:
@@ -324,7 +324,7 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DevicePoolInput"}
-          example: {name: android-smoke, default_lease_seconds: 1800, max_lease_seconds: 7200, status: active}
+          example: {name: android-smoke, default_lease_seconds: 1800, max_lease_seconds: 7200, max_concurrency: 2, enabled: true}
     PoolDeviceInput:
       required: true
       content:
@@ -446,15 +446,14 @@ components:
     DeviceImageInput:
       type: object
       additionalProperties: false
-      required: [name, docker_digest, api_level, abi, resolution, cpu, memory_mb]
+      required: [name, docker_digest, api_level, abi, resolution, resource_config]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         docker_digest: {type: string, pattern: "^sha256:[a-fA-F0-9]{16,64}$"}
         api_level: {type: integer, minimum: 21}
         abi: {type: string, enum: [x86_64, arm64-v8a]}
         resolution: {type: string, pattern: "^[0-9]+x[0-9]+$"}
-        cpu: {type: integer, minimum: 1}
-        memory_mb: {type: integer, minimum: 1024}
+        resource_config: {type: object, additionalProperties: true}
         enabled: {type: boolean, default: true}
     DeviceHostInput:
       type: object
@@ -463,6 +462,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         host_type: {type: string, enum: [docker_emulator, usb_android]}
+        address: {type: string, maxLength: 255}
         capabilities: {type: object, additionalProperties: true}
         capacity: {$ref: "#/components/schemas/HostCapacity"}
     HostCapacity:
@@ -475,15 +475,13 @@ components:
     DevicePoolInput:
       type: object
       additionalProperties: false
-      required: [name, default_lease_seconds, max_lease_seconds, status]
+      required: [name, default_lease_seconds, max_lease_seconds, max_concurrency]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         default_lease_seconds: {type: integer, minimum: 60}
         max_lease_seconds: {type: integer, minimum: 60}
-        status: {type: string, enum: [active, disabled]}
-        allowed_image_ids: {type: array, items: {$ref: "#/components/schemas/Identifier"}}
-        min_ready: {type: integer, minimum: 0, default: 0}
-        max_instances: {type: integer, minimum: 1}
+        max_concurrency: {type: integer, minimum: 1}
+        enabled: {type: boolean, default: true}
     PoolDeviceInput:
       type: object
       additionalProperties: false

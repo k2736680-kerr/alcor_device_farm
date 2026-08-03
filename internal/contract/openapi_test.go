@@ -86,7 +86,7 @@ func TestOpenAPIContract(t *testing.T) {
 	object(t, securitySchemes, "serviceBearer")
 	object(t, securitySchemes, "agentBearer")
 	validateLocalReferences(t, document, document, "#")
-	validateReservationExample(t, components)
+	validateRequestExamples(t, components)
 }
 
 func loadOpenAPI(t *testing.T) (map[string]any, string) {
@@ -156,30 +156,31 @@ func resolveReference(root map[string]any, reference string) (any, bool) {
 	return current, true
 }
 
-func validateReservationExample(t *testing.T, components map[string]any) {
+func validateRequestExamples(t *testing.T, components map[string]any) {
 	t.Helper()
 	requestBodies := object(t, components, "requestBodies")
-	body := object(t, requestBodies, "ReservationCreate")
-	content := object(t, body, "content")
-	media := object(t, content, "application/json")
-	example := object(t, media, "example")
-
 	schemas := object(t, components, "schemas")
-	schema := object(t, schemas, "ReservationCreate")
-	requiredValues, ok := schema["required"].([]any)
-	if !ok {
-		t.Fatalf("ReservationCreate.required = %#v", schema["required"])
-	}
-	var missing []string
-	for _, value := range requiredValues {
-		name := value.(string)
-		if _, ok := example[name]; !ok {
-			missing = append(missing, name)
+	for _, name := range []string{"DeviceImageInput", "DeviceHostInput", "DevicePoolInput", "ReservationCreate"} {
+		body := object(t, requestBodies, name)
+		content := object(t, body, "content")
+		media := object(t, content, "application/json")
+		example := object(t, media, "example")
+		schema := object(t, schemas, name)
+		requiredValues, ok := schema["required"].([]any)
+		if !ok {
+			t.Fatalf("%s.required = %#v", name, schema["required"])
 		}
-	}
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		t.Fatalf("reservation example missing required fields: %v", missing)
+		var missing []string
+		for _, value := range requiredValues {
+			field := value.(string)
+			if _, ok := example[field]; !ok {
+				missing = append(missing, field)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			t.Fatalf("%s example missing required fields: %v", name, missing)
+		}
 	}
 }
 

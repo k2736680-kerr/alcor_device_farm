@@ -309,6 +309,7 @@ Reconciler：
 | `device_sessions` | id、reservation_id、device_id、status、started_at、ended_at、connection_metadata |
 | `device_health_events` | id、device_id、source、event_type、severity、reason、payload、created_at |
 | `device_audit_events` | id、actor_type、actor_id、action、resource_type、resource_id、request_id、summary、created_at |
+| `device_idempotency_records` | client_id、scope、idempotency_key、request_hash、resource_type、resource_id、response_status、expires_at |
 
 必须具有：
 

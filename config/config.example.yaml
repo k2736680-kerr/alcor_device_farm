@@ -5,6 +5,11 @@ server:
   idle_timeout: 60s
   shutdown_timeout: 10s
 
+# Inject the real URL through DEVICE_FARM_DATABASE_URL. An empty value keeps
+# only health endpoints available and makes management APIs fail closed.
+database:
+  url: ""
+
 log:
   level: info
   format: json

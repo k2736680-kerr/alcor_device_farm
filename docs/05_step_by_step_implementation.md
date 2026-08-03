@@ -28,7 +28,7 @@
 | DF-005 | 领域模型和状态机 | completed | DF-004 |
 | DF-006 | Repository、事务和幂等基础 | completed | DF-004、DF-005 |
 | DF-007 | Mock Provider 和故障注入 | completed | DF-005 |
-| DF-008 | Image、Host、Pool、Device API | pending | DF-003、DF-006、DF-007 |
+| DF-008 | Image、Host、Pool、Device API | completed | DF-003、DF-006、DF-007 |
 | DF-009 | Reservation API 和 Scheduler | pending | DF-008 |
 | DF-010 | 续租、释放和 Reaper | pending | DF-009 |
 | DF-011 | Reconciler、健康事件和隔离 | pending | DF-010 |
