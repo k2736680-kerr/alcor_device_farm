@@ -44,7 +44,7 @@
 | DF-021 | 故障恢复、清理和数据隔离 | blocked | DF-020 |
 | DF-022 | 权限、审计和敏感数据加固 | blocked | DF-018、DF-021 |
 | DF-023 | 指标、部署、运维和回滚手册 | blocked | DF-022 |
-| DF-024 | MVP 全量验收 | pending | DF-023 |
+| DF-024 | MVP 全量验收 | blocked | DF-023 |
 | DF-025 | 新版 Alcor Adapter 契约包 | pending | DF-024 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-025、新版 Alcor OpenAPI |
 
@@ -222,7 +222,7 @@
 
 产出：DaFit 薄适配和回归测试。
 
-验收：现有 collect-only 仍发现原 26 个用例；原本地入口行为不变；Farm 模式缺少明确 UDID 时直接失败，不能自动挑第一台设备；不复制页面、动作、断言和报告模块。
+验收：现有 collect-only 仍发现当前主线 158 个执行实例；原本地入口行为不变；Farm 模式缺少明确 UDID 时直接失败，不能自动挑第一台设备；不复制页面、动作、断言和报告模块。
 
 ### DF-020 DaFit 端到端 Harness
 

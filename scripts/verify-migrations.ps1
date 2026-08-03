@@ -52,6 +52,22 @@ function Invoke-SQL {
     )
 }
 
+function Invoke-GoTest {
+    param(
+        [string]$GoExecutable,
+        [string]$Package,
+        [string]$FailureMessage
+    )
+
+    # Convert native output into PowerShell host output so Start-Transcript in
+    # the acceptance wrapper can record it. PostgreSQL is already running at
+    # this point, so this pipeline cannot leak a startup pipe into the server.
+    & $GoExecutable test -count=1 -v $Package 2>&1 | ForEach-Object { Write-Output $_ }
+    if ($LASTEXITCODE -ne 0) {
+        throw $FailureMessage
+    }
+}
+
 $started = $false
 New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
 if (Test-Path -LiteralPath $DataDirectory) {
@@ -101,38 +117,14 @@ try {
         $PreviousDatabaseURL = $env:DEVICE_FARM_TEST_DATABASE_URL
         try {
             $env:DEVICE_FARM_TEST_DATABASE_URL = "postgres://postgres@127.0.0.1:$Port/$DatabaseName`?sslmode=disable"
-            & $GoExecutable test -count=1 -v ./internal/repository
-            if ($LASTEXITCODE -ne 0) {
-                throw "Repository integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/scheduler
-            if ($LASTEXITCODE -ne 0) {
-                throw "Scheduler integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/reaper
-            if ($LASTEXITCODE -ne 0) {
-                throw "Reservation lease and Reaper integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/reconcile
-            if ($LASTEXITCODE -ne 0) {
-                throw "Reconciler and health integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/hostcommand
-            if ($LASTEXITCODE -ne 0) {
-                throw "Host command protocol integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/metrics
-            if ($LASTEXITCODE -ne 0) {
-                throw "Metrics integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/api
-            if ($LASTEXITCODE -ne 0) {
-                throw "Management API integration tests failed."
-            }
-            & $GoExecutable test -count=1 -v ./internal/warmpool
-            if ($LASTEXITCODE -ne 0) {
-                throw "Warm pool controller integration tests failed."
-            }
+            Invoke-GoTest $GoExecutable "./internal/repository" "Repository integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/scheduler" "Scheduler integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/reaper" "Reservation lease and Reaper integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/reconcile" "Reconciler and health integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/hostcommand" "Host command protocol integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/metrics" "Metrics integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/api" "Management API integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/warmpool" "Warm pool controller integration tests failed."
         }
         finally {
             $env:DEVICE_FARM_TEST_DATABASE_URL = $PreviousDatabaseURL

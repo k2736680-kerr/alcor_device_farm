@@ -1,0 +1,403 @@
+﻿Device Farm MVP local acceptance
+timestamp_utc=2026-08-03T14:46:25.5860397Z
+commit=ef282017ae854b14c9bdb9853d3b4d323fdab405
+environment=E0 Windows Mock + temporary PostgreSQL
+
+== Device Farm full gate ==
+?   	github.com/Ad-Quanta/alcor-device-farm/cmd/dafit-farm-harness	[no test files]
+?   	github.com/Ad-Quanta/alcor-device-farm/cmd/device-farm-server	[no test files]
+ok  	github.com/Ad-Quanta/alcor-device-farm/cmd/device-host-agent	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/harness/dafit	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/adapters/appium	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/agent	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/api	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/auth	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/config	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/contract	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/correlation	(cached)
+?   	github.com/Ad-Quanta/alcor-device-farm/internal/database	[no test files]
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/domain	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/httpx	(cached)
+?   	github.com/Ad-Quanta/alcor-device-farm/internal/identifier	[no test files]
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/logging	(cached)
+?   	github.com/Ad-Quanta/alcor-device-farm/internal/management	[no test files]
+?   	github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres	[no test files]
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/metrics	(cached)
+?   	github.com/Ad-Quanta/alcor-device-farm/internal/providers	[no test files]
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/reaper	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/reconcile	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/repository	(cached)
+?   	github.com/Ad-Quanta/alcor-device-farm/internal/reservation	[no test files]
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/scheduler	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/sensitive	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/server	(cached)
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/warmpool	(cached)
+== PostgreSQL migration and integration gate ==
+**********************
+Windows PowerShell transcript start
+Start time: 20260803224630
+Username: KERR\kerr
+RunAs User: KERR\kerr
+Configuration Name:
+Machine: KERR (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}
+.\scripts\run-mvp-local-acceptance.ps1 -GoExecutable 'E:\AutoTestTools\Tools\go1.26.5\go\bin\go.exe' -PostgresBin 'E:\AutoTestTools\Tools\PostgreSQL-17.10\pgsql\bin' -PythonExecutable 'D:\python\python.exe' -DaFitRoot 'E:\AutoTestTools\Projects\dafit_auto_platform'
+Process ID: 21920
+PSVersion: 5.1.26100.8875
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8875
+BuildVersion: 10.0.26100.8875
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+
+
+
+
+
+
+
+constraint checks: passed
+
+
+
+
+down migration: passed
+
+
+
+
+up-down-up migration: passed
+=== RUN   TestReservationIdempotencyReturnsSameResource
+--- PASS: TestReservationIdempotencyReturnsSameResource (0.11s)
+=== RUN   TestConcurrentReservationIdempotencyReturnsOneResource
+--- PASS: TestConcurrentReservationIdempotencyReturnsOneResource (0.19s)
+=== RUN   TestConcurrentReservationLockClaimsOnlyOnce
+--- PASS: TestConcurrentReservationLockClaimsOnlyOnce (0.34s)
+=== RUN   TestConcurrentCommandClaimLeasesOnlyOnce
+--- PASS: TestConcurrentCommandClaimLeasesOnlyOnce (0.14s)
+=== RUN   TestCommandIdempotencyReturnsSameResource
+--- PASS: TestCommandIdempotencyReturnsSameResource (0.10s)
+=== RUN   TestTransactionRollbackLeavesNoPartialReservation
+--- PASS: TestTransactionRollbackLeavesNoPartialReservation (0.11s)
+=== RUN   TestDatabaseClock
+--- PASS: TestDatabaseClock (0.03s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/repository	1.789s
+=== RUN   TestOneHundredConcurrentReservationsUseTwoDevicesWithoutDoubleAllocation
+--- PASS: TestOneHundredConcurrentReservationsUseTwoDevicesWithoutDoubleAllocation (0.29s)
+=== RUN   TestConcurrentIdempotencyCreatesOneReservation
+--- PASS: TestConcurrentIdempotencyCreatesOneReservation (0.23s)
+=== RUN   TestCapabilityMismatchRemainsPendingWithoutBlockingMatchedRequest
+--- PASS: TestCapabilityMismatchRemainsPendingWithoutBlockingMatchedRequest (0.15s)
+=== RUN   TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount
+--- PASS: TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount (0.19s)
+=== RUN   TestSTFClaimRunsBeforeReservationActivation
+--- PASS: TestSTFClaimRunsBeforeReservationActivation (0.15s)
+=== RUN   TestRetryableSTFClaimFailureRestoresDeviceAndKeepsReservationPending
+--- PASS: TestRetryableSTFClaimFailureRestoresDeviceAndKeepsReservationPending (0.14s)
+=== RUN   TestTerminalSTFClaimFailureRestoresDeviceAndFailsReservation
+--- PASS: TestTerminalSTFClaimFailureRestoresDeviceAndFailsReservation (0.14s)
+=== RUN   TestSTFClaimIsReleasedWhenSessionIDGenerationFails
+--- PASS: TestSTFClaimIsReleasedWhenSessionIDGenerationFails (0.14s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/scheduler	2.185s
+=== RUN   TestExtensionUsesDatabaseLeaseAndIsIdempotent
+--- PASS: TestExtensionUsesDatabaseLeaseAndIsIdempotent (0.16s)
+=== RUN   TestConcurrentReleaseClosesOnlyOnce
+--- PASS: TestConcurrentReleaseClosesOnlyOnce (0.17s)
+=== RUN   TestForceReleaseWritesReasonedAudit
+--- PASS: TestForceReleaseWritesReasonedAudit (0.14s)
+=== RUN   TestTwoReapersCloseExpiredReservationOnce
+--- PASS: TestTwoReapersCloseExpiredReservationOnce (0.18s)
+=== RUN   TestReaperHonorsGracePeriod
+--- PASS: TestReaperHonorsGracePeriod (0.14s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/reaper	1.565s
+=== RUN   TestProviderMissingQuarantinesReadyDatabaseDevice
+--- PASS: TestProviderMissingQuarantinesReadyDatabaseDevice (0.16s)
+=== RUN   TestStaleHostGoesOfflineAndDeviceStopsScheduling
+--- PASS: TestStaleHostGoesOfflineAndDeviceStopsScheduling (0.15s)
+=== RUN   TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter
+--- PASS: TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter (0.26s)
+=== RUN   TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover
+--- PASS: TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover (0.15s)
+=== RUN   TestHealthReportValidationAndMissingDevice
+--- PASS: TestHealthReportValidationAndMissingDevice (0.13s)
+=== RUN   TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess
+--- PASS: TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess (0.14s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/reconcile	1.779s
+=== RUN   TestHeartbeatBringsOfflineHostOnline
+--- PASS: TestHeartbeatBringsOfflineHostOnline (0.16s)
+=== RUN   TestHeartbeatDoesNotCreateOrCrossBindDiscoveredDevice
+--- PASS: TestHeartbeatDoesNotCreateOrCrossBindDiscoveredDevice (0.13s)
+=== RUN   TestHeartbeatPreservesReservationAndTerminalLifecycleTruth
+=== RUN   TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/reserved
+=== RUN   TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/busy
+=== RUN   TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/recycling
+=== RUN   TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/quarantined
+=== RUN   TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/deleted
+--- PASS: TestHeartbeatPreservesReservationAndTerminalLifecycleTruth (0.74s)
+    --- PASS: TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/reserved (0.13s)
+    --- PASS: TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/busy (0.12s)
+    --- PASS: TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/recycling (0.24s)
+    --- PASS: TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/quarantined (0.12s)
+    --- PASS: TestHeartbeatPreservesReservationAndTerminalLifecycleTruth/deleted (0.13s)
+=== RUN   TestHeartbeatIdentityConflictsRollbackEntireTransaction
+=== RUN   TestHeartbeatIdentityConflictsRollbackEntireTransaction/serial
+=== RUN   TestHeartbeatIdentityConflictsRollbackEntireTransaction/adb_endpoint
+=== RUN   TestHeartbeatIdentityConflictsRollbackEntireTransaction/appium_endpoint
+--- PASS: TestHeartbeatIdentityConflictsRollbackEntireTransaction (0.38s)
+    --- PASS: TestHeartbeatIdentityConflictsRollbackEntireTransaction/serial (0.13s)
+    --- PASS: TestHeartbeatIdentityConflictsRollbackEntireTransaction/adb_endpoint (0.13s)
+    --- PASS: TestHeartbeatIdentityConflictsRollbackEntireTransaction/appium_endpoint (0.12s)
+=== RUN   TestConcurrentClaimsLeaseOneCommandOnce
+--- PASS: TestConcurrentClaimsLeaseOneCommandOnce (0.15s)
+=== RUN   TestExpiredLeaseReclaimsAndRejectsOldCompletion
+--- PASS: TestExpiredLeaseReclaimsAndRejectsOldCompletion (0.13s)
+=== RUN   TestExpiredFinalAttemptTimesOut
+--- PASS: TestExpiredFinalAttemptTimesOut (0.14s)
+=== RUN   TestRetryableCompletionReturnsCommandToPendingUntilSuccess
+--- PASS: TestRetryableCompletionReturnsCommandToPendingUntilSuccess (0.13s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand	2.738s
+=== RUN   TestDatabaseMetricsExposeDeviceSchedulerAgentAndReservationState
+--- PASS: TestDatabaseMetricsExposeDeviceSchedulerAgentAndReservationState (0.21s)
+=== RUN   TestHandlerExposesServiceAndHTTPMetricsWithoutDatabase
+--- PASS: TestHandlerExposesServiceAndHTTPMetricsWithoutDatabase (0.00s)
+=== RUN   TestReadinessRequiresDatabase
+--- PASS: TestReadinessRequiresDatabase (0.00s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/metrics	1.025s
+=== RUN   TestAgentHeartbeatClaimAndCompletionAPI
+--- PASS: TestAgentHeartbeatClaimAndCompletionAPI (0.19s)
+=== RUN   TestManagementAPICompleteMockFlow
+--- PASS: TestManagementAPICompleteMockFlow (0.18s)
+=== RUN   TestEveryManagementRouteIsProtected
+--- PASS: TestEveryManagementRouteIsProtected (0.14s)
+=== RUN   TestManagementAPIRejectsInvalidParameters
+--- PASS: TestManagementAPIRejectsInvalidParameters (0.14s)
+=== RUN   TestManagementQueryAtTwentyRPSKeepsP95BelowThreeHundredMilliseconds
+    performance_integration_test.go:73: 20 RPS query sample=100 p95=739.3µs
+--- PASS: TestManagementQueryAtTwentyRPSKeepsP95BelowThreeHundredMilliseconds (5.12s)
+=== RUN   TestReservationAPIStoresListsAndReplaysPendingRequest
+--- PASS: TestReservationAPIStoresListsAndReplaysPendingRequest (0.18s)
+=== RUN   TestReservationAPIRejectsDisabledPoolAndExcessLease
+--- PASS: TestReservationAPIRejectsDisabledPoolAndExcessLease (0.14s)
+=== RUN   TestReservationAPIReleaseCancelsUnassignedPendingReservation
+--- PASS: TestReservationAPIReleaseCancelsUnassignedPendingReservation (0.27s)
+=== RUN   TestReservationAPIExtendsAndReleasesActiveReservation
+--- PASS: TestReservationAPIExtendsAndReleasesActiveReservation (0.17s)
+=== RUN   TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds
+--- PASS: TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds (0.17s)
+=== RUN   TestRemoteSessionIsOwnerBoundIdempotentAndDisconnectedAfterExpiry
+--- PASS: TestRemoteSessionIsOwnerBoundIdempotentAndDisconnectedAfterExpiry (0.16s)
+=== RUN   TestAgentHealthEventAPIQuarantinesAfterThreshold
+--- PASS: TestAgentHealthEventAPIQuarantinesAfterThreshold (0.16s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/api	8.141s
+=== RUN   TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding
+--- PASS: TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding (0.21s)
+=== RUN   TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown
+--- PASS: TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown (0.16s)
+=== RUN   TestSuccessfulCreateResultRestoresReadyStateAfterServerRestart
+--- PASS: TestSuccessfulCreateResultRestoresReadyStateAfterServerRestart (0.15s)
+=== RUN   TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm
+--- PASS: TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm (0.17s)
+=== RUN   TestImageValidationCommandGatesWarmPoolCreation
+--- PASS: TestImageValidationCommandGatesWarmPoolCreation (0.16s)
+=== RUN   TestFailedImageValidationDoesNotCreateEmulator
+--- PASS: TestFailedImageValidationDoesNotCreateEmulator (0.15s)
+=== RUN   TestReleasedEmulatorQueuesOneRebuildAndReturnsReadyOnlyAfterCleanSnapshot
+--- PASS: TestReleasedEmulatorQueuesOneRebuildAndReturnsReadyOnlyAfterCleanSnapshot (0.15s)
+=== RUN   TestFailedRecycleRebuildQuarantinesDevice
+--- PASS: TestFailedRecycleRebuildQuarantinesDevice (0.17s)
+PASS
+ok  	github.com/Ad-Quanta/alcor-device-farm/internal/warmpool	2.118s
+**********************
+Windows PowerShell transcript end
+End time: 20260803224719
+**********************
+== DaFit current collect-only baseline ==
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.0.3, pluggy-1.6.0 -- D:\python\python.exe
+metadata: {'Python': '3.12.10', 'Platform': 'Windows-11-10.0.26100-SP0', 'Packages': {'pytest': '9.0.3', 'pluggy': '1.6.0'}, 'Plugins': {'allure-pytest': '2.13.2', 'anyio': '4.10.0', 'html': '4.2.0', 'metadata': '3.1.1'}, 'JAVA_HOME': 'E:\\DevTools\\Java\\jdk-17.0.19.10-hotspot\\'}
+rootdir: E:\AutoTestTools\Projects\dafit_auto_platform
+configfile: pytest.ini
+plugins: allure-pytest-2.13.2, anyio-4.10.0, html-4.2.0, metadata-3.1.1
+collecting ... collected 158 items
+
+<Dir dafit_auto_platform>
+  <Package tests>
+    <Dir runtime>
+      <Module test_configured_cases.py>
+        <Function test_configured_case[SLEEP_PERIOD_EMPTY_001]>
+        <Function test_configured_case[STEPS_SMOKE_001]>
+        <Function test_configured_case[SLEEP_HELP_001]>
+        <Function test_configured_case[STEPS_DATA_CONSISTENCY_001]>
+        <Function test_configured_case[STEPS_TAB_001]>
+        <Function test_configured_case[STEPS_EMPTY_001]>
+        <Function test_configured_case[STEPS_CALENDAR_001]>
+        <Function test_configured_case[STEPS_MET_001]>
+        <Function test_configured_case[STEPS_WEEK_001]>
+        <Function test_configured_case[STEPS_MONTH_001]>
+        <Function test_configured_case[STEPS_PEER_001]>
+        <Function test_configured_case[STEPS_NORMAL_001]>
+        <Function test_configured_case[SLEEP_NORMAL_001]>
+        <Function test_configured_case[STEPS_HISTORY_001]>
+        <Function test_configured_case[SLEEP_HISTORY_001]>
+        <Function test_configured_case[STEPS_CALENDAR_MONTH_MATRIX_001]>
+        <Function test_configured_case[STEPS_BOUNDARY_MIN_001]>
+        <Function test_configured_case[STEPS_BOUNDARY_MAX_001]>
+        <Function test_configured_case[SLEEP_BOUNDARY_MIN_001]>
+        <Function test_configured_case[SLEEP_BOUNDARY_MAX_001]>
+        <Function test_configured_case[I18N_HOME_TODAY_ZH_HANS_CN]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_ZH_HANS_CN]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_ZH_HANS_CN]>
+        <Function test_configured_case[I18N_HOME_TODAY_EN_US]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_EN_US]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_EN_US]>
+        <Function test_configured_case[I18N_HOME_TODAY_AR]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_AR]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_AR]>
+        <Function test_configured_case[I18N_HOME_TODAY_AZ]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_AZ]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_AZ]>
+        <Function test_configured_case[I18N_HOME_TODAY_BG]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_BG]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_BG]>
+        <Function test_configured_case[I18N_HOME_TODAY_BN]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_BN]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_BN]>
+        <Function test_configured_case[I18N_HOME_TODAY_CA]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_CA]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_CA]>
+        <Function test_configured_case[I18N_HOME_TODAY_CS]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_CS]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_CS]>
+        <Function test_configured_case[I18N_HOME_TODAY_DA]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_DA]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_DA]>
+        <Function test_configured_case[I18N_HOME_TODAY_DE]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_DE]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_DE]>
+        <Function test_configured_case[I18N_HOME_TODAY_EL]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_EL]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_EL]>
+        <Function test_configured_case[I18N_HOME_TODAY_ES]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_ES]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_ES]>
+        <Function test_configured_case[I18N_HOME_TODAY_ET]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_ET]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_ET]>
+        <Function test_configured_case[I18N_HOME_TODAY_FA]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_FA]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_FA]>
+        <Function test_configured_case[I18N_HOME_TODAY_FI]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_FI]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_FI]>
+        <Function test_configured_case[I18N_HOME_TODAY_FR]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_FR]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_FR]>
+        <Function test_configured_case[I18N_HOME_TODAY_HI]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_HI]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_HI]>
+        <Function test_configured_case[I18N_HOME_TODAY_HR]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_HR]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_HR]>
+        <Function test_configured_case[I18N_HOME_TODAY_HU]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_HU]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_HU]>
+        <Function test_configured_case[I18N_HOME_TODAY_ID]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_ID]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_ID]>
+        <Function test_configured_case[I18N_HOME_TODAY_IT]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_IT]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_IT]>
+        <Function test_configured_case[I18N_HOME_TODAY_HE]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_HE]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_HE]>
+        <Function test_configured_case[I18N_HOME_TODAY_JA]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_JA]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_JA]>
+        <Function test_configured_case[I18N_HOME_TODAY_KO]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_KO]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_KO]>
+        <Function test_configured_case[I18N_HOME_TODAY_LT]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_LT]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_LT]>
+        <Function test_configured_case[I18N_HOME_TODAY_LV]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_LV]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_LV]>
+        <Function test_configured_case[I18N_HOME_TODAY_MN]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_MN]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_MN]>
+        <Function test_configured_case[I18N_HOME_TODAY_MS]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_MS]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_MS]>
+        <Function test_configured_case[I18N_HOME_TODAY_NB]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_NB]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_NB]>
+        <Function test_configured_case[I18N_HOME_TODAY_NL]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_NL]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_NL]>
+        <Function test_configured_case[I18N_HOME_TODAY_PL]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_PL]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_PL]>
+        <Function test_configured_case[I18N_HOME_TODAY_PS]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_PS]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_PS]>
+        <Function test_configured_case[I18N_HOME_TODAY_PT]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_PT]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_PT]>
+        <Function test_configured_case[I18N_HOME_TODAY_RO]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_RO]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_RO]>
+        <Function test_configured_case[I18N_HOME_TODAY_RU]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_RU]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_RU]>
+        <Function test_configured_case[I18N_HOME_TODAY_SK]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_SK]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_SK]>
+        <Function test_configured_case[I18N_HOME_TODAY_SL]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_SL]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_SL]>
+        <Function test_configured_case[I18N_HOME_TODAY_SR]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_SR]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_SR]>
+        <Function test_configured_case[I18N_HOME_TODAY_SV]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_SV]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_SV]>
+        <Function test_configured_case[I18N_HOME_TODAY_TH]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_TH]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_TH]>
+        <Function test_configured_case[I18N_HOME_TODAY_TR]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_TR]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_TR]>
+        <Function test_configured_case[I18N_HOME_TODAY_UK]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_UK]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_UK]>
+        <Function test_configured_case[I18N_HOME_TODAY_UZ]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_UZ]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_UZ]>
+        <Function test_configured_case[I18N_HOME_TODAY_VI]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_VI]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_VI]>
+        <Function test_configured_case[I18N_HOME_TODAY_ZH_HANT_HK]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_ZH_HANT_HK]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_ZH_HANT_HK]>
+        <Function test_configured_case[I18N_HOME_TODAY_ZH_HANT_TW]>
+        <Function test_configured_case[I18N_STEPS_NORMAL_ZH_HANT_TW]>
+        <Function test_configured_case[I18N_SLEEP_NORMAL_ZH_HANT_TW]>
+
+======================== 158 tests collected in 0.02s =========================
+[DaFit健康模块完整回归] D:\python\python.exe -m pytest tests/runtime/test_configured_cases.py --dafit-plan full_regression -v --collect-only -q -p no:cacheprovider
+LOCAL_ACCEPTANCE=PASS
