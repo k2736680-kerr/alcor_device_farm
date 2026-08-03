@@ -16,6 +16,7 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
@@ -190,10 +191,11 @@ func TestManagementAPIRejectsInvalidParameters(t *testing.T) {
 }
 
 type managementEnvironment struct {
-	db      *database.DB
-	store   *managementpostgres.Store
-	service *management.Service
-	server  *httptest.Server
+	db           *database.DB
+	store        *managementpostgres.Store
+	service      *management.Service
+	server       *httptest.Server
+	hostCommands *hostcommand.Service
 }
 
 func newManagementEnvironment(t *testing.T) *managementEnvironment {
@@ -221,9 +223,10 @@ func newManagementEnvironment(t *testing.T) *managementEnvironment {
 	reservationService := reservation.NewService(db, generator)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	healthService := reconcile.New(db, provider, nil, 3, logger)
-	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService, Reconcile: healthService}))
+	hostCommands := hostcommand.New(db)
+	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
-	return &managementEnvironment{db: db, store: store, service: service, server: httpServer}
+	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands}
 }
 
 func (environment *managementEnvironment) request(t *testing.T, method, path string, body any, token, key string) responseEnvelope {

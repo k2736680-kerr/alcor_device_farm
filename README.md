@@ -70,3 +70,5 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 Reservation 支持幂等续租、主动/强制释放和超时回收。Scheduler 周期、Reaper 周期与 grace period 可通过 `DEVICE_FARM_LEASE_*` 配置；释放或过期会原子关闭 Session、将 Device 送入 recycling 并写入设备审计事件。
 
 Reconciler 会核对 Host 心跳、Provider 健康、ADB/启动/Appium 和可插拔 STF 可见性；健康事件统一写入 PostgreSQL，连续失败达到阈值后自动隔离，隔离设备只能通过既有人工解除/重建流程恢复。周期、Host 超时和失败阈值使用 `DEVICE_FARM_RECONCILE_*` 配置。
+
+Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命令由 PostgreSQL lease token + attempt 防止重复或旧 Agent 回写；租约过期后按最大尝试次数安全重领或转为 timed_out。

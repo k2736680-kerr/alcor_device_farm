@@ -13,6 +13,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
@@ -28,6 +29,7 @@ type Services struct {
 	Reservations *reservation.Service
 	Scheduler    *scheduler.Scheduler
 	Reconcile    *reconcile.Service
+	HostCommands *hostcommand.Service
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -51,6 +53,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterManagement(mux, services.Management)
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
+	api.RegisterHostCommands(mux, services.HostCommands)
 	mux.HandleFunc("/", notFoundHandler)
 
 	protected := auth.RouteMiddleware(security, mux)
@@ -76,6 +79,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)
 		services.Reconcile = reconcile.New(db, provider, nil, cfg.Reconcile.FailureThreshold, logger)
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
+		services.HostCommands = hostcommand.New(db)
+		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
 	errorChannel := make(chan error, 1)

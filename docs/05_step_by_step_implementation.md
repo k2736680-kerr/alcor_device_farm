@@ -32,7 +32,7 @@
 | DF-009 | Reservation API 和 Scheduler | completed | DF-008 |
 | DF-010 | 续租、释放和 Reaper | completed | DF-009 |
 | DF-011 | Reconciler、健康事件和隔离 | completed | DF-010 |
-| DF-012 | Agent 内部协议和 Host Command | pending | DF-003、DF-006 |
+| DF-012 | Agent 内部协议和 Host Command | completed | DF-003、DF-006 |
 | DF-013 | Host Agent 核心程序 | pending | DF-012、DF-007 |
 | DF-014 | Docker Emulator Provider | pending | DF-013 |
 | DF-015 | Appium Endpoint 和健康 Adapter | pending | DF-014 |

@@ -11,6 +11,7 @@ var (
 	ErrIdempotencyConflict = errors.New("idempotency key was reused with different request data")
 	ErrCapacityUnavailable = errors.New("no matching device capacity is currently available")
 	ErrPoolUnavailable     = errors.New("device pool is unavailable")
+	ErrLeaseConflict       = errors.New("command lease token or attempt is stale")
 )
 
 func jsonEquivalent(left, right []byte) bool {

@@ -117,6 +117,10 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "Reconciler and health integration tests failed."
             }
+            & $GoExecutable test -count=1 -v ./internal/hostcommand
+            if ($LASTEXITCODE -ne 0) {
+                throw "Host command protocol integration tests failed."
+            }
             & $GoExecutable test -count=1 -v ./internal/api
             if ($LASTEXITCODE -ne 0) {
                 throw "Management API integration tests failed."
