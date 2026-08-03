@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,32 @@ func TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability(t *testin
 	}
 }
 
+func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
+	client := &completionClient{}
+	base := providermock.New(providermock.Config{})
+	provider := &digestVerifyingProvider{Provider: base, expected: "sha256:" + strings.Repeat("a", 64)}
+	runtime, err := New(Config{
+		HostID: "host_000000000000001", ProviderType: "docker", HeartbeatInterval: time.Second,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "lease_token_000000000001"
+	runtime.execute(hostcommand.Command{ID: "command_0000000000003", CommandType: "validate_image", LeaseToken: &token, Attempt: 1,
+		Payload: map[string]any{"device_id": "validation-device-01", "image_id": "image_00000000000001",
+			"provider_ref": "validation-command-01", "docker_digest": provider.expected,
+			"capabilities": map[string]any{"apiLevel": float64(34)}}})
+	if client.completion.Status != "succeeded" || client.completion.Result["digest_verified"] != true || client.completion.Result["ready"] != true {
+		t.Fatalf("completion=%#v", client.completion)
+	}
+	values, err := base.Discover(context.Background(), "host_000000000000001")
+	if err != nil || len(values) != 0 {
+		t.Fatalf("temporary validation devices=%d error=%v", len(values), err)
+	}
+}
+
 type completionClient struct{ completion hostcommand.CompletionInput }
 
 func (*completionClient) Heartbeat(context.Context, string, hostcommand.HeartbeatInput) error {
@@ -101,6 +128,18 @@ func (client *completionClient) Complete(_ context.Context, _ string, input host
 }
 
 type createFailureProvider struct{ request providers.CreateRequest }
+
+type digestVerifyingProvider struct {
+	providers.Provider
+	expected string
+}
+
+func (provider *digestVerifyingProvider) VerifyImageDigest(_ context.Context, digest string) error {
+	if digest != provider.expected {
+		return &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_DIGEST_MISMATCH", Message: "digest mismatch"}
+	}
+	return nil
+}
 
 func (*createFailureProvider) Discover(context.Context, string) ([]providers.Snapshot, error) {
 	return nil, nil

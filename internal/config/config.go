@@ -24,6 +24,7 @@ type Config struct {
 	Security  SecurityConfig  `yaml:"security" json:"-"`
 	Lease     LeaseConfig     `yaml:"lease" json:"lease"`
 	Reconcile ReconcileConfig `yaml:"reconcile" json:"reconcile"`
+	WarmPool  WarmPoolConfig  `yaml:"warm_pool" json:"warm_pool"`
 }
 
 type DatabaseConfig struct {
@@ -60,6 +61,10 @@ type ReconcileConfig struct {
 	FailureThreshold int           `yaml:"failure_threshold" json:"failure_threshold"`
 }
 
+type WarmPoolConfig struct {
+	Interval time.Duration `yaml:"interval" json:"interval"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -79,6 +84,7 @@ func Default() Config {
 			GracePeriod:       30 * time.Second,
 		},
 		Reconcile: ReconcileConfig{Interval: 2 * time.Second, HostTimeout: 30 * time.Second, FailureThreshold: 3},
+		WarmPool:  WarmPoolConfig{Interval: 30 * time.Second},
 	}
 }
 
@@ -161,6 +167,7 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"LEASE_GRACE_PERIOD", &cfg.Lease.GracePeriod},
 		{"RECONCILE_INTERVAL", &cfg.Reconcile.Interval},
 		{"RECONCILE_HOST_TIMEOUT", &cfg.Reconcile.HostTimeout},
+		{"WARM_POOL_INTERVAL", &cfg.WarmPool.Interval},
 	}
 	if value, ok := lookup(envPrefix + "RECONCILE_FAILURE_THRESHOLD"); ok {
 		parsed, err := strconv.Atoi(value)
@@ -200,6 +207,7 @@ func (cfg Config) Validate() error {
 		"lease.reaper_interval":    cfg.Lease.ReaperInterval,
 		"reconcile.interval":       cfg.Reconcile.Interval,
 		"reconcile.host_timeout":   cfg.Reconcile.HostTimeout,
+		"warm_pool.interval":       cfg.WarmPool.Interval,
 	} {
 		if value <= 0 {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be greater than zero", name))
@@ -266,5 +274,6 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("reconcile_interval", cfg.Reconcile.Interval),
 		slog.Duration("reconcile_host_timeout", cfg.Reconcile.HostTimeout),
 		slog.Int("reconcile_failure_threshold", cfg.Reconcile.FailureThreshold),
+		slog.Duration("warm_pool_interval", cfg.WarmPool.Interval),
 	)
 }

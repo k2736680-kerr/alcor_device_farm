@@ -104,6 +104,29 @@ func (provider *Provider) Discover(ctx context.Context, hostID string) ([]provid
 	return result, nil
 }
 
+func (provider *Provider) VerifyImageDigest(ctx context.Context, expected string) error {
+	expected = strings.ToLower(strings.TrimSpace(expected))
+	if !validSHA256Digest(expected) {
+		return providerError(providers.OperationValidateImage, "INVALID_IMAGE_DIGEST", "expected image digest must be sha256", false, nil)
+	}
+	metadata, err := provider.backend.InspectImage(ctx, provider.config.Image)
+	if errors.Is(err, errNotFound) {
+		return providerError(providers.OperationValidateImage, "IMAGE_NOT_FOUND", "configured emulator image is not present on the host", false, err)
+	}
+	if err != nil {
+		return providerError(providers.OperationValidateImage, "IMAGE_INSPECT_FAILED", "cannot inspect configured emulator image", true, err)
+	}
+	if strings.ToLower(metadata.ID) == expected {
+		return nil
+	}
+	for _, value := range metadata.RepoDigests {
+		if _, digest, ok := strings.Cut(value, "@"); ok && strings.ToLower(digest) == expected {
+			return nil
+		}
+	}
+	return providerError(providers.OperationValidateImage, "IMAGE_DIGEST_MISMATCH", "configured emulator image does not match the registered digest", false, nil)
+}
+
 func (provider *Provider) Create(ctx context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
 	return provider.create(ctx, request, 1)
 }
@@ -467,6 +490,18 @@ func validateConfig(config Config) error {
 		return errors.New("invalid Docker emulator resource configuration")
 	}
 	return nil
+}
+
+func validSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, character := range value[len("sha256:"):] {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	return true
 }
 
 func fixedImageReference(image string) bool {

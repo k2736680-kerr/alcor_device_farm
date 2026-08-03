@@ -22,6 +22,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/warmpool"
 )
 
 type Services struct {
@@ -81,6 +82,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 		services.HostCommands = hostcommand.New(db)
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
+		warmPoolController := warmpool.New(db, nil, logger)
+		go warmPoolController.Run(ctx, cfg.WarmPool.Interval)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
 	errorChannel := make(chan error, 1)

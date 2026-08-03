@@ -50,6 +50,27 @@ func (client *cliBackend) Ping(ctx context.Context) error {
 	return err
 }
 
+func (client *cliBackend) InspectImage(ctx context.Context, reference string) (imageMetadata, error) {
+	output, err := client.run(ctx, "image", "inspect", reference)
+	if err != nil {
+		if isNotFoundError(err) {
+			return imageMetadata{}, errNotFound
+		}
+		return imageMetadata{}, err
+	}
+	var values []struct {
+		ID          string   `json:"Id"`
+		RepoDigests []string `json:"RepoDigests"`
+	}
+	if err := json.Unmarshal([]byte(output), &values); err != nil || len(values) != 1 {
+		if err == nil {
+			err = errors.New("docker image inspect returned an unexpected item count")
+		}
+		return imageMetadata{}, err
+	}
+	return imageMetadata{ID: values[0].ID, RepoDigests: values[0].RepoDigests}, nil
+}
+
 func (client *cliBackend) CreateNetwork(ctx context.Context, name string, labels map[string]string) error {
 	args := []string{"network", "create", "--driver", "bridge"}
 	args = appendLabelArgs(args, labels)
@@ -247,5 +268,6 @@ func isNotFoundError(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such container") || strings.Contains(message, "no such object")
+	return strings.Contains(message, "no such container") || strings.Contains(message, "no such object") ||
+		strings.Contains(message, "no such image")
 }

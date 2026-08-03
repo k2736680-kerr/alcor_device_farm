@@ -40,6 +40,14 @@ func TestAPIIdempotencyMigrationContract(t *testing.T) {
 	assertSQLContains(t, down, `DROP\s+TABLE\s+IF\s+EXISTS\s+device_idempotency_records\b`)
 }
 
+func TestImageValidationCommandMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000003_image_validation_command.up.sql"))
+	down := readFile(t, filepath.Join(root, "000003_image_validation_command.down.sql"))
+	assertSQLContains(t, up, `validate_image`)
+	assertSQLAbsent(t, down, `validate_image`)
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

@@ -125,6 +125,10 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "Management API integration tests failed."
             }
+            & $GoExecutable test -count=1 -v ./internal/warmpool
+            if ($LASTEXITCODE -ne 0) {
+                throw "Warm pool controller integration tests failed."
+            }
         }
         finally {
             $env:DEVICE_FARM_TEST_DATABASE_URL = $PreviousDatabaseURL

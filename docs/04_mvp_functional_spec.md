@@ -274,6 +274,8 @@ Reconciler：
 - `DELETE /api/v1/device-hosts/:id/drains`
 - `POST/GET /api/v1/device-pools`
 - `GET/PUT /api/v1/device-pools/:id`
+- `GET /api/v1/device-pools/:id/images`
+- `PUT/DELETE /api/v1/device-pools/:id/images/:image_id`
 - `POST/DELETE /api/v1/device-pools/:id/devices`
 - `GET /api/v1/devices`
 - `GET /api/v1/devices/:id`

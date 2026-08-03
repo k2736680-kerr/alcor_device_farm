@@ -29,6 +29,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.Reconcile.FailureThreshold != 3 || cfg.Reconcile.HostTimeout != 30*time.Second {
 		t.Fatalf("reconcile defaults = %+v", cfg.Reconcile)
 	}
+	if cfg.WarmPool.Interval != 30*time.Second {
+		t.Fatalf("warm pool defaults = %+v", cfg.WarmPool)
+	}
 }
 
 func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {
@@ -55,6 +58,7 @@ database:
 	t.Setenv("DEVICE_FARM_DATABASE_URL", "postgres://environment-database-secret")
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
+	t.Setenv("DEVICE_FARM_WARM_POOL_INTERVAL", "12s")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -78,6 +82,9 @@ database:
 	if cfg.Reconcile.FailureThreshold != 5 {
 		t.Fatalf("FailureThreshold = %d", cfg.Reconcile.FailureThreshold)
 	}
+	if cfg.WarmPool.Interval != 12*time.Second {
+		t.Fatalf("WarmPool interval = %v", cfg.WarmPool.Interval)
+	}
 }
 
 func TestLoadRejectsUnknownField(t *testing.T) {
@@ -94,13 +101,14 @@ func TestValidateRejectsInvalidValues(t *testing.T) {
 	cfg := Default()
 	cfg.Server.Address = ":0"
 	cfg.Server.ReadTimeout = 0
+	cfg.WarmPool.Interval = 0
 	cfg.Log.Level = "verbose"
 
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("Validate() error = nil")
 	}
-	for _, want := range []string{"host must not be empty", "read_timeout", "log.level"} {
+	for _, want := range []string{"host must not be empty", "read_timeout", "warm_pool.interval", "log.level"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Validate() error = %q, want %q", err, want)
 		}

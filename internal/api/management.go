@@ -34,6 +34,9 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("POST /api/v1/device-pools", handler.createPool)
 	mux.HandleFunc("GET /api/v1/device-pools/{id}", handler.getPool)
 	mux.HandleFunc("PUT /api/v1/device-pools/{id}", handler.updatePool)
+	mux.HandleFunc("GET /api/v1/device-pools/{id}/images", handler.listPoolImages)
+	mux.HandleFunc("PUT /api/v1/device-pools/{id}/images/{image_id}", handler.setPoolImage)
+	mux.HandleFunc("DELETE /api/v1/device-pools/{id}/images/{image_id}", handler.disablePoolImage)
 	mux.HandleFunc("POST /api/v1/device-pools/{id}/devices", handler.addPoolDevice)
 	mux.HandleFunc("DELETE /api/v1/device-pools/{id}/devices", handler.removePoolDevice)
 
@@ -180,6 +183,31 @@ func (handler *managementHandler) updatePool(writer http.ResponseWriter, request
 		return
 	}
 	value, err := handler.service.UpdatePool(request.Context(), request.PathValue("id"), input)
+	handler.write(writer, request, http.StatusOK, value, err)
+}
+func (handler *managementHandler) listPoolImages(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	values, err := handler.service.ListPoolImages(request.Context(), request.PathValue("id"))
+	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+}
+func (handler *managementHandler) setPoolImage(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	var input management.PoolImageInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.SetPoolImage(request.Context(), request.PathValue("id"), request.PathValue("image_id"), input)
+	handler.write(writer, request, http.StatusOK, value, err)
+}
+func (handler *managementHandler) disablePoolImage(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	value, err := handler.service.DisablePoolImage(request.Context(), request.PathValue("id"), request.PathValue("image_id"))
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) addPoolDevice(writer http.ResponseWriter, request *http.Request) {

@@ -23,6 +23,8 @@ var expectedOperations = map[string][]string{
 	"/api/v1/device-pools":                               {"get", "post"},
 	"/api/v1/device-pools/{id}":                          {"get", "put"},
 	"/api/v1/device-pools/{id}/devices":                  {"post", "delete"},
+	"/api/v1/device-pools/{id}/images":                   {"get"},
+	"/api/v1/device-pools/{id}/images/{image_id}":        {"put", "delete"},
 	"/api/v1/devices":                                    {"get"},
 	"/api/v1/devices/{id}":                               {"get"},
 	"/api/v1/devices/{id}/restarts":                      {"post"},
@@ -160,7 +162,7 @@ func validateRequestExamples(t *testing.T, components map[string]any) {
 	t.Helper()
 	requestBodies := object(t, components, "requestBodies")
 	schemas := object(t, components, "schemas")
-	for _, name := range []string{"DeviceImageInput", "DeviceHostInput", "DevicePoolInput", "ReservationCreate"} {
+	for _, name := range []string{"DeviceImageInput", "DeviceHostInput", "DevicePoolInput", "DevicePoolImageInput", "ReservationCreate"} {
 		body := object(t, requestBodies, name)
 		content := object(t, body, "content")
 		media := object(t, content, "application/json")

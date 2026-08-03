@@ -76,6 +76,20 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	}
 }
 
+func TestDockerProviderVerifiesConfiguredImageDigest(t *testing.T) {
+	provider, err := newProvider(context.Background(), testConfig(), newFakeBackend(), staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.VerifyImageDigest(context.Background(), "sha256:"+strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	err = provider.VerifyImageDigest(context.Background(), "sha256:"+strings.Repeat("b", 64))
+	if providers.ErrorCode(err) != "IMAGE_DIGEST_MISMATCH" {
+		t.Fatalf("digest mismatch error=%v", err)
+	}
+}
+
 func TestDockerProviderRequiresIndependentHealthyAppiumEndpoints(t *testing.T) {
 	engine := newFakeBackend()
 	probe := &recordingAppiumProbe{}
@@ -180,6 +194,10 @@ func newFakeBackend() *fakeBackend {
 }
 
 func (*fakeBackend) Ping(context.Context) error { return nil }
+
+func (*fakeBackend) InspectImage(context.Context, string) (imageMetadata, error) {
+	return imageMetadata{ID: "sha256:" + strings.Repeat("a", 64)}, nil
+}
 
 func (engine *fakeBackend) CreateNetwork(_ context.Context, name string, labels map[string]string) error {
 	if _, exists := engine.networks[name]; exists {

@@ -87,7 +87,7 @@ DEVICE_FARM_DOCKER_MEMORY=4g
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
 
-Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。真实部署的镜像 digest 和镜像验证状态在 DF-016 固定。
+Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。DF-016 已要求 validation 和每次正式 create 都核对本机镜像 ID/RepoDigest 与已登记 digest。
 
 Linux Host 的 systemd 配置和安装步骤见 [部署包](../deploy/docker-emulator/README.md)。
 

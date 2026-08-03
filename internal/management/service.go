@@ -100,6 +100,7 @@ func (service *Service) StartImageValidation(ctx context.Context, id string) (Im
 		return Image{}, err
 	}
 	current.Status = aggregate.Status()
+	current.ValidationError = nil
 	return service.store.UpdateImage(ctx, current, from)
 }
 
@@ -220,6 +221,35 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 	current.Name, current.DefaultLeaseSeconds = input.Name, input.DefaultLeaseSeconds
 	current.MaxLeaseSeconds, current.MaxConcurrency = input.MaxLeaseSeconds, input.MaxConcurrency
 	return service.store.UpdatePool(ctx, current, from)
+}
+
+func (service *Service) ListPoolImages(ctx context.Context, poolID string) ([]PoolImage, error) {
+	if _, err := service.store.GetPool(ctx, poolID); err != nil {
+		return nil, err
+	}
+	return service.store.ListPoolImages(ctx, poolID)
+}
+
+func (service *Service) SetPoolImage(ctx context.Context, poolID, imageID string, input PoolImageInput) (PoolImage, error) {
+	if strings.TrimSpace(poolID) == "" || strings.TrimSpace(imageID) == "" || input.Enabled == nil || input.MinReady < 0 ||
+		input.MaxInstances < 1 || input.MinReady > input.MaxInstances {
+		return PoolImage{}, ErrInvalidArgument
+	}
+	if _, err := service.store.GetPool(ctx, poolID); err != nil {
+		return PoolImage{}, err
+	}
+	if _, err := service.store.GetImage(ctx, imageID); err != nil {
+		return PoolImage{}, err
+	}
+	return service.store.SetPoolImage(ctx, PoolImage{PoolID: poolID, ImageID: imageID,
+		MinReady: input.MinReady, MaxInstances: input.MaxInstances, Enabled: *input.Enabled})
+}
+
+func (service *Service) DisablePoolImage(ctx context.Context, poolID, imageID string) (PoolImage, error) {
+	if strings.TrimSpace(poolID) == "" || strings.TrimSpace(imageID) == "" {
+		return PoolImage{}, ErrInvalidArgument
+	}
+	return service.store.DisablePoolImage(ctx, poolID, imageID)
 }
 
 func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID string) error {

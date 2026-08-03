@@ -66,6 +66,16 @@ type Pool struct {
 	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
+type PoolImage struct {
+	PoolID       string    `json:"pool_id"`
+	ImageID      string    `json:"image_id"`
+	MinReady     int       `json:"min_ready"`
+	MaxInstances int       `json:"max_instances"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type Device struct {
 	ID                  string                       `json:"id"`
 	HostID              string                       `json:"host_id"`
@@ -113,6 +123,12 @@ type PoolInput struct {
 	Enabled             *bool  `json:"enabled,omitempty"`
 }
 
+type PoolImageInput struct {
+	MinReady     int   `json:"min_ready"`
+	MaxInstances int   `json:"max_instances"`
+	Enabled      *bool `json:"enabled"`
+}
+
 type ProvisionMockDeviceInput struct {
 	ID           string
 	HostID       string
@@ -136,6 +152,9 @@ type Store interface {
 	ListPools(context.Context) ([]Pool, error)
 	GetPool(context.Context, string) (Pool, error)
 	UpdatePool(context.Context, Pool, domain.PoolStatus) (Pool, error)
+	ListPoolImages(context.Context, string) ([]PoolImage, error)
+	SetPoolImage(context.Context, PoolImage) (PoolImage, error)
+	DisablePoolImage(context.Context, string, string) (PoolImage, error)
 	AddDeviceToPool(context.Context, string, string) error
 	RemoveDeviceFromPool(context.Context, string, string) error
 

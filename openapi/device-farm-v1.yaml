@@ -152,6 +152,25 @@ paths:
       operationId: removeDeviceFromPool
       requestBody: {$ref: "#/components/requestBodies/PoolDeviceInput"}
       responses: *standardResponses
+  /api/v1/device-pools/{id}/images:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    get:
+      tags: [Pools]
+      operationId: listDevicePoolImages
+      responses: *standardResponses
+  /api/v1/device-pools/{id}/images/{image_id}:
+    parameters:
+      - {$ref: "#/components/parameters/ResourceID"}
+      - {name: image_id, in: path, required: true, schema: {$ref: "#/components/schemas/Identifier"}}
+    put:
+      tags: [Pools]
+      operationId: setDevicePoolImageTarget
+      requestBody: {$ref: "#/components/requestBodies/DevicePoolImageInput"}
+      responses: *standardResponses
+    delete:
+      tags: [Pools]
+      operationId: disableDevicePoolImageTarget
+      responses: *standardResponses
   /api/v1/devices:
     get:
       tags: [Devices]
@@ -325,6 +344,12 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/DevicePoolInput"}
           example: {name: android-smoke, default_lease_seconds: 1800, max_lease_seconds: 7200, max_concurrency: 2, enabled: true}
+    DevicePoolImageInput:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/DevicePoolImageInput"}
+          example: {min_ready: 2, max_instances: 2, enabled: true}
     PoolDeviceInput:
       required: true
       content:
@@ -454,7 +479,7 @@ components:
       required: [name, docker_digest, api_level, abi, resolution, resource_config]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
-        docker_digest: {type: string, pattern: "^sha256:[a-fA-F0-9]{16,64}$"}
+        docker_digest: {type: string, pattern: "^sha256:[a-fA-F0-9]{64}$"}
         api_level: {type: integer, minimum: 21}
         abi: {type: string, enum: [x86_64, arm64-v8a]}
         resolution: {type: string, pattern: "^[0-9]+x[0-9]+$"}
@@ -487,6 +512,14 @@ components:
         max_lease_seconds: {type: integer, minimum: 60}
         max_concurrency: {type: integer, minimum: 1}
         enabled: {type: boolean, default: true}
+    DevicePoolImageInput:
+      type: object
+      additionalProperties: false
+      required: [min_ready, max_instances, enabled]
+      properties:
+        min_ready: {type: integer, minimum: 0}
+        max_instances: {type: integer, minimum: 1}
+        enabled: {type: boolean}
     PoolDeviceInput:
       type: object
       additionalProperties: false

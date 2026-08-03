@@ -35,6 +35,7 @@ erDiagram
 - 部分唯一索引保证同一设备最多存在一个 `active` 预约；
 - Pool 默认租期不得超过最大租期；`min_ready` 不得超过 `max_instances`。MVP 默认使用 `min_ready=2/max_instances=2`，Controller 必须锁定配置行后原子登记 provisioning Device、Pool membership 和 Host Command，避免并发超建；
 - Host Command 的 leased 状态必须同时拥有 lease token 和到期时间，完成状态必须有完成时间；
+- `validate_image` Host Command 由后台 Controller 分配给 Docker/Hybrid Host；Server 不接触 Docker Socket。只有 Agent 同时验证本机固定镜像 digest、ADB、启动完成和 Appium 健康，Image 才能进入 `ready`；
 - active Reservation 和 Session 必须具有完整的设备、开始与到期信息；
 - Docker Emulator 的容器内 `appiumUdid` 保存于 `devices.capabilities`，激活预约时与外部 serial、ADB/Appium Endpoint 一起固化到 `device_sessions.connection_metadata`；不为不同运行环境复制 Device 记录；
 - 外键默认 `RESTRICT` 保留历史，只有纯成员关系随 Pool 删除而级联。
@@ -47,5 +48,7 @@ erDiagram
 - `migrations/000001_device_domain.down.sql`
 - `migrations/000002_api_idempotency.up.sql`
 - `migrations/000002_api_idempotency.down.sql`
+- `migrations/000003_image_validation_command.up.sql`
+- `migrations/000003_image_validation_command.down.sql`
 
 执行必须使用单事务和 `ON_ERROR_STOP`。生产回滚前先停止 Server、Agent、Scheduler、Reaper 和 Reconciler；down migration 会删除全部设备域数据，只用于空环境演练或已确认恢复点的回滚。

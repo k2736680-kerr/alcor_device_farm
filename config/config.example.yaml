@@ -24,6 +24,11 @@ reconcile:
   host_timeout: 30s
   failure_threshold: 3
 
+# The controller turns device_pool_images min_ready/max_instances targets into
+# Host Commands. It never talks to Docker directly.
+warm_pool:
+  interval: 30s
+
 # Keep real tokens out of YAML committed to Git. Protected routes fail closed
 # with 401 while the matching token is empty.
 security:

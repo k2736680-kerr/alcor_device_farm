@@ -46,6 +46,18 @@ func TestCLIBackendInspectDecodesPublishedPortAndLabels(t *testing.T) {
 	}
 }
 
+func TestCLIBackendInspectsImageDigest(t *testing.T) {
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	runner := &recordingRunner{output: `[{"Id":"` + digest + `","RepoDigests":["android@` + digest + `"]}]`}
+	value, err := newCLIBackend("docker", runner).InspectImage(context.Background(), "android:2026.08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.ID != digest || len(value.RepoDigests) != 1 || value.RepoDigests[0] != "android@"+digest {
+		t.Fatalf("image metadata=%#v", value)
+	}
+}
+
 type recordingRunner struct {
 	binary string
 	args   []string

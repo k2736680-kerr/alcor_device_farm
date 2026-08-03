@@ -156,11 +156,22 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	switch command.CommandType {
 	case "create":
 		var snapshot providers.Snapshot
-		snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
-			DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
-			ImageID: stringValue(command.Payload, "image_id"), ProviderRef: providerRef,
-			Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
-		})
+		if digest := stringValue(command.Payload, "docker_digest"); digest != "" {
+			verifier, supported := agent.provider.(providers.ImageDigestVerifier)
+			if !supported {
+				err = &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_VALIDATION_UNSUPPORTED",
+					Message: "provider does not support image digest validation", Retryable: false}
+			} else {
+				err = verifier.VerifyImageDigest(ctx, digest)
+			}
+		}
+		if err == nil {
+			snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
+				DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
+				ImageID: stringValue(command.Payload, "image_id"), ProviderRef: providerRef,
+				Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
+			})
+		}
 		if err == nil {
 			result = snapshotResult(snapshot)
 		}
@@ -200,6 +211,8 @@ func (agent *Agent) execute(command hostcommand.Command) {
 			result = healthResult(health)
 			result["provider_ref"] = providerRef
 		}
+	case "validate_image":
+		result, err = agent.validateImage(ctx, command.Payload)
 	default:
 		err = fmt.Errorf("unsupported command type %s", command.CommandType)
 	}
@@ -215,6 +228,59 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	}
 	if completeErr := agent.client.Complete(context.Background(), command.ID, completion); completeErr != nil {
 		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
+	}
+}
+
+func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	verifier, ok := agent.provider.(providers.ImageDigestVerifier)
+	if !ok {
+		return nil, &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_VALIDATION_UNSUPPORTED",
+			Message: "provider does not support image digest validation", Retryable: false}
+	}
+	if err := verifier.VerifyImageDigest(ctx, stringValue(payload, "docker_digest")); err != nil {
+		return nil, err
+	}
+	providerRef := stringValue(payload, "provider_ref")
+	created := false
+	cleanup := func() error {
+		if !created {
+			return nil
+		}
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return agent.provider.Delete(cleanupContext, providerRef)
+	}
+	_, err := agent.provider.Create(ctx, providers.CreateRequest{
+		DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
+		ImageID: stringValue(payload, "image_id"), ProviderRef: providerRef,
+		Capabilities: mapValue(payload, "capabilities"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	created = true
+	if _, err = agent.provider.Start(ctx, providerRef); err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	for {
+		health, healthErr := agent.provider.InspectHealth(ctx, providerRef)
+		if healthErr == nil && health.Ready() {
+			if err := cleanup(); err != nil {
+				return nil, err
+			}
+			return map[string]any{"provider_ref": providerRef, "image_id": stringValue(payload, "image_id"),
+				"digest_verified": true, "ready": true}, nil
+		}
+		select {
+		case <-ctx.Done():
+			_ = cleanup()
+			if healthErr != nil {
+				return nil, healthErr
+			}
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 

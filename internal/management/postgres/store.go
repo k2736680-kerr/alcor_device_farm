@@ -53,11 +53,11 @@ func (store *Store) GetImage(ctx context.Context, id string) (management.Image, 
 
 func (store *Store) UpdateImage(ctx context.Context, image management.Image, expected domain.ImageStatus) (management.Image, error) {
 	value, err := scanImage(store.db.Pool().QueryRow(ctx, `UPDATE device_images SET
-        name=$2,docker_digest=$3,api_level=$4,abi=$5,resolution=$6,resource_config=$7,status=$8,updated_at=clock_timestamp()
-        WHERE id=$1 AND status=$9
-        RETURNING id,name,docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at`,
+		name=$2,docker_digest=$3,api_level=$4,abi=$5,resolution=$6,resource_config=$7,status=$8,validation_error=$9,updated_at=clock_timestamp()
+		WHERE id=$1 AND status=$10
+		RETURNING id,name,docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at`,
 		image.ID, image.Name, image.DockerDigest, image.APILevel, image.ABI, image.Resolution,
-		mustJSON(image.ResourceConfig), image.Status, expected))
+		mustJSON(image.ResourceConfig), image.Status, image.ValidationError, expected))
 	return value, rowError(err)
 }
 
@@ -149,6 +149,40 @@ func (store *Store) UpdatePool(ctx context.Context, pool management.Pool, expect
 	return value, rowError(err)
 }
 
+func (store *Store) ListPoolImages(ctx context.Context, poolID string) ([]management.PoolImage, error) {
+	rows, err := store.db.Pool().Query(ctx, poolImageSelect+` WHERE pool_id=$1 ORDER BY created_at,image_id`, poolID)
+	if err != nil {
+		return nil, normalize(err)
+	}
+	defer rows.Close()
+	values := make([]management.PoolImage, 0)
+	for rows.Next() {
+		value, err := scanPoolImage(rows)
+		if err != nil {
+			return nil, normalize(err)
+		}
+		values = append(values, value)
+	}
+	return values, normalize(rows.Err())
+}
+
+func (store *Store) SetPoolImage(ctx context.Context, value management.PoolImage) (management.PoolImage, error) {
+	result, err := scanPoolImage(store.db.Pool().QueryRow(ctx, `INSERT INTO device_pool_images
+		(pool_id,image_id,min_ready,max_instances,enabled) VALUES($1,$2,$3,$4,$5)
+		ON CONFLICT(pool_id,image_id) DO UPDATE SET min_ready=EXCLUDED.min_ready,
+		max_instances=EXCLUDED.max_instances,enabled=EXCLUDED.enabled,updated_at=clock_timestamp()
+		RETURNING pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at`,
+		value.PoolID, value.ImageID, value.MinReady, value.MaxInstances, value.Enabled))
+	return result, rowError(err)
+}
+
+func (store *Store) DisablePoolImage(ctx context.Context, poolID, imageID string) (management.PoolImage, error) {
+	value, err := scanPoolImage(store.db.Pool().QueryRow(ctx, `UPDATE device_pool_images SET enabled=false,updated_at=clock_timestamp()
+		WHERE pool_id=$1 AND image_id=$2
+		RETURNING pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at`, poolID, imageID))
+	return value, rowError(err)
+}
+
 func (store *Store) AddDeviceToPool(ctx context.Context, poolID, deviceID string) error {
 	_, err := store.db.Pool().Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled)
         VALUES($1,$2,true) ON CONFLICT(pool_id,device_id) DO UPDATE SET enabled=true,updated_at=clock_timestamp()`, poolID, deviceID)
@@ -225,6 +259,7 @@ func (store *Store) UpdateDeviceState(ctx context.Context, device management.Dev
 const imageSelect = `SELECT id,name,docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
 const hostSelect = `SELECT id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
 const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status,created_at,updated_at FROM device_pools`
+const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
 const deviceSelect = `SELECT devices.id,devices.host_id,devices.image_id,devices.device_kind,devices.provider_type,devices.provider_ref,
     devices.lifecycle_mode,devices.serial,devices.stf_serial,devices.adb_endpoint,devices.appium_endpoint,devices.capabilities,
     devices.lifecycle_status,devices.health_status,devices.health_reason,devices.consecutive_failures,devices.created_at,devices.updated_at FROM devices`
@@ -265,6 +300,11 @@ func scanHost(row rowScanner) (management.Host, error) {
 func scanPool(row rowScanner) (management.Pool, error) {
 	var v management.Pool
 	err := row.Scan(&v.ID, &v.Name, &v.DefaultLeaseSeconds, &v.MaxLeaseSeconds, &v.MaxConcurrency, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+	return v, err
+}
+func scanPoolImage(row rowScanner) (management.PoolImage, error) {
+	var v management.PoolImage
+	err := row.Scan(&v.PoolID, &v.ImageID, &v.MinReady, &v.MaxInstances, &v.Enabled, &v.CreatedAt, &v.UpdatedAt)
 	return v, err
 }
 func scanDevice(row rowScanner) (management.Device, error) {

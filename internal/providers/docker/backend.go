@@ -34,8 +34,14 @@ type container struct {
 	Ports  map[int]int
 }
 
+type imageMetadata struct {
+	ID          string
+	RepoDigests []string
+}
+
 type backend interface {
 	Ping(context.Context) error
+	InspectImage(context.Context, string) (imageMetadata, error)
 	CreateNetwork(context.Context, string, map[string]string) error
 	CreateVolume(context.Context, string, map[string]string) error
 	CreateContainer(context.Context, containerSpec) error

@@ -18,6 +18,7 @@ const (
 	OperationDelete         Operation = "delete"
 	OperationInspectHealth  Operation = "inspect_health"
 	OperationConnectionInfo Operation = "get_connection_info"
+	OperationValidateImage  Operation = "validate_image"
 )
 
 type State string
@@ -81,6 +82,12 @@ type Provider interface {
 	Delete(context.Context, string) error
 	InspectHealth(context.Context, string) (Health, error)
 	GetConnectionInfo(context.Context, string) (ConnectionInfo, error)
+}
+
+// ImageDigestVerifier is deliberately separate from Provider so USB and other
+// physical-device providers do not need to implement Docker image behavior.
+type ImageDigestVerifier interface {
+	VerifyImageDigest(context.Context, string) error
 }
 
 type Error struct {

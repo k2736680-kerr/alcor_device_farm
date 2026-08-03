@@ -81,6 +81,11 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-pools", nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-pools/"+pool.ID, nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+pool.ID, validPoolInput(true), serviceToken, ""), http.StatusOK)
+	poolImagePath := "/api/v1/device-pools/" + pool.ID + "/images/" + image.ID
+	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 2, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-pools/"+pool.ID+"/images", nil, serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.request(t, http.MethodDelete, poolImagePath, nil, serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 2, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusOK)
 
 	if _, err := environment.db.Pool().Exec(context.Background(), "UPDATE device_hosts SET status='online',draining=false WHERE id=$1", host.ID); err != nil {
 		t.Fatal(err)
@@ -140,6 +145,7 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodGet, "/api/v1/device-hosts/id"}, {http.MethodPut, "/api/v1/device-hosts/id"}, {http.MethodPost, "/api/v1/device-hosts/id/drains"}, {http.MethodDelete, "/api/v1/device-hosts/id/drains"},
 		{http.MethodGet, "/api/v1/device-pools"}, {http.MethodPost, "/api/v1/device-pools"},
 		{http.MethodGet, "/api/v1/device-pools/id"}, {http.MethodPut, "/api/v1/device-pools/id"}, {http.MethodPost, "/api/v1/device-pools/id/devices"}, {http.MethodDelete, "/api/v1/device-pools/id/devices"},
+		{http.MethodGet, "/api/v1/device-pools/id/images"}, {http.MethodPut, "/api/v1/device-pools/id/images/image-id"}, {http.MethodDelete, "/api/v1/device-pools/id/images/image-id"},
 		{http.MethodGet, "/api/v1/devices"}, {http.MethodGet, "/api/v1/devices/id"},
 		{http.MethodPost, "/api/v1/devices/id/restarts"}, {http.MethodPost, "/api/v1/devices/id/rebuilds"},
 		{http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
@@ -166,6 +172,7 @@ func TestManagementAPIRejectsInvalidParameters(t *testing.T) {
 		{http.MethodPost, "/api/v1/device-pools", map[string]any{}, "valid-key-03"},
 		{http.MethodPost, "/api/v1/device-images/id/validations", nil, ""},
 		{http.MethodPost, "/api/v1/device-pools/id/devices", map[string]any{}, ""},
+		{http.MethodPut, "/api/v1/device-pools/id/images/image-id", map[string]any{"min_ready": 2, "max_instances": 1, "enabled": true}, ""},
 		{http.MethodPost, "/api/v1/devices/id/restarts", map[string]any{}, "valid-key-04"},
 		{http.MethodPost, "/api/v1/devices/id/rebuilds", map[string]any{}, "valid-key-05"},
 		{http.MethodPost, "/api/v1/devices/id/quarantines", map[string]any{}, ""},

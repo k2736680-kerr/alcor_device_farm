@@ -383,7 +383,7 @@ func (service *Service) RecoverExpiredOnce(ctx context.Context) (Command, error)
 
 func validCommandType(value string) bool {
 	switch value {
-	case "create", "start", "stop", "restart", "rebuild", "delete", "inspect":
+	case "create", "start", "stop", "restart", "rebuild", "delete", "inspect", "validate_image":
 		return true
 	default:
 		return false
