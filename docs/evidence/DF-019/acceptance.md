@@ -8,12 +8,13 @@ DaFit 已在原有唯一 `tools/run_full.py` 执行链路上加入 Farm 模式�
 
 - 仓库：`E:/AutoTestTools/Projects/dafit_auto_platform`；
 - 该仓库只有主分支 `main`，没有 `master`，因此修改直接提交到现有主分支，没有创建其他功能分支；
-- commit：`2ae74ca 加入设备农场运行模式`。
+- commits：`2ae74ca 加入设备农场运行模式`、`d211eb2 区分Appium设备和ADB连接`。
 
 ## 已完成交付
 
 - `DAFIT_RUN_MODE=local|farm`，默认 local；
-- Farm 模式必须显式注入 `ANDROID_UDID`、`APPIUM_SERVER` 和绝对 `DAFIT_REPORT_DIR`；
+- Farm 模式必须显式注入 Appium 使用的 `ANDROID_UDID`、宿主机 ADB 使用的 `ANDROID_ADB_SERIAL`、`APPIUM_SERVER` 和绝对 `DAFIT_REPORT_DIR`；
+- Docker 内 Appium UDID 与宿主机随机 ADB Endpoint 可以不同；本地模式下两者默认相同；
 - 缺少任一参数时在清理报告和连接设备前直接返回失败；
 - Farm 指定 UDID 必须已存在于 `adb devices` 且 shell ready，禁止自动选择第一台真机或模拟器；
 - Farm 只探测指定 Appium `/status`，不可用时失败，不在 DaFit 内启动远程 Appium；
@@ -41,7 +42,8 @@ python tools/run_full.py --collect-only
 PASS architecture validation
 PASS home/sleep/sport/steps/weight feature validation
 PASS 308 unit tests
-PASS Farm 缺少明确参数时在报告清理前失败
+PASS Farm 缺少四个明确参数时在报告清理前失败
+PASS Appium UDID 与宿主机 ADB Serial 分离且不串用
 PASS Farm 指定设备不存在时不回退到其他 adb device
 PASS Farm Appium 不可用时不自动启动服务
 PASS Farm 只清理本次报告目录并拒绝项目祖先目录
