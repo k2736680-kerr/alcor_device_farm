@@ -211,7 +211,9 @@ func (store *Store) GetDevice(ctx context.Context, id string) (management.Device
 
 func (store *Store) UpdateDeviceState(ctx context.Context, device management.Device, oldLifecycle domain.DeviceLifecycleStatus, oldHealth domain.HealthStatus) (management.Device, error) {
 	value, err := scanDevice(store.db.Pool().QueryRow(ctx, `UPDATE devices SET
-        lifecycle_status=$2,health_status=$3,health_reason=$4,updated_at=clock_timestamp()
+		lifecycle_status=$2::varchar,health_status=$3::varchar,health_reason=$4,
+		consecutive_failures=CASE WHEN $2::varchar='provisioning' AND $3::varchar='unknown' THEN 0 ELSE consecutive_failures END,
+		updated_at=clock_timestamp()
         WHERE id=$1 AND lifecycle_status=$5 AND health_status=$6
         RETURNING id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
                   adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,

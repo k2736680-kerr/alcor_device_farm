@@ -113,6 +113,10 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "Reservation lease and Reaper integration tests failed."
             }
+            & $GoExecutable test -count=1 -v ./internal/reconcile
+            if ($LASTEXITCODE -ne 0) {
+                throw "Reconciler and health integration tests failed."
+            }
             & $GoExecutable test -count=1 -v ./internal/api
             if ($LASTEXITCODE -ne 0) {
                 throw "Management API integration tests failed."

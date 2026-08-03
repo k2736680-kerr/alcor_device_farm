@@ -26,6 +26,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.Lease.GracePeriod != 30*time.Second || cfg.Lease.ReaperInterval != time.Second {
 		t.Fatalf("lease defaults = %+v", cfg.Lease)
 	}
+	if cfg.Reconcile.FailureThreshold != 3 || cfg.Reconcile.HostTimeout != 30*time.Second {
+		t.Fatalf("reconcile defaults = %+v", cfg.Reconcile)
+	}
 }
 
 func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {
@@ -51,6 +54,7 @@ database:
 	t.Setenv("DEVICE_FARM_SECURITY_SERVICE_TOKEN", "environment-secret")
 	t.Setenv("DEVICE_FARM_DATABASE_URL", "postgres://environment-database-secret")
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
+	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -70,6 +74,9 @@ database:
 	}
 	if cfg.Lease.GracePeriod != 45*time.Second {
 		t.Fatalf("GracePeriod = %v", cfg.Lease.GracePeriod)
+	}
+	if cfg.Reconcile.FailureThreshold != 5 {
+		t.Fatalf("FailureThreshold = %d", cfg.Reconcile.FailureThreshold)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/server"
 )
@@ -215,10 +216,12 @@ func newManagementEnvironment(t *testing.T) *managementEnvironment {
 	store := managementpostgres.New(db)
 	var sequence atomic.Int64
 	generator := func() (string, error) { return fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence.Add(1)), nil }
-	service := management.NewService(store, providermock.New(providermock.Config{}), generator)
+	provider := providermock.New(providermock.Config{})
+	service := management.NewService(store, provider, generator)
 	reservationService := reservation.NewService(db, generator)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService}))
+	healthService := reconcile.New(db, provider, nil, 3, logger)
+	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService, Reconcile: healthService}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
 	return &managementEnvironment{db: db, store: store, service: service, server: httpServer}
 }

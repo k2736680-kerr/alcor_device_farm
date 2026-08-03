@@ -18,6 +18,7 @@ import (
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 )
@@ -26,6 +27,7 @@ type Services struct {
 	Management   *management.Service
 	Reservations *reservation.Service
 	Scheduler    *scheduler.Scheduler
+	Reconcile    *reconcile.Service
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -48,6 +50,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	}
 	api.RegisterManagement(mux, services.Management)
 	api.RegisterReservations(mux, services.Reservations)
+	api.RegisterHealth(mux, services.Reconcile)
 	mux.HandleFunc("/", notFoundHandler)
 
 	protected := auth.RouteMiddleware(security, mux)
@@ -64,12 +67,15 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer db.Close()
-		services.Management = management.NewService(managementpostgres.New(db), providermock.New(providermock.Config{}), nil)
+		provider := providermock.New(providermock.Config{})
+		services.Management = management.NewService(managementpostgres.New(db), provider, nil)
 		services.Reservations = reservation.NewService(db, nil)
 		services.Scheduler = scheduler.New(db, nil, logger)
 		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
 		reservationReaper := reaper.New(services.Reservations, cfg.Lease.GracePeriod, logger)
 		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)
+		services.Reconcile = reconcile.New(db, provider, nil, cfg.Reconcile.FailureThreshold, logger)
+		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
 	errorChannel := make(chan error, 1)

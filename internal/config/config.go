@@ -18,11 +18,12 @@ import (
 const envPrefix = "DEVICE_FARM_"
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server" json:"server"`
-	Database DatabaseConfig `yaml:"database" json:"-"`
-	Log      LogConfig      `yaml:"log" json:"log"`
-	Security SecurityConfig `yaml:"security" json:"-"`
-	Lease    LeaseConfig    `yaml:"lease" json:"lease"`
+	Server    ServerConfig    `yaml:"server" json:"server"`
+	Database  DatabaseConfig  `yaml:"database" json:"-"`
+	Log       LogConfig       `yaml:"log" json:"log"`
+	Security  SecurityConfig  `yaml:"security" json:"-"`
+	Lease     LeaseConfig     `yaml:"lease" json:"lease"`
+	Reconcile ReconcileConfig `yaml:"reconcile" json:"reconcile"`
 }
 
 type DatabaseConfig struct {
@@ -53,6 +54,12 @@ type LeaseConfig struct {
 	GracePeriod       time.Duration `yaml:"grace_period" json:"grace_period"`
 }
 
+type ReconcileConfig struct {
+	Interval         time.Duration `yaml:"interval" json:"interval"`
+	HostTimeout      time.Duration `yaml:"host_timeout" json:"host_timeout"`
+	FailureThreshold int           `yaml:"failure_threshold" json:"failure_threshold"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -71,6 +78,7 @@ func Default() Config {
 			ReaperInterval:    time.Second,
 			GracePeriod:       30 * time.Second,
 		},
+		Reconcile: ReconcileConfig{Interval: 2 * time.Second, HostTimeout: 30 * time.Second, FailureThreshold: 3},
 	}
 }
 
@@ -151,6 +159,15 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"LEASE_SCHEDULER_INTERVAL", &cfg.Lease.SchedulerInterval},
 		{"LEASE_REAPER_INTERVAL", &cfg.Lease.ReaperInterval},
 		{"LEASE_GRACE_PERIOD", &cfg.Lease.GracePeriod},
+		{"RECONCILE_INTERVAL", &cfg.Reconcile.Interval},
+		{"RECONCILE_HOST_TIMEOUT", &cfg.Reconcile.HostTimeout},
+	}
+	if value, ok := lookup(envPrefix + "RECONCILE_FAILURE_THRESHOLD"); ok {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("parse %sRECONCILE_FAILURE_THRESHOLD: %w", envPrefix, err)
+		}
+		cfg.Reconcile.FailureThreshold = parsed
 	}
 
 	for _, item := range durations {
@@ -181,6 +198,8 @@ func (cfg Config) Validate() error {
 		"server.shutdown_timeout":  cfg.Server.ShutdownTimeout,
 		"lease.scheduler_interval": cfg.Lease.SchedulerInterval,
 		"lease.reaper_interval":    cfg.Lease.ReaperInterval,
+		"reconcile.interval":       cfg.Reconcile.Interval,
+		"reconcile.host_timeout":   cfg.Reconcile.HostTimeout,
 	} {
 		if value <= 0 {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be greater than zero", name))
@@ -188,6 +207,9 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Lease.GracePeriod < 0 {
 		validationErrors = append(validationErrors, errors.New("lease.grace_period must not be negative"))
+	}
+	if cfg.Reconcile.FailureThreshold < 1 {
+		validationErrors = append(validationErrors, errors.New("reconcile.failure_threshold must be greater than zero"))
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.Log.Level)) {
@@ -241,5 +263,8 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("lease_scheduler_interval", cfg.Lease.SchedulerInterval),
 		slog.Duration("lease_reaper_interval", cfg.Lease.ReaperInterval),
 		slog.Duration("lease_grace_period", cfg.Lease.GracePeriod),
+		slog.Duration("reconcile_interval", cfg.Reconcile.Interval),
+		slog.Duration("reconcile_host_timeout", cfg.Reconcile.HostTimeout),
+		slog.Int("reconcile_failure_threshold", cfg.Reconcile.FailureThreshold),
 	)
 }

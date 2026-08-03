@@ -19,6 +19,11 @@ lease:
   reaper_interval: 1s
   grace_period: 30s
 
+reconcile:
+  interval: 2s
+  host_timeout: 30s
+  failure_threshold: 3
+
 # Keep real tokens out of YAML committed to Git. Protected routes fail closed
 # with 401 while the matching token is empty.
 security:

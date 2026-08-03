@@ -97,6 +97,31 @@ func TestReservationAPIExtendsAndReleasesActiveReservation(t *testing.T) {
 		releaseBody, serviceToken, "reservation-release-01"), http.StatusOK)
 }
 
+func TestAgentHealthEventAPIQuarantinesAfterThreshold(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	seedReservationDevice(t, environment)
+	path := "/internal/v1/devices/device_0000000000001/health-events"
+	body := map[string]any{
+		"source": "appium", "event_type": "appium_unhealthy", "severity": "error",
+		"reason": "Appium status endpoint is unhealthy", "observed_at": "2026-08-03T12:00:00Z",
+		"payload": map[string]any{"status_code": 503},
+	}
+	assertStatus(t, environment.request(t, http.MethodPost, path, body, "", ""), http.StatusUnauthorized)
+	assertStatus(t, environment.request(t, http.MethodPost, path, body, serviceToken, ""), http.StatusForbidden)
+	for index := 0; index < 3; index++ {
+		assertStatus(t, environment.request(t, http.MethodPost, path, body, agentToken, ""), http.StatusCreated)
+	}
+	var lifecycle, health string
+	var failures int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,consecutive_failures
+        FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "quarantined" || health != "unhealthy" || failures != 3 {
+		t.Fatalf("device lifecycle=%s health=%s failures=%d", lifecycle, health, failures)
+	}
+}
+
 func seedReservationPool(t *testing.T, environment *managementEnvironment, status string) {
 	t.Helper()
 	_, err := environment.db.Pool().Exec(context.Background(), `
