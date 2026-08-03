@@ -74,6 +74,16 @@ type SessionRecord struct {
 	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
+type OperationParams struct {
+	ClientID       string
+	Scope          string
+	Key            string
+	RequestHash    string
+	ResourceType   string
+	ResourceID     string
+	ResponseStatus int
+}
+
 type ReservationRepository struct{}
 
 func (ReservationRepository) CreatePending(ctx context.Context, querier database.Querier, params CreateReservationParams) (ReservationRecord, error) {
@@ -178,6 +188,180 @@ func (ReservationRepository) Get(ctx context.Context, querier database.Querier, 
 		return ReservationRecord{}, fmt.Errorf("get reservation: %w", err)
 	}
 	return record, nil
+}
+
+func (ReservationRepository) LockByID(ctx context.Context, tx pgx.Tx, id string) (ReservationRecord, error) {
+	record, err := scanReservation(tx.QueryRow(ctx, `
+        SELECT id, client_id, pool_id, device_id, owner_type, owner_id,
+               requested_capabilities, lease_seconds, status, idempotency_key,
+               starts_at, expires_at, released_at, failure_code, created_at, updated_at
+        FROM device_reservations WHERE id = $1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("lock reservation: %w", err)
+	}
+	return record, nil
+}
+
+func (ReservationRepository) LockNextExpired(ctx context.Context, tx pgx.Tx, graceSeconds int) (ReservationRecord, error) {
+	record, err := scanReservation(tx.QueryRow(ctx, `
+        SELECT id, client_id, pool_id, device_id, owner_type, owner_id,
+               requested_capabilities, lease_seconds, status, idempotency_key,
+               starts_at, expires_at, released_at, failure_code, created_at, updated_at
+        FROM device_reservations
+        WHERE status = 'active'
+          AND expires_at + make_interval(secs => $1) <= clock_timestamp()
+        ORDER BY expires_at, id
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1`, graceSeconds))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("lock expired reservation: %w", err)
+	}
+	return record, nil
+}
+
+func (ReservationRepository) BeginOperation(ctx context.Context, tx pgx.Tx, params OperationParams) (bool, error) {
+	command, err := tx.Exec(ctx, `
+        INSERT INTO device_idempotency_records
+            (client_id,scope,idempotency_key,request_hash,resource_type,resource_id,response_status)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(client_id,scope,idempotency_key) DO NOTHING`,
+		params.ClientID, params.Scope, params.Key, params.RequestHash,
+		params.ResourceType, params.ResourceID, params.ResponseStatus)
+	if err != nil {
+		return false, fmt.Errorf("record reservation operation: %w", err)
+	}
+	if command.RowsAffected() == 1 {
+		return false, nil
+	}
+	var requestHash, resourceType, resourceID string
+	if err := tx.QueryRow(ctx, `
+        SELECT request_hash,resource_type,resource_id
+        FROM device_idempotency_records
+        WHERE client_id=$1 AND scope=$2 AND idempotency_key=$3`,
+		params.ClientID, params.Scope, params.Key,
+	).Scan(&requestHash, &resourceType, &resourceID); err != nil {
+		return false, fmt.Errorf("load reservation operation: %w", err)
+	}
+	if requestHash != params.RequestHash || resourceType != params.ResourceType || resourceID != params.ResourceID {
+		return false, ErrIdempotencyConflict
+	}
+	return true, nil
+}
+
+func (ReservationRepository) Extend(ctx context.Context, tx pgx.Tx, id string, expiresAt time.Time) (ReservationRecord, error) {
+	record, err := scanReservation(tx.QueryRow(ctx, `
+        UPDATE device_reservations
+        SET expires_at=$2::timestamptz, updated_at=clock_timestamp()
+        WHERE id=$1 AND status='active'
+        RETURNING id, client_id, pool_id, device_id, owner_type, owner_id,
+                  requested_capabilities, lease_seconds, status, idempotency_key,
+                  starts_at, expires_at, released_at, failure_code, created_at, updated_at`, id, expiresAt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("extend reservation: %w", err)
+	}
+	return record, nil
+}
+
+func (ReservationRepository) LockSession(ctx context.Context, tx pgx.Tx, reservationID string) (SessionRecord, error) {
+	var session SessionRecord
+	err := tx.QueryRow(ctx, `
+        SELECT id,reservation_id,device_id,status,started_at,connection_metadata,created_at,updated_at
+        FROM device_sessions WHERE reservation_id=$1 FOR UPDATE`, reservationID).Scan(
+		&session.ID, &session.ReservationID, &session.DeviceID, &session.Status,
+		&session.StartedAt, &session.ConnectionMetadata, &session.CreatedAt, &session.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SessionRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return SessionRecord{}, fmt.Errorf("lock device session: %w", err)
+	}
+	return session, nil
+}
+
+func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceAssignment, error) {
+	var device DeviceAssignment
+	err := tx.QueryRow(ctx, `
+        SELECT id,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint
+        FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(
+		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ADBEndpoint, &device.AppiumEndpoint,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeviceAssignment{}, ErrNotFound
+	}
+	if err != nil {
+		return DeviceAssignment{}, fmt.Errorf("lock reserved device: %w", err)
+	}
+	return device, nil
+}
+
+func (ReservationRepository) CloseActive(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationID, deviceID string,
+	terminal domain.ReservationStatus,
+	closedAt time.Time,
+) (ReservationRecord, error) {
+	if _, err := tx.Exec(ctx, `
+        UPDATE device_sessions SET status='closing',updated_at=$2::timestamptz
+        WHERE reservation_id=$1 AND status='active'`, reservationID, closedAt); err != nil {
+		return ReservationRecord{}, fmt.Errorf("close device session: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+        UPDATE device_sessions SET status='closed',ended_at=$2::timestamptz,updated_at=$2::timestamptz
+        WHERE reservation_id=$1 AND status='closing'`, reservationID, closedAt); err != nil {
+		return ReservationRecord{}, fmt.Errorf("finish device session: %w", err)
+	}
+	result, err := tx.Exec(ctx, `
+        UPDATE devices SET lifecycle_status='recycling',updated_at=$2::timestamptz
+        WHERE id=$1 AND lifecycle_status IN ('busy','reserved')`, deviceID, closedAt)
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("recycle released device: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ReservationRecord{}, ErrNotFound
+	}
+	record, err := scanReservation(tx.QueryRow(ctx, `
+        UPDATE device_reservations
+        SET status=$2,released_at=$3::timestamptz,updated_at=$3::timestamptz
+        WHERE id=$1 AND status='active'
+        RETURNING id, client_id, pool_id, device_id, owner_type, owner_id,
+                  requested_capabilities, lease_seconds, status, idempotency_key,
+                  starts_at, expires_at, released_at, failure_code, created_at, updated_at`,
+		reservationID, terminal, closedAt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("close reservation: %w", err)
+	}
+	return record, nil
+}
+
+func (ReservationRepository) InsertAudit(
+	ctx context.Context,
+	tx pgx.Tx,
+	id, actorType, actorID, action, resourceID, requestID, reason string,
+) error {
+	_, err := tx.Exec(ctx, `
+        INSERT INTO device_audit_events
+            (id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+        VALUES($1,$2,$3,$4,'device_reservation',$5,$6,$7,'{}'::jsonb)`,
+		id, actorType, actorID, action, resourceID, requestID, reason)
+	if err != nil {
+		return fmt.Errorf("insert reservation audit event: %w", err)
+	}
+	return nil
 }
 
 func (ReservationRepository) List(ctx context.Context, querier database.Querier, filter ReservationFilter) ([]ReservationRecord, error) {

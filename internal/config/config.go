@@ -22,6 +22,7 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database" json:"-"`
 	Log      LogConfig      `yaml:"log" json:"log"`
 	Security SecurityConfig `yaml:"security" json:"-"`
+	Lease    LeaseConfig    `yaml:"lease" json:"lease"`
 }
 
 type DatabaseConfig struct {
@@ -46,6 +47,12 @@ type SecurityConfig struct {
 	AgentToken   string `yaml:"agent_token" json:"-"`
 }
 
+type LeaseConfig struct {
+	SchedulerInterval time.Duration `yaml:"scheduler_interval" json:"scheduler_interval"`
+	ReaperInterval    time.Duration `yaml:"reaper_interval" json:"reaper_interval"`
+	GracePeriod       time.Duration `yaml:"grace_period" json:"grace_period"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -58,6 +65,11 @@ func Default() Config {
 		Log: LogConfig{
 			Level:  "info",
 			Format: "json",
+		},
+		Lease: LeaseConfig{
+			SchedulerInterval: 250 * time.Millisecond,
+			ReaperInterval:    time.Second,
+			GracePeriod:       30 * time.Second,
 		},
 	}
 }
@@ -136,6 +148,9 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"SERVER_WRITE_TIMEOUT", &cfg.Server.WriteTimeout},
 		{"SERVER_IDLE_TIMEOUT", &cfg.Server.IdleTimeout},
 		{"SERVER_SHUTDOWN_TIMEOUT", &cfg.Server.ShutdownTimeout},
+		{"LEASE_SCHEDULER_INTERVAL", &cfg.Lease.SchedulerInterval},
+		{"LEASE_REAPER_INTERVAL", &cfg.Lease.ReaperInterval},
+		{"LEASE_GRACE_PERIOD", &cfg.Lease.GracePeriod},
 	}
 
 	for _, item := range durations {
@@ -160,14 +175,19 @@ func (cfg Config) Validate() error {
 		validationErrors = append(validationErrors, err)
 	}
 	for name, value := range map[string]time.Duration{
-		"server.read_timeout":     cfg.Server.ReadTimeout,
-		"server.write_timeout":    cfg.Server.WriteTimeout,
-		"server.idle_timeout":     cfg.Server.IdleTimeout,
-		"server.shutdown_timeout": cfg.Server.ShutdownTimeout,
+		"server.read_timeout":      cfg.Server.ReadTimeout,
+		"server.write_timeout":     cfg.Server.WriteTimeout,
+		"server.idle_timeout":      cfg.Server.IdleTimeout,
+		"server.shutdown_timeout":  cfg.Server.ShutdownTimeout,
+		"lease.scheduler_interval": cfg.Lease.SchedulerInterval,
+		"lease.reaper_interval":    cfg.Lease.ReaperInterval,
 	} {
 		if value <= 0 {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be greater than zero", name))
 		}
+	}
+	if cfg.Lease.GracePeriod < 0 {
+		validationErrors = append(validationErrors, errors.New("lease.grace_period must not be negative"))
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.Log.Level)) {
@@ -218,5 +238,8 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("server_shutdown_timeout", cfg.Server.ShutdownTimeout),
 		slog.String("log_level", cfg.Log.Level),
 		slog.String("log_format", cfg.Log.Format),
+		slog.Duration("lease_scheduler_interval", cfg.Lease.SchedulerInterval),
+		slog.Duration("lease_reaper_interval", cfg.Lease.ReaperInterval),
+		slog.Duration("lease_grace_period", cfg.Lease.GracePeriod),
 	)
 }

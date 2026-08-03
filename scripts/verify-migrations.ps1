@@ -109,6 +109,10 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "Scheduler integration tests failed."
             }
+            & $GoExecutable test -count=1 -v ./internal/reaper
+            if ($LASTEXITCODE -ne 0) {
+                throw "Reservation lease and Reaper integration tests failed."
+            }
             & $GoExecutable test -count=1 -v ./internal/api
             if ($LASTEXITCODE -ne 0) {
                 throw "Management API integration tests failed."

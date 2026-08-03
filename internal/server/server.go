@@ -17,6 +17,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 )
@@ -66,7 +67,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		services.Management = management.NewService(managementpostgres.New(db), providermock.New(providermock.Config{}), nil)
 		services.Reservations = reservation.NewService(db, nil)
 		services.Scheduler = scheduler.New(db, nil, logger)
-		go services.Scheduler.Run(ctx, 250*time.Millisecond)
+		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
+		reservationReaper := reaper.New(services.Reservations, cfg.Lease.GracePeriod, logger)
+		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
 	errorChannel := make(chan error, 1)

@@ -233,7 +233,7 @@ paths:
       tags: [Reservations]
       operationId: releaseDeviceReservation
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
-      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      requestBody: {$ref: "#/components/requestBodies/ReservationRelease"}
       responses: *standardResponses
   /api/v1/device-reservations/{id}/remote-sessions:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
@@ -341,6 +341,11 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/LeaseExtension"}
+    ReservationRelease:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ReservationRelease"}
     RemoteSessionCreate:
       required: true
       content:
@@ -507,6 +512,13 @@ components:
       required: [additional_seconds]
       properties:
         additional_seconds: {type: integer, minimum: 60}
+    ReservationRelease:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 3, maxLength: 500}
+        force: {type: boolean, default: false}
     RemoteSessionCreate:
       type: object
       additionalProperties: false

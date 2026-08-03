@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 )
@@ -15,6 +16,38 @@ func RegisterReservations(mux *http.ServeMux, service *reservation.Service) {
 	mux.HandleFunc("GET /api/v1/device-reservations", handler.list)
 	mux.HandleFunc("POST /api/v1/device-reservations", handler.create)
 	mux.HandleFunc("GET /api/v1/device-reservations/{id}", handler.get)
+	mux.HandleFunc("POST /api/v1/device-reservations/{id}/extensions", handler.extend)
+	mux.HandleFunc("POST /api/v1/device-reservations/{id}/releases", handler.release)
+}
+
+func (handler *reservationHandler) extend(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	var input reservation.ExtensionInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.Extend(
+		request.Context(), clientID(request), request.Header.Get("Idempotency-Key"),
+		request.PathValue("id"), input,
+	)
+	handler.write(writer, request, http.StatusOK, value, err)
+}
+
+func (handler *reservationHandler) release(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	var input reservation.ReleaseInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.Release(
+		request.Context(), clientID(request), request.Header.Get("Idempotency-Key"),
+		request.PathValue("id"), correlation.FromContext(request.Context()).RequestID, input,
+	)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 
 func (handler *reservationHandler) create(writer http.ResponseWriter, request *http.Request) {

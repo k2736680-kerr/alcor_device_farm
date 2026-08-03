@@ -143,6 +143,8 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
 		{http.MethodGet, "/api/v1/device-reservations"}, {http.MethodPost, "/api/v1/device-reservations"},
 		{http.MethodGet, "/api/v1/device-reservations/id"},
+		{http.MethodPost, "/api/v1/device-reservations/id/extensions"},
+		{http.MethodPost, "/api/v1/device-reservations/id/releases"},
 	}
 	for _, route := range routes {
 		assertStatus(t, environment.request(t, route.method, route.path, map[string]any{}, "", ""), http.StatusUnauthorized)

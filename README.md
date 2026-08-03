@@ -66,3 +66,5 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 设备接口以 [OpenAPI 契约](openapi/device-farm-v1.yaml) 为准。`/api/v1/device-*` 使用平台服务 Token，`/internal/v1` 使用独立 Agent Token；两类 Token 必须不同，空值不会放行受保护接口。
 
 配置 PostgreSQL URL 后，Server 已可提供 Image、Host、Pool、Device 和 Reservation API；当前设备实例由 Mock Provider 支撑，Scheduler 会按设备池、能力、Host 状态、设备状态和并发上限完成原子分配并创建 Session。
+
+Reservation 支持幂等续租、主动/强制释放和超时回收。Scheduler 周期、Reaper 周期与 grace period 可通过 `DEVICE_FARM_LEASE_*` 配置；释放或过期会原子关闭 Session、将 Device 送入 recycling 并写入设备审计事件。

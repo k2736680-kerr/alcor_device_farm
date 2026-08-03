@@ -14,6 +14,11 @@ log:
   level: info
   format: json
 
+lease:
+  scheduler_interval: 250ms
+  reaper_interval: 1s
+  grace_period: 30s
+
 # Keep real tokens out of YAML committed to Git. Protected routes fail closed
 # with 401 while the matching token is empty.
 security:

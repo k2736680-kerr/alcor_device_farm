@@ -23,6 +23,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.Log.Format != "json" {
 		t.Fatalf("Log format = %q", cfg.Log.Format)
 	}
+	if cfg.Lease.GracePeriod != 30*time.Second || cfg.Lease.ReaperInterval != time.Second {
+		t.Fatalf("lease defaults = %+v", cfg.Lease)
+	}
 }
 
 func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {
@@ -47,6 +50,7 @@ database:
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
 	t.Setenv("DEVICE_FARM_SECURITY_SERVICE_TOKEN", "environment-secret")
 	t.Setenv("DEVICE_FARM_DATABASE_URL", "postgres://environment-database-secret")
+	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -63,6 +67,9 @@ database:
 	}
 	if cfg.Database.URL != "postgres://environment-database-secret" {
 		t.Fatal("environment did not override database URL")
+	}
+	if cfg.Lease.GracePeriod != 45*time.Second {
+		t.Fatalf("GracePeriod = %v", cfg.Lease.GracePeriod)
 	}
 }
 
