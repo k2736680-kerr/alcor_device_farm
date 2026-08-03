@@ -72,3 +72,5 @@ Reservation 支持幂等续租、主动/强制释放和超时回收。Scheduler 
 Reconciler 会核对 Host 心跳、Provider 健康、ADB/启动/Appium 和可插拔 STF 可见性；健康事件统一写入 PostgreSQL，连续失败达到阈值后自动隔离，隔离设备只能通过既有人工解除/重建流程恢复。周期、Host 超时和失败阈值使用 `DEVICE_FARM_RECONCILE_*` 配置。
 
 Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命令由 PostgreSQL lease token + attempt 防止重复或旧 Agent 回写；租约过期后按最大尝试次数安全重领或转为 timed_out。
+
+`device-host-agent` 已是可运行进程：使用已注册 Host ID 和独立 Agent Token，周期发现本机 Provider 设备并心跳，长轮询领取命令，按并发上限执行 Mock Provider 操作；收到退出信号后先停止领取，再等待在途命令完成，超时未完成的命令由 Server lease recovery 接管。
