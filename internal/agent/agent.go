@@ -53,6 +53,9 @@ func New(config Config, client Client, provider providers.Provider, logger *slog
 }
 
 func (agent *Agent) Run(ctx context.Context) error {
+	if err := agent.sendHeartbeat(ctx); err != nil && ctx.Err() == nil {
+		agent.logger.Warn("agent initial heartbeat failed", "error", err)
+	}
 	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
 	defer stopHeartbeat()
 	heartbeatErrors := make(chan error, 1)
@@ -111,15 +114,15 @@ func (agent *Agent) heartbeatLoop(ctx context.Context, errorsChannel chan<- erro
 	ticker := time.NewTicker(agent.config.HeartbeatInterval)
 	defer ticker.Stop()
 	for {
-		err := agent.sendHeartbeat(ctx)
-		select {
-		case errorsChannel <- err:
-		default:
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+		err := agent.sendHeartbeat(ctx)
+		select {
+		case errorsChannel <- err:
+		default:
 		}
 	}
 }
@@ -147,30 +150,59 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	ctx, cancel := context.WithTimeout(context.Background(), agent.config.CommandTimeout)
 	defer cancel()
 	var err error
+	result := map[string]any(nil)
 	providerRef, _ := command.Payload["provider_ref"].(string)
 	switch command.CommandType {
 	case "create":
-		_, err = agent.provider.Create(ctx, providers.CreateRequest{
+		var snapshot providers.Snapshot
+		snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
 			DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
 			ImageID: stringValue(command.Payload, "image_id"), ProviderRef: providerRef,
 			Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
 		})
+		if err == nil {
+			result = snapshotResult(snapshot)
+		}
 	case "start":
-		_, err = agent.provider.Start(ctx, providerRef)
+		var snapshot providers.Snapshot
+		snapshot, err = agent.provider.Start(ctx, providerRef)
+		if err == nil {
+			result = snapshotResult(snapshot)
+		}
 	case "stop":
-		_, err = agent.provider.Stop(ctx, providerRef)
+		var snapshot providers.Snapshot
+		snapshot, err = agent.provider.Stop(ctx, providerRef)
+		if err == nil {
+			result = snapshotResult(snapshot)
+		}
 	case "restart":
-		_, err = agent.provider.Restart(ctx, providerRef)
+		var snapshot providers.Snapshot
+		snapshot, err = agent.provider.Restart(ctx, providerRef)
+		if err == nil {
+			result = snapshotResult(snapshot)
+		}
 	case "rebuild":
-		_, err = agent.provider.Rebuild(ctx, providerRef)
+		var snapshot providers.Snapshot
+		snapshot, err = agent.provider.Rebuild(ctx, providerRef)
+		if err == nil {
+			result = snapshotResult(snapshot)
+		}
 	case "delete":
 		err = agent.provider.Delete(ctx, providerRef)
+		if err == nil {
+			result = map[string]any{"provider_ref": providerRef, "deleted": true}
+		}
 	case "inspect":
-		_, err = agent.provider.InspectHealth(ctx, providerRef)
+		var health providers.Health
+		health, err = agent.provider.InspectHealth(ctx, providerRef)
+		if err == nil {
+			result = healthResult(health)
+			result["provider_ref"] = providerRef
+		}
 	default:
 		err = fmt.Errorf("unsupported command type %s", command.CommandType)
 	}
-	completion := hostcommand.CompletionInput{Attempt: command.Attempt, Status: "succeeded", Result: map[string]any{"completed": true}}
+	completion := hostcommand.CompletionInput{Attempt: command.Attempt, Status: "succeeded", Result: result}
 	if command.LeaseToken != nil {
 		completion.LeaseToken = *command.LeaseToken
 	}
@@ -219,7 +251,10 @@ func providerErrorRetryable(err error) bool {
 }
 func providerLifecycle(snapshot providers.Snapshot) string {
 	if snapshot.State == providers.StateRunning {
-		return "ready"
+		if snapshot.Ready() {
+			return "ready"
+		}
+		return "booting"
 	}
 	return "stopped"
 }
@@ -227,5 +262,28 @@ func providerHealth(snapshot providers.Snapshot) string {
 	if snapshot.Ready() {
 		return "healthy"
 	}
+	if snapshot.State != providers.StateRunning || snapshot.Health.Online {
+		return "unknown"
+	}
 	return "unhealthy"
+}
+
+func snapshotResult(snapshot providers.Snapshot) map[string]any {
+	return map[string]any{
+		"device_id": snapshot.DeviceID, "host_id": snapshot.HostID, "image_id": snapshot.ImageID,
+		"provider_ref": snapshot.ProviderRef, "state": string(snapshot.State), "generation": snapshot.Generation,
+		"capabilities": snapshot.Capabilities,
+		"connection": map[string]any{
+			"serial": snapshot.Connection.Serial, "adb_endpoint": snapshot.Connection.ADBEndpoint,
+			"appium_endpoint": snapshot.Connection.AppiumEndpoint,
+		},
+		"health": healthResult(snapshot.Health),
+	}
+}
+
+func healthResult(health providers.Health) map[string]any {
+	return map[string]any{
+		"online": health.Online, "adb_online": health.ADBOnline,
+		"boot_completed": health.BootCompleted, "appium_healthy": health.AppiumHealthy,
+	}
 }

@@ -21,6 +21,9 @@ Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KV
 - Create/Delete 幂等，Rebuild 保留 Device/Image/capabilities 并提升 generation；
 - Host Agent 支持 `DEVICE_FARM_AGENT_PROVIDER=mock|docker`，心跳明确上报实际 Provider 类型；
 - Agent create 命令透传 capabilities，并保留 Provider 的 retryable 分类；
+- Agent 的 create/start/stop/restart/rebuild/inspect completion 返回稳定的 Provider Snapshot、连接和健康字段，为后续自动补齐 Controller 更新同一 Device 提供依据；
+- 运行中但尚未通过 ADB/boot/Appium 的设备在 heartbeat 中上报为 `booting/unknown`，不会因为容器刚 running 就被错误标记为 ready；
+- Agent 启动时先完成首次 heartbeat 再领取命令，避免短进程或退出竞态导致 Host 尚未上线就执行设备操作；首次心跳失败会记录并由周期心跳重试，不创建第二套状态真相；
 - 新增 [Docker Emulator Provider 说明](../../docker_emulator_provider.md)；
 - 新增 `scripts/verify-docker-emulator.sh` 和真实 Linux KVM 集成测试。
 - 已核对 `budtmo/docker-android` 上游运行契约并把独立数据卷修正为 `/home/androidusr`；Host Agent 可配置容器内 ADB serial、ADB 端口、数据目录和 Emulator 设备型号；
@@ -40,6 +43,8 @@ PASS TestCLIBackendInspectDecodesPublishedPortAndLabels
 PASS TestDockerProviderLifecycleUsesUniquePortsAndCleansResources
 PASS TestDockerProviderDoesNotSilentlyRunWithoutKVMOrFixedImage
 PASS TestDockerResourceNamesAreStableAndBounded
+PASS TestAgentCreateCompletionReturnsProviderSnapshot
+PASS TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady
 PASS TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability
 PASS internal/providers/docker
 PASS internal/agent
