@@ -80,3 +80,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-migrations.ps
 ```
 
 脚本只在项目 `tmp/df004-postgres-data` 创建一次性实例，依次执行 `up → 约束检查 → down → up`，最后停止实例并清理临时数据。脚本会校验清理目标必须位于项目 `tmp` 目录，避免误删其他 PostgreSQL 数据。
+
+需要同时运行 Repository 真实并发测试时，再设置 `DEVICE_FARM_GO` 并增加参数：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-migrations.ps1 -RunRepositoryTests
+```

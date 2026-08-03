@@ -1,6 +1,7 @@
 param(
     [string]$PostgresBin = $env:DEVICE_FARM_POSTGRES_BIN,
-    [int]$Port = 55432
+    [int]$Port = 55432,
+    [switch]$RunRepositoryTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,6 +88,28 @@ try {
     Invoke-SQLFile $Up
     Invoke-SQL "DO `$test`$ DECLARE table_count integer; BEGIN SELECT count(*) INTO table_count FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%'; IF table_count <> 11 THEN RAISE EXCEPTION 'expected 11 device tables, got %', table_count; END IF; END `$test`$;"
     Write-Output "up-down-up migration: passed"
+
+    if ($RunRepositoryTests) {
+        $GoExecutable = $env:DEVICE_FARM_GO
+        if ([string]::IsNullOrWhiteSpace($GoExecutable)) {
+            $GoCommand = Get-Command go -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $GoCommand) {
+                throw "Set DEVICE_FARM_GO before running repository tests."
+            }
+            $GoExecutable = $GoCommand.Source
+        }
+        $PreviousDatabaseURL = $env:DEVICE_FARM_TEST_DATABASE_URL
+        try {
+            $env:DEVICE_FARM_TEST_DATABASE_URL = "postgres://postgres@127.0.0.1:$Port/$DatabaseName`?sslmode=disable"
+            & $GoExecutable test -count=1 -v ./internal/repository
+            if ($LASTEXITCODE -ne 0) {
+                throw "Repository integration tests failed."
+            }
+        }
+        finally {
+            $env:DEVICE_FARM_TEST_DATABASE_URL = $PreviousDatabaseURL
+        }
+    }
 }
 finally {
     if ($started) {
