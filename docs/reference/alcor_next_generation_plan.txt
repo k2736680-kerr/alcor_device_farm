@@ -1,0 +1,693 @@
+1. 需求概述
+需求介绍
+当前测试条目、数据集、质量评估和性能压测的管理前端位于 altair-ai-hub。由于功能多次迭代，新增、编辑、导入和任务创建中出现了大量历史字段、重复配置和页面职责混杂的问题。
+本次将测试管理能力整体迁移至 llm-eval：新建独立 Eval Console 前端、新 API 和新数据库模型；现有历史数据从当前 llm-eval PostgreSQL 与本机文件目录一次性迁入新库。新平台不再兼容旧前端、旧接口和旧字段格式。
+核心内容
+用户价值
+需求点
+快速录入正确测试样本
+以 HTTP、SSE、WebSocket 协议为基础，通过可配置场景模板录入用例；新增同协议业务场景不需要改前端或执行器代码
+高效组织和复用测试数据
+用例、数据集、测试目标、运行配置（Config）、运行实例分层管理
+快速定位执行问题
+统一查看运行状态、核心指标、失败用例、日志、原始报告，以及由 LLM 根据模板生成的动态分析报告
+面对千万级测试数据仍可快速运行
+测试用例明细迁入 ClickHouse；运行时支持全量、20%/30% 等比例抽样及分层抽样
+解释性能劣化的真实原因
+接入 WeData-Log 和监控指标，关联目标服务 CPU、内存、实例数、错误日志与测试结果
+可追溯测试操作
+用例、数据集、运行记录操作人；支持按操作人筛选和“我创建的/我发起的”快捷筛选
+去除历史包袱
+新前端仅使用 /api/v1，不暴露 extend_config、path/url 等旧字段
+历史资产完整迁移
+使用独立 CLI 迁移旧数据库、本地报告、日志和音频，并生成校验报告
+本期范围
+1. 在 llm-eval 中新建 Eval Console 前端。
+2. 在 eval_server 中新建 /api/v1、Run、Worker 和统一结果模型。
+3. 支持 HTTP、SSE、WebSocket 协议执行；ASR、QA 流式等仅作为协议模板，不作为硬编码业务类型。
+4. 支持钉钉登录、操作人记录和操作人筛选。
+5. 使用 YAML 保存密钥，使用 Supabase Storage 保存媒体、报告、日志和其他制品；对象 Key 设计兼容后续迁移 S3。
+6. 历史测试数据迁入 ClickHouse，支持千万级数据集的导入、抽样和流式读取。
+7. 接入 WeData-Log 与监控数据，采集目标服务资源指标和关联日志。
+8. 完成当前 llm-eval 历史数据到新库的一次性迁移。
+本期不做
+1. 不维护新旧系统双读、双写或在线格式兼容。
+2. 不引入 Redis、Kafka、Temporal、对象存储集群。
+3. 不在本期实现新的 Device Farm。
+4. 不在日常导入功能中兼容旧 Excel 模板；旧格式只由迁移 CLI 处理。
+5. 不承诺新增一种完全不同的传输协议时零代码；新增 HTTP/SSE/WebSocket 场景不改代码，新增 gRPC 等协议时通过新的 Protocol Executor 插件扩展。
+6. 不将 WeData-Log 的全量历史日志复制到本平台；仅查询运行时间窗内的关联日志与聚合指标，并保存引用、摘要和必要的脱敏片段。
+2. 整体架构（可选）
+架构图
+请在钉钉文档中按以下关系绘制流程图：
+测试人员 / 管理员
+        ↓ 钉钉登录
+Eval Console（React + TypeScript）
+        ↓ /api/v1
+eval_server
+        ├─ PostgreSQL：业务元数据、运行状态、审计、配置
+        ├─ ClickHouse：千万级测试数据、用例级结果、可观测性时序摘要
+        ├─ Supabase Storage：媒体、报告、日志、制品
+        └─ PostgreSQL 租约队列
+                    ↓
+               独立 Worker
+        ├─ Locust 性能执行器
+        ├─ HTTP / SSE / WebSocket Protocol Executor
+        ├─ Python 质量评估器
+        ├─ pytest 功能执行器（后续）
+        └─ Device Farm Adapter（后续）
+
+Run 标准结果 + 报告模板
+        ↓
+LLM 报告生成服务
+        ↓
+动态 Markdown / HTML 分析报告
+
+Worker / 报告服务
+        ↓ 查询运行时间窗与关联标识
+WeData-Log + 监控系统
+        ↓
+目标服务 CPU、内存、实例数、错误日志、Trace/Request 关联信息
+
+当前 llm-eval PostgreSQL + 当前本地任务目录
+        ↓
+migrate_legacy_eval CLI
+        ↓
+新 PostgreSQL + ClickHouse + Supabase Storage
+
+组件职责
+组件
+职责
+Eval Console
+钉钉登录、用例管理、数据集管理、运行创建、报告查看、操作人筛选
+eval_server /api/v1
+鉴权、参数校验、对象管理、运行创建、状态查询、审计记录
+PostgreSQL
+保存业务对象、关系、快照元数据、运行状态、配置和审计日志
+ClickHouse
+保存千万级测试数据、数据集版本明细、用例级结果、抽样清单和可观测性聚合数据
+Supabase Storage
+保存媒体、原始 HTML 报告、LLM 动态报告、CSV、JUnit、日志、截图等大文件；未来可迁移 S3
+独立 Worker
+领取运行任务、执行评估器、写入进度、结果和制品
+报告生成服务
+按报告模板将标准指标、异常摘要和脱敏样本交给 LLM，生成可读分析报告
+HyperDX MCP 连接器
+通过 HyperDX MCP 按运行时间窗、服务标识和关联 ID 查询 WeData-Log、CPU、内存、实例数等观测数据
+迁移 CLI
+从旧 schema 和旧目录迁移数据；不参与线上请求
+部署目录
+llm-eval/
+├─ eval_console/                 新前端工程
+├─ eval_server/
+│  ├─ cmd/server/                API 服务
+│  ├─ cmd/worker/                独立 Worker
+│  ├─ cmd/migrate_legacy_eval/   一次性迁移 CLI
+│  ├─ internal/api/v1/
+│  ├─ internal/executor/
+│  ├─ internal/report/
+│  ├─ internal/metrics/
+│  ├─ internal/worker/
+│  └─ migrations/
+├─ performance_eval/
+├─ ai_qa_eval/、asr_eval/ 等
+└─ secrets.yaml                  部署机受限文件，不提交版本库
+
+3. 核心流程
+3.1 用例与数据集维护
+1. 用户通过钉钉登录 Eval Console。
+2. 用户进入“用例库”，选择 HTTP、SSE 或 WebSocket 协议下的场景模板。
+3. 用户填写当前模板所需字段；前端根据服务端下发的 JSON Schema 渲染表单，服务端执行协议和敏感字段校验。
+4. 服务端保存标准化 Case 元数据，明细写入 ClickHouse，并记录创建人、最后修改人和审计日志。
+5. 用户在“数据集”中添加已有用例，或通过导入向导批量创建用例。
+6. 数据集发生变更时增加不可变版本；对应 Case 明细按版本写入 ClickHouse，后续运行固定引用版本与选择规则。
+数据流
+用户填写模板
+  → Case 校验并保存
+  → 选择/导入 Case
+  → 编排 Dataset
+  → 增加 Dataset 版本并写入 ClickHouse
+  → 供 Run 创建可复现的选择快照使用
+
+3.2 导入
+1. 用户选择协议场景模板，上传 CSV/XLSX；WebSocket 音频等场景可上传媒体 ZIP。
+2. 服务端创建导入会话并读取列名、样例数据。
+3. 用户确认字段映射和样例预览。
+4. 服务端校验必填项、JSON、媒体匹配、重复项和敏感字段。
+5. 用户选择全量导入或将该批数据作为大数据集版本写入 ClickHouse。
+6. 用户确认导入后，服务端分批写入 Case 元数据与 ClickHouse 明细。
+7. 页面展示成功数、失败数、总行数和可用抽样比例，并支持下载错误行文件。
+3.3 运行创建与执行
+1. 用户从数据集详情或运行中心发起运行。
+2. 用户选择运行类型、Target、运行配置（Config）、标签筛选和数据选择策略：全量、固定条数、20%/30% 等比例抽样或分层抽样。
+3. 系统展示总数据量、选中样本数、抽样 seed、预计时长、并发限制和运行参数。
+4. API 记录发起人，校验 Target 的最大并发和最大时长；将数据集版本、选择规则和 seed 固化为 Run 快照。
+5. Worker 通过 PostgreSQL 租约领取 Run，从 ClickHouse 分页流式读取选中 Case，并读取 YAML 中的密钥引用。
+6. Worker 根据 Case 的 protocol 调用 HTTP、SSE 或 WebSocket Protocol Executor；质量评分仅在需要时作为后置步骤执行。
+7. Worker 持续写入运行事件、进度、结果和制品索引；用例级结果批量写入 ClickHouse。
+8. Worker 根据运行时间窗、Target 的观测配置及 X-Eval-Run-Id / traceparent 等关联标识，通过 HyperDX MCP 查询 WeData-Log 和监控数据。
+9. 用户在运行详情查看状态、指标、失败用例、目标服务 CPU/内存/实例数、关联日志、报告和日志。
+控制流
+创建 Run
+  → queued
+  → preparing
+  → running
+  → passed / failed / canceled / timeout / infra_failed
+
+3.4 可观测性关联流程
+1. 系统在 config.yaml 中维护 Target 到 WeData 服务标识、HyperDX MCP 连接、日志字段和指标模板的映射；用户不配置、不选择观测服务。
+2. 指标查询规则属于系统 Template，例如 CPU utilization、内存、实例数、请求量、错误率和 P95；模板由部署/平台管理员维护。
+3. Worker 在发起请求时注入 X-Eval-Run-Id、X-Eval-Attempt-Id 和 W3C traceparent；目标服务若支持，将这些字段写入日志或 Trace。
+4. Worker 记录运行开始、结束和预热/冷却时间窗，并通过 HyperDX MCP 查询该时间窗内的 WeData-Log 和监控指标。
+5. 系统优先按 Run ID / Trace ID 关联日志；目标系统不支持关联字段时，降级按系统配置的服务、实例、时间窗和接口路径查询。
+6. 系统只保存指标聚合、HyperDX 查询条件、日志引用与限量脱敏异常片段；原始日志仍由 WeData-Log 管理。
+默认采集目标服务 CPU utilization、内存使用率、实例/Pod 数、请求量、错误率、P95 时延和限流/异常日志数量；同时采集 Worker CPU、内存、网络，防止将发压端饱和误判为目标服务瓶颈。
+3.5 LLM 动态报告生成
+1. Worker 完成运行后，自动保存标准 RunResult、原始 Locust/评估器报告和脱敏失败摘要。
+2. 系统自动创建报告生成后置任务；前端不调用生成接口。
+3. 报告服务根据 Run 的 report_template_version 组装结构化输入：运行信息、核心指标、门禁结果、错误分布、目标服务资源曲线、关联日志摘要和受限数量的脱敏样本。
+4. 报告服务调用配置的 LLM，生成“结论、性能变化、资源瓶颈证据、日志异常归因、与阈值对比、建议动作”等 Markdown 内容。
+5. 系统将 Markdown 渲染为 HTML，并作为独立 Artifact 保存；同时记录模型、模板版本、输入 hash 和生成时间。
+6. LLM 生成失败或超时时，保留确定性基础报告，Run 的通过/失败状态不受影响；报告状态标记为 failed，由平台后台按策略重试。
+LLM 只用于报告解释，不能改变断言、门禁和运行状态；请求 Header、Cookie、密钥、完整响应体和超限日志必须在送入 LLM 前脱敏或截断。
+3.6 历史数据迁移与切换
+1. 在预生产环境盘点当前 llm-eval PostgreSQL 和本地目录。
+2. 配置旧 URL origin 到新 Target 的映射，配置需要人工绑定的密钥引用。
+3. 执行一次完整迁移演练，核对数据条目、数据集关联、报告、日志和媒体 hash。
+4. 切换窗口开始后停止旧评估页面写入。
+5. 执行最终迁移和校验，生成迁移报告。
+6. 发布 Eval Console，所有新写入进入新库。
+7. 删除 Altair 的旧评估管理页面和旧接口。
+4. 详细设计
+接口设计
+前端仅调用 /api/v1。统一响应结构：
+{
+  "request_id": "req_01J...",
+  "data": {},
+  "error": null
+}
+
+REST 路径约定
+● 所有资源路径使用复数名词：/cases、/datasets、/runs、/templates、/case-imports；
+● POST /api/v1/cases 表示在 Case 集合中创建一个 Case，因此使用复数是 REST 规范；单个资源使用 /api/v1/cases/:id；
+● 用例导入是独立资源，命名为 /case-imports，避免通用 /imports 无法看出导入对象；
+● 取消、重试和报告生成也建模为子资源：cancellations、attempts、reports，不使用动词型路径；
+● 抽样是 Run 的创建参数，不单独暴露“预览接口”。数据集统计接口返回总量和分布；Run 创建后保存最终选中数、selection 和 seed。
+认证与用户接口
+接口
+说明
+GET /api/v1/auth/dingtalk/login
+跳转至钉钉 OAuth 授权页
+GET /api/v1/auth/dingtalk/callback
+完成钉钉授权，创建 Eval Console 会话
+GET /api/v1/me
+获取当前用户及可用 Target/Config
+GET /api/v1/users?keyword=
+操作人筛选时按姓名搜索用户
+GET /api/v1/templates?protocol=
+获取协议场景模板及其 JSON Schema，前端据此动态渲染表单
+用户使用钉钉 union_id 作为稳定身份；用例、数据集和运行记录操作时的显示名快照，避免钉钉昵称变更影响历史记录。
+用例与导入接口
+接口
+说明
+POST /api/v1/cases
+创建标准 Case
+GET /api/v1/cases?operator_id=&protocol=&template_id=&tag=
+查询用例，支持操作人、协议、模板、标签筛选
+GET /api/v1/cases/:id
+获取用例详情
+PUT /api/v1/cases/:id
+编辑用例
+DELETE /api/v1/cases/:id
+删除用例
+POST /api/v1/case-imports
+创建“用例导入”资源并上传文件，接口语义明确
+GET /api/v1/case-imports/:id
+获取导入状态、字段映射、校验结果和样例预览
+PATCH /api/v1/case-imports/:id
+更新字段映射，服务端重新校验并返回预览
+POST /api/v1/case-imports/:id/cases
+根据通过校验的导入资源创建 Case 集合
+GET /api/v1/case-imports/:id/errors
+下载该用例导入的错误行文件
+数据集、Target、Config 与运行接口
+接口
+说明
+POST/GET /api/v1/datasets
+创建、查询数据集；支持创建人筛选
+GET/PUT/DELETE /api/v1/datasets/:id
+数据集详情和编辑
+POST/DELETE /api/v1/datasets/:id/cases
+编排或移除 Case
+GET /api/v1/datasets/:id/statistics
+返回 ClickHouse 中的总条数、标签分布、可用抽样比例和数据量
+POST/GET /api/v1/targets
+管理 Target、base URL、资源限制和密钥引用
+POST/GET /api/v1/configs
+管理可版本化的运行 Config，例如并发阶段、时长和门禁阈值
+POST /api/v1/runs
+创建运行并生成快照
+GET /api/v1/runs?operator_id=&status=&target_id=
+查询运行；支持发起人筛选
+GET /api/v1/runs/:id
+获取运行详情、汇总、门禁和指标
+POST /api/v1/runs/:id/cancellations
+创建取消请求，并记录取消人
+POST /api/v1/runs/:id/attempts
+创建新的执行 Attempt，作为重试
+GET /api/v1/runs/:id/events
+获取运行事件
+GET /api/v1/runs/:id/artifacts
+获取报告、日志和媒体制品
+GET /api/v1/runs/:id/metrics
+获取测试端、目标服务和 Worker 的指标序列及聚合值
+GET /api/v1/runs/:id/logs
+获取关联日志摘要、脱敏异常片段和 HyperDX 查询引用
+GET /api/v1/runs/:id/reports
+获取原始报告、基础报告和 LLM 报告列表
+创建 HTTP 用例示例
+POST /api/v1/cases
+{
+  "protocol": "http",
+  "template_id": "http-json-api-v1",
+  "name": "hello-smoke",
+  "tags": ["smoke", "hello"],
+  "spec": {
+    "request": {
+      "path": "/api/v1/hello",
+      "method": "POST",
+      "headers": {"Content-Type": "application/json"},
+      "body": "{\"ping\":\"pong\"}"
+    },
+    "assertions": {
+      "status": 200,
+      "body_contains": ["\"code\":0"]
+    }
+  }
+}
+
+创建运行示例
+POST /api/v1/runs
+{
+  "run_kind": "performance",
+  "dataset_id": "ds_01JABCD",
+  "target_id": "tgt_01JABCD",
+  "config_version_id": "cfgv_01JABCD",
+  "filters": {"tags": ["smoke"]},
+  "selection": {
+    "mode": "ratio",
+    "ratio": 0.2,
+    "strategy": "stratified_by_tag",
+    "seed": 20260729
+  },
+  "overrides": {"timeout_seconds": 1800}
+}
+
+selection 不是独立业务对象：mode=all 表示全量，mode=count 表示固定条数，mode=ratio 表示比例抽样，strategy=stratified_by_tag 表示按标签分层。用户选择 20% 或 30% 后直接创建 Run，系统在 Run 详情展示最终命中数量；不额外引入预览接口和页面状态。
+数据结构
+核心对象
+对象
+用途
+关键字段
+ProtocolTemplate
+场景模板
+protocol、JSON Schema、默认断言、报告模板引用
+Case
+标准化测试用例
+id、protocol、template_id、schema_version、spec、操作人
+Dataset
+Case 集合
+id、protocol、version、操作人
+Target
+被测环境
+base_url、最大并发、最大时长、密钥引用
+Config
+可版本化运行配置
+并发阶段、启动速率、门禁阈值
+Run
+一次运行请求
+快照、Target、Config、发起人、状态
+Attempt
+一次执行尝试
+Worker、租约、时间、状态
+Artifact
+本地报告或媒体制品
+相对路径、大小、SHA-256
+ReportTemplate
+LLM 报告生成模板
+提示词模板、输出结构、版本、适用协议
+Case 数据结构
+type Protocol = 'http' | 'sse' | 'websocket';
+
+interface Case {
+  id: string;
+  protocol: Protocol;
+  templateId: string;
+  schemaVersion: number;
+  name: string;
+
+  tags: string[];
+
+  spec: Record<string, unknown>;
+  createdBy: ActorSnapshot;
+  updatedBy: ActorSnapshot;
+  createdAt: string;
+  updatedAt: string;
+}
+
+Case 以协议而非业务名称建模：ASR 是 WebSocket 场景模板，QA 流式是 SSE 场景模板，普通 API 是 HTTP 场景模板。模板以 JSON Schema 和默认配置存储，新增同协议业务场景只需新增模板，无需修改前端或 Worker 代码。
+Case 只保存相对路径、请求/连接定义、消息帧或媒体节奏和断言；host、环境和密钥不属于 Case，而由 Target 在运行时提供。
+协议模板执行约定
+模板能力
+HTTP
+SSE
+WebSocket
+表单与导入字段
+JSON Schema 动态渲染
+JSON Schema 动态渲染
+JSON Schema 动态渲染
+请求定义
+方法、路径、Query、Header、Body
+HTTP 请求与流读取规则
+建连地址、Header、文本/二进制帧
+响应提取
+状态码、Header、JSONPath
+首事件、事件类型、结束事件、JSONPath
+握手、消息类型、最终帧、JSONPath
+节奏控制
+超时与重试
+首事件时间、事件间隔
+帧间隔、音频真实播放节奏
+断言
+状态、JSONPath、正则
+事件完整性、JSONPath、正则
+消息完整性、JSONPath、正则
+模板中的字段映射、JSONPath、正则、消息帧序列、媒体节奏和报告模板均使用配置表达；因此新增“某业务 WebSocket ASR”“某业务 SSE 对话”等场景时，只需发布新的 Protocol Template。只有增加 HTTP/SSE/WebSocket 之外的传输协议时，才需要新增 Protocol Executor 插件。
+运行状态
+queued / preparing / running / passed / failed /
+canceled / timeout / infra_failed
+
+数据库设计
+新数据库使用 UUID 或 ULID 主键，不保存旧整数 ID、旧 legacy_id_maps 或旧格式 JSON。
+表
+说明
+关键字段
+users
+钉钉用户缓存
+id、dingtalk_union_id、display_name
+protocol_templates
+协议场景模板
+id、protocol、form_schema、default_spec、status
+cases
+标准化用例
+protocol、template_id、schema_version、spec、created_by、updated_by
+case_media
+用例媒体关联
+case_id、relative_path、sha256、size_bytes
+datasets
+数据集
+name、protocol、version、created_by
+dataset_cases
+数据集用例关联
+dataset_id、case_id、position
+dataset_snapshots
+运行不可变快照
+dataset_id、version、content_hash、relative_path
+targets
+被测环境
+base_url、service_key、max_users、max_run_seconds
+target_secret_refs
+Target 密钥引用
+target_id、secret_ref
+configs
+Config 元数据
+name、created_by
+config_versions
+Config 不可变版本
+config_id、version、config
+runs
+运行请求
+run_kind、snapshot_id、target_id、config_version_id、requested_by、status
+run_attempts
+执行尝试与租约
+run_id、lease_token、worker_id、status
+run_events
+运行事件
+attempt_id、event_type、payload
+run_results
+汇总指标和门禁
+attempt_id、summary、metrics、gates
+artifacts
+对象制品索引
+attempt_id、bucket、object_key、sha256、content_type、size_bytes
+report_templates
+动态报告模板
+id、protocol、prompt_template、output_schema、version
+generated_reports
+LLM 生成报告
+run_id、template_version_id、model、input_hash、artifact_id、status
+audit_logs
+操作审计
+actor_id、action、resource_type、resource_id
+ClickHouse 用于大规模明细数据，不承担权限和业务状态：
+表
+说明
+分区/排序建议
+dataset_case_rows
+数据集版本下的 Case 明细，支持千万级数据
+按 dataset_version_id 分区；按 dataset_version_id, sample_key, case_id 排序
+run_case_results
+运行的用例级结果、时延、错误分类
+按运行日期与 run_id 分区；按 run_id, case_id 排序
+run_target_metrics
+从 WeData/监控查询得到的目标服务资源与服务指标
+按日期和 run_id 分区；按 run_id, metric_name, timestamp 排序
+run_log_evidence
+限量脱敏日志片段与 WeData 查询引用
+按日期与 run_id 分区
+dataset_case_rows.sample_key 使用稳定哈希，例如 cityHash64(case_id)。比例抽样通过 sample_key 与 seed 计算，20% 或 30% 结果可复现；分层抽样按 tag、协议或业务字段分别应用同一规则。Run 保存 dataset_version_id + selection + seed + query_hash，因此无需把千万条样本复制到 PostgreSQL 也能复现选择结果。
+系统观测配置
+WeData 与 HyperDX MCP 的连接不暴露为用户配置接口，部署时在 config.yaml 维护：
+observability:
+  hyperdx_mcp:
+    endpoint: ${HYPERDX_MCP_ENDPOINT}
+    token_ref: hyperdx_mcp_token
+  services:
+    payment-api:
+      wedata_service: payment-api-prod
+      correlation_fields: [x_eval_run_id, trace_id]
+      metric_templates: [runtime-default]
+      log_template: service-errors
+  metric_templates:
+    runtime-default:
+      metrics: [cpu_utilization, memory_utilization, pod_count, request_rate, error_rate, p95_latency]
+
+Target 仅保存 service_key=payment-api；Worker 使用该 key 读取系统配置、调用 HyperDX MCP。这样用户只需选择 Target 与 Config，日志服务、指标查询与字段映射由平台统一维护。
+Supabase Storage 制品设计
+首期使用 Supabase Storage，按稳定对象 Key 保存，避免依赖本机磁盘：
+Bucket: eval-media
+  media/{sha256-prefix}/{sha256}-{filename}
+
+Bucket: eval-artifacts
+  snapshots/{snapshot-id}/cases.jsonl
+  runs/{run-id}/attempts/{attempt-id}/report.html
+  runs/{run-id}/attempts/{attempt-id}/metrics.json
+  runs/{run-id}/attempts/{attempt-id}/task.log
+  runs/{run-id}/attempts/{attempt-id}/reports/{report-id}.html
+
+● API 为浏览器导入和 Worker 上传签发短期上传 URL；浏览器与 Worker 不持有 Supabase 管理员密钥。
+● 数据库仅保存 bucket + object_key + sha256 + size + content_type，不保存可变的公开 URL。
+● Worker 运行时将需要的媒体下载到临时缓存目录，完成后清理；报告和日志直接上传至 eval-artifacts。
+● 通过 ArtifactStore 接口隔离 Supabase 实现；未来迁移 S3 时保留 object key 和元数据，仅替换存储适配器并批量复制对象。
+历史数据迁移设计
+迁移 CLI
+迁移命令位于 eval_server/cmd/migrate_legacy_eval：
+migrate-legacy-eval inventory  --source-dsn <old> --media-source <old-dir>
+migrate-legacy-eval plan       --state-file migration-state.sqlite --target-map targets.yaml
+migrate-legacy-eval apply      --state-file migration-state.sqlite --target-dsn <new> --clickhouse-dsn <new> --storage-config <supabase.yaml> --resume
+migrate-legacy-eval verify     --state-file migration-state.sqlite --report migration-report.json
+migrate-legacy-eval rollback   --state-file migration-state.sqlite
+
+migration-state.sqlite 位于迁移执行机，只用于断点续跑和临时维护“旧 ID → 新 ID”的导入关系；不会部署到线上，也不会写入新业务数据库。新数据库只保存新主键和正常外键关系。
+迁移规则
+源数据
+目标数据
+处理规则
+test_items、顶层字段和 extend_config
+PostgreSQL Case 元数据 + ClickHouse 明细
+根据来源数据集类型转换为协议与模板；字段冲突写入异常报告
+完整 url 或完整 path
+HTTP Protocol Case
+通过 targets.yaml 拆分 origin 与相对 path；未匹配 origin 不自动导入
+相对 path
+HTTP Protocol Case
+仅在映射文件指定 Target 时导入，否则记录异常
+method/body/headers
+request
+Header 必须是合法对象；敏感 Header 不导入明文
+expected_text/expected_ai_response
+质量 CaseSpec
+根据数据集类型映射为输入和期望输出
+音频、报告、日志
+case_media、artifacts
+复制到新目录，计算 SHA-256，失败时记录缺失
+旧任务与 config
+PostgreSQL Run 元数据 + ClickHouse 用例结果
+迁移为历史运行，保留时间、指标、状态和报告关联
+同一个旧条目属于相同协议与模板的多个数据集时复用新 Case；属于不同协议或模板时按数据集语义派生新 Case。派生关系只写入迁移报告，不进入新业务模型。
+5. 改动点与风险分析
+模块依赖
+模块
+改动
+依赖
+eval_console
+新建前端、钉钉登录、操作人筛选、协议模板表单、运行与报告页面
+/api/v1、钉钉 OAuth
+eval_server
+新增 v1 API、协议模板、对象模型、审计、导入会话、报告生成和观测查询
+PostgreSQL、ClickHouse、YAML、Supabase Storage、LLM、HyperDX MCP
+Worker
+从 API 进程中拆出，增加租约、心跳、取消和 Artifact 上传
+PostgreSQL、执行器、Supabase Storage
+performance_eval
+接入新 RunSpec、Target、Config、RunResult 和 HTTP/SSE/WS 协议执行
+Locust、快照文件
+现有质量评估器
+读取统一快照并输出统一结果
+Python、媒体文件
+迁移 CLI
+读取旧 schema、上传对象、生成校验报告
+源/目标 PostgreSQL、ClickHouse、Supabase Storage
+Altair
+删除旧评估管理前端和代理入口
+新平台正式切换完成
+风险点分析
+风险
+影响
+风险等级
+旧数据字段冲突或缺失
+用例无法自动迁移
+高
+本地媒体、报告或日志丢失
+历史证据不完整
+高
+URL 无法映射到 Target
+性能样本不能运行
+中
+YAML 密钥泄露或被日志打印
+被测环境安全风险
+高
+Supabase Storage 配额、网络或权限异常
+媒体上传、报告读取失败
+高
+单 Worker 发压端饱和
+性能结果不可信
+中
+ClickHouse 设计不当或批量导入失败
+千万级数据导入慢、抽样不稳定
+高
+HyperDX MCP 查询权限、工具参数或字段不一致
+无法关联目标服务日志和资源指标
+高
+LLM 输出不稳定或生成失败
+动态报告质量不稳定
+中
+送入 LLM 的样本含敏感信息
+数据泄露风险
+高
+钉钉 OAuth 配置错误
+用户无法登录
+中
+正式切换前仍有旧系统写入
+最终迁移遗漏数据
+高
+风险处理
+风险
+处理方式
+字段冲突/缺失
+先执行 inventory 和 plan；异常导出 CSV，处理完后才允许 apply
+文件丢失
+迁移时逐个计算 hash；缺失文件列入对账报告，切换前人工确认
+Target 映射
+使用管理员维护的 targets.yaml；未匹配 URL 禁止自动导入
+YAML 密钥
+限制文件权限；日志脱敏；接口与报告禁止返回密钥
+Supabase Storage
+迁移前核对 Bucket 配额、上传速率、对象大小限制和访问策略；Worker 上传失败可重试并保留本地临时副本
+发压端饱和
+记录 Worker CPU、内存、网络；必要时增加 Worker 或后续接入 k6
+ClickHouse 大数据集
+使用批量写入、版本分区和稳定 sample_key；导入前压测 1000 万级数据与 20%/30% 抽样查询
+HyperDX / WeData 关联
+定义 ObservabilityProvider 接口和 HyperDX MCP Adapter；在预生产校验 MCP 工具、服务标识、指标名、日志字段和查询权限
+LLM 报告失败
+运行结果与基础报告先落库；LLM 报告异步生成且可重试，不影响 Run 状态
+LLM 数据安全
+只输入结构化指标、脱敏错误摘要和限量样本；密钥、Header、Cookie、完整响应体禁止进入 Prompt
+钉钉登录
+预生产验证回调域名、应用权限和账号白名单；保留诊断日志
+切换遗漏
+切换窗口先停止旧页面写入，执行最终迁移和 verify 后再发布新入口
+6. 任务拆解
+以下为一名熟悉 Go、React 和现有评估链路的研发人员的初步估算；不包含钉钉应用审批、部署环境准备和业务方补齐历史异常数据的时间。
+工作项
+人日
+v1 数据模型、PostgreSQL/ClickHouse 数据库迁移、审计字段与 Supabase Storage 接口
+6
+钉钉 OAuth、会话、用户缓存和操作人筛选 API
+3
+Eval Console 工程、基础布局、权限与 API Client
+3
+Protocol Template、动态表单 CaseEditor、用例库和导入向导
+8
+ClickHouse 大数据集导入、统计、全量/比例/分层抽样和流式读取
+6
+数据集列表、详情、编排、版本与操作人筛选
+4
+Target/Config 管理、创建运行向导
+5
+Run 队列、Worker 租约、运行中心、详情、Artifact 查看
+7
+HTTP/SSE/WebSocket Protocol Executor、Locust 与质量评估器接入
+8
+LLM 报告模板、脱敏上下文组装、动态报告生成与降级
+4
+HyperDX MCP / WeData-Log 连接器、目标 CPU 等资源指标与日志关联
+6
+migrate_legacy_eval CLI、媒体/报告复制、迁移报告
+5
+预生产迁移演练、回归测试、正式切换
+3
+合计
+68
+后续能力单独排期：pytest API 功能测试约 5 人日；QA SSE/ASR WebSocket 性能指标约 6 人日；Device Farm 首个 Android 适配约 8 人日。
+7. 执行计划
+阶段
+工作内容
+产出
+第一阶段：基础能力
+v1 Schema、数据库迁移、Supabase Storage、钉钉认证、操作人审计
+可登录的 Eval Console 骨架、v1 基础 API
+第二阶段：协议与大数据管理
+Protocol Template、动态表单、ClickHouse 导入、抽样、数据集详情、操作人筛选
+HTTP/SSE/WebSocket 场景可配置，支持千万级用例与 20%/30% 抽样
+第三阶段：运行、观测与报告闭环
+Target、Config、Run、Worker、协议执行器、HyperDX MCP 关联、LLM 报告和 Artifact
+协议级性能与质量执行，可查看目标资源、关联日志、基础报告和动态报告
+第四阶段：迁移演练
+迁移 CLI、数据盘点、预生产迁移、抽样核验
+迁移报告和异常处理清单
+第五阶段：正式切换
+停止旧页面写入、最终迁移、验证、发布新入口
+Eval Console 正式上线，旧评估入口删除
+第六阶段：能力扩展
+pytest、SSE/WS 性能、Device Farm
+更完整的测试运行能力
+建议执行顺序
+1. 建立 v1 Schema、钉钉认证、审计字段和 Supabase Storage。
+2. 并行开发 Eval Console 骨架与迁移 CLI 的 inventory/plan 能力。
+3. 完成 Protocol Template、动态用例表单、ClickHouse 数据集/抽样、Target/Config、Run/Worker、HyperDX MCP 关联、LLM 报告的核心闭环。
+4. 在预生产执行完整迁移演练，核对数量、关联、媒体和报告。
+5. 切换窗口停止旧页面写入，执行最终迁移与校验。
+6. 发布 Eval Console，删除 Altair 旧评估管理入口。
+7. 稳定后再扩展 pytest、SSE/WS 性能和 Device Farm。
