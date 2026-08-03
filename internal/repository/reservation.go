@@ -384,6 +384,30 @@ func (ReservationRepository) Extend(ctx context.Context, tx pgx.Tx, id string, e
 	return record, nil
 }
 
+func (ReservationRepository) CancelPending(
+	ctx context.Context,
+	tx pgx.Tx,
+	id, failureCode string,
+	canceledAt time.Time,
+) (ReservationRecord, error) {
+	record, err := scanReservation(tx.QueryRow(ctx, `
+		UPDATE device_reservations
+		SET status='failed',failure_code=$2,updated_at=$3::timestamptz
+		WHERE id=$1 AND status='pending' AND device_id IS NULL
+		RETURNING id,client_id,pool_id,device_id,owner_type,owner_id,
+		          requested_capabilities,lease_seconds,status,idempotency_key,
+		          starts_at,expires_at,released_at,failure_code,created_at,updated_at`,
+		id, failureCode, canceledAt,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("cancel pending reservation: %w", err)
+	}
+	return record, nil
+}
+
 func (ReservationRepository) LockSession(ctx context.Context, tx pgx.Tx, reservationID string) (SessionRecord, error) {
 	var session SessionRecord
 	err := tx.QueryRow(ctx, `

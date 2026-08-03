@@ -24,7 +24,7 @@ Docker Provider 为 ADB 和 Appium 分别请求随机 Host 端口，返回：
 }
 ```
 
-每个 Appium 进程只看到本容器的 Android Emulator，因此两台设备不会共享 Appium 进程或默认选择同一台设备。容器外 ADB 使用 Host Endpoint，容器内 Appium 使用本地 `emulator-5554`，两者必须明确区分：DF-019 的 DaFit 薄适配分别注入 `ANDROID_UDID=<adb_endpoint>`、`APPIUM_SERVER=<appium_endpoint>` 和 `APPIUM_UDID=<appium_udid>`，不能自行挑选设备。`APPIUM_UDID` 缺省时仍回退原 `ANDROID_UDID`，保证 DaFit 本地模式不变。
+每个 Appium 进程只看到本容器的 Android Emulator，因此两台设备不会共享 Appium 进程或默认选择同一台设备。容器外 ADB 使用 Host Endpoint，容器内 Appium 使用本地 `emulator-5554`，两者必须明确区分：DF-019 的 DaFit 薄适配分别注入 `ANDROID_ADB_SERIAL=<adb_endpoint>`、`ANDROID_UDID=<appium_udid>` 和 `APPIUM_SERVER=<appium_endpoint>`，不能自行挑选设备。本地模式下 `ANDROID_ADB_SERIAL` 缺省时仍回退 `ANDROID_UDID`，保证原有本地入口不变。
 
 ## 3. 健康规则
 

@@ -308,6 +308,31 @@ func (service *Service) Release(
 		if err != nil {
 			return err
 		}
+		if current.Status == domain.ReservationPending {
+			if current.DeviceID != nil {
+				return fmt.Errorf("%w: reservation claim is in progress", ErrConflict)
+			}
+			now, err := database.ClockNow(ctx, tx)
+			if err != nil {
+				return err
+			}
+			state, err := domain.RestoreReservation(current.ID, current.Status)
+			if err != nil {
+				return err
+			}
+			if err := state.Transition(domain.ReservationFailed, input.Reason, now); err != nil {
+				return err
+			}
+			result, err = service.repo.CancelPending(ctx, tx, current.ID, "RESERVATION_CANCELED", now)
+			if err != nil {
+				return err
+			}
+			auditID, err := service.newID()
+			if err != nil {
+				return err
+			}
+			return service.repo.InsertAudit(ctx, tx, auditID, "service", clientID, "cancel_pending_device_reservation", current.ID, requestID, input.Reason)
+		}
 		if current.Status != domain.ReservationActive {
 			if isClosedStatus(current.Status) {
 				result = current
@@ -658,7 +683,7 @@ func validOwnerType(value string) bool {
 
 func isClosedStatus(status domain.ReservationStatus) bool {
 	switch status {
-	case domain.ReservationReleased, domain.ReservationExpired, domain.ReservationForceReleased:
+	case domain.ReservationReleased, domain.ReservationExpired, domain.ReservationForceReleased, domain.ReservationFailed:
 		return true
 	default:
 		return false

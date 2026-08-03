@@ -63,6 +63,7 @@ try {
             New-Item -ItemType Directory -Path "bin" -Force | Out-Null
             Invoke-Go -Arguments @("build", "-o", "bin/device-farm-server.exe", "./cmd/device-farm-server")
             Invoke-Go -Arguments @("build", "-o", "bin/device-host-agent.exe", "./cmd/device-host-agent")
+            Invoke-Go -Arguments @("build", "-o", "bin/dafit-farm-harness.exe", "./cmd/dafit-farm-harness")
         }
         "test" {
             Invoke-Go -Arguments @("test", "./...")
@@ -77,6 +78,7 @@ try {
             New-Item -ItemType Directory -Path "bin" -Force | Out-Null
             Invoke-Go -Arguments @("build", "-o", "bin/device-farm-server.exe", "./cmd/device-farm-server")
             Invoke-Go -Arguments @("build", "-o", "bin/device-host-agent.exe", "./cmd/device-host-agent")
+            Invoke-Go -Arguments @("build", "-o", "bin/dafit-farm-harness.exe", "./cmd/dafit-farm-harness")
         }
     }
 }

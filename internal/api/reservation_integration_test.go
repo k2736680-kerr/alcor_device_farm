@@ -108,6 +108,35 @@ func TestReservationAPIRejectsDisabledPoolAndExcessLease(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations", body, serviceToken, "reservation-api-key-03"), http.StatusBadRequest)
 }
 
+func TestReservationAPIReleaseCancelsUnassignedPendingReservation(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	seedReservationPool(t, environment, "active")
+	createdResponse := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"pool_id": "pool_000000000000001", "owner_type": "test_run",
+		"owner_id": "attempt_000000000099", "lease_seconds": 600,
+	}, serviceToken, "pending-cancel-create")
+	assertStatus(t, createdResponse, http.StatusCreated)
+	var created reservation.View
+	decodeData(t, createdResponse, &created)
+
+	releasedResponse := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/releases",
+		map[string]any{"reason": "Harness canceled while waiting for capacity"}, serviceToken, "pending-cancel-release")
+	assertStatus(t, releasedResponse, http.StatusOK)
+	var canceled reservation.View
+	decodeData(t, releasedResponse, &canceled)
+	if canceled.Status != "failed" || canceled.DeviceID != nil || canceled.FailureCode == nil || *canceled.FailureCode != "RESERVATION_CANCELED" {
+		t.Fatalf("canceled reservation=%#v", canceled)
+	}
+	var auditCount int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_id=$1 AND action='cancel_pending_device_reservation'`, created.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("cancel audit count=%d", auditCount)
+	}
+}
+
 func TestReservationAPIExtendsAndReleasesActiveReservation(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	seedReservationDevice(t, environment)
