@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,13 +13,15 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid host command argument")
-	ErrNotFound        = errors.New("host command resource not found")
-	ErrConflict        = errors.New("host command conflict")
-	ErrNoCommand       = errors.New("no host command available")
+	ErrInvalidArgument        = errors.New("invalid host command argument")
+	ErrNotFound               = errors.New("host command resource not found")
+	ErrConflict               = errors.New("host command conflict")
+	ErrDeviceIdentityConflict = errors.New("discovered device identity conflict")
+	ErrNoCommand              = errors.New("no host command available")
 )
 
 type DiscoveredDevice struct {
@@ -112,8 +115,16 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		return HeartbeatResult{}, ErrInvalidArgument
 	}
 	seenRefs, seenSerials := map[string]bool{}, map[string]bool{}
-	for _, device := range input.Devices {
-		if device.ProviderRef == "" || device.Serial == "" || seenRefs[device.ProviderRef] || seenSerials[device.Serial] {
+	for index := range input.Devices {
+		device := &input.Devices[index]
+		device.ProviderRef = strings.TrimSpace(device.ProviderRef)
+		device.Serial = strings.TrimSpace(device.Serial)
+		if device.ProviderRef == "" || device.Serial == "" || seenRefs[device.ProviderRef] || seenSerials[device.Serial] ||
+			!validDiscoveredLifecycle(device.LifecycleStatus) || !validDiscoveredHealth(device.HealthStatus) ||
+			(device.LifecycleStatus == string(domain.DeviceReady) && device.HealthStatus != string(domain.HealthHealthy)) {
+			return HeartbeatResult{}, ErrInvalidArgument
+		}
+		if _, _, err := discoveredConnection(device.Connection); err != nil {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
 		seenRefs[device.ProviderRef], seenSerials[device.Serial] = true, true
@@ -149,13 +160,145 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 			hostID, target, capacity, usedCapacity, now); err != nil {
 			return err
 		}
+		for _, discovered := range input.Devices {
+			if err := updateDiscoveredDevice(ctx, tx, hostID, discovered, now); err != nil {
+				return err
+			}
+		}
 		result = HeartbeatResult{HostID: hostID, Status: string(target), ReceivedAt: now, Devices: len(input.Devices)}
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return HeartbeatResult{}, ErrNotFound
 	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return HeartbeatResult{}, fmt.Errorf("%w: %s", ErrDeviceIdentityConflict, pgErr.ConstraintName)
+	}
 	return result, err
+}
+
+type discoveredDeviceState struct {
+	id           string
+	lifecycle    domain.DeviceLifecycleStatus
+	health       domain.HealthStatus
+	healthReason *string
+}
+
+func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, discovered DiscoveredDevice, now time.Time) error {
+	var current discoveredDeviceState
+	err := tx.QueryRow(ctx, `SELECT id,lifecycle_status,health_status,health_reason FROM devices
+        WHERE host_id=$1 AND provider_ref=$2 FOR UPDATE`, hostID, discovered.ProviderRef).
+		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	adbEndpoint, appiumEndpoint, err := discoveredConnection(discovered.Connection)
+	if err != nil {
+		return err
+	}
+	aggregate, err := domain.RestoreDevice(current.id, current.lifecycle, current.health)
+	if err != nil {
+		return err
+	}
+	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted {
+		incomingHealth := domain.HealthStatus(discovered.HealthStatus)
+		if aggregate.Health() != incomingHealth {
+			if err := aggregate.UpdateHealth(incomingHealth, "agent heartbeat health observation", now); err != nil {
+				return err
+			}
+		}
+		if current.lifecycle != domain.DeviceReserved && current.lifecycle != domain.DeviceBusy && current.lifecycle != domain.DeviceRecycling {
+			if err := applyDiscoveredLifecycle(aggregate, domain.DeviceLifecycleStatus(discovered.LifecycleStatus), now); err != nil {
+				return err
+			}
+		}
+	}
+	healthReason := current.healthReason
+	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted {
+		healthReason = nil
+		if aggregate.Health() != domain.HealthHealthy {
+			value := "agent heartbeat reported " + string(aggregate.Health())
+			healthReason = &value
+		}
+	}
+	_, err = tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
+        lifecycle_status=$5::varchar,health_status=$6::varchar,health_reason=$7,last_seen_at=$8,updated_at=$8
+        WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint,
+		aggregate.Lifecycle(), aggregate.Health(), healthReason, now)
+	return err
+}
+
+func applyDiscoveredLifecycle(device *domain.Device, incoming domain.DeviceLifecycleStatus, now time.Time) error {
+	if device.Lifecycle() == incoming {
+		return nil
+	}
+	switch incoming {
+	case domain.DeviceBooting:
+		if device.Lifecycle() == domain.DeviceProvisioning || device.Lifecycle() == domain.DeviceStopped {
+			return device.Transition(domain.DeviceBooting, "agent discovered booting device", now)
+		}
+	case domain.DeviceReady:
+		if device.Lifecycle() == domain.DeviceProvisioning || device.Lifecycle() == domain.DeviceStopped {
+			if err := device.Transition(domain.DeviceBooting, "agent discovered running device", now); err != nil {
+				return err
+			}
+		}
+		if device.Lifecycle() == domain.DeviceBooting {
+			return device.Transition(domain.DeviceReady, "agent health checks passed", now)
+		}
+	case domain.DeviceStopped:
+		if device.Lifecycle() == domain.DeviceBooting || device.Lifecycle() == domain.DeviceReady {
+			return device.Transition(domain.DeviceStopped, "agent discovered stopped device", now)
+		}
+	}
+	return nil
+}
+
+func discoveredConnection(connection map[string]any) (*string, *string, error) {
+	adb, err := optionalConnectionValue(connection, "adb_endpoint")
+	if err != nil {
+		return nil, nil, err
+	}
+	appium, err := optionalConnectionValue(connection, "appium_endpoint")
+	return adb, appium, err
+}
+
+func optionalConnectionValue(connection map[string]any, key string) (*string, error) {
+	value, exists := connection[key]
+	if !exists || value == nil {
+		return nil, nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return nil, ErrInvalidArgument
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	return &text, nil
+}
+
+func validDiscoveredLifecycle(value string) bool {
+	switch domain.DeviceLifecycleStatus(value) {
+	case domain.DeviceBooting, domain.DeviceReady, domain.DeviceStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+func validDiscoveredHealth(value string) bool {
+	switch domain.HealthStatus(value) {
+	case domain.HealthUnknown, domain.HealthHealthy, domain.HealthDegraded, domain.HealthUnhealthy:
+		return true
+	default:
+		return false
+	}
 }
 
 func (service *Service) Claim(ctx context.Context, hostID string, input ClaimInput) ([]Command, error) {

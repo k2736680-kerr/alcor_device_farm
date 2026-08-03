@@ -22,6 +22,9 @@ Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KV
 - Host Agent 支持 `DEVICE_FARM_AGENT_PROVIDER=mock|docker`，心跳明确上报实际 Provider 类型；
 - Agent create 命令透传 capabilities，并保留 Provider 的 retryable 分类；
 - Agent 的 create/start/stop/restart/rebuild/inspect completion 返回稳定的 Provider Snapshot、连接和健康字段，为后续自动补齐 Controller 更新同一 Device 提供依据；
+- Host Agent 心跳现在会把已登记 Device 的 serial、ADB/Appium Endpoint、生命周期、健康状态和 `last_seen_at` 原子回写；只匹配同一 `host_id + provider_ref`，不会根据 Agent 自报创建 Device，也不会串绑其他 Host；
+- 心跳状态更新复用 Device 状态机，进入 ready 前先更新 healthy；reserved/busy/recycling、quarantined/deleted 不会被 Agent 自动覆盖或恢复；
+- serial、ADB Endpoint 或 Appium Endpoint 唯一冲突会回滚 Host 和 Device 的整笔心跳，并返回稳定的 `DEVICE_IDENTITY_CONFLICT`；
 - 运行中但尚未通过 ADB/boot/Appium 的设备在 heartbeat 中上报为 `booting/unknown`，不会因为容器刚 running 就被错误标记为 ready；
 - Agent 启动时先完成首次 heartbeat 再领取命令，避免短进程或退出竞态导致 Host 尚未上线就执行设备操作；首次心跳失败会记录并由周期心跳重试，不创建第二套状态真相；
 - 新增 [Docker Emulator Provider 说明](../../docker_emulator_provider.md)；
@@ -32,7 +35,8 @@ Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KV
 ## 本地自动化验证
 
 ```powershell
-go test -count=1 -v ./internal/providers/docker ./internal/agent ./cmd/device-host-agent
+go test -count=1 -v ./internal/providers/docker ./internal/agent ./internal/hostcommand ./cmd/device-host-agent
+./scripts/verify-migrations.ps1 -RunRepositoryTests
 ```
 
 已通过：
@@ -46,8 +50,13 @@ PASS TestDockerResourceNamesAreStableAndBounded
 PASS TestAgentCreateCompletionReturnsProviderSnapshot
 PASS TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady
 PASS TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability
+PASS TestHeartbeatBringsOfflineHostOnline
+PASS TestHeartbeatDoesNotCreateOrCrossBindDiscoveredDevice
+PASS TestHeartbeatPreservesReservationAndTerminalLifecycleTruth
+PASS TestHeartbeatIdentityConflictsRollbackEntireTransaction
 PASS internal/providers/docker
 PASS internal/agent
+PASS internal/hostcommand
 cmd/device-host-agent [no test files]
 ```
 

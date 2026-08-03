@@ -73,6 +73,8 @@ func (handler *hostCommandHandler) write(writer http.ResponseWriter, request *ht
 		httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: err.Error()})
 	case errors.Is(err, hostcommand.ErrConflict):
 		httpx.WriteError(writer, request, http.StatusConflict, httpx.APIError{Code: "STALE_COMMAND_LEASE", Message: err.Error()})
+	case errors.Is(err, hostcommand.ErrDeviceIdentityConflict):
+		httpx.WriteError(writer, request, http.StatusConflict, httpx.APIError{Code: "DEVICE_IDENTITY_CONFLICT", Message: err.Error()})
 	default:
 		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error"})
 	}

@@ -57,6 +57,14 @@ alcor-df-<可读短名>-<provider_ref 哈希>-data
 - `discover`：只返回当前 Host ID 且带受管标签的容器；单台设备仍在启动不会阻断其他设备心跳；
 - Host Agent 命令 completion 继续使用 DF-012 lease token 和 attempt，Provider 本身不创建第二套任务队列。
 
+Agent 心跳发现结果按以下规则回写 Server：
+
+- 只更新已经登记且同时匹配 `host_id + provider_ref` 的 Device；未知设备和其他 Host 的同名引用不会自动注册或串绑；
+- `serial`、ADB/Appium Endpoint 和 `last_seen_at` 使用 Server 数据库事务更新；唯一标识冲突时整笔心跳回滚并返回 `DEVICE_IDENTITY_CONFLICT`；
+- `provisioning → booting → ready`、`stopped → booting` 等变化必须通过 Device 状态机，进入 `ready` 前先确认健康为 `healthy`；
+- `reserved/busy/recycling` 的预约生命周期不被 Agent 覆盖，`quarantined/deleted` 也不会因心跳自动恢复；
+- 自动补齐所需的新 Device 必须由 DF-016 Controller 先登记，再创建 Host Command，不能把 Agent 自报设备当作创建入口。
+
 ## 6. 配置
 
 ```text

@@ -14,10 +14,12 @@ import (
 func TestHeartbeatBringsOfflineHostOnline(t *testing.T) {
 	db := openTestDatabase(t)
 	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "pending-container-1", nil, nil, "provisioning", "unknown")
 	service := hostcommand.New(db)
 	result, err := service.Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
 		AgentTime: time.Now().UTC(), Capacity: map[string]any{"cpu": 8, "device_slots": 2},
-		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "emulator-5554", LifecycleStatus: "ready", HealthStatus: "healthy"}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "emulator-5554", LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection: map[string]any{"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -25,13 +27,136 @@ func TestHeartbeatBringsOfflineHostOnline(t *testing.T) {
 	if result.Status != "online" || result.Devices != 1 || result.ReceivedAt.IsZero() {
 		t.Fatalf("heartbeat result=%+v", result)
 	}
-	var status string
+	var status, lifecycle, health, serial string
+	var adbEndpoint, appiumEndpoint *string
 	var heartbeat *time.Time
 	if err := db.Pool().QueryRow(context.Background(), "SELECT status,last_heartbeat_at FROM device_hosts WHERE id=$1", result.HostID).Scan(&status, &heartbeat); err != nil {
 		t.Fatal(err)
 	}
 	if status != "online" || heartbeat == nil {
 		t.Fatalf("host status=%s heartbeat=%v", status, heartbeat)
+	}
+	var lastSeen *time.Time
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,last_seen_at
+        FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial, &adbEndpoint, &appiumEndpoint, &lastSeen); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "ready" || health != "healthy" || serial != "emulator-5554" || adbEndpoint == nil || *adbEndpoint != "10.0.0.8:31000" ||
+		appiumEndpoint == nil || *appiumEndpoint != "http://10.0.0.8:4723" || lastSeen == nil {
+		t.Fatalf("device lifecycle=%s health=%s serial=%s adb=%v appium=%v last_seen=%v", lifecycle, health, serial, adbEndpoint, appiumEndpoint, lastSeen)
+	}
+}
+
+func TestHeartbeatDoesNotCreateOrCrossBindDiscoveredDevice(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_hosts
+        (id,name,host_type,status) VALUES ('host_000000000000002','other-command-host','docker_emulator','offline')`); err != nil {
+		t.Fatal(err)
+	}
+	seedDevice(t, db, "device_0000000000002", "host_000000000000002", "container-other", "other-serial", nil, nil, "provisioning", "unknown")
+	service := hostcommand.New(db)
+	_, err := service.Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Devices: []hostcommand.DiscoveredDevice{
+			{ProviderRef: "container-unregistered", Serial: "unregistered-serial", LifecycleStatus: "booting", HealthStatus: "unknown"},
+			{ProviderRef: "container-other", Serial: "forged-cross-host-serial", LifecycleStatus: "ready", HealthStatus: "healthy"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.Pool().QueryRow(context.Background(), "SELECT count(*) FROM devices").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	var serial string
+	if err := db.Pool().QueryRow(context.Background(), "SELECT serial FROM devices WHERE id='device_0000000000002'").Scan(&serial); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || serial != "other-serial" {
+		t.Fatalf("device count=%d cross-host serial=%s", count, serial)
+	}
+}
+
+func TestHeartbeatPreservesReservationAndTerminalLifecycleTruth(t *testing.T) {
+	for _, lifecycle := range []string{"reserved", "busy", "recycling", "quarantined", "deleted"} {
+		t.Run(lifecycle, func(t *testing.T) {
+			db := openTestDatabase(t)
+			seedHost(t, db)
+			seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "old-serial", nil, nil, lifecycle, "unknown")
+			if lifecycle == "quarantined" || lifecycle == "deleted" {
+				if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET health_reason='manual state must be preserved'
+                    WHERE id='device_0000000000001'`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			incomingLifecycle, incomingHealth := "stopped", "unknown"
+			if lifecycle == "quarantined" || lifecycle == "deleted" {
+				incomingLifecycle, incomingHealth = "ready", "healthy"
+			}
+			_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+				AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+				Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "new-serial", LifecycleStatus: incomingLifecycle,
+					HealthStatus: incomingHealth, Connection: map[string]any{"adb_endpoint": "10.0.0.8:32000"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actualLifecycle, actualHealth, serial string
+			var adbEndpoint, healthReason *string
+			var lastSeen *time.Time
+			if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,adb_endpoint,health_reason,last_seen_at
+                    FROM devices WHERE id='device_0000000000001'`).Scan(&actualLifecycle, &actualHealth, &serial, &adbEndpoint, &healthReason, &lastSeen); err != nil {
+				t.Fatal(err)
+			}
+			if actualLifecycle != lifecycle || actualHealth != "unknown" || serial != "new-serial" || adbEndpoint == nil || lastSeen == nil {
+				t.Fatalf("lifecycle=%s health=%s serial=%s adb=%v last_seen=%v", actualLifecycle, actualHealth, serial, adbEndpoint, lastSeen)
+			}
+			if (lifecycle == "quarantined" || lifecycle == "deleted") && (healthReason == nil || *healthReason != "manual state must be preserved") {
+				t.Fatalf("health reason=%v", healthReason)
+			}
+		})
+	}
+}
+
+func TestHeartbeatIdentityConflictsRollbackEntireTransaction(t *testing.T) {
+	for _, field := range []string{"serial", "adb_endpoint", "appium_endpoint"} {
+		t.Run(field, func(t *testing.T) {
+			db := openTestDatabase(t)
+			seedHost(t, db)
+			firstADB, firstAppium := "10.0.0.8:31000", "http://10.0.0.8:4723"
+			secondADB, secondAppium := "10.0.0.8:31001", "http://10.0.0.8:4724"
+			seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "serial-1", &firstADB, &firstAppium, "booting", "unknown")
+			seedDevice(t, db, "device_0000000000002", "host_000000000000001", "container-2", "serial-2", &secondADB, &secondAppium, "ready", "healthy")
+			discovered := hostcommand.DiscoveredDevice{ProviderRef: "container-1", Serial: "new-serial", LifecycleStatus: "ready", HealthStatus: "healthy",
+				Connection: map[string]any{"adb_endpoint": "10.0.0.8:32000", "appium_endpoint": "http://10.0.0.8:4823"}}
+			switch field {
+			case "serial":
+				discovered.Serial = "serial-2"
+			case "adb_endpoint":
+				discovered.Connection["adb_endpoint"] = secondADB
+			case "appium_endpoint":
+				discovered.Connection["appium_endpoint"] = secondAppium
+			}
+			_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+				AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2}, Devices: []hostcommand.DiscoveredDevice{discovered},
+			})
+			if !errors.Is(err, hostcommand.ErrDeviceIdentityConflict) {
+				t.Fatalf("heartbeat error=%v", err)
+			}
+			var hostStatus, lifecycle, health, serial string
+			if err := db.Pool().QueryRow(context.Background(), "SELECT status FROM device_hosts WHERE id='host_000000000000001'").Scan(&hostStatus); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial FROM devices
+                    WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial); err != nil {
+				t.Fatal(err)
+			}
+			if hostStatus != "offline" || lifecycle != "booting" || health != "unknown" || serial != "serial-1" {
+				t.Fatalf("host=%s lifecycle=%s health=%s serial=%s", hostStatus, lifecycle, health, serial)
+			}
+		})
 	}
 }
 
@@ -159,6 +284,21 @@ func seedHost(t *testing.T, db *database.DB) {
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_hosts
         (id,name,host_type,status) VALUES ('host_000000000000001','command-host','docker_emulator','offline')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images
+        (id,name,docker_digest,api_level,abi,resolution,status)
+        VALUES ('image_00000000000001','command-image','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x1920','ready')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedDevice(t *testing.T, db *database.DB, id, hostID, providerRef, serial string, adbEndpoint, appiumEndpoint *string, lifecycle, health string) {
+	t.Helper()
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+        (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,adb_endpoint,appium_endpoint,lifecycle_status,health_status)
+        VALUES($1,$2,'image_00000000000001','emulator','docker_emulator',$3,'rebuild',$4,$5,$6,$7,$8)`,
+		id, hostID, providerRef, serial, adbEndpoint, appiumEndpoint, lifecycle, health); err != nil {
 		t.Fatal(err)
 	}
 }
