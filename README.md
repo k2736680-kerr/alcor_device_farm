@@ -74,3 +74,5 @@ Reconciler 会核对 Host 心跳、Provider 健康、ADB/启动/Appium 和可插
 Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命令由 PostgreSQL lease token + attempt 防止重复或旧 Agent 回写；租约过期后按最大尝试次数安全重领或转为 timed_out。
 
 `device-host-agent` 已是可运行进程：使用已注册 Host ID 和独立 Agent Token，周期发现本机 Provider 设备并心跳，长轮询领取命令，按并发上限执行 Mock Provider 操作；收到退出信号后先停止领取，再等待在途命令完成，超时未完成的命令由 Server lease recovery 接管。
+
+Host Agent 可通过 `DEVICE_FARM_AGENT_PROVIDER=mock|docker` 选择 Provider。Docker 模式只允许在具备可读写 `/dev/kvm` 的 Linux Host 启动，并使用固定版本镜像、独立网络/数据卷、Docker 随机 ADB 端口和 CPU/内存/PID 限制；配置与 Linux 双设备验收入口见 [Docker Emulator Provider](docs/docker_emulator_provider.md)。

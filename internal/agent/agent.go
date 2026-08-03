@@ -20,6 +20,7 @@ type Client interface {
 
 type Config struct {
 	HostID            string
+	ProviderType      string
 	HeartbeatInterval time.Duration
 	LeaseSeconds      int
 	WaitSeconds       int
@@ -44,6 +45,9 @@ func New(config Config, client Client, provider providers.Provider, logger *slog
 	}
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if config.ProviderType == "" {
+		config.ProviderType = "mock"
 	}
 	return &Agent{config: config, client: client, provider: provider, logger: logger}, nil
 }
@@ -135,7 +139,7 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	}
 	return agent.client.Heartbeat(ctx, agent.config.HostID, hostcommand.HeartbeatInput{
 		AgentTime: time.Now().UTC(), Capacity: agent.config.Capacity,
-		Environment: map[string]any{"provider": "mock"}, Devices: devices,
+		Environment: map[string]any{"provider": agent.config.ProviderType}, Devices: devices,
 	})
 }
 
@@ -149,7 +153,7 @@ func (agent *Agent) execute(command hostcommand.Command) {
 		_, err = agent.provider.Create(ctx, providers.CreateRequest{
 			DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
 			ImageID: stringValue(command.Payload, "image_id"), ProviderRef: providerRef,
-			Serial: stringValue(command.Payload, "serial"),
+			Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
 		})
 	case "start":
 		_, err = agent.provider.Start(ctx, providerRef)
@@ -172,7 +176,9 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	}
 	if err != nil {
 		completion.Status = "failed"
-		completion.Error = &hostcommand.CompletionError{Code: providerErrorCode(err), Message: err.Error(), Retryable: true}
+		completion.Error = &hostcommand.CompletionError{
+			Code: providerErrorCode(err), Message: err.Error(), Retryable: providerErrorRetryable(err),
+		}
 	}
 	if completeErr := agent.client.Complete(context.Background(), command.ID, completion); completeErr != nil {
 		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
@@ -194,11 +200,22 @@ func stringValue(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
 }
+func mapValue(values map[string]any, key string) map[string]any {
+	value, _ := values[key].(map[string]any)
+	return value
+}
 func providerErrorCode(err error) string {
 	if code := providers.ErrorCode(err); code != "" {
 		return code
 	}
 	return "AGENT_COMMAND_FAILED"
+}
+func providerErrorRetryable(err error) bool {
+	var providerError *providers.Error
+	if errors.As(err, &providerError) {
+		return providerError.Retryable
+	}
+	return true
 }
 func providerLifecycle(snapshot providers.Snapshot) string {
 	if snapshot.State == providers.StateRunning {

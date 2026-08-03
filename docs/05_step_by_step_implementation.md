@@ -34,7 +34,7 @@
 | DF-011 | Reconciler、健康事件和隔离 | completed | DF-010 |
 | DF-012 | Agent 内部协议和 Host Command | completed | DF-003、DF-006 |
 | DF-013 | Host Agent 核心程序 | completed | DF-012、DF-007 |
-| DF-014 | Docker Emulator Provider | pending | DF-013 |
+| DF-014 | Docker Emulator Provider | blocked | DF-013 |
 | DF-015 | Appium Endpoint 和健康 Adapter | pending | DF-014 |
 | DF-016 | 镜像验证和 warm pool | pending | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | pending | DF-014 |
