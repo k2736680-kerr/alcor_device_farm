@@ -84,3 +84,5 @@ STF 与 RethinkDB 的最小内网部署已固定为 DeviceFarmer/STF `3.7.9` 和
 Server 启用 `DEVICE_FARM_STF_ENABLED=true` 后，Scheduler 会在 Reservation 进入 active 前调用 STF claim；claim 失败会补偿数据库和设备状态。主动释放与过期回收必须先完成 STF release，失败时预约保持 active 并记录审计。`POST /api/v1/device-reservations/{id}/remote-sessions` 只向匹配的预约 owner 返回短时 STF remoteConnect ADB 地址，过期后由 Reaper 调用 remoteDisconnect；STF API Token 永不进入响应。配置、流程和限制见 [STF Adapter 与预约编排](docs/stf_adapter.md)。
 
 Server 已提供 `/healthz`、数据库感知的 `/readyz` 和 Prometheus `/metrics`。Linux systemd、Docker Compose、备份、升级、告警、运维和回滚入口见 [Server 部署](deploy/server/README.md)、[可观测性](docs/observability.md)、[运维手册](docs/operations_runbook.md) 和 [回滚方案](docs/rollback.md)。
+
+新版 Alcor 接口尚未完成时，可直接使用 [Adapter 契约包](docs/alcor_adapter_contract.md) 独立联调。包内包含冻结的 Device Farm OpenAPI、RunAttempt 示例客户端、可运行 Mock Server、错误映射和契约测试；Mock 不需要 PostgreSQL、Docker 或真实设备。真实 Alcor 接口到位后只需在 Worker 中实现同一调用边界，不改变设备农场内部架构。

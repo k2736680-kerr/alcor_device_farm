@@ -2,6 +2,9 @@ openapi: 3.0.3
 info:
   title: Alcor Device Farm API
   version: 1.0.0
+  x-contract-status: frozen
+  x-contract-frozen-at: 2026-08-03
+  x-platform-semantics: Case/Run/RunAttempt
   description: >-
     Android 设备农场独立控制面契约。北向接口只接受平台服务身份，
     internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
@@ -199,7 +202,18 @@ paths:
     get:
       tags: [Devices]
       operationId: getDevice
-      responses: *standardResponses
+      parameters:
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
+      responses:
+        "200": {$ref: "#/components/responses/DeviceSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/devices/{id}/restarts:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -247,31 +261,78 @@ paths:
     post:
       tags: [Reservations]
       operationId: createDeviceReservation
-      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
       requestBody: {$ref: "#/components/requestBodies/ReservationCreate"}
-      responses: *createdResponses
+      responses:
+        "201": {$ref: "#/components/responses/ReservationCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/device-reservations/{id}:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     get:
       tags: [Reservations]
       operationId: getDeviceReservation
-      responses: *standardResponses
+      parameters:
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
+      responses:
+        "200": {$ref: "#/components/responses/ReservationSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/device-reservations/{id}/extensions:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
       tags: [Reservations]
       operationId: extendDeviceReservation
-      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
       requestBody: {$ref: "#/components/requestBodies/LeaseExtension"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/ReservationSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/device-reservations/{id}/releases:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
       tags: [Reservations]
       operationId: releaseDeviceReservation
-      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
       requestBody: {$ref: "#/components/requestBodies/ReservationRelease"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/ReservationSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/device-reservations/{id}/remote-sessions:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -340,6 +401,24 @@ components:
       in: header
       required: false
       description: Alcor Adapter 注入的平台操作者标识；缺省时记录认证服务身份。不得放入 Token、密码或 Cookie。
+      schema: {type: string, minLength: 1, maxLength: 128}
+    EvalRunID:
+      name: X-Eval-Run-Id
+      in: header
+      required: false
+      description: 新版 Alcor Run UUID/ULID；RunAttempt Adapter 调用时必传。
+      schema: {$ref: "#/components/schemas/Identifier"}
+    EvalAttemptID:
+      name: X-Eval-Attempt-Id
+      in: header
+      required: false
+      description: 新版 Alcor RunAttempt UUID/ULID；owner_type=run_attempt 时必须与 owner_id 一致。
+      schema: {$ref: "#/components/schemas/Identifier"}
+    Traceparent:
+      name: traceparent
+      in: header
+      required: false
+      description: W3C Trace Context，设备农场原样透传，不作为业务主键。
       schema: {type: string, minLength: 1, maxLength: 128}
     Page:
       name: page
@@ -426,6 +505,21 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/HealthEvent"}
   responses:
+    ReservationCreated:
+      description: 预约已创建，初始通常为 pending
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ReservationEnvelope"}
+    ReservationSuccess:
+      description: 预约操作成功
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ReservationEnvelope"}
+    DeviceSuccess:
+      description: 已分配设备及连接信息
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/DeviceEnvelope"}
     Success:
       description: 请求成功
       content:
@@ -493,7 +587,8 @@ components:
       properties:
         code:
           type: string
-          enum: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_CAPACITY_UNAVAILABLE, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
+          pattern: "^[A-Z][A-Z0-9_]{2,63}$"
+          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
         message: {type: string}
         details: {type: object, additionalProperties: true}
         retryable: {type: boolean}
@@ -553,6 +648,57 @@ components:
     OwnerType:
       type: string
       enum: [run_attempt, manual, test_run]
+    ReservationStatus:
+      type: string
+      enum: [pending, active, released, force_released, expired, failed]
+    Reservation:
+      type: object
+      additionalProperties: false
+      required: [id, pool_id, owner_type, owner_id, requested_capabilities, lease_seconds, status, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        owner_type: {$ref: "#/components/schemas/OwnerType"}
+        owner_id: {$ref: "#/components/schemas/Identifier"}
+        requested_capabilities: {type: object, additionalProperties: true}
+        lease_seconds: {type: integer, minimum: 60}
+        status: {$ref: "#/components/schemas/ReservationStatus"}
+        starts_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        released_at: {type: string, format: date-time}
+        failure_code: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Device:
+      type: object
+      additionalProperties: true
+      required: [id, serial, capabilities]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        serial: {type: string, minLength: 1}
+        adb_endpoint: {type: string}
+        appium_endpoint: {type: string, format: uri}
+        capabilities:
+          type: object
+          additionalProperties: true
+          description: appiumUdid 存放 Appium 所在网络空间使用的 UDID；缺省时 Adapter 回退 serial。
+    ReservationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/Reservation"}
+        error: {nullable: true}
+    DeviceEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/Device"}
+        error: {nullable: true}
     ReservationCreate:
       type: object
       additionalProperties: false

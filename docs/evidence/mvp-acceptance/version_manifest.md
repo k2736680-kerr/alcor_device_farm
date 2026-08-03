@@ -5,8 +5,9 @@
 - 分支：`master`；
 - DF-022：`f1acdf5 加固设备权限审计和敏感数据`；
 - DF-023：`ef28201 补齐设备指标部署和回滚手册`；
-- DF-024：以本步骤提交为准；
-- 构建产物：`device-farm-server`、`device-host-agent`、`dafit-farm-harness`；
+- DF-024：`392c93a 整理设备农场全量验收证据`；
+- DF-025：以本步骤提交为准，冻结契约 `1.0.0`；
+- 构建产物：`device-farm-server`、`device-host-agent`、`dafit-farm-harness`、`device-farm-adapter-mock`；
 - 接口契约：`openapi/device-farm-v1.yaml`。
 
 ## DaFit

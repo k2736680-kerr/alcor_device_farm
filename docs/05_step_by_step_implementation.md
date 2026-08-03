@@ -45,7 +45,7 @@
 | DF-022 | 权限、审计和敏感数据加固 | blocked | DF-018、DF-021 |
 | DF-023 | 指标、部署、运维和回滚手册 | blocked | DF-022 |
 | DF-024 | MVP 全量验收 | blocked | DF-023 |
-| DF-025 | 新版 Alcor Adapter 契约包 | pending | DF-024 |
+| DF-025 | 新版 Alcor Adapter 契约包 | completed | DF-024 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-025、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础

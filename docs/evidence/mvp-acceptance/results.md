@@ -9,8 +9,8 @@ E0 控制面、并发、租约、安全、指标和 migration 门禁已通过；
 - `PASS-E0`：Windows + Mock + 真实临时 PostgreSQL 自动化通过；
 - `PASS-STATIC`：契约、配置或部署安全静态门禁通过；
 - `PASS-DAFIT`：DaFit 当前源码入口无设备检查通过；
+- `PASS-MOCK`：不依赖真实设备的 Adapter 客户端、Mock 和错误契约通过；
 - `BLOCKED-E1/E2`：必须在真实 Linux KVM 或完整联调环境验证；
-- `WAIT-DF025`：由下一步 Adapter 契约包完成。
 
 ## Gate
 
@@ -22,7 +22,7 @@ E0 控制面、并发、租约、安全、指标和 migration 门禁已通过；
 | G3 Docker 设备 | BLOCKED-E1 | DF-014～DF-016 evidence |
 | G4 STF/Appium | BLOCKED-E2 | DF-017～DF-018 evidence |
 | G5 DaFit 闭环 | BLOCKED-E2 | DF-019～DF-021 evidence |
-| G6 可交付 | BLOCKED | DF-022/023 已交付；DF-024 真实项阻塞；DF-025 待执行 |
+| G6 可交付 | BLOCKED | DF-022/023 已交付；DF-025 契约包通过；DF-024 真实项仍阻塞 |
 
 ## 用例结果
 
@@ -84,11 +84,11 @@ E0 控制面、并发、租约、安全、指标和 migration 门禁已通过；
 | AT-SEC-003 | PASS-E0 | current/previous 轮换和旧 Token 401 |
 | AT-SEC-004 | PASS-STATIC | Server/Compose/systemd 无 Docker Socket；真实网络待复核 |
 | AT-REL-005 | BLOCKED-E2 | 需 8 小时或至少 50 次真实循环 |
-| AT-ALC-001 | WAIT-DF025 | Adapter Mock 契约包 |
-| AT-ALC-002 | WAIT-DF025 | capacity retryable mapping |
-| AT-ALC-003 | WAIT-DF025 | infra failure mapping |
-| AT-ALC-004 | WAIT-DF025 | cancel/timeout release flow |
-| AT-ALC-005 | WAIT-DF025 | generated/example client against Mock |
+| AT-ALC-001 | PASS-MOCK | RunAttempt UUID/ULID 创建 pending 预约 |
+| AT-ALC-002 | PASS-MOCK | `DEVICE_CAPACITY_UNAVAILABLE` 映射 `retry_capacity` |
+| AT-ALC-003 | PASS-MOCK | 不可重试 `KVM_UNAVAILABLE` 映射 `infra_failed` |
+| AT-ALC-004 | PASS-MOCK | active release 幂等重放；等待超时映射容量重试 |
+| AT-ALC-005 | PASS-MOCK | 冻结 OpenAPI 的类型化示例客户端通过完整 Mock 生命周期 |
 
 ## 非功能结果
 
@@ -103,7 +103,7 @@ E0 控制面、并发、租约、安全、指标和 migration 门禁已通过；
 | 数据隔离检出率 0 | BLOCKED-E1/E2 |
 | 密钥泄露 0 | PASS-E0；真实集中日志待复核 |
 | migration up/down/up | PASS-E0 |
-| 真机扩展 | Provider/统一模型保留；DF-025 契约后复核 |
+| 真机扩展 | Provider/统一模型和 Adapter 契约均保留；新增 USB Provider 不改 Worker 调用模型 |
 
 ## 签字
 

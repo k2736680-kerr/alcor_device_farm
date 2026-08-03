@@ -121,9 +121,9 @@ func (handler *reservationHandler) write(writer http.ResponseWriter, request *ht
 	case errors.Is(err, reservation.ErrConflict):
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()}
 	case errors.Is(err, reservation.ErrPoolUnavailable):
-		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "POOL_UNAVAILABLE", Message: err.Error(), Retryable: false}
+		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "DEVICE_POOL_UNAVAILABLE", Message: err.Error(), Retryable: false}
 	case errors.Is(err, reservation.ErrCapacityUnavailable):
-		httpStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "CAPACITY_UNAVAILABLE", Message: err.Error(), Retryable: true}
+		httpStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "DEVICE_CAPACITY_UNAVAILABLE", Message: err.Error(), Retryable: true}
 	case errors.Is(err, reservation.ErrForbidden):
 		httpStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "reservation owner does not match"}
 	case errors.Is(err, reservation.ErrSTFReleaseFailed):

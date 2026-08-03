@@ -107,7 +107,11 @@ func TestReservationAPIRejectsDisabledPoolAndExcessLease(t *testing.T) {
 		"pool_id": "pool_000000000000001", "owner_type": "manual",
 		"owner_id": "owner_00000000000001", "lease_seconds": 600,
 	}
-	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations", body, serviceToken, "reservation-api-key-02"), http.StatusConflict)
+	disabled := environment.request(t, http.MethodPost, "/api/v1/device-reservations", body, serviceToken, "reservation-api-key-02")
+	assertStatus(t, disabled, http.StatusConflict)
+	if disabled.Error == nil || disabled.Error.Code != "DEVICE_POOL_UNAVAILABLE" || disabled.Error.Retryable {
+		t.Fatalf("disabled pool error=%#v", disabled.Error)
+	}
 	if _, err := environment.db.Pool().Exec(context.Background(), "UPDATE device_pools SET status='active' WHERE id='pool_000000000000001'"); err != nil {
 		t.Fatal(err)
 	}

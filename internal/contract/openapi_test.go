@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,8 +48,13 @@ func TestOpenAPIContract(t *testing.T) {
 	if document["openapi"] != "3.0.3" {
 		t.Fatalf("openapi = %#v, want 3.0.3", document["openapi"])
 	}
-	if strings.Contains(strings.ToLower(raw), "eval-tasks") || strings.Contains(strings.ToLower(raw), "eval_tasks") {
+	lowerRaw := strings.ToLower(raw)
+	if strings.Contains(lowerRaw, "eval-tasks") || strings.Contains(lowerRaw, "eval_tasks") || strings.Contains(lowerRaw, "eval task") {
 		t.Fatal("contract must not depend on legacy eval-tasks")
+	}
+	info := object(t, document, "info")
+	if info["version"] != "1.0.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 
 	paths := object(t, document, "paths")
@@ -90,6 +96,106 @@ func TestOpenAPIContract(t *testing.T) {
 	object(t, securitySchemes, "agentBearer")
 	validateLocalReferences(t, document, document, "#")
 	validateRequestExamples(t, components)
+	validateAlcorAdapterContract(t, paths, components)
+	validateFrozenHash(t, raw)
+}
+
+func validateFrozenHash(t *testing.T, raw string) {
+	t.Helper()
+	path := filepath.Join("..", "..", "openapi", "device-farm-v1.sha256")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read frozen OpenAPI hash: %v", err)
+	}
+	canonical := strings.ReplaceAll(raw, "\r\n", "\n")
+	actual := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
+	if expected := strings.TrimSpace(string(content)); actual != expected {
+		t.Fatalf("OpenAPI changed without updating frozen hash: actual=%s expected=%s", actual, expected)
+	}
+}
+
+func validateAlcorAdapterContract(t *testing.T, paths, components map[string]any) {
+	t.Helper()
+	operations := []struct {
+		path, method, successStatus, responseRef string
+	}{
+		{"/api/v1/device-reservations", "post", "201", "#/components/responses/ReservationCreated"},
+		{"/api/v1/device-reservations/{id}", "get", "200", "#/components/responses/ReservationSuccess"},
+		{"/api/v1/device-reservations/{id}/extensions", "post", "200", "#/components/responses/ReservationSuccess"},
+		{"/api/v1/device-reservations/{id}/releases", "post", "200", "#/components/responses/ReservationSuccess"},
+		{"/api/v1/devices/{id}", "get", "200", "#/components/responses/DeviceSuccess"},
+	}
+	for _, expected := range operations {
+		operation := object(t, object(t, paths, expected.path), expected.method)
+		parameters, ok := operation["parameters"].([]any)
+		if !ok {
+			t.Fatalf("%s %s parameters=%#v", expected.method, expected.path, operation["parameters"])
+		}
+		for _, requiredRef := range []string{"#/components/parameters/EvalRunID", "#/components/parameters/EvalAttemptID", "#/components/parameters/Traceparent"} {
+			if !containsReference(parameters, requiredRef) {
+				t.Fatalf("%s %s is missing %s", expected.method, expected.path, requiredRef)
+			}
+		}
+		response := object(t, object(t, operation, "responses"), expected.successStatus)
+		if response["$ref"] != expected.responseRef {
+			t.Fatalf("%s %s success response=%#v", expected.method, expected.path, response)
+		}
+	}
+
+	schemas := object(t, components, "schemas")
+	ownerType := object(t, schemas, "OwnerType")
+	if strings.Join(stringValues(t, ownerType["enum"]), ",") != "run_attempt,manual,test_run" {
+		t.Fatalf("OwnerType enum=%#v", ownerType["enum"])
+	}
+	apiError := object(t, schemas, "APIError")
+	code := object(t, object(t, apiError, "properties"), "code")
+	codes := stringValues(t, code["x-adapter-stable-codes"])
+	for _, required := range []string{"DEVICE_CAPACITY_UNAVAILABLE", "DEVICE_POOL_UNAVAILABLE", "KVM_UNAVAILABLE", "SERVICE_UNAVAILABLE"} {
+		if !containsString(codes, required) {
+			t.Fatalf("APIError stable code list is missing %s", required)
+		}
+	}
+	for _, legacy := range []string{"CAPACITY_UNAVAILABLE", "POOL_UNAVAILABLE"} {
+		if containsString(codes, legacy) {
+			t.Fatalf("APIError stable code list contains legacy code %s", legacy)
+		}
+	}
+}
+
+func containsReference(values []any, reference string) bool {
+	for _, value := range values {
+		item, ok := value.(map[string]any)
+		if ok && item["$ref"] == reference {
+			return true
+		}
+	}
+	return false
+}
+
+func stringValues(t *testing.T, value any) []string {
+	t.Helper()
+	values, ok := value.([]any)
+	if !ok {
+		t.Fatalf("value=%#v, want array", value)
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		text, ok := value.(string)
+		if !ok {
+			t.Fatalf("array value=%#v, want string", value)
+		}
+		result = append(result, text)
+	}
+	return result
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func loadOpenAPI(t *testing.T) (map[string]any, string) {
