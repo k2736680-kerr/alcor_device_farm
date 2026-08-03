@@ -22,7 +22,10 @@ PASS Repository/Scheduler/Reaper/API/Agent/健康/指标集成测试
 PASS 100 次、20 RPS 查询性能基线，p95 远低于 300ms
 PASS DaFit collect-only 收集 158 个执行实例
 PASS 验收日志为有效 UTF-8，无 UTF-16 NUL 混入
+PASS 实施证据门禁动态读取计划状态，并校验计划/清单一致、证据已纳入 Git、主要提交存在且可从 master HEAD 追溯
 ```
+
+证据门禁不再把 DF-014～DF-024 永久写死为 `blocked`。后续真实环境验收完成后，只要实施清单、证据清单和验收文件同步改为 `completed`，门禁即可按新状态验证；若只改其中一处、引用不存在的提交或缺少阻塞解除条件，会明确失败。
 
 ## 阻塞解除条件
 
