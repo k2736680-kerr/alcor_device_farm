@@ -32,7 +32,7 @@ make check
 
 ## 当前二进制
 
-- `bin/device-farm-server.exe`：设备农场控制面；HTTP 运行入口从 DF-002 开始实现；
+- `bin/device-farm-server.exe`：设备农场控制面；默认加载配置并启动 HTTP 服务；
 - `bin/device-host-agent.exe`：宿主机 Agent；运行时从 DF-013 开始实现。
 
 查看构建信息：
@@ -41,5 +41,31 @@ make check
 bin/device-farm-server.exe --version
 bin/device-host-agent.exe --version
 ```
+
+检查配置但不启动服务：
+
+```powershell
+bin/device-farm-server.exe --config config/config.example.yaml --check-config
+```
+
+启动服务：
+
+```powershell
+bin/device-farm-server.exe --config config/config.example.yaml
+```
+
+配置可以由 `DEVICE_FARM_` 前缀的环境变量覆盖。当前支持：
+
+- `DEVICE_FARM_SERVER_ADDRESS`；
+- `DEVICE_FARM_SERVER_READ_TIMEOUT`；
+- `DEVICE_FARM_SERVER_WRITE_TIMEOUT`；
+- `DEVICE_FARM_SERVER_IDLE_TIMEOUT`；
+- `DEVICE_FARM_SERVER_SHUTDOWN_TIMEOUT`；
+- `DEVICE_FARM_LOG_LEVEL`；
+- `DEVICE_FARM_LOG_FORMAT`；
+- `DEVICE_FARM_SECURITY_SERVICE_TOKEN`；
+- `DEVICE_FARM_SECURITY_AGENT_TOKEN`。
+
+真实 Token 只能通过部署 Secret 或环境变量注入，不写入已提交 YAML。
 
 构建产物位于 `bin/`，已被 `.gitignore` 排除。
