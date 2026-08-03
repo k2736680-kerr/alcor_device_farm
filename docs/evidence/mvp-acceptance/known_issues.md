@@ -2,7 +2,7 @@
 
 | 编号 | 问题 | 影响 | 处理计划 |
 |---|---|---|---|
-| KI-001 | 当前没有 Linux KVM/Docker 环境 | G3～G5 不能签收 | 在目标服务器执行 DF-014～DF-021 和 AT-EMU/APP/STF/DFT |
+| KI-001 | 当前没有可用 Linux KVM/Docker 环境；已登记的 Ubuntu WSL2 因 `ext4.vhdx` 路径不存在而无法启动 | G3～G5 不能签收，本机不能启动真实 Docker Emulator | 不改动现有 WSL 数据；在具备 `/dev/kvm` 的目标服务器执行 DF-014～DF-021 和 AT-EMU/APP/STF/DFT |
 | KI-002 | 当前没有 Prometheus/Alertmanager 和真实 systemd | 部署、告警和回滚只能做静态/本地验证 | 按 DF-023 手册完成从零部署、故障告警和恢复演练 |
 | KI-003 | PostgreSQL 短暂断连后的未确认事务未做真实网络故障注入 | AT-DB-006 尚未签收 | 在 Linux 测试库使用网络阻断验证客户端重试和幂等 |
 | KI-004 | 稳定性未运行 8 小时或 50 次真实循环 | 资源泄漏和长期悬挂风险未关闭 | 在 E2 运行循环并保存 Docker/DB/指标前后快照 |
