@@ -1,0 +1,58 @@
+package contract
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestDeviceDomainMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000001_device_domain.up.sql"))
+	down := readFile(t, filepath.Join(root, "000001_device_domain.down.sql"))
+
+	tables := []string{
+		"device_images", "device_hosts", "device_host_commands", "device_pools",
+		"device_pool_images", "devices", "device_pool_devices", "device_reservations",
+		"device_sessions", "device_health_events", "device_audit_events",
+	}
+	for _, table := range tables {
+		assertSQLContains(t, up, `CREATE\s+TABLE\s+`+table+`\b`)
+		assertSQLContains(t, down, `DROP\s+TABLE\s+IF\s+EXISTS\s+`+table+`\b`)
+	}
+
+	for _, forbidden := range []string{"eval_tasks", "eval_results", "runs", "run_attempts", "run_results", "artifacts"} {
+		assertSQLAbsent(t, up, `\b`+forbidden+`\b`)
+	}
+	assertSQLContains(t, up, `CREATE\s+UNIQUE\s+INDEX\s+uq_device_reservations_active_device`)
+	assertSQLContains(t, up, `UNIQUE\s*\(client_id,\s*idempotency_key\)`)
+	assertSQLContains(t, up, `serial\s+varchar\(255\)\s+NOT\s+NULL\s+UNIQUE`)
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
+}
+
+func assertSQLContains(t *testing.T, sql, pattern string) {
+	t.Helper()
+	if !regexp.MustCompile(`(?i)` + pattern).MatchString(sql) {
+		t.Fatalf("SQL does not match %q", pattern)
+	}
+}
+
+func assertSQLAbsent(t *testing.T, sql, pattern string) {
+	t.Helper()
+	if regexp.MustCompile(`(?i)` + pattern).MatchString(sql) {
+		t.Fatalf("SQL unexpectedly matches %q", pattern)
+	}
+	if strings.TrimSpace(sql) == "" {
+		t.Fatal("SQL is empty")
+	}
+}

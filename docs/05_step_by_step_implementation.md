@@ -24,7 +24,7 @@
 | DF-001 | Go 工程骨架与本地开发入口 | completed | DF-000 |
 | DF-002 | 配置、日志、统一响应和关联 ID | completed | DF-001 |
 | DF-003 | OpenAPI 和服务/Agent 认证骨架 | completed | DF-002 |
-| DF-004 | 设备域 PostgreSQL migration | pending | DF-001 |
+| DF-004 | 设备域 PostgreSQL migration | completed | DF-001 |
 | DF-005 | 领域模型和状态机 | pending | DF-004 |
 | DF-006 | Repository、事务和幂等基础 | pending | DF-004、DF-005 |
 | DF-007 | Mock Provider 和故障注入 | pending | DF-005 |

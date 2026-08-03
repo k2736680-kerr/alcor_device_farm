@@ -5,7 +5,7 @@
 
 ## 1. 结论
 
-当前 Windows 机器可以立即用于文档、Go 控制面、Mock Provider、OpenAPI、状态机和 DaFit 薄适配开发。DF-001 已提供便携式 Go 工具链；当前仍缺少 Docker 和 PostgreSQL 客户端，开始 DF-004 前需要提供 PostgreSQL 测试实例。
+当前 Windows 机器可以立即用于文档、Go 控制面、Mock Provider、OpenAPI、状态机、PostgreSQL 设备域测试和 DaFit 薄适配开发。DF-001 已提供便携式 Go 工具链；DF-004 已加入免安装 PostgreSQL 17.10 测试工具，不注册系统服务。
 
 真实 Docker Android Emulator 不能在本机标记验收完成。DF-014 及之后的 Emulator 验收必须准备能够访问 `/dev/kvm` 的 Linux Host；STF/Appium/DaFit 完整链路在该 Host 或同一可达内网环境验证。
 
@@ -27,7 +27,7 @@
 | Git | 可用 | 2.53.0.windows.1 | 直接使用 |
 | Go | 便携工具链可用，不在系统 PATH | 官方 Go 1.26.5，SHA-256 已校验；项目语言级别 1.24 | 通过 `DEVICE_FARM_GO` 由开发脚本使用 |
 | Docker CLI/Engine | 未安装 | 无服务、常见安装路径不存在 | Windows 不作为真实 Emulator 验收环境；Linux Host 单独准备 |
-| PostgreSQL/psql | 未安装 | 无服务 | DF-004 前提供测试 PostgreSQL |
+| PostgreSQL/psql | 免安装工具可用，不在系统 PATH | 官方页面指向的 EDB PostgreSQL 17.10 Windows x64 二进制；ZIP SHA-256 `EF9B1E5E23D2E8A83914BA13D9DC536A72210FBA53FD1808FF1F7E06BB22B106` | 通过 `DEVICE_FARM_POSTGRES_BIN` 启动项目临时实例，不注册系统服务 |
 | Python | 可用 | 3.12.10 | DaFit 使用 |
 | uv | 可用 | 0.11.28 | DaFit 使用 |
 | Node.js | 可用 | 24.14.0 | Appium 使用 |
@@ -71,7 +71,7 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 | 方案、OpenAPI、目录和配置 | 是 | 无 |
 | Go Server/Agent 编译测试 | 是 | DF-001 已验证 build/vet/test |
 | Mock Provider/状态机 | 补齐 Go 后可做 | 不依赖 Docker |
-| PostgreSQL migration/并发测试 | 暂不可 | 缺测试 PostgreSQL；DF-004 前补齐 |
+| PostgreSQL migration/并发测试 | 是 | DF-004 的临时实例脚本可做空库和约束测试 |
 | DaFit collect-only 和静态核对 | 是 | 已验证 26 用例 |
 | 本地真机 DaFit | 技术上可做 | 非当前 MVP 验收范围，未经用户要求不执行 |
 | Docker Emulator | 不可 | 缺 Linux KVM Host 和 Docker |
@@ -82,7 +82,7 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 ## 8. 依赖准备顺序
 
 1. DF-001：已提供 Go 工具链并完成纯 Go 工程骨架；
-2. DF-004 前：提供 PostgreSQL 测试实例；
+2. DF-004：已提供 PostgreSQL 17.10 免安装测试实例；
 3. DF-014 前：提供 Linux KVM Host、Docker Engine 和可用网络；
 4. DF-015~DF-018：在 Host 环境固定 Appium、UiAutomator2、STF 和 Emulator 镜像版本；
 5. DF-019：只对 DaFit 增加 Farm 模式薄适配；

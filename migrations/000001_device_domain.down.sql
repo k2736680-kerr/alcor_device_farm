@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS device_audit_events;
+DROP TABLE IF EXISTS device_health_events;
+DROP TABLE IF EXISTS device_sessions;
+DROP TABLE IF EXISTS device_reservations;
+DROP TABLE IF EXISTS device_pool_devices;
+DROP TABLE IF EXISTS devices;
+DROP TABLE IF EXISTS device_pool_images;
+DROP TABLE IF EXISTS device_pools;
+DROP TABLE IF EXISTS device_host_commands;
+DROP TABLE IF EXISTS device_hosts;
+DROP TABLE IF EXISTS device_images;
