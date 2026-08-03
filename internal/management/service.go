@@ -2,15 +2,14 @@ package management
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 )
 
@@ -24,7 +23,7 @@ type Service struct {
 
 func NewService(store Store, provider providers.Provider, generator IDGenerator) *Service {
 	if generator == nil {
-		generator = newUUID
+		generator = identifier.New
 	}
 	return &Service{store: store, provider: provider, newID: generator}
 }
@@ -406,17 +405,6 @@ func idempotency(clientID, scope, key, resourceType, resourceID string, request 
 	hash := sha256.Sum256(content)
 	return Idempotency{ClientID: clientID, Scope: scope, Key: key, RequestHash: hex.EncodeToString(hash[:]),
 		ResourceType: resourceType, ResourceID: resourceID, ResponseStatus: status}, nil
-}
-
-func newUUID() (string, error) {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		return "", fmt.Errorf("generate ID: %w", err)
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
 func cloneMap(source map[string]any) map[string]any {

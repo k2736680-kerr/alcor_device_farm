@@ -20,6 +20,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/server"
 )
 
@@ -140,6 +141,8 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodGet, "/api/v1/devices"}, {http.MethodGet, "/api/v1/devices/id"},
 		{http.MethodPost, "/api/v1/devices/id/restarts"}, {http.MethodPost, "/api/v1/devices/id/rebuilds"},
 		{http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
+		{http.MethodGet, "/api/v1/device-reservations"}, {http.MethodPost, "/api/v1/device-reservations"},
+		{http.MethodGet, "/api/v1/device-reservations/id"},
 	}
 	for _, route := range routes {
 		assertStatus(t, environment.request(t, route.method, route.path, map[string]any{}, "", ""), http.StatusUnauthorized)
@@ -211,8 +214,9 @@ func newManagementEnvironment(t *testing.T) *managementEnvironment {
 	var sequence atomic.Int64
 	generator := func() (string, error) { return fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence.Add(1)), nil }
 	service := management.NewService(store, providermock.New(providermock.Config{}), generator)
+	reservationService := reservation.NewService(db, generator)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, service))
+	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
 	return &managementEnvironment{db: db, store: store, service: service, server: httpServer}
 }

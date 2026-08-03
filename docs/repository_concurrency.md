@@ -13,7 +13,7 @@
 ```text
 BEGIN
   锁定一条 pending reservation（FOR UPDATE SKIP LOCKED）
-  锁定一台 ready + healthy device（DF-009）
+  锁定一台 ready + healthy 且能力匹配的 device（DF-009 已完成）
   领域对象校验 pending→active、ready→reserved
   更新 reservation 和 device
 COMMIT

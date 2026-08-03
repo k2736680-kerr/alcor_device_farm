@@ -105,6 +105,10 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "Repository integration tests failed."
             }
+            & $GoExecutable test -count=1 -v ./internal/scheduler
+            if ($LASTEXITCODE -ne 0) {
+                throw "Scheduler integration tests failed."
+            }
             & $GoExecutable test -count=1 -v ./internal/api
             if ($LASTEXITCODE -ne 0) {
                 throw "Management API integration tests failed."

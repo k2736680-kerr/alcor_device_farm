@@ -17,27 +17,36 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 )
 
-func NewHTTPServer(cfg config.Config, logger *slog.Logger, services ...*management.Service) *http.Server {
+type Services struct {
+	Management   *management.Service
+	Reservations *reservation.Service
+	Scheduler    *scheduler.Scheduler
+}
+
+func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
 	return &http.Server{
 		Addr:         cfg.Server.Address,
-		Handler:      Handler(cfg.Security, logger, services...),
+		Handler:      Handler(cfg.Security, logger, services),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 }
 
-func Handler(security config.SecurityConfig, logger *slog.Logger, services ...*management.Service) http.Handler {
+func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ...Services) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", readyHandler)
-	var managementService *management.Service
-	if len(services) > 0 {
-		managementService = services[0]
+	var services Services
+	if len(serviceSets) > 0 {
+		services = serviceSets[0]
 	}
-	api.RegisterManagement(mux, managementService)
+	api.RegisterManagement(mux, services.Management)
+	api.RegisterReservations(mux, services.Reservations)
 	mux.HandleFunc("/", notFoundHandler)
 
 	protected := auth.RouteMiddleware(security, mux)
@@ -45,7 +54,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, services ...*m
 }
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	var managementService *management.Service
+	var services Services
 	var db *database.DB
 	if cfg.Database.URL != "" {
 		var err error
@@ -54,9 +63,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer db.Close()
-		managementService = management.NewService(managementpostgres.New(db), providermock.New(providermock.Config{}), nil)
+		services.Management = management.NewService(managementpostgres.New(db), providermock.New(providermock.Config{}), nil)
+		services.Reservations = reservation.NewService(db, nil)
+		services.Scheduler = scheduler.New(db, nil, logger)
+		go services.Scheduler.Run(ctx, 250*time.Millisecond)
 	}
-	httpServer := NewHTTPServer(cfg, logger, managementService)
+	httpServer := NewHTTPServer(cfg, logger, services)
 	errorChannel := make(chan error, 1)
 
 	go func() {
