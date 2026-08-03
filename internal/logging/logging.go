@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 )
 
 const redactedValue = "[REDACTED]"
@@ -83,6 +84,10 @@ func redactAttr(attr slog.Attr) slog.Attr {
 
 	value := attr.Value.Resolve()
 	if value.Kind() != slog.KindGroup {
+		if value.Kind() == slog.KindString {
+			attr.Value = slog.StringValue(sensitive.RedactText(value.String()))
+			return attr
+		}
 		attr.Value = value
 		return attr
 	}

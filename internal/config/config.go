@@ -47,8 +47,10 @@ type LogConfig struct {
 }
 
 type SecurityConfig struct {
-	ServiceToken string `yaml:"service_token" json:"-"`
-	AgentToken   string `yaml:"agent_token" json:"-"`
+	ServiceToken         string `yaml:"service_token" json:"-"`
+	ServicePreviousToken string `yaml:"service_previous_token" json:"-"`
+	AgentToken           string `yaml:"agent_token" json:"-"`
+	AgentPreviousToken   string `yaml:"agent_previous_token" json:"-"`
 }
 
 type LeaseConfig struct {
@@ -159,7 +161,9 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"LOG_LEVEL", &cfg.Log.Level},
 		{"LOG_FORMAT", &cfg.Log.Format},
 		{"SECURITY_SERVICE_TOKEN", &cfg.Security.ServiceToken},
+		{"SECURITY_SERVICE_PREVIOUS_TOKEN", &cfg.Security.ServicePreviousToken},
 		{"SECURITY_AGENT_TOKEN", &cfg.Security.AgentToken},
+		{"SECURITY_AGENT_PREVIOUS_TOKEN", &cfg.Security.AgentPreviousToken},
 		{"STF_BASE_URL", &cfg.STF.BaseURL},
 		{"STF_API_TOKEN", &cfg.STF.APIToken},
 	}
@@ -279,8 +283,26 @@ func (cfg Config) Validate() error {
 		validationErrors = append(validationErrors, errors.New("log.format must be one of json, text"))
 	}
 
-	if cfg.Security.ServiceToken != "" && cfg.Security.ServiceToken == cfg.Security.AgentToken {
-		validationErrors = append(validationErrors, errors.New("security.service_token and security.agent_token must be different"))
+	tokens := map[string]string{
+		"security.service_token": cfg.Security.ServiceToken, "security.service_previous_token": cfg.Security.ServicePreviousToken,
+		"security.agent_token": cfg.Security.AgentToken, "security.agent_previous_token": cfg.Security.AgentPreviousToken,
+	}
+	seenTokens := map[string]string{}
+	for name, token := range tokens {
+		if token == "" {
+			continue
+		}
+		if previous, exists := seenTokens[token]; exists {
+			validationErrors = append(validationErrors, fmt.Errorf("%s and %s must be different", previous, name))
+			continue
+		}
+		seenTokens[token] = name
+	}
+	if cfg.Security.ServicePreviousToken != "" && cfg.Security.ServiceToken == "" {
+		validationErrors = append(validationErrors, errors.New("security.service_previous_token requires security.service_token"))
+	}
+	if cfg.Security.AgentPreviousToken != "" && cfg.Security.AgentToken == "" {
+		validationErrors = append(validationErrors, errors.New("security.agent_previous_token requires security.agent_token"))
 	}
 
 	if err := errors.Join(validationErrors...); err != nil {

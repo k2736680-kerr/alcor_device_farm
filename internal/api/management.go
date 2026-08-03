@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
@@ -278,13 +279,13 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	var err error
 	switch action {
 	case "restart":
-		value, err = handler.service.RestartDevice(request.Context(), request.PathValue("id"), input.Reason)
+		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
 	case "rebuild":
-		value, err = handler.service.RebuildDevice(request.Context(), request.PathValue("id"), input.Reason)
+		value, err = handler.service.RebuildDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
 	case "quarantine":
-		value, err = handler.service.QuarantineDevice(request.Context(), request.PathValue("id"), input.Reason)
+		value, err = handler.service.QuarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
 	case "unquarantine":
-		value, err = handler.service.UnquarantineDevice(request.Context(), request.PathValue("id"), input.Reason)
+		value, err = handler.service.UnquarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
 	}
 	status := http.StatusOK
 	if action == "restart" || action == "rebuild" {
@@ -375,4 +376,12 @@ func clientID(request *http.Request) string {
 		return "unknown"
 	}
 	return string(principal.Role)
+}
+
+func actorID(request *http.Request) string {
+	value := request.Header.Get("X-Device-Farm-Actor-Id")
+	if value == "" {
+		return clientID(request)
+	}
+	return value
 }

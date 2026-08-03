@@ -51,7 +51,9 @@ log:
   format: text
 security:
   service_token: yaml-secret
+  service_previous_token: yaml-previous-secret
   agent_token: yaml-agent-secret
+  agent_previous_token: yaml-agent-previous-secret
 database:
   url: postgres://yaml-database-secret
 stf:
@@ -65,6 +67,8 @@ stf:
 	t.Setenv("DEVICE_FARM_SERVER_ADDRESS", "127.0.0.1:28080")
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
 	t.Setenv("DEVICE_FARM_SECURITY_SERVICE_TOKEN", "environment-secret")
+	t.Setenv("DEVICE_FARM_SECURITY_SERVICE_PREVIOUS_TOKEN", "environment-previous-secret")
+	t.Setenv("DEVICE_FARM_SECURITY_AGENT_PREVIOUS_TOKEN", "environment-agent-previous-secret")
 	t.Setenv("DEVICE_FARM_DATABASE_URL", "postgres://environment-database-secret")
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
@@ -83,8 +87,9 @@ stf:
 	if cfg.Server.ReadTimeout != 7*time.Second {
 		t.Fatalf("ReadTimeout = %v", cfg.Server.ReadTimeout)
 	}
-	if cfg.Security.ServiceToken != "environment-secret" {
-		t.Fatal("environment did not override service token")
+	if cfg.Security.ServiceToken != "environment-secret" || cfg.Security.ServicePreviousToken != "environment-previous-secret" ||
+		cfg.Security.AgentPreviousToken != "environment-agent-previous-secret" {
+		t.Fatalf("environment did not override rotation tokens: %+v", cfg.Security)
 	}
 	if cfg.Database.URL != "postgres://environment-database-secret" {
 		t.Fatal("environment did not override database URL")
@@ -143,6 +148,16 @@ func TestValidateRejectsAmbiguousSecurityTokens(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsPreviousTokenWithoutCurrentToken(t *testing.T) {
+	cfg := Default()
+	cfg.Security.AgentPreviousToken = "retired-agent-token"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "requires security.agent_token") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateRequiresSTFEndpointAndTokenWhenEnabled(t *testing.T) {
 	cfg := Default()
 	cfg.STF.Enabled = true
@@ -167,7 +182,9 @@ func TestValidateRejectsSTFBaseURLWithCredentialsOrQuery(t *testing.T) {
 func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg := Default()
 	cfg.Security.ServiceToken = "service-token-value"
+	cfg.Security.ServicePreviousToken = "service-previous-token-value"
 	cfg.Security.AgentToken = "agent-token-value"
+	cfg.Security.AgentPreviousToken = "agent-previous-token-value"
 	cfg.Database.URL = "postgres://database-secret-value"
 	cfg.STF.APIToken = "stf-token-value"
 
@@ -212,7 +229,7 @@ func clearDeviceFarmEnvironment(t *testing.T) {
 
 func assertNoSecrets(t *testing.T, value string) {
 	t.Helper()
-	for _, secret := range []string{"service-token-value", "agent-token-value", "database-secret-value", "stf-token-value"} {
+	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value"} {
 		if strings.Contains(value, secret) {
 			t.Fatalf("serialized value contains secret %q", secret)
 		}

@@ -64,6 +64,13 @@ func TestReservationAPIStoresListsAndReplaysPendingRequest(t *testing.T) {
 		"owner_id": "attempt_000000000001", "lease_seconds": 600,
 		"requested_capabilities": map[string]any{"platformName": "Android", "apiLevel": 34},
 	}
+	sensitiveBody := map[string]any{}
+	for key, value := range body {
+		sensitiveBody[key] = value
+	}
+	sensitiveBody["requested_capabilities"] = map[string]any{"platformName": "Android", "api_token": "must-not-be-stored"}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations", sensitiveBody,
+		serviceToken, "reservation-sensitive-capability"), http.StatusBadRequest)
 	createdResponse := environment.request(t, http.MethodPost, "/api/v1/device-reservations", body, serviceToken, "reservation-api-key-01")
 	assertStatus(t, createdResponse, http.StatusCreated)
 	var created reservation.View
@@ -152,6 +159,8 @@ func TestReservationAPIExtendsAndReleasesActiveReservation(t *testing.T) {
 	if _, err := scheduler.New(environment.db, nil, nil).RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/releases",
+		map[string]any{"reason": "token=must-not-be-stored"}, serviceToken, "reservation-sensitive-release"), http.StatusBadRequest)
 	extendedResponse := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/extensions",
 		map[string]any{"additional_seconds": 300}, serviceToken, "reservation-extension-01")
 	assertStatus(t, extendedResponse, http.StatusOK)
@@ -293,7 +302,8 @@ func TestAgentHealthEventAPIQuarantinesAfterThreshold(t *testing.T) {
 	body := map[string]any{
 		"source": "appium", "event_type": "appium_unhealthy", "severity": "error",
 		"reason": "Appium status endpoint is unhealthy", "observed_at": "2026-08-03T12:00:00Z",
-		"payload": map[string]any{"status_code": 503},
+		"payload": map[string]any{"status_code": 503, "authorization": "Bearer health-event-secret",
+			"message": "upstream password=health-password"},
 	}
 	assertStatus(t, environment.request(t, http.MethodPost, path, body, "", ""), http.StatusUnauthorized)
 	assertStatus(t, environment.request(t, http.MethodPost, path, body, serviceToken, ""), http.StatusForbidden)
@@ -308,6 +318,14 @@ func TestAgentHealthEventAPIQuarantinesAfterThreshold(t *testing.T) {
 	}
 	if lifecycle != "quarantined" || health != "unhealthy" || failures != 3 {
 		t.Fatalf("device lifecycle=%s health=%s failures=%d", lifecycle, health, failures)
+	}
+	var leaked int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE payload::text LIKE '%health-event-secret%' OR payload::text LIKE '%health-password%'`).Scan(&leaked); err != nil {
+		t.Fatal(err)
+	}
+	if leaked != 0 {
+		t.Fatalf("health event secret rows=%d", leaked)
 	}
 }
 

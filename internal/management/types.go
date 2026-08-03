@@ -26,6 +26,15 @@ type Idempotency struct {
 	ResponseStatus int
 }
 
+type DeviceAudit struct {
+	ID        string
+	ActorType string
+	ActorID   string
+	Action    string
+	RequestID string
+	Reason    string
+}
+
 type Image struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
@@ -162,5 +171,5 @@ type Store interface {
 	ListDevices(context.Context) ([]Device, error)
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
-	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus) (Device, error)
+	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)
 }

@@ -72,10 +72,10 @@ func authenticate(header string, security config.SecurityConfig) (Principal, boo
 	if !ok {
 		return Principal{}, false
 	}
-	if constantTimeEqual(token, security.ServiceToken) {
+	if constantTimeEqual(token, security.ServiceToken) || constantTimeEqual(token, security.ServicePreviousToken) {
 		return Principal{Role: RoleService}, true
 	}
-	if constantTimeEqual(token, security.AgentToken) {
+	if constantTimeEqual(token, security.AgentToken) || constantTimeEqual(token, security.AgentPreviousToken) {
 		return Principal{Role: RoleAgent}, true
 	}
 	return Principal{}, false

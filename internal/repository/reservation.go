@@ -9,6 +9,7 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -588,6 +589,7 @@ func (ReservationRepository) InsertAudit(
 	tx pgx.Tx,
 	id, actorType, actorID, action, resourceID, requestID, reason string,
 ) error {
+	reason = sensitive.RedactText(reason)
 	_, err := tx.Exec(ctx, `
         INSERT INTO device_audit_events
             (id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)

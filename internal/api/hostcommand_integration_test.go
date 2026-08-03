@@ -43,12 +43,21 @@ func TestAgentHeartbeatClaimAndCompletionAPI(t *testing.T) {
 	completionResponse := environment.request(t, http.MethodPost,
 		"/internal/v1/device-host-commands/"+created.ID+"/completions",
 		map[string]any{"lease_token": *claimed.Items[0].LeaseToken, "attempt": claimed.Items[0].Attempt,
-			"status": "succeeded", "result": map[string]any{"healthy": true}}, agentToken, "")
+			"status": "succeeded", "result": map[string]any{"healthy": true, "authorization": "Bearer command-result-secret",
+				"message": "provider password=command-password"}}, agentToken, "")
 	assertStatus(t, completionResponse, http.StatusOK)
 	var completed hostcommand.Command
 	decodeData(t, completionResponse, &completed)
 	if completed.Status != "succeeded" || completed.CompletedAt == nil {
 		t.Fatalf("completed=%+v", completed)
+	}
+	var leaked int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_host_commands
+		WHERE id=$1 AND result::text LIKE '%command-result-secret%' OR id=$1 AND result::text LIKE '%command-password%'`, created.ID).Scan(&leaked); err != nil {
+		t.Fatal(err)
+	}
+	if leaked != 0 {
+		t.Fatalf("command result secret rows=%d", leaked)
 	}
 	assertStatus(t, environment.request(t, http.MethodPost,
 		"/internal/v1/device-host-commands/"+created.ID+"/completions",

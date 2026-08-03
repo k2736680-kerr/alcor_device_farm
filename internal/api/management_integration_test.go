@@ -106,13 +106,15 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/devices", nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/devices/"+device.ID, nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines",
+		reasonBody(), serviceToken, "", "token=must-not-be-audit-actor"), http.StatusBadRequest)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-01"), http.StatusAccepted)
 
 	schedulable, err := environment.store.ListSchedulableDevices(context.Background(), pool.ID)
 	if err != nil || len(schedulable) != 1 {
 		t.Fatalf("schedulable before quarantine = %d, error=%v", len(schedulable), err)
 	}
-	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, "", "alcor-user-01"), http.StatusOK)
 	schedulable, err = environment.store.ListSchedulableDevices(context.Background(), pool.ID)
 	if err != nil || len(schedulable) != 0 {
 		t.Fatalf("schedulable after quarantine = %d, error=%v", len(schedulable), err)
@@ -121,6 +123,24 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01"), http.StatusAccepted)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
+	var auditedActions, missingFields int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*),count(*) FILTER (
+		WHERE actor_type<>'service' OR actor_id='' OR request_id='' OR reason IS NULL OR length(trim(reason))<3)
+		FROM device_audit_events WHERE resource_type='device' AND resource_id=$1`, device.ID).
+		Scan(&auditedActions, &missingFields); err != nil {
+		t.Fatal(err)
+	}
+	if auditedActions != 5 || missingFields != 0 {
+		t.Fatalf("device audit actions=%d missing fields=%d", auditedActions, missingFields)
+	}
+	var alcorActorActions int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_type='device' AND resource_id=$1 AND actor_id='alcor-user-01'`, device.ID).Scan(&alcorActorActions); err != nil {
+		t.Fatal(err)
+	}
+	if alcorActorActions != 1 {
+		t.Fatalf("Alcor actor audit actions=%d", alcorActorActions)
+	}
 
 	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+pool.ID, validPoolInput(false), serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusConflict)
@@ -162,13 +182,19 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 
 func TestManagementAPIRejectsInvalidParameters(t *testing.T) {
 	environment := newManagementEnvironment(t)
+	sensitiveImage := validImageInput()
+	sensitiveImage["resource_config"] = map[string]any{"registry_token": "must-not-be-stored"}
+	sensitiveHost := validHostInput()
+	sensitiveHost["capabilities"] = map[string]any{"message": "password=must-not-be-stored"}
 	tests := []struct {
 		method, path string
 		body         any
 		key          string
 	}{
 		{http.MethodPost, "/api/v1/device-images", map[string]any{}, "valid-key-01"},
+		{http.MethodPost, "/api/v1/device-images", sensitiveImage, "valid-key-sensitive-image"},
 		{http.MethodPost, "/api/v1/device-hosts", map[string]any{}, "valid-key-02"},
+		{http.MethodPost, "/api/v1/device-hosts", sensitiveHost, "valid-key-sensitive-host"},
 		{http.MethodPost, "/api/v1/device-pools", map[string]any{}, "valid-key-03"},
 		{http.MethodPost, "/api/v1/device-images/id/validations", nil, ""},
 		{http.MethodPost, "/api/v1/device-pools/id/devices", map[string]any{}, ""},
@@ -176,6 +202,7 @@ func TestManagementAPIRejectsInvalidParameters(t *testing.T) {
 		{http.MethodPost, "/api/v1/devices/id/restarts", map[string]any{}, "valid-key-04"},
 		{http.MethodPost, "/api/v1/devices/id/rebuilds", map[string]any{}, "valid-key-05"},
 		{http.MethodPost, "/api/v1/devices/id/quarantines", map[string]any{}, ""},
+		{http.MethodPost, "/api/v1/devices/id/quarantines", map[string]any{"reason": "token=must-not-be-stored"}, ""},
 	}
 	for _, test := range tests {
 		assertStatus(t, environment.request(t, test.method, test.path, test.body, serviceToken, test.key), http.StatusBadRequest)
@@ -238,6 +265,10 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 }
 
 func (environment *managementEnvironment) request(t *testing.T, method, path string, body any, token, key string) responseEnvelope {
+	return environment.requestAsActor(t, method, path, body, token, key, "")
+}
+
+func (environment *managementEnvironment) requestAsActor(t *testing.T, method, path string, body any, token, key, actorID string) responseEnvelope {
 	t.Helper()
 	var content io.Reader
 	if body != nil {
@@ -256,6 +287,9 @@ func (environment *managementEnvironment) request(t *testing.T, method, path str
 	}
 	if key != "" {
 		request.Header.Set("Idempotency-Key", key)
+	}
+	if actorID != "" {
+		request.Header.Set("X-Device-Farm-Actor-Id", actorID)
 	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")

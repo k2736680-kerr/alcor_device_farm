@@ -18,7 +18,7 @@ const (
 	HeaderRunID     = "X-Eval-Run-Id"
 	HeaderAttemptID = "X-Eval-Attempt-Id"
 	HeaderTrace     = "traceparent"
-	maxHeaderLength = 256
+	maxHeaderLength = 128
 )
 
 type Values struct {

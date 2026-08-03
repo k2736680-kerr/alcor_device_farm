@@ -13,6 +13,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -91,6 +92,8 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 	if input.Payload == nil {
 		input.Payload = map[string]any{}
 	}
+	input.Reason = sensitive.RedactText(input.Reason)
+	input.Payload = sensitive.RedactMap(input.Payload)
 	id, err := service.newID()
 	if err != nil {
 		return Event{}, err

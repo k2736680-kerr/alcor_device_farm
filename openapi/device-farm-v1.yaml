@@ -193,7 +193,9 @@ paths:
     post:
       tags: [Devices]
       operationId: restartDevice
-      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
       responses: *acceptedResponses
   /api/v1/devices/{id}/rebuilds:
@@ -201,7 +203,9 @@ paths:
     post:
       tags: [Devices]
       operationId: rebuildDevice
-      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
       responses: *acceptedResponses
   /api/v1/devices/{id}/quarantines:
@@ -209,11 +213,13 @@ paths:
     post:
       tags: [Devices]
       operationId: quarantineDevice
+      parameters: [{$ref: "#/components/parameters/ActorID"}]
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
       responses: *standardResponses
     delete:
       tags: [Devices]
       operationId: unquarantineDevice
+      parameters: [{$ref: "#/components/parameters/ActorID"}]
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
       responses: *standardResponses
   /api/v1/device-reservations:
@@ -317,6 +323,12 @@ components:
       in: header
       required: true
       schema: {type: string, minLength: 8, maxLength: 128}
+    ActorID:
+      name: X-Device-Farm-Actor-Id
+      in: header
+      required: false
+      description: Alcor Adapter 注入的平台操作者标识；缺省时记录认证服务身份。不得放入 Token、密码或 Cookie。
+      schema: {type: string, minLength: 1, maxLength: 128}
     Page:
       name: page
       in: query
@@ -550,7 +562,11 @@ components:
       additionalProperties: false
       required: [reason]
       properties:
-        reason: {type: string, minLength: 3, maxLength: 500}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: 必填操作原因；包含 Token、密码、Cookie、密钥或带口令 DSN 时拒绝请求。
         force: {type: boolean, default: false}
     RemoteSessionCreate:
       type: object
@@ -565,7 +581,11 @@ components:
       additionalProperties: false
       required: [reason]
       properties:
-        reason: {type: string, minLength: 3, maxLength: 500}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: 必填操作原因；包含 Token、密码、Cookie、密钥或带口令 DSN 时拒绝请求。
     HostHeartbeat:
       type: object
       additionalProperties: false

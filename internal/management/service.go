@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 )
 
 type IDGenerator func() (string, error)
@@ -105,7 +108,8 @@ func (service *Service) StartImageValidation(ctx context.Context, id string) (Im
 }
 
 func (service *Service) CreateHost(ctx context.Context, clientID, key string, input HostInput) (Host, error) {
-	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" {
+	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" ||
+		sensitive.ContainsMap(input.Capabilities) || sensitive.ContainsMap(input.Capacity) {
 		return Host{}, ErrInvalidArgument
 	}
 	id, err := service.newID()
@@ -129,7 +133,8 @@ func (service *Service) GetHost(ctx context.Context, id string) (Host, error) {
 }
 
 func (service *Service) UpdateHost(ctx context.Context, id string, input HostInput) (Host, error) {
-	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" {
+	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" ||
+		sensitive.ContainsMap(input.Capabilities) || sensitive.ContainsMap(input.Capacity) {
 		return Host{}, ErrInvalidArgument
 	}
 	current, err := service.store.GetHost(ctx, id)
@@ -323,15 +328,31 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 	return created, err
 }
 
-func (service *Service) QuarantineDevice(ctx context.Context, id, reason string) (Device, error) {
-	return service.transitionDevice(ctx, id, domain.DeviceQuarantined, domain.HealthUnhealthy, reason)
+func (service *Service) QuarantineDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
+	audit, err := service.deviceAudit(actorID, requestID, "quarantine_device", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.transitionDevice(ctx, id, domain.DeviceQuarantined, domain.HealthUnhealthy, reason, audit)
 }
 
-func (service *Service) UnquarantineDevice(ctx context.Context, id, reason string) (Device, error) {
-	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason)
+func (service *Service) UnquarantineDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
+	audit, err := service.deviceAudit(actorID, requestID, "unquarantine_device", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason, audit)
 }
 
-func (service *Service) RestartDevice(ctx context.Context, id, reason string) (Device, error) {
+func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
+	audit, err := service.deviceAudit(actorID, requestID, "restart_device", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.restartDevice(ctx, id, reason, audit)
+}
+
+func (service *Service) restartDevice(ctx context.Context, id, reason string, audit DeviceAudit) (Device, error) {
 	if strings.TrimSpace(reason) == "" {
 		return Device{}, ErrInvalidArgument
 	}
@@ -363,10 +384,18 @@ func (service *Service) RestartDevice(ctx context.Context, id, reason string) (D
 		return Device{}, ErrConflict
 	}
 	current.LifecycleStatus, current.HealthStatus = domain.DeviceReady, domain.HealthHealthy
-	return service.store.UpdateDeviceState(ctx, current, oldLifecycle, oldHealth)
+	return service.store.UpdateDeviceState(ctx, current, oldLifecycle, oldHealth, audit)
 }
 
-func (service *Service) RebuildDevice(ctx context.Context, id, reason string) (Device, error) {
+func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
+	audit, err := service.deviceAudit(actorID, requestID, "rebuild_device", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.rebuildDevice(ctx, id, reason, audit)
+}
+
+func (service *Service) rebuildDevice(ctx context.Context, id, reason string, audit DeviceAudit) (Device, error) {
 	if strings.TrimSpace(reason) == "" {
 		return Device{}, ErrInvalidArgument
 	}
@@ -380,10 +409,10 @@ func (service *Service) RebuildDevice(ctx context.Context, id, reason string) (D
 	if _, err := service.provider.Rebuild(ctx, current.ProviderRef); err != nil {
 		return Device{}, err
 	}
-	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason)
+	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason, audit)
 }
 
-func (service *Service) transitionDevice(ctx context.Context, id string, target domain.DeviceLifecycleStatus, health domain.HealthStatus, reason string) (Device, error) {
+func (service *Service) transitionDevice(ctx context.Context, id string, target domain.DeviceLifecycleStatus, health domain.HealthStatus, reason string, audit DeviceAudit) (Device, error) {
 	if strings.TrimSpace(reason) == "" {
 		return Device{}, ErrInvalidArgument
 	}
@@ -405,12 +434,43 @@ func (service *Service) transitionDevice(ctx context.Context, id string, target 
 		}
 	}
 	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
-	return service.store.UpdateDeviceState(ctx, current, fromLifecycle, fromHealth)
+	return service.store.UpdateDeviceState(ctx, current, fromLifecycle, fromHealth, audit)
+}
+
+func (service *Service) deviceAudit(actorID, requestID, action, reason string) (DeviceAudit, error) {
+	if !validAuditIdentity(actorID) || !validAuditIdentity(requestID) || !validReason(reason) {
+		return DeviceAudit{}, ErrInvalidArgument
+	}
+	id, err := service.newID()
+	if err != nil {
+		return DeviceAudit{}, err
+	}
+	return DeviceAudit{ID: id, ActorType: "service", ActorID: strings.TrimSpace(actorID), Action: action,
+		RequestID: strings.TrimSpace(requestID), Reason: strings.TrimSpace(reason)}, nil
+}
+
+func validAuditIdentity(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > 128 || sensitive.Contains(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validReason(reason string) bool {
+	reason = strings.TrimSpace(reason)
+	return len(reason) >= 3 && len(reason) <= 500 && !sensitive.Contains(reason)
 }
 
 func validateImageInput(input ImageInput) error {
 	if strings.TrimSpace(input.Name) == "" || !strings.HasPrefix(input.DockerDigest, "sha256:") ||
-		input.APILevel < 21 || strings.TrimSpace(input.ABI) == "" || strings.TrimSpace(input.Resolution) == "" {
+		input.APILevel < 21 || strings.TrimSpace(input.ABI) == "" || strings.TrimSpace(input.Resolution) == "" ||
+		sensitive.ContainsMap(input.ResourceConfig) {
 		return ErrInvalidArgument
 	}
 	return nil

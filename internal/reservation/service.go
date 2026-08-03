@@ -16,6 +16,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -266,7 +267,7 @@ func (service *Service) Release(
 	}
 	input.Reason = strings.TrimSpace(input.Reason)
 	if strings.TrimSpace(clientID) == "" || len(key) < 8 || len(key) > 128 ||
-		!identifierPattern.MatchString(id) || len(input.Reason) < 3 || len(input.Reason) > 500 || requestID == "" {
+		!identifierPattern.MatchString(id) || len(input.Reason) < 3 || len(input.Reason) > 500 || sensitive.Contains(input.Reason) || requestID == "" {
 		return View{}, ErrInvalidArgument
 	}
 	hash, err := requestHash(map[string]any{"reservation_id": id, "reason": input.Reason, "force": input.Force})
@@ -665,6 +666,9 @@ func validateCreate(clientID, key string, input CreateInput) error {
 	}
 	if input.RequestedCapabilities == nil {
 		input.RequestedCapabilities = map[string]any{}
+	}
+	if sensitive.ContainsMap(input.RequestedCapabilities) {
+		return ErrInvalidArgument
 	}
 	if _, err := json.Marshal(input.RequestedCapabilities); err != nil {
 		return fmt.Errorf("%w: requested_capabilities is not valid JSON", ErrInvalidArgument)

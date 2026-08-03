@@ -20,12 +20,13 @@ func TestLoggerRedactsSensitiveAttributes(t *testing.T) {
 		"request",
 		"authorization", "Bearer top-secret",
 		"database_dsn", "postgres://secret",
+		"error", "upstream failed with token=message-secret",
 		"safe", "visible",
 		slog.Group("nested", slog.String("agent_token", "agent-secret")),
 	)
 
 	got := output.String()
-	for _, secret := range []string{"top-secret", "postgres://secret", "agent-secret"} {
+	for _, secret := range []string{"top-secret", "postgres://secret", "agent-secret", "message-secret"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("log contains secret %q: %s", secret, got)
 		}

@@ -103,6 +103,37 @@ func TestEmptyConfiguredTokensFailClosed(t *testing.T) {
 	}
 }
 
+func TestTokenRotationAcceptsPreviousOnlyDuringConfiguredGraceWindow(t *testing.T) {
+	next := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
+	security := config.SecurityConfig{
+		ServiceToken: "service-new", ServicePreviousToken: "service-old",
+		AgentToken: "agent-new", AgentPreviousToken: "agent-old",
+	}
+	for _, test := range []struct{ path, token string }{
+		{path: "/api/v1/devices", token: "service-new"}, {path: "/api/v1/devices", token: "service-old"},
+		{path: "/internal/v1/device-hosts/id/heartbeats", token: "agent-new"},
+		{path: "/internal/v1/device-hosts/id/heartbeats", token: "agent-old"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		request.Header.Set("Authorization", "Bearer "+test.token)
+		response := httptest.NewRecorder()
+		RouteMiddleware(security, next).ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("path=%s token=%s status=%d", test.path, test.token, response.Code)
+		}
+	}
+	security.ServicePreviousToken, security.AgentPreviousToken = "", ""
+	for _, test := range []struct{ path, token string }{{"/api/v1/devices", "service-old"}, {"/internal/v1/device-hosts/id/heartbeats", "agent-old"}} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		request.Header.Set("Authorization", "Bearer "+test.token)
+		response := httptest.NewRecorder()
+		RouteMiddleware(security, next).ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("removed previous token path=%s status=%d", test.path, response.Code)
+		}
+	}
+}
+
 func contains(value, part string) bool {
 	for index := 0; index+len(part) <= len(value); index++ {
 		if value[index:index+len(part)] == part {

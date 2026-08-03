@@ -63,7 +63,7 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 
 本地构建和测试入口见 [开发说明](docs/development.md)。
 
-设备接口以 [OpenAPI 契约](openapi/device-farm-v1.yaml) 为准。`/api/v1/device-*` 使用平台服务 Token，`/internal/v1` 使用独立 Agent Token；两类 Token 必须不同，空值不会放行受保护接口。
+设备接口以 [OpenAPI 契约](openapi/device-farm-v1.yaml) 为准。`/api/v1/device-*` 使用平台服务 Token，`/internal/v1` 使用独立 Agent Token；两类 Token 必须不同，空值不会放行受保护接口。current/previous 双 Token 支持无中断轮换，旧 Token 从 previous 配置移除后立即失效。管理设备操作会保存操作者、request ID、原因和动作，日志、健康事件及审计写入前会脱敏；规则见 [安全与审计](docs/security_and_audit.md)。
 
 配置 PostgreSQL URL 后，Server 已可提供 Image、Host、Pool、Device 和 Reservation API；当前设备实例由 Mock Provider 支撑，Scheduler 会按设备池、能力、Host 状态、设备状态和并发上限完成原子分配并创建 Session。
 

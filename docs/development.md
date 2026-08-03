@@ -65,9 +65,11 @@ bin/device-farm-server.exe --config config/config.example.yaml
 - `DEVICE_FARM_LOG_LEVEL`；
 - `DEVICE_FARM_LOG_FORMAT`；
 - `DEVICE_FARM_SECURITY_SERVICE_TOKEN`；
-- `DEVICE_FARM_SECURITY_AGENT_TOKEN`。
+- `DEVICE_FARM_SECURITY_SERVICE_PREVIOUS_TOKEN`；
+- `DEVICE_FARM_SECURITY_AGENT_TOKEN`；
+- `DEVICE_FARM_SECURITY_AGENT_PREVIOUS_TOKEN`。
 
-真实 Token 只能通过部署 Secret 或环境变量注入，不写入已提交 YAML。
+真实 Token 只能通过部署 Secret 或环境变量注入，不写入已提交 YAML。`*_PREVIOUS_TOKEN` 只用于轮换宽限期，不能脱离对应 current Token 单独配置；四个非空 Token 必须互不相同。具体轮换、审计和脱敏规则见 [安全与审计](security_and_audit.md)。
 
 管理 API 需要 `DEVICE_FARM_DATABASE_URL`。URL 为空时 Server 只提供健康检查，受保护的管理路径返回 503；不会退化为不持久化的内存管理模式。
 

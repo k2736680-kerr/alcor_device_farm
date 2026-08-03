@@ -44,4 +44,6 @@ stf:
 # with 401 while the matching token is empty.
 security:
   service_token: ""
+  service_previous_token: ""
   agent_token: ""
+  agent_previous_token: ""

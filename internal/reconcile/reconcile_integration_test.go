@@ -87,7 +87,8 @@ func TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter(t *testi
 	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
 
 	environment.provider.SetScenario(providermock.Scenario{})
-	if _, err := environment.management.UnquarantineDevice(context.Background(), "device_0000000000001", "operator confirmed rebuild path"); err != nil {
+	if _, err := environment.management.UnquarantineDeviceAudited(context.Background(), "device_0000000000001",
+		"operator confirmed rebuild path", "test-operator", "request-reconcile-recovery"); err != nil {
 		t.Fatal(err)
 	}
 	assertDevice(t, environment.db, "provisioning", "unknown", 0)

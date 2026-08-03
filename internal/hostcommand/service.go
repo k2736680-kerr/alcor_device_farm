@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,9 +13,12 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+var errorCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,63}$`)
 
 var (
 	ErrInvalidArgument        = errors.New("invalid host command argument")
@@ -101,7 +105,7 @@ func (service *Service) Create(ctx context.Context, hostID, commandType string, 
 		return Command{}, err
 	}
 	record, err := service.repo.Create(ctx, service.db.Pool(), repository.CreateCommandParams{
-		ID: id, HostID: hostID, CommandType: commandType, Payload: payload,
+		ID: id, HostID: hostID, CommandType: commandType, Payload: sensitive.RedactMap(payload),
 		MaxAttempts: maxAttempts, IdempotencyKey: key,
 	})
 	if err != nil {
@@ -129,7 +133,7 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		}
 		seenRefs[device.ProviderRef], seenSerials[device.Serial] = true, true
 	}
-	capacity, err := json.Marshal(input.Capacity)
+	capacity, err := json.Marshal(sensitive.RedactMap(input.Capacity))
 	if err != nil {
 		return HeartbeatResult{}, ErrInvalidArgument
 	}
@@ -363,11 +367,14 @@ func (service *Service) Complete(ctx context.Context, id string, input Completio
 	}
 	var errorCode *string
 	if input.Error != nil && strings.TrimSpace(input.Error.Code) != "" {
-		value := input.Error.Code
+		value := strings.TrimSpace(input.Error.Code)
+		if !errorCodePattern.MatchString(value) {
+			return Command{}, ErrInvalidArgument
+		}
 		errorCode = &value
 	}
 	retryable := input.Error != nil && input.Error.Retryable
-	record, err := service.repo.Complete(ctx, service.db.Pool(), id, input.LeaseToken, input.Attempt, domain.CommandStatus(input.Status), input.Result, errorCode, retryable)
+	record, err := service.repo.Complete(ctx, service.db.Pool(), id, input.LeaseToken, input.Attempt, domain.CommandStatus(input.Status), sensitive.RedactMap(input.Result), errorCode, retryable)
 	if err != nil {
 		return Command{}, translate(err)
 	}
