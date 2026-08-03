@@ -33,7 +33,7 @@ erDiagram
 - `devices.serial` 和 `(provider_type, provider_ref)` 唯一；已分配的 STF serial、ADB Endpoint、Appium Endpoint 也分别唯一；
 - `device_reservations(client_id, idempotency_key)` 唯一，同一调用方重复提交不会重复占用；
 - 部分唯一索引保证同一设备最多存在一个 `active` 预约；
-- Pool 默认租期不得超过最大租期，warm pool 的 `min_ready` 不得超过 `max_instances`；
+- Pool 默认租期不得超过最大租期；`min_ready` 不得超过 `max_instances`。MVP 固定使用 `min_ready=0/max_instances=2`，字段仅作未来兼容，不代表自动补池已启用；
 - Host Command 的 leased 状态必须同时拥有 lease token 和到期时间，完成状态必须有完成时间；
 - active Reservation 和 Session 必须具有完整的设备、开始与到期信息；
 - 外键默认 `RESTRICT` 保留历史，只有纯成员关系随 Pool 删除而级联。

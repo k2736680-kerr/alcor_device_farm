@@ -36,7 +36,7 @@
 | DF-013 | Host Agent 核心程序 | completed | DF-012、DF-007 |
 | DF-014 | Docker Emulator Provider | blocked | DF-013 |
 | DF-015 | Appium Endpoint 和健康 Adapter | pending | DF-014 |
-| DF-016 | 镜像验证和 warm pool | pending | DF-011、DF-014、DF-015 |
+| DF-016 | 镜像验证和固定容量配置 | pending | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | pending | DF-014 |
 | DF-018 | STF Adapter 和远控入口 | pending | DF-009、DF-017 |
 | DF-019 | DaFit Farm 运行适配 | pending | DF-015 |
@@ -190,13 +190,13 @@
 
 验收：两台设备可同时创建独立 Appium Session；错误 UDID 不能连接到其他设备；Appium 不健康时设备不得变为 ready。
 
-### DF-016 镜像验证和 warm pool
+### DF-016 镜像验证和固定容量配置
 
-实施：实现 digest 验证、镜像 validation 资源、`min_ready/max_instances` 和自动补池。
+实施：实现 digest 验证和镜像 validation；建立一个 `max_concurrency=2` 的默认逻辑设备池，显式关联最多两台已验证设备。保留 `min_ready/max_instances` 兼容字段但固定为 `0/2`，不实现自动补池、预测扩容或自动缩容。
 
-产出：镜像验证任务、warm pool controller。
+产出：镜像验证任务、默认池初始化/配置说明和两设备容量检查。
 
-验收：未验证镜像不能启设备；ready 少于 min 时自动补足；总设备不超过 max；连续创建失败触发退避和告警，不形成命令风暴。
+验收：未验证镜像不能启动设备；默认池最多调度两台设备；第三个并发预约保持 pending/capacity unavailable；系统不会自动创建或删除 Emulator，也不会形成 Host Command 风暴；后续真机可通过成员关系加入现有池或新逻辑池，不修改核心架构。
 
 ## 7. 阶段 E：STF 和真实执行
 
