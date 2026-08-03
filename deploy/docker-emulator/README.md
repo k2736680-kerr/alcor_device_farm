@@ -36,11 +36,14 @@ sudoedit /etc/alcor-device-farm/host-agent.env
 
 至少填写：
 
+- `DEVICE_FARM_AGENT_PROVIDER=docker`；
 - `DEVICE_FARM_AGENT_SERVER_URL`；
 - `DEVICE_FARM_AGENT_HOST_ID`；
 - `DEVICE_FARM_SECURITY_AGENT_TOKEN`；
 - `DEVICE_FARM_DOCKER_IMAGE`；
 - `DEVICE_FARM_DOCKER_ADVERTISE_HOST`。
+
+Provider 没有默认值。漏配或填写未知值时 Agent 会直接退出，绝不会改用 Mock 冒充真实设备；正式 Linux Host 必须保持部署样例中的 `docker`。
 
 再执行真实双设备验收：
 

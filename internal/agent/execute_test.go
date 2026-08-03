@@ -128,7 +128,7 @@ func TestAgentCreateWaitsForReadinessClassifiesFailureAndCleans(t *testing.T) {
 			client := &completionClient{}
 			provider := providermock.New(providermock.Config{Scenario: test.scenario})
 			runtime, err := New(Config{
-				HostID: "host_000000000000001", HeartbeatInterval: time.Second,
+				HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: time.Second,
 				LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
 				CommandTimeout: 20 * time.Millisecond, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
 			}, client, provider, nil)

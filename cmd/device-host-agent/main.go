@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -26,7 +27,7 @@ func main() {
 	hostID := flag.String("host-id", os.Getenv("DEVICE_FARM_AGENT_HOST_ID"), "registered device host ID")
 	token := flag.String("agent-token", os.Getenv("DEVICE_FARM_SECURITY_AGENT_TOKEN"), "agent bearer token")
 	concurrency := flag.Int("concurrency", 2, "maximum concurrent provider commands")
-	providerType := flag.String("provider", envOr("DEVICE_FARM_AGENT_PROVIDER", "mock"), "device provider: mock or docker")
+	providerType := flag.String("provider", strings.TrimSpace(os.Getenv("DEVICE_FARM_AGENT_PROVIDER")), "device provider: mock or docker; required")
 	dockerBinary := flag.String("docker-binary", envOr("DEVICE_FARM_DOCKER_BINARY", "docker"), "Docker CLI path")
 	dockerImage := flag.String("docker-image", os.Getenv("DEVICE_FARM_DOCKER_IMAGE"), "fixed Android Emulator container image")
 	dockerAdvertiseHost := flag.String("docker-advertise-host", os.Getenv("DEVICE_FARM_DOCKER_ADVERTISE_HOST"), "host advertised for published ADB ports")
@@ -92,6 +93,8 @@ func main() {
 
 func buildProvider(providerType string, dockerConfig providerdocker.Config) (providers.Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(providerType)) {
+	case "":
+		return nil, errors.New("device provider is required; set DEVICE_FARM_AGENT_PROVIDER or --provider")
 	case "mock":
 		return providermock.New(providermock.Config{}), nil
 	case "docker":

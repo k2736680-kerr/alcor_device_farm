@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,16 +39,14 @@ type Agent struct {
 }
 
 func New(config Config, client Client, provider providers.Provider, logger *slog.Logger) (*Agent, error) {
+	config.ProviderType = strings.ToLower(strings.TrimSpace(config.ProviderType))
 	if len(config.HostID) < 16 || client == nil || provider == nil || config.HeartbeatInterval <= 0 ||
 		config.LeaseSeconds < 5 || config.LeaseSeconds > 300 || config.Concurrency < 1 ||
-		config.CommandTimeout <= 0 || config.ShutdownTimeout <= 0 {
+		config.CommandTimeout <= 0 || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
 		return nil, errors.New("invalid agent configuration")
 	}
 	if logger == nil {
 		logger = slog.Default()
-	}
-	if config.ProviderType == "" {
-		config.ProviderType = "mock"
 	}
 	return &Agent{config: config, client: client, provider: provider, logger: logger}, nil
 }

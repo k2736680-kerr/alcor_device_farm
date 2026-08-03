@@ -4,7 +4,7 @@
 
 Docker Emulator Provider 只运行在 Device Host Agent 本机，负责 Android Emulator 容器、专属网络、独立数据卷、KVM 挂载、资源限制和 ADB 连接信息。Server 不访问远程 Docker Socket，Provider 不执行 DaFit 用例，也不实现 Appium、STF 或 Alcor 业务对象。
 
-当前 Server 管理面继续使用 Mock Provider 做纯控制面开发。真实 Docker 生命周期由 Host Agent 选择 `DEVICE_FARM_AGENT_PROVIDER=docker` 后执行；后续 DF-016 Pool Controller 负责把已验证 Image 转成 Host Command，不把 Docker 操作搬回 Server。
+当前 Server 管理面继续使用 Mock Provider 做纯控制面开发。Host Agent 必须显式选择 Provider：本地 Mock 开发配置 `DEVICE_FARM_AGENT_PROVIDER=mock`，真实 Docker 生命周期配置 `DEVICE_FARM_AGENT_PROVIDER=docker`；缺失或未知值直接拒绝启动，不存在自动 fallback。DF-016 Pool Controller 负责把已验证 Image 转成 Host Command，不把 Docker 操作搬回 Server。
 
 ## 2. Host 和镜像契约
 
@@ -19,7 +19,7 @@ Docker Emulator Provider 只运行在 Device Host Agent 本机，负责 Android 
 - 默认独立数据卷挂载到 `budtmo/docker-android` 的持久化目录 `/home/androidusr`。若所选镜像的数据目录不同，部署时必须显式调整并完成清理验证；
 - 镜像的 ABI 必须与待测 APK 兼容，MVP 推荐 `x86_64`。
 
-Provider 初始化会先检查 Linux、KVM 读写权限和 Docker Engine。任何一项失败都会返回明确错误，不会自动切换 Mock Provider，也不会把 Windows Docker Desktop 当成通过。
+Agent 会先校验 Provider 已显式选择；Docker Provider 初始化再检查 Linux、KVM 读写权限和 Docker Engine。任何一项失败都会返回明确错误，不会自动切换 Mock Provider，也不会把 Windows Docker Desktop 当成通过。
 
 ## 3. 资源和命名规则
 
@@ -88,6 +88,8 @@ DEVICE_FARM_DOCKER_CPUS=2
 DEVICE_FARM_DOCKER_MEMORY=4g
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
+
+`DEVICE_FARM_AGENT_PROVIDER` 是必填项，也可用命令行 `--provider` 显式传入。仓库 `.env.example` 的 `mock` 只用于本地控制面开发；Linux Host 的部署样例固定为 `docker`。不要删除该配置来依赖默认行为，因为 Agent 不提供默认 Provider。
 
 Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。DF-016 已要求 validation 和每次正式 create 都核对本机镜像 ID/RepoDigest 与已登记 digest。
 

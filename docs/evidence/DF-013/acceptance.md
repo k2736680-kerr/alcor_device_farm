@@ -11,7 +11,7 @@
 - 使用固定并发槽限制本机 Provider 操作，领取数量不会超过剩余槽位；
 - 收到 SIGINT/SIGTERM 后立即停止领取新命令，并等待在途命令完成；超过退出等待时间时明确报错，由 DF-012 Server lease recovery 恢复未完成命令；
 - Agent Server URL、Host ID 和 Token 均通过参数或环境变量注入，仓库未保存真实 Token；
-- 当前运行入口使用 DF-007 Mock Provider；真实 Docker/KVM Provider 在 DF-014 接入，不以 Mock 冒充真实设备验收。
+- Agent 必须通过环境变量或参数显式选择 Provider；缺失或未知值拒绝启动，不会静默回退到 DF-007 Mock Provider；本地开发样例显式使用 `mock`，真实 Docker/KVM Host 显式使用 `docker`。
 
 ## 核心运行链路验收
 
@@ -23,6 +23,7 @@
 - 两条在途命令均完成 completion；
 - Agent 运行期间至少完成一次设备发现和 heartbeat；
 - 修复取消信号与领取循环同时就绪时可能额外领取一批命令的退出竞态。
+- `TestAgentRequiresExplicitProvider` 验证 Agent Runtime 不接受空 Provider 类型；`TestBuildProviderRequiresExplicitProvider`、`TestBuildProviderAcceptsExplicitMock` 和 `TestBuildProviderRejectsUnknownProvider` 验证进程入口不存在隐式 Mock fallback。
 
 Agent 或 Server 重启时，命令真相仍保存在 DF-012 的 PostgreSQL `device_host_commands` 中：未完成 lease 到期后按 attempt 和最大重试次数安全重领，旧 lease completion 不能覆盖新 attempt。该能力已经由 DF-012 真实 PostgreSQL 验收覆盖，本阶段没有新建进程内命令队列。
 
@@ -53,10 +54,14 @@ go test -count=1 -v ./internal/agent ./cmd/device-host-agent
 
 ```text
 PASS TestAgentStopsClaimingAndFinishesInflightCommands
+PASS TestAgentRequiresExplicitProvider
 PASS TestHTTPClientClaimUsesAgentTokenAndDecodesEnvelope
 PASS TestHTTPClientReturnsAPIErrorForNonSuccessStatus
+PASS TestBuildProviderRequiresExplicitProvider
+PASS TestBuildProviderAcceptsExplicitMock
+PASS TestBuildProviderRejectsUnknownProvider
 PASS internal/agent
-cmd/device-host-agent [no test files]
+PASS cmd/device-host-agent
 ```
 
 ```powershell

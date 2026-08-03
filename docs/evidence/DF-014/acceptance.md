@@ -19,7 +19,7 @@ Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KV
 - 健康检查真实执行容器内 `adb get-state` 和 `adb shell getprop sys.boot_completed`；
 - Appium 健康保持未通过，不在 DF-014 伪造 ready，独立 Endpoint 在 DF-015 实现；
 - Create/Delete 幂等，Rebuild 保留 Device/Image/capabilities 并提升 generation；
-- Host Agent 支持 `DEVICE_FARM_AGENT_PROVIDER=mock|docker`，心跳明确上报实际 Provider 类型；
+- Host Agent 必须显式配置 `DEVICE_FARM_AGENT_PROVIDER=mock|docker` 或 `--provider`，心跳明确上报规范化后的实际 Provider 类型；配置缺失或未知时拒绝启动，不会降级到 Mock；
 - Agent create 命令透传 capabilities，并保留 Provider 的 retryable 分类；
 - Agent 的 create/start/stop/restart/rebuild/inspect completion 返回稳定的 Provider Snapshot、连接和健康字段，为后续自动补齐 Controller 更新同一 Device 提供依据；
 - 管理 API 的 restart/rebuild 不再调用 Server 内 Mock Provider，而是原子写 Device 状态、审计和持久化 Host Command，由 Host Agent 在本机执行真实 Provider；
@@ -49,6 +49,9 @@ PASS TestCLIBackendInspectDecodesPublishedPortAndLabels
 PASS TestDockerProviderLifecycleUsesUniquePortsAndCleansResources
 PASS TestDockerProviderDoesNotSilentlyRunWithoutKVMOrFixedImage
 PASS TestDockerResourceNamesAreStableAndBounded
+PASS TestBuildProviderRequiresExplicitProvider
+PASS TestBuildProviderAcceptsExplicitMock
+PASS TestBuildProviderRejectsUnknownProvider
 PASS TestAgentCreateCompletionReturnsProviderSnapshot
 PASS TestManagementAPICompleteMockFlow（restart/rebuild Host Command 幂等、成功恢复和失败隔离）
 PASS TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady
@@ -60,7 +63,7 @@ PASS TestHeartbeatIdentityConflictsRollbackEntireTransaction
 PASS internal/providers/docker
 PASS internal/agent
 PASS internal/hostcommand
-cmd/device-host-agent [no test files]
+PASS cmd/device-host-agent
 ```
 
 真实测试 `TestDockerProviderLinuxKVMIntegration` 在本机按设计显示 SKIP：

@@ -59,6 +59,17 @@ type trackingSleeper struct {
 	release chan struct{}
 }
 
+func TestAgentRequiresExplicitProvider(t *testing.T) {
+	_, err := agent.New(agent.Config{
+		HostID: "host_000000000000001", HeartbeatInterval: time.Second,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second,
+	}, &fakeClient{}, providermock.New(providermock.Config{}), nil)
+	if err == nil {
+		t.Fatal("agent accepted an empty provider type")
+	}
+}
+
 func (sleeper *trackingSleeper) Sleep(ctx context.Context, duration time.Duration) error {
 	if duration <= 0 {
 		return nil
@@ -104,7 +115,7 @@ func TestAgentStopsClaimingAndFinishesInflightCommands(t *testing.T) {
 	}
 	client := &fakeClient{commands: commands}
 	runtime, err := agent.New(agent.Config{
-		HostID: "host_000000000000001", HeartbeatInterval: 10 * time.Millisecond,
+		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: 10 * time.Millisecond,
 		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 2,
 		CommandTimeout: time.Second, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 2},
 	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
