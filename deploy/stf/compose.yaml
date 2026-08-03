@@ -1,0 +1,104 @@
+name: alcor-device-farm-stf
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  rethinkdb:
+    image: ${RETHINKDB_IMAGE:-rethinkdb:2.4.2}
+    restart: unless-stopped
+    command: ["rethinkdb", "--bind", "all", "--cache-size", "512", "--no-update-check"]
+    expose:
+      - "28015"
+    volumes:
+      - stf-rethinkdb-data:/data
+    networks:
+      - stf-internal
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/28015'"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    logging: *default-logging
+
+  stf-adb:
+    image: ${STF_IMAGE:-devicefarmer/stf:3.7.9}
+    restart: unless-stopped
+    command: ["adb", "-a", "-P", "5037", "nodaemon", "server"]
+    expose:
+      - "5037"
+    volumes:
+      - stf-adb-keys:/root/.android
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - stf-internal
+    healthcheck:
+      test: ["CMD-SHELL", "adb -H 127.0.0.1 -P 5037 devices >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  stf:
+    image: ${STF_IMAGE:-devicefarmer/stf:3.7.9}
+    restart: unless-stopped
+    depends_on:
+      rethinkdb:
+        condition: service_healthy
+      stf-adb:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      RETHINKDB_PORT_28015_TCP: tcp://rethinkdb:28015
+      STF_ADMIN_NAME: ${STF_ADMIN_NAME:-Device Farm Admin}
+      STF_ADMIN_EMAIL: ${STF_ADMIN_EMAIL:?set STF_ADMIN_EMAIL in deploy/stf/.env}
+    command:
+      - stf
+      - local
+      - --adb-host
+      - stf-adb
+      - --adb-port
+      - "5037"
+      - --public-ip
+      - ${STF_PUBLIC_IP:?set STF_PUBLIC_IP in deploy/stf/.env}
+      - --auth-secret
+      - ${STF_AUTH_SECRET:?set STF_AUTH_SECRET in deploy/stf/.env}
+      - --provider-min-port
+      - "7400"
+      - --provider-max-port
+      - "7500"
+      - --allow-remote
+    ports:
+      - "${STF_BIND_ADDRESS:-127.0.0.1}:7100:7100"
+      - "${STF_BIND_ADDRESS:-127.0.0.1}:7110:7110"
+      - "${STF_BIND_ADDRESS:-127.0.0.1}:7400-7500:7400-7500"
+    networks:
+      - stf-internal
+      - stf-edge
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('http').get('http://127.0.0.1:7100/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+    logging: *default-logging
+
+volumes:
+  stf-rethinkdb-data:
+  stf-adb-keys:
+
+networks:
+  stf-internal:
+    internal: true
+  stf-edge:

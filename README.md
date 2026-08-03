@@ -78,3 +78,5 @@ Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命�
 Host Agent 可通过 `DEVICE_FARM_AGENT_PROVIDER=mock|docker` 选择 Provider。Docker 模式只允许在具备可读写 `/dev/kvm` 的 Linux Host 启动，并使用固定版本镜像、独立网络/数据卷、Docker 随机 ADB 端口和 CPU/内存/PID 限制；配置与 Linux 双设备验收入口见 [Docker Emulator Provider](docs/docker_emulator_provider.md)。
 
 镜像 validation 和固定目标 Controller 已通过 Host Command 接入 Agent。管理端设置 `device_pool_images.min_ready/max_instances` 后，后台会自动登记并补齐 Emulator，不需要手工创建设备；默认两台时设置 `2/2`，以后扩容只改参数。详细边界与操作见 [固定目标模拟器池](docs/warm_pool_controller.md)。
+
+STF 与 RethinkDB 的最小内网部署已固定为 DeviceFarmer/STF `3.7.9` 和 RethinkDB `2.4.2`。默认只绑定本机回环地址，RethinkDB、ADB server 和管理 Token 不暴露给浏览器；部署和真实验收见 [STF 单机内网部署](deploy/stf/README.md)。
