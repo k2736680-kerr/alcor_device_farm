@@ -13,6 +13,8 @@
 - Server 重启后可从数据库中的 create/rebuild command 结果继续恢复，不依赖进程内状态；
 - rebuild 结果必须包含 serial、ADB/Appium Endpoint、Appium UDID 和完整健康快照，缺失时隔离；
 - rebuild 成功才从 recycling 回 ready；最终失败或超时进入 quarantined/unhealthy 并写健康事件；
+- 人工 restart/rebuild 同样只走持久化 Host Command；请求、Device 不可调度状态和审计在一个事务提交，同一幂等键不重复执行；
+- 人工命令 completion 与 Device 收敛在一个数据库事务处理：完整健康快照恢复 ready，最终失败、超时或不完整结果自动 quarantined/unhealthy 并写带 command ID 的健康事件；
 - Server Reconciler 不调用真实 Provider，不需要 Docker Socket；它使用 Agent heartbeat、PostgreSQL 和 STF 可见性收敛状态；
 - Docker Provider 测试证明 rebuild 删除带上一任务标记的旧数据卷并创建干净卷；
 - 补偿矩阵、数据隔离规则和人工介入条件见 `docs/failure_recovery_and_data_isolation.md`。
@@ -27,6 +29,8 @@ PASS Server 重启后从 succeeded create 结果恢复 Device ready
 PASS released Device 只创建一条 rebuild 命令
 PASS rebuild 完整健康后 recycling -> ready
 PASS rebuild 最终超时后 recycling -> quarantined 并写健康事件
+PASS 管理 restart/rebuild 不直调 Server Provider，Host Command 重放不重复
+PASS 管理命令成功 -> ready，最终失败 -> quarantined + 健康事件
 PASS Server 无 Provider 访问时依据 Agent unhealthy 结果隔离设备
 PASS Docker rebuild 不复用带上一任务标记的数据卷
 PASS 原有 Scheduler/Reaper/STF/Appium/Agent/Warm Pool 测试不回归

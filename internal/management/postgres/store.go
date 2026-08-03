@@ -9,6 +9,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -267,6 +268,91 @@ func (store *Store) UpdateDeviceState(ctx context.Context, device management.Dev
 		return err
 	})
 	return value, rowError(err)
+}
+
+func (store *Store) ReplayDeviceOperation(ctx context.Context, deviceID, hostID, key, commandType, requestHash string) (management.Device, bool, error) {
+	var existingType string
+	var existingRaw []byte
+	err := store.db.Pool().QueryRow(ctx, `SELECT command_type,payload FROM device_host_commands
+		WHERE host_id=$1 AND idempotency_key=$2`, hostID, key).Scan(&existingType, &existingRaw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return management.Device{}, false, nil
+	}
+	if err != nil {
+		return management.Device{}, false, normalize(err)
+	}
+	var payload map[string]any
+	if json.Unmarshal(existingRaw, &payload) != nil || existingType != commandType ||
+		payload["device_id"] != deviceID || payload["request_hash"] != requestHash {
+		return management.Device{}, false, management.ErrConflict
+	}
+	value, err := store.GetDevice(ctx, deviceID)
+	return value, true, err
+}
+
+func (store *Store) QueueDeviceOperation(ctx context.Context, operation management.DeviceOperation) (management.Device, error) {
+	if operation.CommandID == "" || operation.CommandType == "" || operation.IdempotencyKey == "" ||
+		operation.MaxAttempts < 1 || operation.Device.ID == "" || operation.Device.HostID == "" {
+		return management.Device{}, management.ErrInvalidArgument
+	}
+	var value management.Device
+	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var existingType string
+		var existingRaw []byte
+		err := tx.QueryRow(ctx, `SELECT command_type,payload FROM device_host_commands
+			WHERE host_id=$1 AND idempotency_key=$2`, operation.Device.HostID, operation.IdempotencyKey).
+			Scan(&existingType, &existingRaw)
+		if err == nil {
+			var existingPayload map[string]any
+			if json.Unmarshal(existingRaw, &existingPayload) != nil || existingType != operation.CommandType ||
+				existingPayload["request_hash"] != operation.Payload["request_hash"] {
+				return management.ErrConflict
+			}
+			value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, operation.Device.ID))
+			return err
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		record, err := (repository.CommandRepository{}).Create(ctx, tx, repository.CreateCommandParams{
+			ID: operation.CommandID, HostID: operation.Device.HostID, CommandType: operation.CommandType,
+			Payload: sensitive.RedactMap(operation.Payload), MaxAttempts: operation.MaxAttempts,
+			IdempotencyKey: operation.IdempotencyKey,
+		})
+		if errors.Is(err, repository.ErrIdempotencyConflict) {
+			return management.ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		if record.ID != operation.CommandID {
+			value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, operation.Device.ID))
+			return err
+		}
+		value, err = scanDevice(tx.QueryRow(ctx, `UPDATE devices SET
+			lifecycle_status=$2::varchar,health_status=$3::varchar,health_reason=$4,updated_at=clock_timestamp()
+			WHERE id=$1 AND host_id=$5 AND provider_ref=$6 AND lifecycle_status=$7 AND health_status=$8
+			RETURNING id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
+				adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,
+				consecutive_failures,created_at,updated_at`,
+			operation.Device.ID, operation.Device.LifecycleStatus, operation.Device.HealthStatus,
+			operation.Device.HealthReason, operation.Device.HostID, operation.Device.ProviderRef,
+			operation.ExpectedLifecycle, operation.ExpectedHealth))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return management.ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,$2,$3,$4,'device',$5,$6,$7,jsonb_build_object('command_id',$8::text,'command_type',$9::text))`,
+			operation.Audit.ID, operation.Audit.ActorType, operation.Audit.ActorID, operation.Audit.Action,
+			operation.Device.ID, operation.Audit.RequestID, sensitive.RedactText(operation.Audit.Reason),
+			record.ID, record.CommandType)
+		return err
+	})
+	return value, normalize(err)
 }
 
 const imageSelect = `SELECT id,name,docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`

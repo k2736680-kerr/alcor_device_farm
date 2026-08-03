@@ -19,7 +19,6 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
-	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
@@ -79,7 +78,6 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		}
 		defer db.Close()
 		services.Metrics = farmmetrics.New(db)
-		provider := providermock.New(providermock.Config{})
 		var stfClient *stf.Client
 		if cfg.STF.Enabled {
 			stfClient, err = stf.New(stf.Config{
@@ -90,7 +88,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				return err
 			}
 		}
-		services.Management = management.NewService(managementpostgres.New(db), provider, nil)
+		services.Management = management.NewService(managementpostgres.New(db), nil, nil)
 		if stfClient != nil {
 			services.Reservations = reservation.NewService(db, nil, stfClient)
 			services.Scheduler = scheduler.New(db, nil, logger, stfClient)

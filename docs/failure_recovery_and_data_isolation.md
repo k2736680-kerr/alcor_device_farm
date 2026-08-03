@@ -22,6 +22,7 @@
 | 清理失败 | Agent Delete/rebuild | 返回 retryable，旧卷不复用，命令重新领取；成功前设备保持不可调度 | ready 或 quarantined | Docker 资源持续无法删除 |
 | Harness/DaFit 超时或取消 | Harness finally + Reaper | 独立清理上下文 release；进程硬杀由租约到期回收 | released/expired | STF/数据库同时长期不可用 |
 | 重建结果不完整 | 固定目标 Controller | 不接受缺少 Endpoint 或健康字段的 succeeded 结果，直接隔离并记录健康事件 | quarantined | 检查 Agent/Provider 契约 |
+| 管理员 restart/rebuild 失败 | Host Command completion | 管理 API 不直调 Provider；命令最终失败、超时或健康快照不完整时原子隔离并记录 command ID | quarantined | 修复 Host/镜像后重新发起受审计操作 |
 
 ## 3. 释放和回池链路
 
@@ -71,5 +72,6 @@ sequenceDiagram
 - 禁止清理失败时继续复用旧数据卷；
 - 禁止只靠进程内 goroutine 保存重试状态；
 - 禁止 Server 为真实设备调用 Mock Provider 或访问 Docker；
+- 禁止 restart/rebuild 管理 API 绕过 Host Command 直接调用任何 Provider；
 - 禁止旧 lease token、旧 attempt 或重复 Controller 创建第二条重建命令；
 - 禁止把 failed/timed_out/quarantined 伪装成已完成验收。

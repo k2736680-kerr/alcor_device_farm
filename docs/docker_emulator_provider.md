@@ -67,6 +67,7 @@ Agent 心跳发现结果按以下规则回写 Server：
 - `reserved/busy/recycling` 的预约生命周期不被 Agent 覆盖，`quarantined/deleted` 也不会因心跳自动恢复；
 - 自动补齐所需的新 Device 必须由 DF-016 Controller 先登记，再创建 Host Command，不能把 Agent 自报设备当作创建入口；create 命令会启动设备并等待 ADB、boot 和 Appium 全部健康；
 - Reservation 释放后的 rebuild 命令使用“幂等 Delete + 全新 Create”，旧数据卷删除失败时命令失败并重试，不允许挂载旧卷冒充清理完成。
+- 管理员触发 restart/rebuild 时，Server 只在同一 PostgreSQL 事务中写入 Device 不可调度状态、审计和幂等 Host Command；Agent restart 会重新等待 ADB、boot 和 Appium 健康，命令完成后才恢复 ready，最终失败自动隔离。Server 不通过 Mock Provider 代替该链路。
 
 ## 6. 配置
 

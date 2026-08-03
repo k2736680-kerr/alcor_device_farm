@@ -110,7 +110,16 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines",
 		reasonBody(), serviceToken, "", "token=must-not-be-audit-actor"), http.StatusBadRequest)
+	restartResponse := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-01")
+	assertStatus(t, restartResponse, http.StatusAccepted)
+	var restarting management.Device
+	decodeData(t, restartResponse, &restarting)
+	if restarting.LifecycleStatus != "stopped" || restarting.HealthStatus != "unknown" {
+		t.Fatalf("queued restart device = %#v", restarting)
+	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-01"), http.StatusAccepted)
+	assertCommandCount(t, environment.db, device.ID, "restart", 1)
+	completeNextManagementCommand(t, environment, host.ID, "restart", true)
 
 	schedulable, err := environment.store.ListSchedulableDevices(context.Background(), pool.ID)
 	if err != nil || len(schedulable) != 1 {
@@ -122,8 +131,23 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatalf("schedulable after quarantine = %d, error=%v", len(schedulable), err)
 	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-02"), http.StatusConflict)
+	rebuildResponse := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01")
+	assertStatus(t, rebuildResponse, http.StatusAccepted)
+	var rebuilding management.Device
+	decodeData(t, rebuildResponse, &rebuilding)
+	if rebuilding.LifecycleStatus != "provisioning" || rebuilding.HealthStatus != "unknown" {
+		t.Fatalf("queued rebuild device = %#v", rebuilding)
+	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01"), http.StatusAccepted)
-	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
+	assertCommandCount(t, environment.db, device.ID, "rebuild", 1)
+	completeNextManagementCommand(t, environment, host.ID, "rebuild", true)
+
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-failure"), http.StatusAccepted)
+	completeNextManagementCommand(t, environment, host.ID, "restart", false)
+	failedDevice, err := environment.store.GetDevice(context.Background(), device.ID)
+	if err != nil || failedDevice.LifecycleStatus != "quarantined" || failedDevice.HealthStatus != "unhealthy" {
+		t.Fatalf("failed management command device = %#v, error=%v", failedDevice, err)
+	}
 	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
 	var auditedActions, missingFields int
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*),count(*) FILTER (
@@ -142,6 +166,15 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 	if alcorActorActions != 1 {
 		t.Fatalf("Alcor actor audit actions=%d", alcorActorActions)
+	}
+	var commandEvents int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id=$1 AND event_type IN ('device_management_operation_succeeded','device_management_operation_failed')`, device.ID).
+		Scan(&commandEvents); err != nil {
+		t.Fatal(err)
+	}
+	if commandEvents != 3 {
+		t.Fatalf("management command health events=%d", commandEvents)
 	}
 
 	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+pool.ID, validPoolInput(false), serviceToken, ""), http.StatusOK)
@@ -321,6 +354,46 @@ func assertStatus(t *testing.T, response responseEnvelope, want int) {
 	t.Helper()
 	if response.Status != want {
 		t.Fatalf("status=%d want=%d error=%#v data=%s", response.Status, want, response.Error, response.Data)
+	}
+}
+
+func assertCommandCount(t *testing.T, db *database.DB, deviceID, commandType string, want int) {
+	t.Helper()
+	var count int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_host_commands
+		WHERE command_type=$1 AND payload->>'device_id'=$2 AND payload->>'operation_source'='management'`, commandType, deviceID).
+		Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != want {
+		t.Fatalf("management %s command count=%d want=%d", commandType, count, want)
+	}
+}
+
+func completeNextManagementCommand(t *testing.T, environment *managementEnvironment, hostID, commandType string, success bool) {
+	t.Helper()
+	commands, err := environment.hostCommands.Claim(context.Background(), hostID, hostcommand.ClaimInput{
+		LeaseSeconds: 30, MaxCommands: 1,
+	})
+	if err != nil || len(commands) != 1 || commands[0].CommandType != commandType || commands[0].LeaseToken == nil {
+		t.Fatalf("claimed management command=%#v error=%v", commands, err)
+	}
+	completion := hostcommand.CompletionInput{
+		LeaseToken: *commands[0].LeaseToken, Attempt: commands[0].Attempt, Status: "succeeded",
+		Result: map[string]any{
+			"generation": 2,
+			"connection": map[string]any{"serial": "10.0.0.1:31000", "adb_endpoint": "10.0.0.1:31000",
+				"appium_endpoint": "http://10.0.0.1:32000", "appium_udid": "emulator-5554"},
+			"health": map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true},
+		},
+	}
+	if !success {
+		completion.Status = "failed"
+		completion.Result = nil
+		completion.Error = &hostcommand.CompletionError{Code: "KVM_UNAVAILABLE", Message: "injected provider failure", Retryable: false}
+	}
+	if _, err := environment.hostCommands.Complete(context.Background(), commands[0].ID, completion); err != nil {
+		t.Fatal(err)
 	}
 }
 

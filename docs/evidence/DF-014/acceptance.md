@@ -22,6 +22,8 @@ Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KV
 - Host Agent 支持 `DEVICE_FARM_AGENT_PROVIDER=mock|docker`，心跳明确上报实际 Provider 类型；
 - Agent create 命令透传 capabilities，并保留 Provider 的 retryable 分类；
 - Agent 的 create/start/stop/restart/rebuild/inspect completion 返回稳定的 Provider Snapshot、连接和健康字段，为后续自动补齐 Controller 更新同一 Device 提供依据；
+- 管理 API 的 restart/rebuild 不再调用 Server 内 Mock Provider，而是原子写 Device 状态、审计和持久化 Host Command，由 Host Agent 在本机执行真实 Provider；
+- Agent restart 会重新等待 ADB、boot completed 和 Appium 全部健康后才回报成功；管理命令成功时依据完整快照回 ready，最终失败或结果不完整时自动 quarantined 并写健康事件；
 - Host Agent 心跳现在会把已登记 Device 的 serial、ADB/Appium Endpoint、生命周期、健康状态和 `last_seen_at` 原子回写；只匹配同一 `host_id + provider_ref`，不会根据 Agent 自报创建 Device，也不会串绑其他 Host；
 - 心跳状态更新复用 Device 状态机，进入 ready 前先更新 healthy；reserved/busy/recycling、quarantined/deleted 不会被 Agent 自动覆盖或恢复；
 - serial、ADB Endpoint 或 Appium Endpoint 唯一冲突会回滚 Host 和 Device 的整笔心跳，并返回稳定的 `DEVICE_IDENTITY_CONFLICT`；
@@ -48,6 +50,7 @@ PASS TestDockerProviderLifecycleUsesUniquePortsAndCleansResources
 PASS TestDockerProviderDoesNotSilentlyRunWithoutKVMOrFixedImage
 PASS TestDockerResourceNamesAreStableAndBounded
 PASS TestAgentCreateCompletionReturnsProviderSnapshot
+PASS TestManagementAPICompleteMockFlow（restart/rebuild Host Command 幂等、成功恢复和失败隔离）
 PASS TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady
 PASS TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability
 PASS TestHeartbeatBringsOfflineHostOnline

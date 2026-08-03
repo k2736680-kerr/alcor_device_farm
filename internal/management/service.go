@@ -281,6 +281,9 @@ func (service *Service) GetDevice(ctx context.Context, id string) (Device, error
 }
 
 func (service *Service) ProvisionMockDevice(ctx context.Context, input ProvisionMockDeviceInput) (Device, error) {
+	if service.provider == nil {
+		return Device{}, ErrProviderUnavailable
+	}
 	host, err := service.store.GetHost(ctx, input.HostID)
 	if err != nil {
 		return Device{}, err
@@ -344,72 +347,130 @@ func (service *Service) UnquarantineDeviceAudited(ctx context.Context, id, reaso
 	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason, audit)
 }
 
-func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
+func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason, actorID, requestID, idempotencyKey string) (Device, error) {
 	audit, err := service.deviceAudit(actorID, requestID, "restart_device", reason)
 	if err != nil {
 		return Device{}, err
 	}
-	return service.restartDevice(ctx, id, reason, audit)
+	return service.restartDevice(ctx, id, reason, idempotencyKey, audit)
 }
 
-func (service *Service) restartDevice(ctx context.Context, id, reason string, audit DeviceAudit) (Device, error) {
-	if strings.TrimSpace(reason) == "" {
+func (service *Service) restartDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
+	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
 		return Device{}, ErrInvalidArgument
 	}
 	current, err := service.store.GetDevice(ctx, id)
 	if err != nil {
 		return Device{}, err
+	}
+	commandKey := operationCommandKey("restart", audit.ActorID, idempotencyKey)
+	requestHash := operationRequestHash("restart", current.ID, reason)
+	if replayed, found, err := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "restart", requestHash); err != nil {
+		return Device{}, err
+	} else if found {
+		return replayed, nil
 	}
 	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped {
 		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: "restart"}
 	}
 	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
-	if current.LifecycleStatus == domain.DeviceStopped {
-		aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
-		if err != nil {
-			return Device{}, err
-		}
-		if err := aggregate.Transition(domain.DeviceBooting, reason, time.Now().UTC()); err != nil {
-			return Device{}, err
-		}
-		if err := aggregate.Transition(domain.DeviceReady, reason, time.Now().UTC()); err != nil {
-			return Device{}, err
-		}
-	}
-	snapshot, err := service.provider.Restart(ctx, current.ProviderRef)
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
 	if err != nil {
 		return Device{}, err
 	}
-	if !snapshot.Ready() {
-		return Device{}, ErrConflict
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
 	}
-	current.LifecycleStatus, current.HealthStatus = domain.DeviceReady, domain.HealthHealthy
-	return service.store.UpdateDeviceState(ctx, current, oldLifecycle, oldHealth, audit)
+	if current.LifecycleStatus == domain.DeviceStopped {
+		if err := aggregate.Transition(domain.DeviceBooting, reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	} else if err := aggregate.Transition(domain.DeviceStopped, reason, time.Now().UTC()); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: "restart",
+		IdempotencyKey: commandKey, MaxAttempts: 3,
+		Payload: map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
+			"request_hash": requestHash,
+			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
+		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
+	})
 }
 
-func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
+func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason, actorID, requestID, idempotencyKey string) (Device, error) {
 	audit, err := service.deviceAudit(actorID, requestID, "rebuild_device", reason)
 	if err != nil {
 		return Device{}, err
 	}
-	return service.rebuildDevice(ctx, id, reason, audit)
+	return service.rebuildDevice(ctx, id, reason, idempotencyKey, audit)
 }
 
-func (service *Service) rebuildDevice(ctx context.Context, id, reason string, audit DeviceAudit) (Device, error) {
-	if strings.TrimSpace(reason) == "" {
+func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
+	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
 		return Device{}, ErrInvalidArgument
 	}
 	current, err := service.store.GetDevice(ctx, id)
 	if err != nil {
 		return Device{}, err
 	}
+	commandKey := operationCommandKey("rebuild", audit.ActorID, idempotencyKey)
+	requestHash := operationRequestHash("rebuild", current.ID, reason)
+	if replayed, found, err := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "rebuild", requestHash); err != nil {
+		return Device{}, err
+	} else if found {
+		return replayed, nil
+	}
 	if current.LifecycleStatus != domain.DeviceQuarantined {
 		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceProvisioning)}
 	}
-	if _, err := service.provider.Rebuild(ctx, current.ProviderRef); err != nil {
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
+	if err != nil {
 		return Device{}, err
 	}
-	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason, audit)
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceProvisioning, reason, time.Now().UTC()); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	payload := map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
+		"request_hash": requestHash,
+		"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
+		"capabilities": cloneMap(current.Capabilities)}
+	if current.ImageID != nil {
+		payload["image_id"] = *current.ImageID
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: "rebuild",
+		IdempotencyKey: commandKey, MaxAttempts: 3,
+		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
+	})
+}
+
+func operationCommandKey(action, actorID, idempotencyKey string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(actorID) + "\x00" + action + "\x00" + strings.TrimSpace(idempotencyKey)))
+	return "management-" + hex.EncodeToString(digest[:16])
+}
+
+func operationRequestHash(action, deviceID, reason string) string {
+	digest := sha256.Sum256([]byte(action + "\x00" + strings.TrimSpace(deviceID) + "\x00" + strings.TrimSpace(reason)))
+	return hex.EncodeToString(digest[:])
 }
 
 func (service *Service) transitionDevice(ctx context.Context, id string, target domain.DeviceLifecycleStatus, health domain.HealthStatus, reason string, audit DeviceAudit) (Device, error) {

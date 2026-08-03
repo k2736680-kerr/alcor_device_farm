@@ -279,9 +279,9 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	var err error
 	switch action {
 	case "restart":
-		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
+		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
 	case "rebuild":
-		value, err = handler.service.RebuildDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
+		value, err = handler.service.RebuildDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
 	case "quarantine":
 		value, err = handler.service.QuarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
 	case "unquarantine":

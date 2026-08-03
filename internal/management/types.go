@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("management resource not found")
-	ErrConflict         = errors.New("management resource conflict")
-	ErrInvalidArgument  = errors.New("invalid management argument")
-	ErrHostUnavailable  = errors.New("device host is not accepting new devices")
-	ErrImageUnavailable = errors.New("device image is not ready")
+	ErrNotFound            = errors.New("management resource not found")
+	ErrConflict            = errors.New("management resource conflict")
+	ErrInvalidArgument     = errors.New("invalid management argument")
+	ErrHostUnavailable     = errors.New("device host is not accepting new devices")
+	ErrImageUnavailable    = errors.New("device image is not ready")
+	ErrProviderUnavailable = errors.New("device provider is not configured")
 )
 
 type Idempotency struct {
@@ -33,6 +34,18 @@ type DeviceAudit struct {
 	Action    string
 	RequestID string
 	Reason    string
+}
+
+type DeviceOperation struct {
+	CommandID         string
+	CommandType       string
+	IdempotencyKey    string
+	Payload           map[string]any
+	MaxAttempts       int
+	Device            Device
+	ExpectedLifecycle domain.DeviceLifecycleStatus
+	ExpectedHealth    domain.HealthStatus
+	Audit             DeviceAudit
 }
 
 type Image struct {
@@ -172,4 +185,6 @@ type Store interface {
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)
+	ReplayDeviceOperation(context.Context, string, string, string, string, string) (Device, bool, error)
+	QueueDeviceOperation(context.Context, DeviceOperation) (Device, error)
 }

@@ -203,6 +203,9 @@ func (agent *Agent) execute(command hostcommand.Command) {
 		var snapshot providers.Snapshot
 		snapshot, err = agent.provider.Restart(ctx, providerRef)
 		if err == nil {
+			snapshot, err = agent.waitReady(ctx, snapshot)
+		}
+		if err == nil {
 			result = snapshotResult(snapshot)
 		}
 	case "rebuild":
