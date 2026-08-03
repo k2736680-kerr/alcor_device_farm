@@ -50,6 +50,39 @@ func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testi
 	assertCount(t, db, "SELECT count(*) FROM devices", 2)
 }
 
+func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 2, 2, 4)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 2 {
+		t.Fatalf("initial target result=%+v error=%v", result, err)
+	}
+
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET max_concurrency=4;
+		UPDATE device_pool_images SET min_ready=4,max_instances=4`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 2 {
+		t.Fatalf("larger target result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices", 4)
+	assertCount(t, db, "SELECT count(*) FROM device_pool_devices WHERE enabled", 4)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 4)
+
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET max_concurrency=3;
+		UPDATE device_pool_images SET min_ready=3,max_instances=3`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("smaller target result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices", 4)
+}
+
 func TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "draft", 2, 2, 1)

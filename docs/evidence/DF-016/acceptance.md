@@ -15,6 +15,7 @@
 - Controller 原子登记 provisioning Device、Pool membership 和 create Host Command，Server 不访问 Docker；
 - 两个 Controller 并发运行通过 PostgreSQL 行锁不超建；
 - 默认 `2/2` 时 reserved/busy 设备仍占上限，不因任务压力创建第三台；
+- 运行中把 Pool 并发、Host 槽位和 Image 目标从 `2` 调到 `N` 时只补创建缺少的 Emulator，不需要修改代码或数据库结构；
 - 降低目标或禁用配置不自动删除设备；
 - create 最终失败后隔离设备、写健康事件并指数退避；
 - Controller 只处理 Docker Emulator Image，不自动创建 USB 真机；
@@ -33,6 +34,7 @@
 
 ```text
 PASS TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding
+PASS TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges
 PASS TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown
 PASS TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm
 PASS TestImageValidationCommandGatesWarmPoolCreation

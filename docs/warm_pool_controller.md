@@ -128,6 +128,8 @@ warm_pool:
 
 Host Agent 的 `DEVICE_FARM_DOCKER_IMAGE` 必须是固定 tag 或 digest，禁止 `latest`。Image validation 会把该本机镜像的真实 ID/RepoDigest 与 `device_images.docker_digest` 对比；每条正式 create 命令执行前还会再次核对 digest，避免 Agent 配置在验证后被替换而启动错误镜像。
 
+需要从两台增加到更多 Emulator 时，不改代码，只同步调整三处容量：Host 的 `capacity.device_slots`、Pool 的 `max_concurrency`、Pool Image 的 `min_ready/max_instances`。Controller 只创建新增缺口。例如从 `2/2` 调到 `4/4` 时补两台；调低目标不会直接删除现有或正在使用的设备，缩容需先 drain，再走受控删除。
+
 ## 当前验收状态
 
 PostgreSQL、并发锁、接口、状态门禁、容量限制、失败隔离和退避已在 Windows 本地自动化测试通过。真实 Docker/KVM、两台 Emulator 自动补齐、删除/隔离后补回以及 Appium 就绪仍必须在 Linux KVM 服务器执行，Mock 结果不能替代该验收。
