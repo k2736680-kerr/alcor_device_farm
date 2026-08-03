@@ -9,8 +9,8 @@ log:
   level: info
   format: json
 
-# Keep real tokens out of YAML committed to Git. DF-003 will enforce these
-# values for authenticated routes.
+# Keep real tokens out of YAML committed to Git. Protected routes fail closed
+# with 401 while the matching token is empty.
 security:
   service_token: ""
   agent_token: ""

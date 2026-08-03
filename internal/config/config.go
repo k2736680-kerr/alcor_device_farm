@@ -176,6 +176,10 @@ func (cfg Config) Validate() error {
 		validationErrors = append(validationErrors, errors.New("log.format must be one of json, text"))
 	}
 
+	if cfg.Security.ServiceToken != "" && cfg.Security.ServiceToken == cfg.Security.AgentToken {
+		validationErrors = append(validationErrors, errors.New("security.service_token and security.agent_token must be different"))
+	}
+
 	if err := errors.Join(validationErrors...); err != nil {
 		return fmt.Errorf("validate config: %w", err)
 	}

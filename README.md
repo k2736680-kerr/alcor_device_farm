@@ -62,3 +62,5 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 后续按 `DF-000 → DF-001 → ... → DF-025` 执行。`ALCOR-001` 等新版 Alcor 实际 OpenAPI 可用后再开始，不阻塞设备农场 MVP 独立完成。
 
 本地构建和测试入口见 [开发说明](docs/development.md)。
+
+设备接口以 [OpenAPI 契约](openapi/device-farm-v1.yaml) 为准。`/api/v1/device-*` 使用平台服务 Token，`/internal/v1` 使用独立 Agent Token；两类 Token 必须不同，空值不会放行受保护接口。

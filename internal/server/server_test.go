@@ -19,7 +19,7 @@ import (
 func TestHealthUsesUnifiedResponseAndCorrelation(t *testing.T) {
 	var logs bytes.Buffer
 	logger := testLogger(t, &logs)
-	server := httptest.NewServer(Handler(logger))
+	server := httptest.NewServer(Handler(config.SecurityConfig{}, logger))
 	defer server.Close()
 
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/healthz", nil)
@@ -52,7 +52,7 @@ func TestHealthUsesUnifiedResponseAndCorrelation(t *testing.T) {
 
 func TestNotFoundAndMethodNotAllowedUseStableErrors(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-	handler := Handler(logger)
+	handler := Handler(config.SecurityConfig{}, logger)
 
 	tests := []struct {
 		name      string

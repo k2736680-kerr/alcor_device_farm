@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
@@ -16,20 +17,21 @@ import (
 func NewHTTPServer(cfg config.Config, logger *slog.Logger) *http.Server {
 	return &http.Server{
 		Addr:         cfg.Server.Address,
-		Handler:      Handler(logger),
+		Handler:      Handler(cfg.Security, logger),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 }
 
-func Handler(logger *slog.Logger) http.Handler {
+func Handler(security config.SecurityConfig, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", readyHandler)
 	mux.HandleFunc("/", notFoundHandler)
 
-	return correlation.Middleware(recoverMiddleware(logger, requestLogMiddleware(logger, mux)))
+	protected := auth.RouteMiddleware(security, mux)
+	return correlation.Middleware(recoverMiddleware(logger, requestLogMiddleware(logger, protected)))
 }
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {

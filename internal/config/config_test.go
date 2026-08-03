@@ -87,6 +87,17 @@ func TestValidateRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsAmbiguousSecurityTokens(t *testing.T) {
+	cfg := Default()
+	cfg.Security.ServiceToken = "same-token"
+	cfg.Security.AgentToken = "same-token"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "must be different") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg := Default()
 	cfg.Security.ServiceToken = "service-token-value"
