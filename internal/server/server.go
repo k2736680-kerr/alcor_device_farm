@@ -98,7 +98,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		if stfClient != nil {
 			visibility = stfClient
 		}
-		services.Reconcile = reconcile.New(db, provider, visibility, cfg.Reconcile.FailureThreshold, logger)
+		// Real Provider operations belong to the Host Agent. The Server reconciles
+		// database state and Agent heartbeat observations without Docker access.
+		services.Reconcile = reconcile.New(db, nil, visibility, cfg.Reconcile.FailureThreshold, logger)
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 		services.HostCommands = hostcommand.New(db)
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)

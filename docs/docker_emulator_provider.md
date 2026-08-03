@@ -65,7 +65,8 @@ Agent 心跳发现结果按以下规则回写 Server：
 - `serial`、ADB/Appium Endpoint、容器内 `appium_udid` 和 `last_seen_at` 使用 Server 数据库事务更新；`appium_udid` 放入 Device capabilities 和 Session 连接快照，不新增第二套 Device；唯一标识冲突时整笔心跳回滚并返回 `DEVICE_IDENTITY_CONFLICT`；
 - `provisioning → booting → ready`、`stopped → booting` 等变化必须通过 Device 状态机，进入 `ready` 前先确认健康为 `healthy`；
 - `reserved/busy/recycling` 的预约生命周期不被 Agent 覆盖，`quarantined/deleted` 也不会因心跳自动恢复；
-- 自动补齐所需的新 Device 必须由 DF-016 Controller 先登记，再创建 Host Command，不能把 Agent 自报设备当作创建入口。
+- 自动补齐所需的新 Device 必须由 DF-016 Controller 先登记，再创建 Host Command，不能把 Agent 自报设备当作创建入口；create 命令会启动设备并等待 ADB、boot 和 Appium 全部健康；
+- Reservation 释放后的 rebuild 命令使用“幂等 Delete + 全新 Create”，旧数据卷删除失败时命令失败并重试，不允许挂载旧卷冒充清理完成。
 
 ## 6. 配置
 

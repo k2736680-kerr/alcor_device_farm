@@ -126,6 +126,22 @@ func TestHealthReportValidationAndMissingDevice(t *testing.T) {
 	}
 }
 
+func TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET health_status='unhealthy'
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, testLogger())
+	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+}
+
 type environment struct {
 	db         *database.DB
 	provider   *providermock.Provider

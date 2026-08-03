@@ -187,7 +187,7 @@ func (provider *Provider) Delete(ctx context.Context, providerRef string) error 
 		return providerError(providers.OperationDelete, "EMULATOR_DELETE_FAILED", "mock delete failure", true, nil)
 	}
 	if _, exists := provider.devices[providerRef]; !exists {
-		return providerError(providers.OperationDelete, "PROVIDER_DEVICE_NOT_FOUND", "mock device not found", false, nil)
+		return nil
 	}
 	delete(provider.devices, providerRef)
 	return nil

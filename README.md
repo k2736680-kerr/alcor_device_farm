@@ -67,11 +67,11 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 
 配置 PostgreSQL URL 后，Server 已可提供 Image、Host、Pool、Device 和 Reservation API；当前设备实例由 Mock Provider 支撑，Scheduler 会按设备池、能力、Host 状态、设备状态和并发上限完成原子分配并创建 Session。
 
-Reservation 支持幂等续租、主动/强制释放和超时回收。Scheduler 周期、Reaper 周期与 grace period 可通过 `DEVICE_FARM_LEASE_*` 配置；释放或过期会原子关闭 Session、将 Device 送入 recycling 并写入设备审计事件。
+Reservation 支持幂等续租、主动/强制释放和超时回收。Scheduler 周期、Reaper 周期与 grace period 可通过 `DEVICE_FARM_LEASE_*` 配置；释放或过期会原子关闭 Session、将 Device 送入 recycling 并写入设备审计事件。固定目标 Controller 随后创建持久化 rebuild Host Command，Agent 删除旧容器、网络和数据卷后重新创建；只有 ADB、Android boot 和 Appium 全部健康才回到 ready，失败则重试并最终隔离。
 
-Reconciler 会核对 Host 心跳、Provider 健康、ADB/启动/Appium 和可插拔 STF 可见性；健康事件统一写入 PostgreSQL，连续失败达到阈值后自动隔离，隔离设备只能通过既有人工解除/重建流程恢复。周期、Host 超时和失败阈值使用 `DEVICE_FARM_RECONCILE_*` 配置。
+Reconciler 会核对 Host/Agent 心跳上报的 ADB、启动、Appium 健康和可插拔 STF 可见性；真实 Provider 操作仍只在 Host Agent 内发生。健康事件统一写入 PostgreSQL，连续失败达到阈值后自动隔离，隔离设备只能通过既有人工解除/重建流程恢复。周期、Host 超时和失败阈值使用 `DEVICE_FARM_RECONCILE_*` 配置。
 
-Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命令由 PostgreSQL lease token + attempt 防止重复或旧 Agent 回写；租约过期后按最大尝试次数安全重领或转为 timed_out。
+Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命令由 PostgreSQL lease token + attempt 防止重复或旧 Agent 回写；租约过期或 Agent 明确上报可重试失败后，按最大尝试次数安全重领，最终才转为 failed/timed_out。
 
 `device-host-agent` 已是可运行进程：使用已注册 Host ID 和独立 Agent Token，周期发现本机 Provider 设备并心跳，长轮询领取命令，按并发上限执行 Mock Provider 操作；收到退出信号后先停止领取，再等待在途命令完成，超时未完成的命令由 Server lease recovery 接管。
 

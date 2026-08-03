@@ -15,7 +15,7 @@
 | Run、RunAttempt、Result、Artifact | 当前不开发正式业务模型 | 由独立 Worker、PostgreSQL、ClickHouse、Supabase Storage 管理 | DaFit 报告只作为联调产物 |
 | Device Farm Adapter | 提供北向 OpenAPI 和 Mock | 由新版 Worker 在第六阶段实现 | 不直接依赖旧 `eval_tasks` 或共享数据库 |
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
-| Reconciler、Reaper | 当前新增并独立测试 | 设备农场内部能力 | 不以 STF 数据替代设备农场 PostgreSQL 真相 |
+| Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Docker Emulator Provider | 当前新增 | 由设备农场调度 | 不把 Docker Socket 暴露给 Alcor/浏览器 |
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |

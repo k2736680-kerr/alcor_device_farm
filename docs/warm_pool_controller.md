@@ -44,9 +44,13 @@ sequenceDiagram
     Server->>DB: Upsert device_pool_images
     Controller->>DB: 锁配置行并计算缺口
     Controller->>DB: 原子写 Device、Pool membership、create Host Command
-    Agent->>Docker: 创建 Emulator
+    Agent->>Docker: 创建并启动 Emulator，等待 ADB/boot/Appium 健康
     Agent->>DB: 心跳回写 Endpoint 和健康状态
     Controller->>DB: 隔离失败实例并按退避策略补回
+    Server->>DB: Reservation 释放，Device 进入 recycling
+    Controller->>DB: 创建带 Reservation ID 的 rebuild Host Command
+    Agent->>Docker: 删除旧容器、网络、数据卷并重新创建
+    Controller->>DB: 健康快照完整后回 ready，否则隔离
 ```
 
 ## 管理接口
@@ -97,9 +101,14 @@ missing = min(min_ready - ready_or_creating,
 
 `reserved/busy/recycling/stopped` 仍占 `max_instances`，所以默认最多两台时，即使两台都在使用也不会创建第三台。隔离或删除一台会产生缺口并触发补回。两个 Server 同时运行时，PostgreSQL 行锁保证不会超建。
 
+`recycling` 不是可调度终态。Controller 以最后一次 released/expired/force_released Reservation ID 生成唯一重建命令，Server 重启或多实例重复扫描不会重复创建。Agent 执行 rebuild 时先幂等删除旧容器、专属网络和数据卷，再重新创建并等待完整健康；因此 App、缓存和外部存储测试文件不会跨 Reservation 复用。
+
 ## 失败处理
 
 - create 命令最终失败或超时后，Device 进入 `quarantined/unhealthy`；
+- create/rebuild/delete 的可重试失败先回到 pending，最多执行三次；
+- rebuild 成功结果缺少 serial、ADB/Appium Endpoint 或完整健康快照时按失败处理，不能直接 ready；
+- rebuild 最终失败或超时后，Device 进入 `quarantined/unhealthy` 并写 `device_rebuild_failed`；
 - 写入 `warm_pool_create_failed` 健康事件；
 - 失败后从 30 秒开始指数退避，最大约 8 分钟；
 - 退避结束后按目标补回，持续故障不会形成命令风暴；

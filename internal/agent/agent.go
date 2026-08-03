@@ -156,6 +156,7 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	switch command.CommandType {
 	case "create":
 		var snapshot providers.Snapshot
+		created := false
 		if digest := stringValue(command.Payload, "docker_digest"); digest != "" {
 			verifier, supported := agent.provider.(providers.ImageDigestVerifier)
 			if !supported {
@@ -171,9 +172,20 @@ func (agent *Agent) execute(command hostcommand.Command) {
 				ImageID: stringValue(command.Payload, "image_id"), ProviderRef: providerRef,
 				Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
 			})
+			created = err == nil
+		}
+		if err == nil {
+			snapshot, err = agent.provider.Start(ctx, providerRef)
+		}
+		if err == nil {
+			snapshot, err = agent.waitReady(ctx, snapshot)
 		}
 		if err == nil {
 			result = snapshotResult(snapshot)
+		} else if created {
+			if cleanupErr := agent.cleanupProvider(providerRef); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup failed emulator create: %w", cleanupErr))
+			}
 		}
 	case "start":
 		var snapshot providers.Snapshot
@@ -195,7 +207,14 @@ func (agent *Agent) execute(command hostcommand.Command) {
 		}
 	case "rebuild":
 		var snapshot providers.Snapshot
-		snapshot, err = agent.provider.Rebuild(ctx, providerRef)
+		if stringValue(command.Payload, "device_id") != "" && stringValue(command.Payload, "image_id") != "" {
+			snapshot, err = agent.recreate(ctx, command.Payload)
+		} else {
+			snapshot, err = agent.provider.Rebuild(ctx, providerRef)
+			if err == nil {
+				snapshot, err = agent.waitReady(ctx, snapshot)
+			}
+		}
 		if err == nil {
 			result = snapshotResult(snapshot)
 		}
@@ -229,6 +248,69 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	if completeErr := agent.client.Complete(context.Background(), command.ID, completion); completeErr != nil {
 		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
 	}
+}
+
+func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snapshot providers.Snapshot, returnErr error) {
+	providerRef := stringValue(payload, "provider_ref")
+	if err := agent.provider.Delete(ctx, providerRef); err != nil && providers.ErrorCode(err) != "PROVIDER_DEVICE_NOT_FOUND" {
+		return providers.Snapshot{}, err
+	}
+	created := false
+	defer func() {
+		if returnErr != nil && created {
+			if cleanupErr := agent.cleanupProvider(providerRef); cleanupErr != nil && providers.ErrorCode(cleanupErr) != "PROVIDER_DEVICE_NOT_FOUND" {
+				returnErr = errors.Join(returnErr, fmt.Errorf("cleanup failed emulator rebuild: %w", cleanupErr))
+			}
+		}
+	}()
+	snapshot, returnErr = agent.provider.Create(ctx, providers.CreateRequest{
+		DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
+		ImageID: stringValue(payload, "image_id"), ProviderRef: providerRef,
+		Capabilities: mapValue(payload, "capabilities"),
+	})
+	if returnErr != nil {
+		return providers.Snapshot{}, returnErr
+	}
+	created = true
+	snapshot, returnErr = agent.provider.Start(ctx, providerRef)
+	if returnErr != nil {
+		return providers.Snapshot{}, returnErr
+	}
+	return agent.waitReady(ctx, snapshot)
+}
+
+func (agent *Agent) waitReady(ctx context.Context, snapshot providers.Snapshot) (providers.Snapshot, error) {
+	var lastErr error
+	for {
+		health, err := agent.provider.InspectHealth(ctx, snapshot.ProviderRef)
+		if err == nil && health.Ready() {
+			connection, connectionErr := agent.provider.GetConnectionInfo(ctx, snapshot.ProviderRef)
+			if connectionErr != nil {
+				return providers.Snapshot{}, connectionErr
+			}
+			snapshot.Health, snapshot.Connection = health, connection
+			return snapshot, nil
+		}
+		lastErr = err
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			code, message := "DEVICE_BOOT_TIMEOUT", "emulator did not become ready before command timeout"
+			if providers.ErrorCode(lastErr) == "APPIUM_UNHEALTHY" {
+				code, message = "APPIUM_UNHEALTHY", "Appium did not become healthy before command timeout"
+			}
+			return providers.Snapshot{}, &providers.Error{Operation: providers.OperationInspectHealth,
+				Code: code, Message: message, Retryable: true, Cause: errors.Join(lastErr, ctx.Err())}
+		case <-timer.C:
+		}
+	}
+}
+
+func (agent *Agent) cleanupProvider(providerRef string) error {
+	cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return agent.provider.Delete(cleanupContext, providerRef)
 }
 
 func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (map[string]any, error) {

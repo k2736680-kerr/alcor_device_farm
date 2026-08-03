@@ -22,7 +22,11 @@ type Result struct {
 	ValidationsQueued    int
 	ValidationsCompleted int
 	ValidationsFailed    int
+	RebuildsQueued       int
+	RebuildsCompleted    int
+	RebuildsFailed       int
 	DevicesCreated       int
+	DevicesReady         int
 	DevicesFailed        int
 	CapacityMisses       int
 	BackoffSkips         int
@@ -48,10 +52,17 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	if controller == nil || controller.db == nil {
 		return Result{}, errors.New("warm pool database is not configured")
 	}
-	result, err := controller.reconcileImageValidations(ctx)
+	result, err := controller.reconcileRecyclingDevices(ctx)
 	if err != nil {
 		return result, err
 	}
+	validations, err := controller.reconcileImageValidations(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.ValidationsQueued += validations.ValidationsQueued
+	result.ValidationsCompleted += validations.ValidationsCompleted
+	result.ValidationsFailed += validations.ValidationsFailed
 	rows, err := controller.db.Pool().Query(ctx, `SELECT pi.pool_id,pi.image_id
 		FROM device_pool_images pi
 		JOIN device_pools p ON p.id=pi.pool_id AND p.status='active'
@@ -81,11 +92,231 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 			return result, err
 		}
 		result.DevicesCreated += partial.DevicesCreated
+		result.DevicesReady += partial.DevicesReady
 		result.DevicesFailed += partial.DevicesFailed
 		result.CapacityMisses += partial.CapacityMisses
 		result.BackoffSkips += partial.BackoffSkips
 	}
 	return result, nil
+}
+
+type recyclingDevice struct {
+	ID            string
+	HostID        string
+	ImageID       string
+	ProviderRef   string
+	ReservationID string
+	Capabilities  map[string]any
+	Lifecycle     domain.DeviceLifecycleStatus
+	Health        domain.HealthStatus
+	HostOnline    bool
+}
+
+type rebuildResult struct {
+	Generation int `json:"generation"`
+	Connection struct {
+		Serial         string `json:"serial"`
+		ADBEndpoint    string `json:"adb_endpoint"`
+		AppiumEndpoint string `json:"appium_endpoint"`
+		AppiumUDID     string `json:"appium_udid"`
+	} `json:"connection"`
+	Health struct {
+		Online        bool `json:"online"`
+		ADBOnline     bool `json:"adb_online"`
+		BootCompleted bool `json:"boot_completed"`
+		AppiumHealthy bool `json:"appium_healthy"`
+	} `json:"health"`
+}
+
+func (controller *Controller) reconcileRecyclingDevices(ctx context.Context) (Result, error) {
+	rows, err := controller.db.Pool().Query(ctx, `SELECT d.id FROM devices d
+		WHERE d.device_kind='emulator' AND d.lifecycle_mode='rebuild' AND d.lifecycle_status='recycling'
+		ORDER BY d.updated_at,d.id`)
+	if err != nil {
+		return Result{}, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return Result{}, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Result{}, err
+	}
+	rows.Close()
+	result := Result{}
+	for _, id := range ids {
+		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+			current, err := lockRecyclingDevice(ctx, tx, id)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			var status domain.CommandStatus
+			var commandResult []byte
+			var errorCode *string
+			err = tx.QueryRow(ctx, `SELECT status,result,error_code FROM device_host_commands
+				WHERE command_type='rebuild' AND payload->>'device_id'=$1 AND payload->>'reservation_id'=$2
+				ORDER BY created_at DESC,id DESC LIMIT 1`, current.ID, current.ReservationID).
+				Scan(&status, &commandResult, &errorCode)
+			if errors.Is(err, pgx.ErrNoRows) {
+				if !current.HostOnline {
+					return nil
+				}
+				if err := controller.queueRecycleRebuild(ctx, tx, current); err != nil {
+					return err
+				}
+				result.RebuildsQueued++
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			switch status {
+			case domain.CommandPending, domain.CommandLeased:
+				return nil
+			case domain.CommandSucceeded:
+				var value rebuildResult
+				if json.Unmarshal(commandResult, &value) != nil || !validRebuildResult(value) {
+					if err := controller.failRecycle(ctx, tx, current, "REBUILD_RESULT_INVALID", "rebuild command returned an incomplete readiness snapshot"); err != nil {
+						return err
+					}
+					result.RebuildsFailed++
+					return nil
+				}
+				if err := controller.completeRecycle(ctx, tx, current, value); err != nil {
+					return err
+				}
+				result.RebuildsCompleted++
+			default:
+				code := "REBUILD_FAILED"
+				if errorCode != nil && *errorCode != "" {
+					code = *errorCode
+				}
+				if err := controller.failRecycle(ctx, tx, current, code, "rebuild command exhausted retries"); err != nil {
+					return err
+				}
+				result.RebuildsFailed++
+			}
+			return nil
+		})
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func lockRecyclingDevice(ctx context.Context, tx pgx.Tx, id string) (recyclingDevice, error) {
+	var value recyclingDevice
+	var capabilities []byte
+	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.image_id,d.provider_ref,r.id,d.capabilities,d.lifecycle_status,d.health_status,
+		(h.status='online' AND NOT h.draining)
+		FROM devices d JOIN device_hosts h ON h.id=d.host_id
+		JOIN LATERAL (SELECT id FROM device_reservations WHERE device_id=d.id
+			AND status IN ('released','expired','force_released') ORDER BY COALESCE(released_at,updated_at) DESC,id DESC LIMIT 1) r ON true
+		WHERE d.id=$1 AND d.device_kind='emulator' AND d.lifecycle_mode='rebuild' AND d.lifecycle_status='recycling'
+		FOR UPDATE OF d`, id).Scan(&value.ID, &value.HostID, &value.ImageID, &value.ProviderRef, &value.ReservationID,
+		&capabilities, &value.Lifecycle, &value.Health, &value.HostOnline)
+	if err == nil {
+		err = json.Unmarshal(capabilities, &value.Capabilities)
+	}
+	return value, err
+}
+
+func (controller *Controller) queueRecycleRebuild(ctx context.Context, tx pgx.Tx, device recyclingDevice) error {
+	commandID, err := controller.newID()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{"device_id": device.ID, "host_id": device.HostID, "image_id": device.ImageID,
+		"provider_ref": device.ProviderRef, "reservation_id": device.ReservationID, "capabilities": device.Capabilities})
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256([]byte(device.ID + "\x00" + device.ReservationID))
+	_, err = tx.Exec(ctx, `INSERT INTO device_host_commands
+		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES($1,$2,'rebuild',$3::jsonb,'pending',3,$4)
+		ON CONFLICT(host_id,idempotency_key) DO NOTHING`, commandID, device.HostID, payload, "recycle-"+hex.EncodeToString(hash[:16]))
+	return err
+}
+
+func validRebuildResult(value rebuildResult) bool {
+	return value.Generation > 0 && value.Connection.Serial != "" && value.Connection.ADBEndpoint != "" &&
+		value.Connection.AppiumEndpoint != "" && value.Connection.AppiumUDID != "" && value.Health.Online &&
+		value.Health.ADBOnline && value.Health.BootCompleted && value.Health.AppiumHealthy
+}
+
+func (controller *Controller) completeRecycle(ctx context.Context, tx pgx.Tx, current recyclingDevice, value rebuildResult) error {
+	now, err := database.ClockNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	aggregate, err := domain.RestoreDevice(current.ID, current.Lifecycle, current.Health)
+	if err != nil {
+		return err
+	}
+	if aggregate.Health() != domain.HealthHealthy {
+		if err := aggregate.UpdateHealth(domain.HealthHealthy, "rebuild readiness checks passed", now); err != nil {
+			return err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceReady, "rebuild removed previous run data and passed readiness checks", now); err != nil {
+		return err
+	}
+	result, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
+		capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),lifecycle_status=$6,health_status=$7,
+		health_reason=NULL,consecutive_failures=0,last_seen_at=$8,updated_at=$8 WHERE id=$1 AND lifecycle_status='recycling'`,
+		current.ID, value.Connection.Serial, value.Connection.ADBEndpoint, value.Connection.AppiumEndpoint,
+		value.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), now)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("recycling device state changed concurrently")
+	}
+	return nil
+}
+
+func (controller *Controller) failRecycle(ctx context.Context, tx pgx.Tx, current recyclingDevice, code, reason string) error {
+	now, err := database.ClockNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	aggregate, err := domain.RestoreDevice(current.ID, current.Lifecycle, current.Health)
+	if err != nil {
+		return err
+	}
+	if aggregate.Health() != domain.HealthUnhealthy {
+		if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+			return err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+		consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status='recycling'`,
+		current.ID, aggregate.Lifecycle(), aggregate.Health(), code+": "+reason, now); err != nil {
+		return err
+	}
+	eventID, err := controller.newID()
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]any{"error_code": code, "reservation_id": current.ReservationID})
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'reconciler','device_rebuild_failed','error',$3,$4::jsonb,$5)`, eventID, current.ID, reason, payload, now)
+	return err
 }
 
 func (controller *Controller) reconcileImageValidations(ctx context.Context) (Result, error) {
@@ -257,11 +488,17 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			}
 			return err
 		}
+		ready, invalid, err := controller.completeSuccessfulCreates(ctx, tx, poolID, imageID)
+		if err != nil {
+			return err
+		}
+		result.DevicesReady = ready
+		result.DevicesFailed = invalid
 		failed, err := controller.quarantineFailedCreates(ctx, tx, poolID, imageID)
 		if err != nil {
 			return err
 		}
-		result.DevicesFailed = failed
+		result.DevicesFailed += failed
 		backoff, err := creationBackoff(ctx, tx, poolID, imageID)
 		if err != nil {
 			return err
@@ -307,6 +544,108 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		return nil
 	})
 	return result, err
+}
+
+func (controller *Controller) completeSuccessfulCreates(ctx context.Context, tx pgx.Tx, poolID, imageID string) (int, int, error) {
+	rows, err := tx.Query(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,c.result
+		FROM devices d JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
+		JOIN LATERAL (SELECT result FROM device_host_commands WHERE command_type='create'
+			AND payload->>'device_id'=d.id AND status='succeeded' ORDER BY completed_at DESC,id DESC LIMIT 1) c ON true
+		WHERE pd.pool_id=$1 AND d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting')
+		FOR UPDATE OF d`, poolID, imageID)
+	if err != nil {
+		return 0, 0, err
+	}
+	type successfulCreate struct {
+		id        string
+		lifecycle domain.DeviceLifecycleStatus
+		health    domain.HealthStatus
+		result    []byte
+	}
+	var values []successfulCreate
+	for rows.Next() {
+		var value successfulCreate
+		if err := rows.Scan(&value.id, &value.lifecycle, &value.health, &value.result); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, err
+	}
+	rows.Close()
+	completed, invalid := 0, 0
+	for _, current := range values {
+		var snapshot rebuildResult
+		if json.Unmarshal(current.result, &snapshot) != nil || !validRebuildResult(snapshot) {
+			if err := controller.quarantineCreateResult(ctx, tx, current.id, current.lifecycle, current.health); err != nil {
+				return completed, invalid, err
+			}
+			invalid++
+			continue
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return completed, invalid, err
+		}
+		aggregate, err := domain.RestoreDevice(current.id, current.lifecycle, current.health)
+		if err != nil {
+			return completed, invalid, err
+		}
+		if aggregate.Health() != domain.HealthHealthy {
+			if err := aggregate.UpdateHealth(domain.HealthHealthy, "create readiness checks passed", now); err != nil {
+				return completed, invalid, err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceProvisioning {
+			if err := aggregate.Transition(domain.DeviceBooting, "emulator started", now); err != nil {
+				return completed, invalid, err
+			}
+		}
+		if err := aggregate.Transition(domain.DeviceReady, "create readiness checks passed", now); err != nil {
+			return completed, invalid, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
+			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),lifecycle_status=$6,health_status=$7,
+			health_reason=NULL,consecutive_failures=0,last_seen_at=$8,updated_at=$8 WHERE id=$1`, current.id,
+			snapshot.Connection.Serial, snapshot.Connection.ADBEndpoint, snapshot.Connection.AppiumEndpoint,
+			snapshot.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), now); err != nil {
+			return completed, invalid, err
+		}
+		completed++
+	}
+	return completed, invalid, nil
+}
+
+func (controller *Controller) quarantineCreateResult(
+	ctx context.Context,
+	tx pgx.Tx,
+	deviceID string,
+	lifecycle domain.DeviceLifecycleStatus,
+	health domain.HealthStatus,
+) error {
+	now, err := database.ClockNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if aggregate.Health() != domain.HealthUnhealthy {
+		if err := aggregate.UpdateHealth(domain.HealthUnhealthy, "create command returned an incomplete readiness snapshot", now); err != nil {
+			return err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceQuarantined, "create command returned an incomplete readiness snapshot", now); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,
+		health_reason='CREATE_RESULT_INVALID',consecutive_failures=consecutive_failures+1,updated_at=$4 WHERE id=$1`,
+		deviceID, aggregate.Lifecycle(), aggregate.Health(), now)
+	return err
 }
 
 func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, digest, hostID string, capabilities map[string]any) error {

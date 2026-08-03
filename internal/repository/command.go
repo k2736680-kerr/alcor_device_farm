@@ -47,19 +47,22 @@ func (CommandRepository) Complete(
 	status domain.CommandStatus,
 	result map[string]any,
 	errorCode *string,
+	retryable bool,
 ) (CommandRecord, error) {
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return CommandRecord{}, err
 	}
 	record, err := scanCommand(querier.QueryRow(ctx, `UPDATE device_host_commands SET
-        status=$4,lease_token=NULL,lease_expires_at=NULL,result=$5,error_code=$6,
-        completed_at=clock_timestamp(),updated_at=clock_timestamp()
-        WHERE id=$1 AND status='leased' AND lease_token=$2 AND attempts=$3
-          AND lease_expires_at >= clock_timestamp()
+		status=CASE WHEN $7 AND $4::varchar='failed' AND attempts < max_attempts THEN 'pending' ELSE $4::varchar END,
+		lease_token=NULL,lease_expires_at=NULL,result=$5,error_code=$6,
+		completed_at=CASE WHEN $7 AND $4::varchar='failed' AND attempts < max_attempts THEN NULL ELSE clock_timestamp() END,
+		updated_at=clock_timestamp()
+		WHERE id=$1 AND status='leased' AND lease_token=$2 AND attempts=$3
+		  AND lease_expires_at >= clock_timestamp()
         RETURNING id,host_id,command_type,payload,status,lease_token,lease_expires_at,
                   attempts,max_attempts,idempotency_key,created_at,updated_at,result,error_code,completed_at`,
-		id, leaseToken, attempt, status, encoded, errorCode))
+		id, leaseToken, attempt, status, encoded, errorCode, retryable))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CommandRecord{}, ErrLeaseConflict
 	}

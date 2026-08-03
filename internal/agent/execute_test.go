@@ -34,7 +34,7 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 	if client.completion.Status != "succeeded" || client.completion.Error != nil {
 		t.Fatalf("completion=%#v", client.completion)
 	}
-	if client.completion.Result["provider_ref"] != "emulator-1" || client.completion.Result["state"] != "created" ||
+	if client.completion.Result["provider_ref"] != "emulator-1" || client.completion.Result["state"] != "running" ||
 		client.completion.Result["generation"] != 1 {
 		t.Fatalf("result=%#v", client.completion.Result)
 	}
@@ -111,6 +111,44 @@ func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
 	values, err := base.Discover(context.Background(), "host_000000000000001")
 	if err != nil || len(values) != 0 {
 		t.Fatalf("temporary validation devices=%d error=%v", len(values), err)
+	}
+}
+
+func TestAgentCreateWaitsForReadinessClassifiesFailureAndCleans(t *testing.T) {
+	tests := []struct {
+		name     string
+		scenario providermock.Scenario
+		wantCode string
+	}{
+		{name: "boot timeout", scenario: providermock.Scenario{BootTimeout: true}, wantCode: "DEVICE_BOOT_TIMEOUT"},
+		{name: "Appium unhealthy", scenario: providermock.Scenario{AppiumUnhealthy: true}, wantCode: "APPIUM_UNHEALTHY"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &completionClient{}
+			provider := providermock.New(providermock.Config{Scenario: test.scenario})
+			runtime, err := New(Config{
+				HostID: "host_000000000000001", HeartbeatInterval: time.Second,
+				LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+				CommandTimeout: 20 * time.Millisecond, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+			}, client, provider, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := "lease_token_000000000001"
+			runtime.execute(hostcommand.Command{
+				ID: "command_0000000000001", CommandType: "create", LeaseToken: &token, Attempt: 1,
+				Payload: map[string]any{"device_id": "device_0000000000001", "image_id": "image_00000000000001",
+					"provider_ref": "emulator-readiness-test", "capabilities": map[string]any{"apiLevel": float64(34)}},
+			})
+			if client.completion.Status != "failed" || client.completion.Error == nil ||
+				client.completion.Error.Code != test.wantCode || !client.completion.Error.Retryable {
+				t.Fatalf("completion=%#v", client.completion)
+			}
+			if _, lookupErr := provider.GetConnectionInfo(context.Background(), "emulator-readiness-test"); providers.ErrorCode(lookupErr) != "PROVIDER_DEVICE_NOT_FOUND" {
+				t.Fatalf("failed emulator was not cleaned: %v", lookupErr)
+			}
+		})
 	}
 }
 

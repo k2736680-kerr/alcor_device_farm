@@ -73,6 +73,31 @@ func TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown(t *testing.T)
 	assertCount(t, db, "SELECT count(*) FROM devices", 1)
 }
 
+func TestSuccessfulCreateResultRestoresReadyStateAfterServerRestart(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
+	firstController := warmpool.New(db, sequentialGenerator(), nil)
+	if result, err := firstController.RunOnce(context.Background()); err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("create result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"generation":1,"connection":{"serial":"10.0.0.20:31000","adb_endpoint":"10.0.0.20:31000",
+		"appium_endpoint":"http://10.0.0.20:32000","appium_udid":"emulator-5554"},
+		"health":{"online":true,"adb_online":true,"boot_completed":true,"appium_healthy":true}}',
+		completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE command_type='create'`); err != nil {
+		t.Fatal(err)
+	}
+	// A new controller instance represents a Server restart. It must continue
+	// from the persisted command result without relying on an in-memory worker.
+	restartedController := warmpool.New(db, sequentialGenerator(), nil)
+	result, err := restartedController.RunOnce(context.Background())
+	if err != nil || result.DevicesReady != 1 || result.DevicesCreated != 0 {
+		t.Fatalf("restart result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE lifecycle_status='ready' AND health_status='healthy'
+		AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
+}
+
 func TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 2, 2, 2)
@@ -146,6 +171,60 @@ func TestFailedImageValidationDoesNotCreateEmulator(t *testing.T) {
 	assertCount(t, db, "SELECT count(*) FROM devices", 0)
 }
 
+func TestReleasedEmulatorQueuesOneRebuildAndReturnsReadyOnlyAfterCleanSnapshot(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 0, 2, 2)
+	seedRecyclingDevice(t, db)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.RebuildsQueued != 1 {
+		t.Fatalf("queue result=%+v error=%v", result, err)
+	}
+	if result, err = controller.RunOnce(context.Background()); err != nil || result.RebuildsQueued != 0 {
+		t.Fatalf("idempotent result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='rebuild'
+		AND payload->>'reservation_id'='reservation_00000001'`, 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"generation":2,"connection":{"serial":"10.0.0.20:31001","adb_endpoint":"10.0.0.20:31001",
+		"appium_endpoint":"http://10.0.0.20:32001","appium_udid":"emulator-5554"},
+		"health":{"online":true,"adb_online":true,"boot_completed":true,"appium_healthy":true}}',
+		completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE command_type='rebuild'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.RebuildsCompleted != 1 {
+		t.Fatalf("complete result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='device_0000000000001'
+		AND lifecycle_status='ready' AND health_status='healthy' AND serial='10.0.0.20:31001'
+		AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
+}
+
+func TestFailedRecycleRebuildQuarantinesDevice(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 0, 2, 2)
+	seedRecyclingDevice(t, db)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='timed_out',
+		error_code='DEVICE_BOOT_TIMEOUT',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='rebuild'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.RebuildsFailed != 1 {
+		t.Fatalf("failure result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='device_0000000000001'
+		AND lifecycle_status='quarantined' AND health_status='unhealthy'
+		AND health_reason LIKE 'DEVICE_BOOT_TIMEOUT:%'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id='device_0000000000001'
+		AND event_type='device_rebuild_failed' AND payload->>'error_code'='DEVICE_BOOT_TIMEOUT'`, 1)
+}
+
 func openTestDatabase(t *testing.T) *database.DB {
 	t.Helper()
 	url := os.Getenv("DEVICE_FARM_TEST_DATABASE_URL")
@@ -184,6 +263,29 @@ func seedWarmPool(t *testing.T, db *database.DB, imageStatus string, minReady, m
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_images(pool_id,image_id,min_ready,max_instances,enabled)
 		VALUES('pool_000000000000001','image_00000000000001',$1,$2,true)`, minReady, maxInstances); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func seedRecyclingDevice(t *testing.T, db *database.DB) {
+	t.Helper()
+	statements := []string{
+		`INSERT INTO devices(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,
+			adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status)
+		VALUES('device_0000000000001','host_000000000000001','image_00000000000001','emulator','docker_emulator',
+			'emulator-device-1','rebuild','10.0.0.20:31000','10.0.0.20:31000','http://10.0.0.20:32000',
+			'{"platformName":"Android","appiumUdid":"emulator-5554"}','recycling','healthy')`,
+		`INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_0000000000001',true)`,
+		`INSERT INTO device_reservations(id,client_id,pool_id,device_id,owner_type,owner_id,lease_seconds,status,
+			idempotency_key,starts_at,expires_at,released_at)
+		VALUES('reservation_00000001','service','pool_000000000000001','device_0000000000001','test_run',
+			'owner_00000000000001',600,'released','recycle-reservation-key',clock_timestamp()-interval '2 minutes',
+			clock_timestamp()+interval '8 minutes',clock_timestamp()-interval '1 minute')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Pool().Exec(context.Background(), statement); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

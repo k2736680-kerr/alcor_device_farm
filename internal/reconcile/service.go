@@ -150,7 +150,7 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 }
 
 func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) (Result, error) {
-	if service == nil || service.db == nil || service.provider == nil || hostTimeout <= 0 {
+	if service == nil || service.db == nil || hostTimeout <= 0 {
 		return Result{}, ErrInvalidArgument
 	}
 	result := Result{}
@@ -164,14 +164,14 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		return Result{}, err
 	}
 	for _, device := range devices {
-		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceQuarantined {
+		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceQuarantined || device.Lifecycle == domain.DeviceRecycling {
 			continue
 		}
 		result.DevicesChecked++
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", "device host is offline or unavailable"
-		} else {
+		} else if service.provider != nil {
 			health, inspectErr := service.provider.InspectHealth(ctx, device.ProviderRef)
 			switch {
 			case inspectErr != nil && providers.ErrorCode(inspectErr) == "PROVIDER_DEVICE_NOT_FOUND":
@@ -192,6 +192,21 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 					}
 				}
 			}
+		} else if service.visibility != nil && device.Health == domain.HealthHealthy &&
+			(device.Lifecycle == domain.DeviceReady || device.Lifecycle == domain.DeviceReserved || device.Lifecycle == domain.DeviceBusy) {
+			visible, visibilityErr := service.visibility.Visible(ctx, device.Serial)
+			if visibilityErr == nil && visible {
+				continue
+			}
+			input.EventType, input.Severity, input.Reason = "stf_not_visible", "error", "device is not visible through STF"
+			if visibilityErr != nil {
+				input.Reason = visibilityErr.Error()
+			}
+		} else if device.Health != domain.HealthHealthy &&
+			(device.Lifecycle == domain.DeviceReady || device.Lifecycle == domain.DeviceReserved || device.Lifecycle == domain.DeviceBusy) {
+			input.EventType, input.Severity, input.Reason = "agent_reported_unhealthy", "error", "agent heartbeat reported an assigned or schedulable device is not healthy"
+		} else {
+			continue
 		}
 		before := device.Lifecycle
 		if _, err := service.Report(ctx, device.ID, input); err != nil {

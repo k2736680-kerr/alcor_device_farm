@@ -195,6 +195,7 @@ Reaper：
 - 释放 STF claim；
 - 关闭 Device Session；
 - 将设备送入 recycling；
+- 由固定目标 Controller 创建持久化 rebuild Host Command，Agent 删除旧数据卷并通过完整健康检查后才回 ready；
 - 多实例运行时通过数据库锁避免重复回收。
 
 Reconciler：

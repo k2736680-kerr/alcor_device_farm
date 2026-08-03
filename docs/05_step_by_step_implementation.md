@@ -41,7 +41,7 @@
 | DF-018 | STF Adapter 和远控入口 | blocked | DF-009、DF-017 |
 | DF-019 | DaFit Farm 运行适配 | blocked | DF-015 |
 | DF-020 | DaFit 端到端 Harness | blocked | DF-018、DF-019 |
-| DF-021 | 故障恢复、清理和数据隔离 | pending | DF-020 |
+| DF-021 | 故障恢复、清理和数据隔离 | blocked | DF-020 |
 | DF-022 | 权限、审计和敏感数据加固 | pending | DF-018、DF-021 |
 | DF-023 | 指标、部署、运维和回滚手册 | pending | DF-022 |
 | DF-024 | MVP 全量验收 | pending | DF-023 |

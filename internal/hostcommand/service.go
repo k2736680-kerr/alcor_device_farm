@@ -351,6 +351,9 @@ func (service *Service) Complete(ctx context.Context, id string, input Completio
 		return Command{}, ErrInvalidArgument
 	}
 	target := domain.CommandStatus(input.Status)
+	if target == domain.CommandFailed && input.Error != nil && input.Error.Retryable {
+		target = domain.CommandPending
+	}
 	state, err := domain.RestoreCommand(id, domain.CommandLeased)
 	if err != nil {
 		return Command{}, err
@@ -363,7 +366,8 @@ func (service *Service) Complete(ctx context.Context, id string, input Completio
 		value := input.Error.Code
 		errorCode = &value
 	}
-	record, err := service.repo.Complete(ctx, service.db.Pool(), id, input.LeaseToken, input.Attempt, target, input.Result, errorCode)
+	retryable := input.Error != nil && input.Error.Retryable
+	record, err := service.repo.Complete(ctx, service.db.Pool(), id, input.LeaseToken, input.Attempt, domain.CommandStatus(input.Status), input.Result, errorCode, retryable)
 	if err != nil {
 		return Command{}, translate(err)
 	}

@@ -60,9 +60,14 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	if err != nil || len(discovered) != 2 {
 		t.Fatalf("discover=%#v error=%v", discovered, err)
 	}
+	_, _, firstVolume := resourceNames("emulator-one")
+	engine.volumes[firstVolume]["test.previous-run-data"] = "installed-app-cache-and-files"
 	rebuilt, err := provider.Rebuild(context.Background(), "emulator-one")
 	if err != nil || rebuilt.Generation != 2 || rebuilt.State != providers.StateRunning {
 		t.Fatalf("rebuilt=%#v error=%v", rebuilt, err)
+	}
+	if engine.volumes[firstVolume]["test.previous-run-data"] != "" {
+		t.Fatal("rebuilt emulator reused the previous run data volume")
 	}
 
 	if err := provider.Delete(context.Background(), "emulator-one"); err != nil {

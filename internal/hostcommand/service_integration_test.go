@@ -253,6 +253,35 @@ func TestExpiredFinalAttemptTimesOut(t *testing.T) {
 	}
 }
 
+func TestRetryableCompletionReturnsCommandToPendingUntilSuccess(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	service := hostcommand.New(db)
+	created, err := service.Create(context.Background(), "host_000000000000001", "delete",
+		map[string]any{"provider_ref": "container-1"}, 2, "reported-retry-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := claimOne(t, service)
+	retried, err := service.Complete(context.Background(), created.ID, hostcommand.CompletionInput{
+		LeaseToken: *first.LeaseToken, Attempt: first.Attempt, Status: "failed",
+		Error: &hostcommand.CompletionError{Code: "EMULATOR_DELETE_FAILED", Message: "temporary cleanup failure", Retryable: true},
+	})
+	if err != nil || retried.Status != "pending" || retried.CompletedAt != nil || retried.ErrorCode == nil {
+		t.Fatalf("retried=%+v err=%v", retried, err)
+	}
+	second := claimOne(t, service)
+	if second.Attempt != 2 {
+		t.Fatalf("second attempt=%d", second.Attempt)
+	}
+	completed, err := service.Complete(context.Background(), created.ID, hostcommand.CompletionInput{
+		LeaseToken: *second.LeaseToken, Attempt: second.Attempt, Status: "succeeded", Result: map[string]any{"deleted": true},
+	})
+	if err != nil || completed.Status != "succeeded" || completed.CompletedAt == nil || completed.ErrorCode != nil {
+		t.Fatalf("completed=%+v err=%v", completed, err)
+	}
+}
+
 func claimOne(t *testing.T, service *hostcommand.Service) hostcommand.Command {
 	t.Helper()
 	values, err := service.Claim(context.Background(), "host_000000000000001", hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
