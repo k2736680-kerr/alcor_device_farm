@@ -75,6 +75,14 @@ type SessionRecord struct {
 	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
+type ExpiredRemoteSession struct {
+	ID            string
+	ReservationID string
+	DeviceID      string
+	Serial        string
+	ExpiresAt     time.Time
+}
+
 type OperationParams struct {
 	ClientID       string
 	Scope          string
@@ -142,7 +150,8 @@ func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx 
                r.requested_capabilities, r.lease_seconds, r.status, r.idempotency_key,
                r.starts_at, r.expires_at, r.released_at, r.failure_code, r.created_at, r.updated_at
         FROM device_reservations r
-        WHERE r.status = 'pending'
+        WHERE r.status = 'pending' AND r.device_id IS NULL
+          AND (r.failure_code IS NULL OR r.updated_at <= clock_timestamp() - interval '5 seconds')
           AND EXISTS (
               SELECT 1
               FROM devices d
@@ -164,6 +173,70 @@ func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx 
 		return ReservationRecord{}, fmt.Errorf("lock next allocatable reservation: %w", err)
 	}
 	return record, nil
+}
+
+func (ReservationRepository) ReserveForClaim(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationID, deviceID string,
+	reservedAt time.Time,
+) error {
+	result, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status='reserved',updated_at=$2
+		WHERE id=$1 AND lifecycle_status='ready' AND health_status='healthy'`, deviceID, reservedAt)
+	if err != nil {
+		return fmt.Errorf("reserve device for STF claim: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrCapacityUnavailable
+	}
+	result, err = tx.Exec(ctx, `UPDATE device_reservations SET device_id=$2,failure_code=NULL,updated_at=$3
+		WHERE id=$1 AND status='pending' AND device_id IS NULL`, reservationID, deviceID, reservedAt)
+	if err != nil {
+		return fmt.Errorf("mark reservation STF claim in progress: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (ReservationRepository) CompensateClaim(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationID, deviceID, failureCode string,
+	terminal bool,
+	compensatedAt time.Time,
+) error {
+	result, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status='recycling',updated_at=$2
+		WHERE id=$1 AND lifecycle_status='reserved'`, deviceID, compensatedAt)
+	if err != nil {
+		return fmt.Errorf("recycle device after STF claim failure: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	result, err = tx.Exec(ctx, `UPDATE devices SET lifecycle_status='ready',updated_at=$2
+		WHERE id=$1 AND lifecycle_status='recycling' AND health_status='healthy'`, deviceID, compensatedAt)
+	if err != nil {
+		return fmt.Errorf("restore device after STF claim failure: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	status := domain.ReservationPending
+	if terminal {
+		status = domain.ReservationFailed
+	}
+	result, err = tx.Exec(ctx, `UPDATE device_reservations
+		SET device_id=NULL,status=$3,failure_code=$4,updated_at=$5
+		WHERE id=$1 AND status='pending' AND device_id=$2`, reservationID, deviceID, status, failureCode, compensatedAt)
+	if err != nil {
+		return fmt.Errorf("compensate reservation STF claim failure: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (ReservationRepository) HasPending(ctx context.Context, querier database.Querier) (bool, error) {
@@ -226,6 +299,25 @@ func (ReservationRepository) LockNextExpired(ctx context.Context, tx pgx.Tx, gra
 	return record, nil
 }
 
+func (ReservationRepository) FindNextExpired(ctx context.Context, querier database.Querier, graceSeconds int) (ReservationRecord, error) {
+	record, err := scanReservation(querier.QueryRow(ctx, `
+        SELECT id, client_id, pool_id, device_id, owner_type, owner_id,
+               requested_capabilities, lease_seconds, status, idempotency_key,
+               starts_at, expires_at, released_at, failure_code, created_at, updated_at
+        FROM device_reservations
+        WHERE status = 'active'
+          AND expires_at + make_interval(secs => $1) <= clock_timestamp()
+        ORDER BY expires_at, id
+        LIMIT 1`, graceSeconds))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("find expired reservation: %w", err)
+	}
+	return record, nil
+}
+
 func (ReservationRepository) BeginOperation(ctx context.Context, tx pgx.Tx, params OperationParams) (bool, error) {
 	command, err := tx.Exec(ctx, `
         INSERT INTO device_idempotency_records
@@ -248,6 +340,26 @@ func (ReservationRepository) BeginOperation(ctx context.Context, tx pgx.Tx, para
 		params.ClientID, params.Scope, params.Key,
 	).Scan(&requestHash, &resourceType, &resourceID); err != nil {
 		return false, fmt.Errorf("load reservation operation: %w", err)
+	}
+	if requestHash != params.RequestHash || resourceType != params.ResourceType || resourceID != params.ResourceID {
+		return false, ErrIdempotencyConflict
+	}
+	return true, nil
+}
+
+func (ReservationRepository) CheckOperation(ctx context.Context, querier database.Querier, params OperationParams) (bool, error) {
+	var requestHash, resourceType, resourceID string
+	err := querier.QueryRow(ctx, `
+		SELECT request_hash,resource_type,resource_id
+		FROM device_idempotency_records
+		WHERE client_id=$1 AND scope=$2 AND idempotency_key=$3`,
+		params.ClientID, params.Scope, params.Key,
+	).Scan(&requestHash, &resourceType, &resourceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check reservation operation: %w", err)
 	}
 	if requestHash != params.RequestHash || resourceType != params.ResourceType || resourceID != params.ResourceID {
 		return false, ErrIdempotencyConflict
@@ -289,6 +401,23 @@ func (ReservationRepository) LockSession(ctx context.Context, tx pgx.Tx, reserva
 	return session, nil
 }
 
+func (ReservationRepository) GetSession(ctx context.Context, querier database.Querier, reservationID string) (SessionRecord, error) {
+	var session SessionRecord
+	err := querier.QueryRow(ctx, `
+        SELECT id,reservation_id,device_id,status,started_at,connection_metadata,created_at,updated_at
+        FROM device_sessions WHERE reservation_id=$1`, reservationID).Scan(
+		&session.ID, &session.ReservationID, &session.DeviceID, &session.Status,
+		&session.StartedAt, &session.ConnectionMetadata, &session.CreatedAt, &session.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SessionRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return SessionRecord{}, fmt.Errorf("get device session: %w", err)
+	}
+	return session, nil
+}
+
 func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
@@ -305,6 +434,86 @@ func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id strin
 		return DeviceAssignment{}, fmt.Errorf("lock reserved device: %w", err)
 	}
 	return device, nil
+}
+
+func (ReservationRepository) GetDevice(ctx context.Context, querier database.Querier, id string) (DeviceAssignment, error) {
+	var device DeviceAssignment
+	err := querier.QueryRow(ctx, `
+		SELECT id,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		       COALESCE(capabilities->>'appiumUdid',serial)
+		FROM devices WHERE id=$1`, id).Scan(
+		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeviceAssignment{}, ErrNotFound
+	}
+	if err != nil {
+		return DeviceAssignment{}, fmt.Errorf("get reserved device: %w", err)
+	}
+	return device, nil
+}
+
+func (ReservationRepository) SetRemoteSession(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationID string,
+	metadata json.RawMessage,
+) (SessionRecord, error) {
+	var session SessionRecord
+	err := tx.QueryRow(ctx, `
+		UPDATE device_sessions
+		SET connection_metadata=jsonb_set(connection_metadata,'{stf_remote_session}',$2::jsonb,true),
+		    updated_at=clock_timestamp()
+		WHERE reservation_id=$1 AND status='active'
+		RETURNING id,reservation_id,device_id,status,started_at,connection_metadata,created_at,updated_at`,
+		reservationID, metadata,
+	).Scan(&session.ID, &session.ReservationID, &session.DeviceID, &session.Status,
+		&session.StartedAt, &session.ConnectionMetadata, &session.CreatedAt, &session.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SessionRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return SessionRecord{}, fmt.Errorf("store STF remote session: %w", err)
+	}
+	return session, nil
+}
+
+func (ReservationRepository) FindNextExpiredRemoteSession(ctx context.Context, querier database.Querier) (ExpiredRemoteSession, error) {
+	var remote ExpiredRemoteSession
+	err := querier.QueryRow(ctx, `
+		SELECT s.connection_metadata->'stf_remote_session'->>'id',s.reservation_id,s.device_id,d.serial,
+		       (s.connection_metadata->'stf_remote_session'->>'expires_at')::timestamptz
+		FROM device_sessions s
+		JOIN device_reservations r ON r.id=s.reservation_id
+		JOIN devices d ON d.id=s.device_id
+		WHERE s.status='active' AND r.status='active'
+		  AND s.connection_metadata ? 'stf_remote_session'
+		  AND (s.connection_metadata->'stf_remote_session'->>'expires_at')::timestamptz <= clock_timestamp()
+		ORDER BY (s.connection_metadata->'stf_remote_session'->>'expires_at')::timestamptz,s.id
+		LIMIT 1`).Scan(&remote.ID, &remote.ReservationID, &remote.DeviceID, &remote.Serial, &remote.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ExpiredRemoteSession{}, ErrNotFound
+	}
+	if err != nil {
+		return ExpiredRemoteSession{}, fmt.Errorf("find expired STF remote session: %w", err)
+	}
+	return remote, nil
+}
+
+func (ReservationRepository) ClearRemoteSession(ctx context.Context, tx pgx.Tx, reservationID, remoteID string) error {
+	result, err := tx.Exec(ctx, `
+		UPDATE device_sessions
+		SET connection_metadata=connection_metadata-'stf_remote_session',updated_at=clock_timestamp()
+		WHERE reservation_id=$1 AND status='active'
+		  AND connection_metadata->'stf_remote_session'->>'id'=$2`, reservationID, remoteID)
+	if err != nil {
+		return fmt.Errorf("clear STF remote session: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (ReservationRepository) CloseActive(
@@ -460,7 +669,7 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 	return device, nil
 }
 
-func (ReservationRepository) Activate(
+func (ReservationRepository) ActivateClaimed(
 	ctx context.Context,
 	tx pgx.Tx,
 	reservation ReservationRecord,
@@ -470,11 +679,6 @@ func (ReservationRepository) Activate(
 	now, err := database.ClockNow(ctx, tx)
 	if err != nil {
 		return ReservationRecord{}, SessionRecord{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-        UPDATE devices SET lifecycle_status = 'reserved', updated_at = $2
-        WHERE id = $1 AND lifecycle_status = 'ready'`, device.ID, now); err != nil {
-		return ReservationRecord{}, SessionRecord{}, fmt.Errorf("reserve device: %w", err)
 	}
 	result, err := tx.Exec(ctx, `
         UPDATE devices SET lifecycle_status = 'busy', updated_at = $2
@@ -490,7 +694,7 @@ func (ReservationRepository) Activate(
         UPDATE device_reservations
 		SET device_id = $2, status = 'active', starts_at = $3::timestamptz,
 		    expires_at = $3::timestamptz + make_interval(secs => lease_seconds), updated_at = $3::timestamptz
-        WHERE id = $1 AND status = 'pending'
+		WHERE id = $1 AND status = 'pending' AND device_id=$2
         RETURNING id, client_id, pool_id, device_id, owner_type, owner_id,
                   requested_capabilities, lease_seconds, status, idempotency_key,
                   starts_at, expires_at, released_at, failure_code, created_at, updated_at`,

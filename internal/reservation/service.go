@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
@@ -25,6 +26,10 @@ var (
 	ErrPoolUnavailable     = errors.New("device pool is unavailable")
 	ErrCapacityUnavailable = errors.New("matching device capacity is unavailable")
 	ErrNothingToReap       = errors.New("no expired reservation to reap")
+	ErrNothingToReapRemote = errors.New("no expired STF remote session to reap")
+	ErrForbidden           = errors.New("reservation access is forbidden")
+	ErrSTFReleaseFailed    = errors.New("STF device release failed")
+	ErrSTFRemoteFailed     = errors.New("STF remote connection failed")
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
@@ -53,6 +58,36 @@ type ReleaseInput struct {
 	Force  bool   `json:"force,omitempty"`
 }
 
+type RemoteSessionInput struct {
+	OwnerType  string `json:"owner_type"`
+	OwnerID    string `json:"owner_id"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+}
+
+type RemoteSessionView struct {
+	ID            string    `json:"id"`
+	ReservationID string    `json:"reservation_id"`
+	URL           string    `json:"remote_connect_url,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+type remoteSessionMetadata struct {
+	ID             string    `json:"id"`
+	URL            string    `json:"remote_connect_url"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	OwnerType      string    `json:"owner_type"`
+	OwnerID        string    `json:"owner_id"`
+	ClientID       string    `json:"client_id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	RequestHash    string    `json:"request_hash"`
+}
+
+type STFController interface {
+	Release(context.Context, string) error
+	RemoteConnect(context.Context, string) (stf.RemoteConnection, error)
+	RemoteDisconnect(context.Context, string) error
+}
+
 type View struct {
 	ID                    string                   `json:"id"`
 	PoolID                string                   `json:"pool_id"`
@@ -74,13 +109,18 @@ type Service struct {
 	db    *database.DB
 	repo  repository.ReservationRepository
 	newID IDGenerator
+	stf   STFController
 }
 
-func NewService(db *database.DB, generator IDGenerator) *Service {
+func NewService(db *database.DB, generator IDGenerator, controllers ...STFController) *Service {
 	if generator == nil {
 		generator = identifier.New
 	}
-	return &Service{db: db, repo: repository.ReservationRepository{}, newID: generator}
+	var controller STFController
+	if len(controllers) > 0 {
+		controller = controllers[0]
+	}
+	return &Service{db: db, repo: repository.ReservationRepository{}, newID: generator, stf: controller}
 }
 
 func (service *Service) Create(ctx context.Context, clientID, key string, input CreateInput) (View, error) {
@@ -233,12 +273,30 @@ func (service *Service) Release(
 	if err != nil {
 		return View{}, err
 	}
+	operation := repository.OperationParams{
+		ClientID: clientID, Scope: "release_device_reservation", Key: key, RequestHash: hash,
+		ResourceType: "device_reservation", ResourceID: id, ResponseStatus: 200,
+	}
+	if _, err := service.repo.CheckOperation(ctx, service.db.Pool(), operation); err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	current, err := service.repo.Get(ctx, service.db.Pool(), id)
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	if current.ClientID != clientID {
+		return View{}, ErrForbidden
+	}
+	if current.Status == domain.ReservationActive {
+		if err := service.releaseSTF(ctx, current); err != nil {
+			auditErr := service.recordSTFFailure(context.Background(), current, "service", clientID, requestID,
+				"stf_release_failed", "STF release failed; reservation remains active")
+			return View{}, errors.Join(err, auditErr)
+		}
+	}
 	var result repository.ReservationRecord
 	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
-		replay, err := service.repo.BeginOperation(ctx, tx, repository.OperationParams{
-			ClientID: clientID, Scope: "release_device_reservation", Key: key, RequestHash: hash,
-			ResourceType: "device_reservation", ResourceID: id, ResponseStatus: 200,
-		})
+		replay, err := service.repo.BeginOperation(ctx, tx, operation)
 		if err != nil {
 			return err
 		}
@@ -277,16 +335,35 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 		return View{}, ErrInvalidArgument
 	}
 	graceSeconds := int(gracePeriod / time.Second)
+	selected, err := service.repo.FindNextExpired(ctx, service.db.Pool(), graceSeconds)
+	if errors.Is(err, repository.ErrNotFound) {
+		return View{}, ErrNothingToReap
+	}
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	requestID := "reaper_" + selected.ID
+	if err := service.releaseSTF(ctx, selected); err != nil {
+		auditErr := service.recordSTFFailure(context.Background(), selected, "system", "reservation_reaper", requestID,
+			"stf_release_failed", "STF release failed during expiry; reservation remains active")
+		return View{}, errors.Join(err, auditErr)
+	}
 	var result repository.ReservationRecord
-	err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
-		current, err := service.repo.LockNextExpired(ctx, tx, graceSeconds)
-		if errors.Is(err, repository.ErrNotFound) {
-			return ErrNothingToReap
-		}
+	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		current, err := service.repo.LockByID(ctx, tx, selected.ID)
 		if err != nil {
 			return err
 		}
-		requestID := "reaper_" + current.ID
+		if current.Status != domain.ReservationActive || current.ExpiresAt == nil {
+			return ErrNothingToReap
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if current.ExpiresAt.Add(gracePeriod).After(now) {
+			return ErrNothingToReap
+		}
 		result, err = service.closeActiveLocked(
 			ctx, tx, current, domain.ReservationExpired, "system", "reservation_reaper",
 			"expire_device_reservation", requestID, "reservation lease and grace period expired",
@@ -297,6 +374,202 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 		return View{}, translateRepositoryError(err)
 	}
 	return toView(result)
+}
+
+func (service *Service) CreateRemoteSession(
+	ctx context.Context,
+	clientID, key, reservationID string,
+	input RemoteSessionInput,
+) (RemoteSessionView, error) {
+	if service == nil || service.db == nil || service.stf == nil {
+		return RemoteSessionView{}, fmt.Errorf("%w: STF is not configured", ErrSTFRemoteFailed)
+	}
+	if input.TTLSeconds == 0 {
+		input.TTLSeconds = 300
+	}
+	if strings.TrimSpace(clientID) == "" || len(key) < 8 || len(key) > 128 ||
+		!identifierPattern.MatchString(reservationID) || !validOwnerType(input.OwnerType) ||
+		!identifierPattern.MatchString(input.OwnerID) || input.TTLSeconds < 30 || input.TTLSeconds > 3600 {
+		return RemoteSessionView{}, ErrInvalidArgument
+	}
+	hash, err := requestHash(map[string]any{
+		"reservation_id": reservationID, "owner_type": input.OwnerType,
+		"owner_id": input.OwnerID, "ttl_seconds": input.TTLSeconds,
+	})
+	if err != nil {
+		return RemoteSessionView{}, err
+	}
+	operation := repository.OperationParams{
+		ClientID: clientID, Scope: "create_stf_remote_session", Key: key, RequestHash: hash,
+		ResourceType: "device_reservation", ResourceID: reservationID, ResponseStatus: 201,
+	}
+	replay, err := service.repo.CheckOperation(ctx, service.db.Pool(), operation)
+	if err != nil {
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	if replay {
+		return service.loadRemoteSession(ctx, reservationID, clientID, key, hash)
+	}
+	current, err := service.repo.Get(ctx, service.db.Pool(), reservationID)
+	if err != nil {
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	if current.ClientID != clientID || current.OwnerType != input.OwnerType || current.OwnerID != input.OwnerID {
+		return RemoteSessionView{}, ErrForbidden
+	}
+	if current.Status != domain.ReservationActive || current.DeviceID == nil {
+		return RemoteSessionView{}, ErrConflict
+	}
+	device, err := service.repo.GetDevice(ctx, service.db.Pool(), *current.DeviceID)
+	if err != nil {
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	remoteID, err := service.newID()
+	if err != nil {
+		return RemoteSessionView{}, fmt.Errorf("generate remote session ID: %w", err)
+	}
+	connection, err := service.stf.RemoteConnect(ctx, device.Serial)
+	if err != nil {
+		return RemoteSessionView{}, fmt.Errorf("%w: %w", ErrSTFRemoteFailed, err)
+	}
+	metadata := remoteSessionMetadata{
+		ID: remoteID, URL: connection.URL, ExpiresAt: time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second),
+		OwnerType: input.OwnerType, OwnerID: input.OwnerID, ClientID: clientID,
+		IdempotencyKey: key, RequestHash: hash,
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		service.disconnectRemote(device.Serial)
+		return RemoteSessionView{}, err
+	}
+	var stored remoteSessionMetadata
+	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		locked, err := service.repo.LockByID(ctx, tx, reservationID)
+		if err != nil {
+			return err
+		}
+		if locked.Status != domain.ReservationActive || locked.DeviceID == nil || *locked.DeviceID != device.ID ||
+			locked.ClientID != clientID || locked.OwnerType != input.OwnerType || locked.OwnerID != input.OwnerID {
+			return ErrConflict
+		}
+		replay, err := service.repo.BeginOperation(ctx, tx, operation)
+		if err != nil {
+			return err
+		}
+		if replay {
+			session, err := service.repo.LockSession(ctx, tx, reservationID)
+			if err != nil {
+				return err
+			}
+			stored, err = decodeRemoteSession(session.ConnectionMetadata)
+			return err
+		}
+		session, err := service.repo.SetRemoteSession(ctx, tx, reservationID, encoded)
+		if err != nil {
+			return err
+		}
+		stored, err = decodeRemoteSession(session.ConnectionMetadata)
+		return err
+	})
+	if err != nil {
+		service.disconnectRemote(device.Serial)
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	return remoteSessionView(reservationID, stored), nil
+}
+
+func (service *Service) ReapRemoteSessionOnce(ctx context.Context) (RemoteSessionView, error) {
+	if service == nil || service.db == nil || service.stf == nil {
+		return RemoteSessionView{}, ErrNothingToReapRemote
+	}
+	remote, err := service.repo.FindNextExpiredRemoteSession(ctx, service.db.Pool())
+	if errors.Is(err, repository.ErrNotFound) {
+		return RemoteSessionView{}, ErrNothingToReapRemote
+	}
+	if err != nil {
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	if err := service.stf.RemoteDisconnect(ctx, remote.Serial); err != nil {
+		return RemoteSessionView{}, fmt.Errorf("%w: %w", ErrSTFRemoteFailed, err)
+	}
+	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		return service.repo.ClearRemoteSession(ctx, tx, remote.ReservationID, remote.ID)
+	})
+	if errors.Is(err, repository.ErrNotFound) {
+		return RemoteSessionView{}, ErrNothingToReapRemote
+	}
+	if err != nil {
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	return RemoteSessionView{ID: remote.ID, ReservationID: remote.ReservationID, ExpiresAt: remote.ExpiresAt}, nil
+}
+
+func (service *Service) releaseSTF(ctx context.Context, current repository.ReservationRecord) error {
+	if service.stf == nil || current.DeviceID == nil {
+		return nil
+	}
+	device, err := service.repo.GetDevice(ctx, service.db.Pool(), *current.DeviceID)
+	if err != nil {
+		return translateRepositoryError(err)
+	}
+	if err := service.stf.Release(ctx, device.Serial); err != nil {
+		return fmt.Errorf("%w: %w", ErrSTFReleaseFailed, err)
+	}
+	return nil
+}
+
+func (service *Service) disconnectRemote(serial string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = service.stf.RemoteDisconnect(ctx, serial)
+}
+
+func (service *Service) loadRemoteSession(ctx context.Context, reservationID, clientID, key, hash string) (RemoteSessionView, error) {
+	session, err := service.repo.GetSession(ctx, service.db.Pool(), reservationID)
+	if err != nil {
+		return RemoteSessionView{}, translateRepositoryError(err)
+	}
+	metadata, err := decodeRemoteSession(session.ConnectionMetadata)
+	if err != nil || metadata.ClientID != clientID || metadata.IdempotencyKey != key || metadata.RequestHash != hash {
+		return RemoteSessionView{}, ErrConflict
+	}
+	if !metadata.ExpiresAt.After(time.Now().UTC()) {
+		return RemoteSessionView{}, ErrConflict
+	}
+	return remoteSessionView(reservationID, metadata), nil
+}
+
+func decodeRemoteSession(connectionMetadata json.RawMessage) (remoteSessionMetadata, error) {
+	var envelope struct {
+		Remote remoteSessionMetadata `json:"stf_remote_session"`
+	}
+	if err := json.Unmarshal(connectionMetadata, &envelope); err != nil {
+		return remoteSessionMetadata{}, fmt.Errorf("decode STF remote session: %w", err)
+	}
+	if envelope.Remote.ID == "" || envelope.Remote.URL == "" || envelope.Remote.ExpiresAt.IsZero() {
+		return remoteSessionMetadata{}, ErrConflict
+	}
+	return envelope.Remote, nil
+}
+
+func remoteSessionView(reservationID string, metadata remoteSessionMetadata) RemoteSessionView {
+	return RemoteSessionView{ID: metadata.ID, ReservationID: reservationID, URL: metadata.URL, ExpiresAt: metadata.ExpiresAt}
+}
+
+func (service *Service) recordSTFFailure(
+	ctx context.Context,
+	current repository.ReservationRecord,
+	actorType, actorID, requestID, action, reason string,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		auditID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		return service.repo.InsertAudit(ctx, tx, auditID, actorType, actorID, action, current.ID, requestID, reason)
+	})
 }
 
 func (service *Service) closeActiveLocked(

@@ -469,7 +469,7 @@ components:
       properties:
         code:
           type: string
-          enum: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_CAPACITY_UNAVAILABLE, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
+          enum: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_CAPACITY_UNAVAILABLE, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
         message: {type: string}
         details: {type: object, additionalProperties: true}
         retryable: {type: boolean}
@@ -555,7 +555,10 @@ components:
     RemoteSessionCreate:
       type: object
       additionalProperties: false
+      required: [owner_type, owner_id]
       properties:
+        owner_type: {$ref: "#/components/schemas/OwnerType"}
+        owner_id: {$ref: "#/components/schemas/Identifier"}
         ttl_seconds: {type: integer, minimum: 30, maximum: 3600, default: 300}
     OperationReason:
       type: object

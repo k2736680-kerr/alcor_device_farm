@@ -8,12 +8,37 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 )
+
+type fakeClaimer struct {
+	claim        func(context.Context, string, time.Duration) error
+	releaseCalls atomic.Int64
+}
+
+func (claimer *fakeClaimer) Claim(ctx context.Context, serial string, ttl time.Duration) error {
+	if claimer.claim == nil {
+		return nil
+	}
+	return claimer.claim(ctx, serial, ttl)
+}
+
+func (claimer *fakeClaimer) Release(context.Context, string) error {
+	claimer.releaseCalls.Add(1)
+	return nil
+}
+
+type claimFailure struct{ retryable bool }
+
+func (failure claimFailure) Error() string     { return "simulated STF claim failure" }
+func (failure claimFailure) IsRetryable() bool { return failure.retryable }
 
 func TestOneHundredConcurrentReservationsUseTwoDevicesWithoutDoubleAllocation(t *testing.T) {
 	db := openTestDatabase(t)
@@ -182,6 +207,113 @@ func TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount(t *testing.T) {
 	assertCount(t, db, "SELECT count(*) FROM device_reservations WHERE status='active'", 1)
 	assertCount(t, db, "SELECT count(*) FROM device_reservations WHERE status='pending'", 1)
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='busy'", 1)
+}
+
+func TestSTFClaimRunsBeforeReservationActivation(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 1)
+	service := reservation.NewService(db, nil)
+	created, err := service.Create(context.Background(), "service", "stf-claim-success-key", reservation.CreateInput{
+		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000101",
+		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimer := &fakeClaimer{claim: func(_ context.Context, serial string, ttl time.Duration) error {
+		if serial != "emulator-0" || ttl != 600*time.Second {
+			t.Fatalf("claim serial=%q ttl=%s", serial, ttl)
+		}
+		var reservationStatus domain.ReservationStatus
+		var deviceStatus domain.DeviceLifecycleStatus
+		if err := db.Pool().QueryRow(context.Background(), `SELECT r.status,d.lifecycle_status
+			FROM device_reservations r JOIN devices d ON d.id=r.device_id WHERE r.id=$1`, created.ID).Scan(
+			&reservationStatus, &deviceStatus,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if reservationStatus != domain.ReservationPending || deviceStatus != domain.DeviceReserved {
+			t.Fatalf("claim observed reservation=%s device=%s", reservationStatus, deviceStatus)
+		}
+		return nil
+	}}
+	assignment, err := scheduler.New(db, nil, nil, claimer).RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assignment.Reservation.Status != domain.ReservationActive {
+		t.Fatalf("reservation status=%s", assignment.Reservation.Status)
+	}
+	assertCount(t, db, "SELECT count(*) FROM device_sessions WHERE status='active'", 1)
+}
+
+func TestRetryableSTFClaimFailureRestoresDeviceAndKeepsReservationPending(t *testing.T) {
+	testSTFClaimFailureCompensation(t, true, domain.ReservationPending)
+}
+
+func TestTerminalSTFClaimFailureRestoresDeviceAndFailsReservation(t *testing.T) {
+	testSTFClaimFailureCompensation(t, false, domain.ReservationFailed)
+}
+
+func TestSTFClaimIsReleasedWhenSessionIDGenerationFails(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 1)
+	service := reservation.NewService(db, nil)
+	created, err := service.Create(context.Background(), "service", "stf-session-id-failure", reservation.CreateInput{
+		PoolID: "pool_000000000000001", OwnerType: "manual", OwnerID: "owner_00000000000101",
+		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimer := &fakeClaimer{}
+	generationError := errors.New("ID generator unavailable")
+	_, err = scheduler.New(db, func() (string, error) { return "", generationError }, nil, claimer).RunOnce(context.Background())
+	if !errors.Is(err, generationError) {
+		t.Fatalf("RunOnce() error=%v", err)
+	}
+	if claimer.releaseCalls.Load() != 1 {
+		t.Fatalf("release calls=%d", claimer.releaseCalls.Load())
+	}
+	stored, err := service.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != domain.ReservationFailed || stored.DeviceID != nil {
+		t.Fatalf("reservation=%#v", stored)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='ready'", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_sessions", 0)
+}
+
+func testSTFClaimFailureCompensation(t *testing.T, retryable bool, want domain.ReservationStatus) {
+	t.Helper()
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 1)
+	service := reservation.NewService(db, nil)
+	created, err := service.Create(context.Background(), "service", fmt.Sprintf("stf-claim-failure-%t", retryable), reservation.CreateInput{
+		PoolID: "pool_000000000000001", OwnerType: "test_run", OwnerID: "owner_00000000000102",
+		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimer := &fakeClaimer{claim: func(context.Context, string, time.Duration) error {
+		return claimFailure{retryable: retryable}
+	}}
+	_, err = scheduler.New(db, nil, nil, claimer).RunOnce(context.Background())
+	if !errors.Is(err, scheduler.ErrSTFClaimFailed) {
+		t.Fatalf("RunOnce() error=%v", err)
+	}
+	stored, err := service.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != want || stored.DeviceID != nil || stored.FailureCode == nil || *stored.FailureCode != "STF_CLAIM_FAILED" {
+		t.Fatalf("reservation=%#v", stored)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='ready'", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_sessions", 0)
 }
 
 func openTestDatabase(t *testing.T) *database.DB {

@@ -44,6 +44,17 @@ func (reaper *Reaper) Run(ctx context.Context, interval time.Duration) {
 			}
 			break
 		}
+		for {
+			remote, err := reaper.service.ReapRemoteSessionOnce(ctx)
+			if err == nil {
+				reaper.logger.Info("expired STF remote session closed", "remote_session_id", remote.ID, "reservation_id", remote.ReservationID)
+				continue
+			}
+			if !errors.Is(err, reservation.ErrNothingToReapRemote) && !errors.Is(err, context.Canceled) {
+				reaper.logger.Error("STF remote session reaper cycle failed", "error", err)
+			}
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return

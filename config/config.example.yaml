@@ -29,6 +29,17 @@ reconcile:
 warm_pool:
   interval: 30s
 
+# STF remains the remote-control and visibility tool. PostgreSQL reservations
+# remain the allocation source of truth. Inject api_token through an environment
+# secret instead of committing it here.
+stf:
+  enabled: false
+  base_url: "http://127.0.0.1:7100"
+  api_token: ""
+  timeout: 5s
+  attempts: 3
+  retry_delay: 200ms
+
 # Keep real tokens out of YAML committed to Git. Protected routes fail closed
 # with 401 while the matching token is empty.
 security:

@@ -203,9 +203,10 @@ type managementEnvironment struct {
 	service      *management.Service
 	server       *httptest.Server
 	hostCommands *hostcommand.Service
+	reservations *reservation.Service
 }
 
-func newManagementEnvironment(t *testing.T) *managementEnvironment {
+func newManagementEnvironment(t *testing.T, controllers ...reservation.STFController) *managementEnvironment {
 	t.Helper()
 	databaseURL := os.Getenv("DEVICE_FARM_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -227,13 +228,13 @@ func newManagementEnvironment(t *testing.T) *managementEnvironment {
 	generator := func() (string, error) { return fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence.Add(1)), nil }
 	provider := providermock.New(providermock.Config{})
 	service := management.NewService(store, provider, generator)
-	reservationService := reservation.NewService(db, generator)
+	reservationService := reservation.NewService(db, generator, controllers...)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	healthService := reconcile.New(db, provider, nil, 3, logger)
 	hostCommands := hostcommand.New(db)
 	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
-	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands}
+	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands, reservations: reservationService}
 }
 
 func (environment *managementEnvironment) request(t *testing.T, method, path string, body any, token, key string) responseEnvelope {

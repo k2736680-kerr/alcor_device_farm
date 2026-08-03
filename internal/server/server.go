@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/api"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
@@ -72,13 +73,32 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		}
 		defer db.Close()
 		provider := providermock.New(providermock.Config{})
+		var stfClient *stf.Client
+		if cfg.STF.Enabled {
+			stfClient, err = stf.New(stf.Config{
+				BaseURL: cfg.STF.BaseURL, Token: cfg.STF.APIToken, Timeout: cfg.STF.Timeout,
+				Attempts: cfg.STF.Attempts, RetryDelay: cfg.STF.RetryDelay,
+			})
+			if err != nil {
+				return err
+			}
+		}
 		services.Management = management.NewService(managementpostgres.New(db), provider, nil)
-		services.Reservations = reservation.NewService(db, nil)
-		services.Scheduler = scheduler.New(db, nil, logger)
+		if stfClient != nil {
+			services.Reservations = reservation.NewService(db, nil, stfClient)
+			services.Scheduler = scheduler.New(db, nil, logger, stfClient)
+		} else {
+			services.Reservations = reservation.NewService(db, nil)
+			services.Scheduler = scheduler.New(db, nil, logger)
+		}
 		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
 		reservationReaper := reaper.New(services.Reservations, cfg.Lease.GracePeriod, logger)
 		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)
-		services.Reconcile = reconcile.New(db, provider, nil, cfg.Reconcile.FailureThreshold, logger)
+		var visibility reconcile.Visibility
+		if stfClient != nil {
+			visibility = stfClient
+		}
+		services.Reconcile = reconcile.New(db, provider, visibility, cfg.Reconcile.FailureThreshold, logger)
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 		services.HostCommands = hostcommand.New(db)
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)

@@ -18,6 +18,21 @@ func RegisterReservations(mux *http.ServeMux, service *reservation.Service) {
 	mux.HandleFunc("GET /api/v1/device-reservations/{id}", handler.get)
 	mux.HandleFunc("POST /api/v1/device-reservations/{id}/extensions", handler.extend)
 	mux.HandleFunc("POST /api/v1/device-reservations/{id}/releases", handler.release)
+	mux.HandleFunc("POST /api/v1/device-reservations/{id}/remote-sessions", handler.createRemoteSession)
+}
+
+func (handler *reservationHandler) createRemoteSession(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	var input reservation.RemoteSessionInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.CreateRemoteSession(
+		request.Context(), clientID(request), request.Header.Get("Idempotency-Key"), request.PathValue("id"), input,
+	)
+	handler.write(writer, request, http.StatusCreated, value, err)
 }
 
 func (handler *reservationHandler) extend(writer http.ResponseWriter, request *http.Request) {
@@ -109,6 +124,18 @@ func (handler *reservationHandler) write(writer http.ResponseWriter, request *ht
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "POOL_UNAVAILABLE", Message: err.Error(), Retryable: false}
 	case errors.Is(err, reservation.ErrCapacityUnavailable):
 		httpStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "CAPACITY_UNAVAILABLE", Message: err.Error(), Retryable: true}
+	case errors.Is(err, reservation.ErrForbidden):
+		httpStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "reservation owner does not match"}
+	case errors.Is(err, reservation.ErrSTFReleaseFailed):
+		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_RELEASE_FAILED", Message: "STF release failed; reservation remains active", Retryable: isRetryable(err)}
+	case errors.Is(err, reservation.ErrSTFRemoteFailed):
+		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_REMOTE_CONNECT_FAILED", Message: "STF remote connection is unavailable", Retryable: isRetryable(err)}
 	}
 	httpx.WriteError(writer, request, httpStatus, apiError)
+}
+
+func isRetryable(err error) bool {
+	type retryable interface{ IsRetryable() bool }
+	var value retryable
+	return errors.As(err, &value) && value.IsRetryable()
 }

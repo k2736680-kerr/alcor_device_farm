@@ -3,11 +3,58 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 )
+
+type fakeSTFController struct {
+	mutex             sync.Mutex
+	releaseErr        error
+	claimCalls        int
+	releaseCalls      int
+	remoteCalls       int
+	disconnectCalls   int
+	lastReleaseSerial string
+}
+
+func (controller *fakeSTFController) Claim(context.Context, string, time.Duration) error {
+	controller.mutex.Lock()
+	defer controller.mutex.Unlock()
+	controller.claimCalls++
+	return nil
+}
+
+func (controller *fakeSTFController) Release(_ context.Context, serial string) error {
+	controller.mutex.Lock()
+	defer controller.mutex.Unlock()
+	controller.releaseCalls++
+	controller.lastReleaseSerial = serial
+	return controller.releaseErr
+}
+
+func (controller *fakeSTFController) RemoteConnect(context.Context, string) (stf.RemoteConnection, error) {
+	controller.mutex.Lock()
+	defer controller.mutex.Unlock()
+	controller.remoteCalls++
+	return stf.RemoteConnection{URL: "10.0.0.20:7401"}, nil
+}
+
+func (controller *fakeSTFController) RemoteDisconnect(context.Context, string) error {
+	controller.mutex.Lock()
+	defer controller.mutex.Unlock()
+	controller.disconnectCalls++
+	return nil
+}
+
+type retryableSTFError struct{}
+
+func (retryableSTFError) Error() string     { return "temporary STF outage" }
+func (retryableSTFError) IsRetryable() bool { return true }
 
 func TestReservationAPIStoresListsAndReplaysPendingRequest(t *testing.T) {
 	environment := newManagementEnvironment(t)
@@ -95,6 +142,119 @@ func TestReservationAPIExtendsAndReleasesActiveReservation(t *testing.T) {
 	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/releases",
 		releaseBody, serviceToken, "reservation-release-01"), http.StatusOK)
+}
+
+func TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds(t *testing.T) {
+	controller := &fakeSTFController{releaseErr: retryableSTFError{}}
+	environment := newManagementEnvironment(t, controller)
+	seedReservationDevice(t, environment)
+	created := createAndActivateReservation(t, environment, controller, "reservation-stf-release-create")
+	releaseBody := map[string]any{"reason": "STF release ordering test"}
+
+	failed := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/releases",
+		releaseBody, serviceToken, "reservation-stf-release-key")
+	assertStatus(t, failed, http.StatusBadGateway)
+	stored, err := environment.reservations.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "active" {
+		t.Fatalf("reservation status after STF failure=%s", stored.Status)
+	}
+	var auditCount int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_id=$1 AND action='stf_release_failed'`, created.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("STF failure audit count=%d", auditCount)
+	}
+
+	controller.mutex.Lock()
+	controller.releaseErr = nil
+	controller.mutex.Unlock()
+	succeeded := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/releases",
+		releaseBody, serviceToken, "reservation-stf-release-key")
+	assertStatus(t, succeeded, http.StatusOK)
+	stored, err = environment.reservations.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "released" || controller.lastReleaseSerial != "emulator-api-lifecycle" {
+		t.Fatalf("reservation=%#v release serial=%q", stored, controller.lastReleaseSerial)
+	}
+}
+
+func TestRemoteSessionIsOwnerBoundIdempotentAndDisconnectedAfterExpiry(t *testing.T) {
+	controller := &fakeSTFController{}
+	environment := newManagementEnvironment(t, controller)
+	seedReservationDevice(t, environment)
+	created := createAndActivateReservation(t, environment, controller, "reservation-remote-create")
+	path := "/api/v1/device-reservations/" + created.ID + "/remote-sessions"
+	input := map[string]any{
+		"owner_type": "test_run", "owner_id": "attempt_000000000001", "ttl_seconds": 30,
+	}
+	response := environment.request(t, http.MethodPost, path, input, serviceToken, "remote-session-key-01")
+	assertStatus(t, response, http.StatusCreated)
+	var remote reservation.RemoteSessionView
+	decodeData(t, response, &remote)
+	if remote.URL != "10.0.0.20:7401" || remote.ReservationID != created.ID || remote.ID == "" {
+		t.Fatalf("remote session=%#v", remote)
+	}
+	replayed := environment.request(t, http.MethodPost, path, input, serviceToken, "remote-session-key-01")
+	assertStatus(t, replayed, http.StatusCreated)
+	var replayedRemote reservation.RemoteSessionView
+	decodeData(t, replayed, &replayedRemote)
+	if replayedRemote.ID != remote.ID || controller.remoteCalls != 1 {
+		t.Fatalf("replayed=%#v remote calls=%d", replayedRemote, controller.remoteCalls)
+	}
+	wrongOwner := map[string]any{
+		"owner_type": "test_run", "owner_id": "attempt_000000000002", "ttl_seconds": 30,
+	}
+	assertStatus(t, environment.request(t, http.MethodPost, path, wrongOwner, serviceToken, "remote-session-key-02"), http.StatusForbidden)
+
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_sessions
+		SET connection_metadata=jsonb_set(connection_metadata,'{stf_remote_session,expires_at}',to_jsonb((clock_timestamp()-interval '1 second')::text))
+		WHERE reservation_id=$1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	reaped, err := environment.reservations.ReapRemoteSessionOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reaped.ID != remote.ID || controller.disconnectCalls != 1 {
+		t.Fatalf("reaped=%#v disconnect calls=%d", reaped, controller.disconnectCalls)
+	}
+	var hasRemote bool
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT connection_metadata ? 'stf_remote_session'
+		FROM device_sessions WHERE reservation_id=$1`, created.ID).Scan(&hasRemote); err != nil {
+		t.Fatal(err)
+	}
+	if hasRemote {
+		t.Fatal("expired remote session metadata was not cleared")
+	}
+}
+
+func createAndActivateReservation(
+	t *testing.T,
+	environment *managementEnvironment,
+	controller *fakeSTFController,
+	key string,
+) reservation.View {
+	t.Helper()
+	body := map[string]any{
+		"pool_id": "pool_000000000000001", "owner_type": "test_run",
+		"owner_id": "attempt_000000000001", "lease_seconds": 600,
+		"requested_capabilities": map[string]any{"platformName": "Android", "apiLevel": 34},
+	}
+	createdResponse := environment.request(t, http.MethodPost, "/api/v1/device-reservations", body, serviceToken, key)
+	assertStatus(t, createdResponse, http.StatusCreated)
+	var created reservation.View
+	decodeData(t, createdResponse, &created)
+	if _, err := scheduler.New(environment.db, nil, nil, controller).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return created
 }
 
 func TestAgentHealthEventAPIQuarantinesAfterThreshold(t *testing.T) {

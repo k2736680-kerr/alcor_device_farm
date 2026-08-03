@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type Config struct {
 	Lease     LeaseConfig     `yaml:"lease" json:"lease"`
 	Reconcile ReconcileConfig `yaml:"reconcile" json:"reconcile"`
 	WarmPool  WarmPoolConfig  `yaml:"warm_pool" json:"warm_pool"`
+	STF       STFConfig       `yaml:"stf" json:"stf"`
 }
 
 type DatabaseConfig struct {
@@ -65,6 +67,15 @@ type WarmPoolConfig struct {
 	Interval time.Duration `yaml:"interval" json:"interval"`
 }
 
+type STFConfig struct {
+	Enabled    bool          `yaml:"enabled" json:"enabled"`
+	BaseURL    string        `yaml:"base_url" json:"base_url"`
+	APIToken   string        `yaml:"api_token" json:"-"`
+	Timeout    time.Duration `yaml:"timeout" json:"timeout"`
+	Attempts   int           `yaml:"attempts" json:"attempts"`
+	RetryDelay time.Duration `yaml:"retry_delay" json:"retry_delay"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -85,6 +96,9 @@ func Default() Config {
 		},
 		Reconcile: ReconcileConfig{Interval: 2 * time.Second, HostTimeout: 30 * time.Second, FailureThreshold: 3},
 		WarmPool:  WarmPoolConfig{Interval: 30 * time.Second},
+		STF: STFConfig{
+			Timeout: 5 * time.Second, Attempts: 3, RetryDelay: 200 * time.Millisecond,
+		},
 	}
 }
 
@@ -146,6 +160,8 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"LOG_FORMAT", &cfg.Log.Format},
 		{"SECURITY_SERVICE_TOKEN", &cfg.Security.ServiceToken},
 		{"SECURITY_AGENT_TOKEN", &cfg.Security.AgentToken},
+		{"STF_BASE_URL", &cfg.STF.BaseURL},
+		{"STF_API_TOKEN", &cfg.STF.APIToken},
 	}
 
 	for _, item := range stringValues {
@@ -168,6 +184,22 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"RECONCILE_INTERVAL", &cfg.Reconcile.Interval},
 		{"RECONCILE_HOST_TIMEOUT", &cfg.Reconcile.HostTimeout},
 		{"WARM_POOL_INTERVAL", &cfg.WarmPool.Interval},
+		{"STF_TIMEOUT", &cfg.STF.Timeout},
+		{"STF_RETRY_DELAY", &cfg.STF.RetryDelay},
+	}
+	if value, ok := lookup(envPrefix + "STF_ENABLED"); ok {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse %sSTF_ENABLED: %w", envPrefix, err)
+		}
+		cfg.STF.Enabled = parsed
+	}
+	if value, ok := lookup(envPrefix + "STF_ATTEMPTS"); ok {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("parse %sSTF_ATTEMPTS: %w", envPrefix, err)
+		}
+		cfg.STF.Attempts = parsed
 	}
 	if value, ok := lookup(envPrefix + "RECONCILE_FAILURE_THRESHOLD"); ok {
 		parsed, err := strconv.Atoi(value)
@@ -208,6 +240,8 @@ func (cfg Config) Validate() error {
 		"reconcile.interval":       cfg.Reconcile.Interval,
 		"reconcile.host_timeout":   cfg.Reconcile.HostTimeout,
 		"warm_pool.interval":       cfg.WarmPool.Interval,
+		"stf.timeout":              cfg.STF.Timeout,
+		"stf.retry_delay":          cfg.STF.RetryDelay,
 	} {
 		if value <= 0 {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be greater than zero", name))
@@ -218,6 +252,19 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Reconcile.FailureThreshold < 1 {
 		validationErrors = append(validationErrors, errors.New("reconcile.failure_threshold must be greater than zero"))
+	}
+	if cfg.STF.Attempts < 1 || cfg.STF.Attempts > 5 {
+		validationErrors = append(validationErrors, errors.New("stf.attempts must be between 1 and 5"))
+	}
+	if cfg.STF.Enabled {
+		if strings.TrimSpace(cfg.STF.BaseURL) == "" {
+			validationErrors = append(validationErrors, errors.New("stf.base_url is required when STF is enabled"))
+		} else if err := validateSTFBaseURL(cfg.STF.BaseURL); err != nil {
+			validationErrors = append(validationErrors, err)
+		}
+		if strings.TrimSpace(cfg.STF.APIToken) == "" {
+			validationErrors = append(validationErrors, errors.New("stf.api_token is required when STF is enabled"))
+		}
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.Log.Level)) {
@@ -238,6 +285,15 @@ func (cfg Config) Validate() error {
 
 	if err := errors.Join(validationErrors...); err != nil {
 		return fmt.Errorf("validate config: %w", err)
+	}
+	return nil
+}
+
+func validateSTFBaseURL(value string) error {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("stf.base_url must be an absolute HTTP(S) URL without user info, query or fragment")
 	}
 	return nil
 }
@@ -275,5 +331,10 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("reconcile_host_timeout", cfg.Reconcile.HostTimeout),
 		slog.Int("reconcile_failure_threshold", cfg.Reconcile.FailureThreshold),
 		slog.Duration("warm_pool_interval", cfg.WarmPool.Interval),
+		slog.Bool("stf_enabled", cfg.STF.Enabled),
+		slog.String("stf_base_url", cfg.STF.BaseURL),
+		slog.Duration("stf_timeout", cfg.STF.Timeout),
+		slog.Int("stf_attempts", cfg.STF.Attempts),
+		slog.Duration("stf_retry_delay", cfg.STF.RetryDelay),
 	)
 }

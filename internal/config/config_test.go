@@ -32,6 +32,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.WarmPool.Interval != 30*time.Second {
 		t.Fatalf("warm pool defaults = %+v", cfg.WarmPool)
 	}
+	if cfg.STF.Enabled || cfg.STF.Attempts != 3 || cfg.STF.Timeout != 5*time.Second {
+		t.Fatalf("STF defaults = %+v", cfg.STF)
+	}
 }
 
 func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {
@@ -51,6 +54,13 @@ security:
   agent_token: yaml-agent-secret
 database:
   url: postgres://yaml-database-secret
+stf:
+  enabled: true
+  base_url: http://stf-yaml.local/stf
+  api_token: yaml-stf-secret
+  timeout: 8s
+  attempts: 2
+  retry_delay: 300ms
 `)
 	t.Setenv("DEVICE_FARM_SERVER_ADDRESS", "127.0.0.1:28080")
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
@@ -59,6 +69,9 @@ database:
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
 	t.Setenv("DEVICE_FARM_WARM_POOL_INTERVAL", "12s")
+	t.Setenv("DEVICE_FARM_STF_BASE_URL", "http://stf-environment.local/base")
+	t.Setenv("DEVICE_FARM_STF_API_TOKEN", "environment-stf-secret")
+	t.Setenv("DEVICE_FARM_STF_ATTEMPTS", "4")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -84,6 +97,10 @@ database:
 	}
 	if cfg.WarmPool.Interval != 12*time.Second {
 		t.Fatalf("WarmPool interval = %v", cfg.WarmPool.Interval)
+	}
+	if !cfg.STF.Enabled || cfg.STF.BaseURL != "http://stf-environment.local/base" ||
+		cfg.STF.APIToken != "environment-stf-secret" || cfg.STF.Attempts != 4 {
+		t.Fatalf("STF config = %+v", cfg.STF)
 	}
 }
 
@@ -126,11 +143,33 @@ func TestValidateRejectsAmbiguousSecurityTokens(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresSTFEndpointAndTokenWhenEnabled(t *testing.T) {
+	cfg := Default()
+	cfg.STF.Enabled = true
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "stf.base_url") || !strings.Contains(err.Error(), "stf.api_token") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsSTFBaseURLWithCredentialsOrQuery(t *testing.T) {
+	for _, value := range []string{"ftp://stf.internal", "http://user:secret@stf.internal", "http://stf.internal?token=secret"} {
+		cfg := Default()
+		cfg.STF.Enabled = true
+		cfg.STF.BaseURL = value
+		cfg.STF.APIToken = "secret"
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "stf.base_url") {
+			t.Fatalf("Validate(%q) error=%v", value, err)
+		}
+	}
+}
+
 func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg := Default()
 	cfg.Security.ServiceToken = "service-token-value"
 	cfg.Security.AgentToken = "agent-token-value"
 	cfg.Database.URL = "postgres://database-secret-value"
+	cfg.STF.APIToken = "stf-token-value"
 
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
@@ -173,7 +212,7 @@ func clearDeviceFarmEnvironment(t *testing.T) {
 
 func assertNoSecrets(t *testing.T, value string) {
 	t.Helper()
-	for _, secret := range []string{"service-token-value", "agent-token-value", "database-secret-value"} {
+	for _, secret := range []string{"service-token-value", "agent-token-value", "database-secret-value", "stf-token-value"} {
 		if strings.Contains(value, secret) {
 			t.Fatalf("serialized value contains secret %q", secret)
 		}
