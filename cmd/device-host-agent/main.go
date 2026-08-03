@@ -31,6 +31,10 @@ func main() {
 	dockerAdvertiseHost := flag.String("docker-advertise-host", os.Getenv("DEVICE_FARM_DOCKER_ADVERTISE_HOST"), "host advertised for published ADB ports")
 	dockerBindAddress := flag.String("docker-bind-address", envOr("DEVICE_FARM_DOCKER_BIND_ADDRESS", "127.0.0.1"), "IP used to bind published ADB ports")
 	dockerKVMDevice := flag.String("docker-kvm-device", envOr("DEVICE_FARM_DOCKER_KVM_DEVICE", "/dev/kvm"), "KVM device path")
+	dockerADBPort := flag.Int("docker-adb-port", envInt("DEVICE_FARM_DOCKER_ADB_PORT", 5555), "ADB port exposed by the emulator container")
+	dockerADBSerial := flag.String("docker-adb-serial", envOr("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"), "ADB serial inside the emulator container")
+	dockerDataMountPath := flag.String("docker-data-mount-path", envOr("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"), "container path backed by the per-device data volume")
+	dockerEmulatorDevice := flag.String("docker-emulator-device", envOr("DEVICE_FARM_DOCKER_EMULATOR_DEVICE", "Samsung Galaxy S10"), "docker-android emulator device profile")
 	dockerCPUs := flag.Float64("docker-cpus", envFloat("DEVICE_FARM_DOCKER_CPUS", 2), "CPU limit per emulator")
 	dockerMemory := flag.String("docker-memory", envOr("DEVICE_FARM_DOCKER_MEMORY", "4g"), "memory limit per emulator")
 	dockerPidsLimit := flag.Int("docker-pids-limit", envInt("DEVICE_FARM_DOCKER_PIDS_LIMIT", 512), "PID limit per emulator")
@@ -50,7 +54,10 @@ func main() {
 	deviceProvider, err := buildProvider(*providerType, providerdocker.Config{
 		Binary: *dockerBinary, Image: *dockerImage, AdvertiseHost: *dockerAdvertiseHost,
 		BindAddress: *dockerBindAddress, KVMDevice: *dockerKVMDevice,
-		CPUs: *dockerCPUs, Memory: *dockerMemory, PidsLimit: *dockerPidsLimit,
+		ContainerADBPort: *dockerADBPort, ContainerADBSerial: *dockerADBSerial,
+		DataMountPath: *dockerDataMountPath,
+		CPUs:          *dockerCPUs, Memory: *dockerMemory, PidsLimit: *dockerPidsLimit,
+		Environment: dockerEnvironment(*dockerEmulatorDevice),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent provider configuration error: %v\n", err)
@@ -109,4 +116,12 @@ func envFloat(name string, fallback float64) float64 {
 		return fallback
 	}
 	return value
+}
+
+func dockerEnvironment(emulatorDevice string) map[string]string {
+	values := map[string]string{"WEB_VNC": "false", "APPIUM": "false"}
+	if emulatorDevice = strings.TrimSpace(emulatorDevice); emulatorDevice != "" {
+		values["EMULATOR_DEVICE"] = emulatorDevice
+	}
+	return values
 }

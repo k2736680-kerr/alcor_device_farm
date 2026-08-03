@@ -24,10 +24,11 @@ func TestDockerProviderLinuxKVMIntegration(t *testing.T) {
 		BindAddress:        envValue("DEVICE_FARM_DOCKER_BIND_ADDRESS", "127.0.0.1"),
 		KVMDevice:          envValue("DEVICE_FARM_DOCKER_KVM_DEVICE", "/dev/kvm"),
 		ContainerADBSerial: envValue("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"),
-		DataMountPath:      envValue("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/data"),
+		DataMountPath:      envValue("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"),
+		Environment:        map[string]string{"APPIUM": "false", "WEB_VNC": "false"},
 	}
 	if device := strings.TrimSpace(os.Getenv("DEVICE_FARM_DOCKER_EMULATOR_DEVICE")); device != "" {
-		config.Environment = map[string]string{"EMULATOR_DEVICE": device}
+		config.Environment["EMULATOR_DEVICE"] = device
 	}
 	provider, err := New(ctx, config)
 	if err != nil {

@@ -23,6 +23,8 @@ Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KV
 - Agent create 命令透传 capabilities，并保留 Provider 的 retryable 分类；
 - 新增 [Docker Emulator Provider 说明](../../docker_emulator_provider.md)；
 - 新增 `scripts/verify-docker-emulator.sh` 和真实 Linux KVM 集成测试。
+- 已核对 `budtmo/docker-android` 上游运行契约并把独立数据卷修正为 `/home/androidusr`；Host Agent 可配置容器内 ADB serial、ADB 端口、数据目录和 Emulator 设备型号；
+- 新增 systemd unit、脱敏环境样例和 `scripts/install-device-host-agent.sh`，服务器可直接安装但不会在密钥和镜像未配置时自动启动。
 
 ## 本地自动化验证
 

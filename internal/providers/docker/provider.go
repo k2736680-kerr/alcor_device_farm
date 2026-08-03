@@ -423,7 +423,7 @@ func withDefaults(config Config) Config {
 		config.ADBPath = "adb"
 	}
 	if config.DataMountPath == "" {
-		config.DataMountPath = "/data"
+		config.DataMountPath = "/home/androidusr"
 	}
 	if config.CPUs == 0 {
 		config.CPUs = 2
@@ -447,7 +447,8 @@ func validateConfig(config Config) error {
 	if net.ParseIP(config.BindAddress) == nil {
 		return errors.New("docker bind address must be an IP address")
 	}
-	if config.ContainerADBPort < 1 || config.ContainerADBPort > 65535 || config.CPUs <= 0 ||
+	if config.ContainerADBPort < 1 || config.ContainerADBPort > 65535 || strings.TrimSpace(config.ContainerADBSerial) == "" ||
+		strings.TrimSpace(config.ADBPath) == "" || !path.IsAbs(config.KVMDevice) || config.CPUs <= 0 ||
 		strings.TrimSpace(config.Memory) == "" || config.PidsLimit < 1 || !path.IsAbs(config.DataMountPath) {
 		return errors.New("invalid Docker emulator resource configuration")
 	}

@@ -11,7 +11,7 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 	client := newCLIBackend("docker", runner)
 	err := client.CreateContainer(context.Background(), containerSpec{
 		Name: "alcor-df-device", Hostname: "alcor-df-device", Image: "android:2026.08",
-		Network: "device-net", Volume: "device-data", DataMountPath: "/data",
+		Network: "device-net", Volume: "device-data", DataMountPath: "/home/androidusr",
 		KVMDevice: "/dev/kvm", BindAddress: "127.0.0.1", ContainerADBPort: 5555,
 		CPUs: 2, Memory: "4g", PidsLimit: 512,
 		Labels:      map[string]string{labelManaged: "true", labelProviderRef: "device-1"},
@@ -23,7 +23,7 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 	wantParts := [][]string{
 		{"--device", "/dev/kvm:/dev/kvm"}, {"--cpus", "2"}, {"--memory", "4g"},
 		{"--pids-limit", "512"}, {"--publish", "127.0.0.1::5555/tcp"},
-		{"--mount", "type=volume,source=device-data,target=/data"},
+		{"--mount", "type=volume,source=device-data,target=/home/androidusr"},
 		{"--env", "EMULATOR_DEVICE=Pixel 7"},
 	}
 	for _, part := range wantParts {

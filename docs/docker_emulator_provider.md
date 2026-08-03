@@ -16,7 +16,7 @@ Docker Emulator Provider 只运行在 Device Host Agent 本机，负责 Android 
 - Android Emulator 镜像使用固定 tag 或 `sha256` digest，禁止 `latest`；
 - 镜像内存在 `adb`，单个容器只运行一台 Emulator；
 - 默认容器内 ADB serial 为 `emulator-5554`，ADB TCP 端口为 `5555`；
-- 默认独立数据卷挂载到 `/data`。若所选镜像的数据目录不同，部署时必须显式调整并完成清理验证；
+- 默认独立数据卷挂载到 `budtmo/docker-android` 的持久化目录 `/home/androidusr`。若所选镜像的数据目录不同，部署时必须显式调整并完成清理验证；
 - 镜像的 ABI 必须与待测 APK 兼容，MVP 推荐 `x86_64`。
 
 Provider 初始化会先检查 Linux、KVM 读写权限和 Docker Engine。任何一项失败都会返回明确错误，不会自动切换 Mock Provider，也不会把 Windows Docker Desktop 当成通过。
@@ -66,12 +66,18 @@ DEVICE_FARM_DOCKER_IMAGE=<固定 tag 或 digest>
 DEVICE_FARM_DOCKER_ADVERTISE_HOST=<ADB 客户端可访问的 Host 地址>
 DEVICE_FARM_DOCKER_BIND_ADDRESS=127.0.0.1
 DEVICE_FARM_DOCKER_KVM_DEVICE=/dev/kvm
+DEVICE_FARM_DOCKER_ADB_PORT=5555
+DEVICE_FARM_DOCKER_ADB_SERIAL=emulator-5554
+DEVICE_FARM_DOCKER_DATA_MOUNT_PATH=/home/androidusr
+DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Samsung Galaxy S10
 DEVICE_FARM_DOCKER_CPUS=2
 DEVICE_FARM_DOCKER_MEMORY=4g
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
 
-所选镜像需要指定设备型号时，可在 Linux 集成验收中设置 `DEVICE_FARM_DOCKER_EMULATOR_DEVICE`。真实部署的镜像 digest 和镜像验证状态在 DF-016 固定。
+Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。真实部署的镜像 digest 和镜像验证状态在 DF-016 固定。
+
+Linux Host 的 systemd 配置和安装步骤见 [部署包](../deploy/docker-emulator/README.md)。
 
 ## 7. Linux KVM 验收
 

@@ -1,0 +1,24 @@
+[Unit]
+Description=Alcor Device Farm Host Agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=device-farm
+Group=device-farm
+SupplementaryGroups=docker kvm
+EnvironmentFile=/etc/alcor-device-farm/host-agent.env
+ExecStart=/opt/alcor-device-farm/bin/device-host-agent --concurrency 2
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
