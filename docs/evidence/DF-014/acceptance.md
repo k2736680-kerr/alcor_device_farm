@@ -2,9 +2,22 @@
 
 ## 当前结论
 
-Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KVM 双设备集成测试和验收脚本已经完成。本机没有 Docker CLI/Engine；WSL Ubuntu 虚拟磁盘路径损坏，无法启动，也没有可验证的 `/dev/kvm`。因此 DF-014 当前状态为 `blocked`，不能标记 `completed`，也不能用 Fake Backend 或 Mock Provider 代替真实 Linux KVM 验收。
+Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KVM 双设备集成测试和验收脚本已经完成。本机没有 Docker CLI/Engine，WSL Ubuntu 虚拟磁盘路径损坏；2026-08-04 已连接一台内网 Ubuntu 22.04 候选服务器，但该机 BIOS 关闭 VMX、没有 `/dev/kvm`，且 Docker Hub Registry 连接超时。因此 DF-014 当前状态仍为 `blocked`，不能标记 `completed`，也不能用 Fake Backend、Mock Provider 或无 KVM 软件模拟代替真实 Linux KVM 验收。
 
-待提供其他 Linux KVM 服务器后，不需要调整现有架构，只需部署当前 Host Agent、注入固定 Emulator 镜像和 Host 地址，然后执行本文件中的真实验收命令。
+候选服务器开启 VT-x/VMX、受控重启并提供可读写 `/dev/kvm`，同时具备固定 Emulator 镜像拉取路径后，不需要调整现有架构，只需部署当前 Host Agent、注入固定镜像和 Host 地址，然后执行本文件中的真实验收命令。当前服务器已有业务容器和 MicroK8s 等服务，未经维护窗口不得重启或清理现有 Docker 资源。
+
+## 候选服务器脱敏预检证据
+
+```text
+PASS SSH 密码认证和已知主机指纹校验
+PASS Ubuntu 22.04 x86_64、Docker Engine 28.1.1
+PASS 12 逻辑核、15 GiB 内存、约 47 GiB 根分区可用
+BLOCKED /dev/kvm 不存在
+BLOCKED CPU 未暴露 vmx/svm
+BLOCKED 内核记录 VMX disabled by BIOS
+BLOCKED Docker Hub Registry 443 连接超时
+SAFE 未安装软件、未重启、未创建或删除任何 Docker 资源
+```
 
 ## 已完成交付
 

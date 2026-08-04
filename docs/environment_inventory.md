@@ -46,6 +46,19 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 - 即使修复 WSL，也不能在未验证 `/dev/kvm` 和嵌套虚拟化前把它当作 DF-014 验收 Host；
 - 真实 Host 最少必须验证：Linux、Docker Engine、`/dev/kvm`、x86_64、Agent 到 Server 网络、Emulator 镜像拉取和两实例资源。
 
+### 4.1 内网候选服务器预检（2026-08-04）
+
+已通过密码 SSH 和主机指纹校验连接一台内网 Ubuntu 22.04 x86_64 候选服务器，只执行只读盘点，没有安装软件、重启系统或修改现有服务。脱敏结果如下：
+
+- 12 逻辑核 Intel Core i5-11400、15 GiB 内存、根分区约 47 GiB 可用；
+- Docker Engine 28.1.1 正常运行，但服务器已有 Docker、MicroK8s、MySQL、Web 和监控负载，部署前必须继续隔离端口、资源和命名；
+- 当前用户具备 sudo 权限，但不在 docker 组，后续只能按安装脚本最小授权；
+- `/dev/kvm` 不存在，CPU 未暴露 `vmx/svm`，内核明确记录 `VMX (outside TXT) disabled by BIOS`；
+- GitHub HTTPS 可达，Docker Hub Registry 443 连接超时，当前不能拉取正式 Emulator 镜像；
+- 因 KVM 和镜像网络两项前置条件均不满足，没有启动 Provider、创建容器或改动现有 Docker 资源。
+
+该服务器需由管理员在 BIOS/UEFI 开启 Intel Virtualization Technology（VT-x/VMX）并安排受控重启；启动后必须出现可读写 `/dev/kvm`。同时需要开放 Docker Hub，或提供可访问的内网镜像仓库/代理。两项满足后才能继续 DF-014 真实部署。
+
 ## 5. Android 与 DaFit 现状
 
 - ADB 当前发现一台已授权三星真机；证据中不保存完整序列号；

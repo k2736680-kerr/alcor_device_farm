@@ -12,9 +12,10 @@ Device Farm commit：执行本地门禁时记录在 `artifacts/local-gate.txt`�
 - Provider：Mock；
 - Python：3.12.10；
 - DaFit 当前分支：`main`，collect-only 当前基线 158；
-- Docker、Linux KVM、systemd：不可用；
+- 本机 Docker、Linux KVM、systemd：不可用；
 - WSL2：登记有 `Ubuntu`，但启动时因注册的 `ext4.vhdx` 路径不存在而失败，不能作为 Linux 验收环境；
-- STF、远程 Appium、两台 Docker Emulator：不可用。
+- 内网候选服务器：Ubuntu 22.04、Docker Engine 28.1.1 可用，但 BIOS 关闭 VMX、没有 `/dev/kvm`，Docker Hub Registry 443 连接超时；只完成脱敏只读预检，未改动现有业务服务；
+- STF、远程 Appium、两台 Docker Emulator：仍不可用。
 
 ## E1/E2 阻塞
 
