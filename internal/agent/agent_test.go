@@ -70,6 +70,17 @@ func TestAgentRequiresExplicitProvider(t *testing.T) {
 	}
 }
 
+func TestAgentRejectsCommandTimeoutThatCanOutliveLease(t *testing.T) {
+	_, err := agent.New(agent.Config{
+		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: time.Second,
+		LeaseSeconds: 60, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: 60 * time.Second, ShutdownTimeout: time.Second,
+	}, &fakeClient{}, providermock.New(providermock.Config{}), nil)
+	if err == nil {
+		t.Fatal("agent accepted a command timeout that can outlive its lease")
+	}
+}
+
 func (sleeper *trackingSleeper) Sleep(ctx context.Context, duration time.Duration) error {
 	if duration <= 0 {
 		return nil
@@ -81,14 +92,16 @@ func (sleeper *trackingSleeper) Sleep(ctx context.Context, duration time.Duratio
 	}
 	sleeper.mu.Unlock()
 	sleeper.started <- struct{}{}
+	defer func() {
+		sleeper.mu.Lock()
+		sleeper.active--
+		sleeper.mu.Unlock()
+	}()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-sleeper.release:
 	}
-	sleeper.mu.Lock()
-	sleeper.active--
-	sleeper.mu.Unlock()
 	return nil
 }
 
@@ -117,7 +130,7 @@ func TestAgentStopsClaimingAndFinishesInflightCommands(t *testing.T) {
 	runtime, err := agent.New(agent.Config{
 		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: 10 * time.Millisecond,
 		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 2,
-		CommandTimeout: time.Second, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 2},
+		CommandTimeout: 10 * time.Second, ShutdownTimeout: 500 * time.Millisecond, Capacity: map[string]any{"device_slots": 2},
 	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +141,7 @@ func TestAgentStopsClaimingAndFinishesInflightCommands(t *testing.T) {
 	<-sleeper.started
 	<-sleeper.started
 	cancel()
-	close(sleeper.release)
+	defer close(sleeper.release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}

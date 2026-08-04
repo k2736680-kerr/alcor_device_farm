@@ -36,7 +36,7 @@
 | DF-013 | Host Agent 核心程序 | completed | DF-012、DF-007 |
 | DF-014 | Docker Emulator Provider | completed | DF-013 |
 | DF-015 | Appium Endpoint 和健康 Adapter | completed | DF-014 |
-| DF-016 | 镜像验证和固定目标自动补齐 | in_progress | DF-011、DF-014、DF-015 |
+| DF-016 | 镜像验证和固定目标自动补齐 | completed | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | blocked | DF-014 |
 | DF-018 | STF Adapter 和远控入口 | blocked | DF-009、DF-017 |
 | DF-019 | DaFit Farm 运行适配 | blocked | DF-015 |

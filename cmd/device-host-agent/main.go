@@ -26,7 +26,7 @@ func main() {
 	serverURL := flag.String("server-url", os.Getenv("DEVICE_FARM_AGENT_SERVER_URL"), "device farm server URL")
 	hostID := flag.String("host-id", os.Getenv("DEVICE_FARM_AGENT_HOST_ID"), "registered device host ID")
 	token := flag.String("agent-token", os.Getenv("DEVICE_FARM_SECURITY_AGENT_TOKEN"), "agent bearer token")
-	concurrency := flag.Int("concurrency", 2, "maximum concurrent provider commands")
+	concurrency := flag.Int("concurrency", envInt("DEVICE_FARM_AGENT_CONCURRENCY", 1), "maximum concurrent provider commands")
 	providerType := flag.String("provider", strings.TrimSpace(os.Getenv("DEVICE_FARM_AGENT_PROVIDER")), "device provider: mock or docker; required")
 	dockerBinary := flag.String("docker-binary", envOr("DEVICE_FARM_DOCKER_BINARY", "docker"), "Docker CLI path")
 	dockerImage := flag.String("docker-image", os.Getenv("DEVICE_FARM_DOCKER_IMAGE"), "optional fixed fallback image for direct provider tests; production commands select the Device Image runtime reference")
@@ -38,7 +38,7 @@ func main() {
 	dockerADBSerial := flag.String("docker-adb-serial", envOr("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"), "ADB serial inside the emulator container")
 	appiumHealthTimeout := flag.Duration("appium-health-timeout", envDuration("DEVICE_FARM_APPIUM_HEALTH_TIMEOUT", 5*time.Second), "Appium status request timeout")
 	dockerDataMountPath := flag.String("docker-data-mount-path", envOr("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"), "container path backed by the per-device data volume")
-	dockerEmulatorDevice := flag.String("docker-emulator-device", envOr("DEVICE_FARM_DOCKER_EMULATOR_DEVICE", "Samsung Galaxy S10"), "docker-android emulator device profile")
+	dockerEmulatorDevice := flag.String("docker-emulator-device", envOr("DEVICE_FARM_DOCKER_EMULATOR_DEVICE", "Pixel 9"), "docker-android emulator device profile")
 	dockerCPUs := flag.Float64("docker-cpus", envFloat("DEVICE_FARM_DOCKER_CPUS", 4), "CPU limit per emulator")
 	dockerMemory := flag.String("docker-memory", envOr("DEVICE_FARM_DOCKER_MEMORY", "5g"), "memory limit per emulator")
 	dockerPidsLimit := flag.Int("docker-pids-limit", envInt("DEVICE_FARM_DOCKER_PIDS_LIMIT", 512), "PID limit per emulator")
@@ -74,8 +74,8 @@ func main() {
 	}
 	runtime, err := agent.New(agent.Config{
 		HostID: *hostID, ProviderType: strings.ToLower(strings.TrimSpace(*providerType)),
-		HeartbeatInterval: 5 * time.Second, LeaseSeconds: 60,
-		WaitSeconds: 5, Concurrency: *concurrency, CommandTimeout: 5 * time.Minute,
+		HeartbeatInterval: 5 * time.Second, LeaseSeconds: 300,
+		WaitSeconds: 5, Concurrency: *concurrency, CommandTimeout: 270 * time.Second,
 		ShutdownTimeout: 30 * time.Second,
 		Capacity:        map[string]any{"device_slots": *concurrency},
 	}, client, deviceProvider, logger)

@@ -24,7 +24,7 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := "lease_token_000000000001"
-	runtime.execute(hostcommand.Command{
+	runtime.execute(context.Background(), hostcommand.Command{
 		ID: "command_0000000000002", CommandType: "create", LeaseToken: &token, Attempt: 1,
 		Payload: map[string]any{
 			"device_id": "device_0000000000001", "image_id": "image_00000000000001",
@@ -69,7 +69,7 @@ func TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability(t *testin
 		t.Fatal(err)
 	}
 	token := "lease_token_000000000001"
-	runtime.execute(hostcommand.Command{
+	runtime.execute(context.Background(), hostcommand.Command{
 		ID: "command_0000000000001", CommandType: "create", LeaseToken: &token, Attempt: 2,
 		Payload: map[string]any{
 			"device_id": "device_0000000000001", "image_id": "image_00000000000001",
@@ -102,7 +102,7 @@ func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := "lease_token_000000000001"
-	runtime.execute(hostcommand.Command{ID: "command_0000000000003", CommandType: "validate_image", LeaseToken: &token, Attempt: 1,
+	runtime.execute(context.Background(), hostcommand.Command{ID: "command_0000000000003", CommandType: "validate_image", LeaseToken: &token, Attempt: 1,
 		Payload: map[string]any{"device_id": "validation-device-01", "image_id": "image_00000000000001",
 			"provider_ref": "validation-command-01", "docker_image": provider.expectedImage, "docker_digest": provider.expected,
 			"capabilities": map[string]any{"apiLevel": float64(34)}}})
@@ -137,7 +137,7 @@ func TestAgentCreateWaitsForReadinessClassifiesFailureAndCleans(t *testing.T) {
 				t.Fatal(err)
 			}
 			token := "lease_token_000000000001"
-			runtime.execute(hostcommand.Command{
+			runtime.execute(context.Background(), hostcommand.Command{
 				ID: "command_0000000000001", CommandType: "create", LeaseToken: &token, Attempt: 1,
 				Payload: map[string]any{"device_id": "device_0000000000001", "image_id": "image_00000000000001",
 					"provider_ref": "emulator-readiness-test", "capabilities": map[string]any{"apiLevel": float64(34)}},

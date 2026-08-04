@@ -40,9 +40,10 @@ type Agent struct {
 
 func New(config Config, client Client, provider providers.Provider, logger *slog.Logger) (*Agent, error) {
 	config.ProviderType = strings.ToLower(strings.TrimSpace(config.ProviderType))
+	leaseDuration := time.Duration(config.LeaseSeconds) * time.Second
 	if len(config.HostID) < 16 || client == nil || provider == nil || config.HeartbeatInterval <= 0 ||
 		config.LeaseSeconds < 5 || config.LeaseSeconds > 300 || config.Concurrency < 1 ||
-		config.CommandTimeout <= 0 || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
+		config.CommandTimeout <= 0 || leaseDuration <= config.CommandTimeout || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
 		return nil, errors.New("invalid agent configuration")
 	}
 	if logger == nil {
@@ -103,7 +104,7 @@ func (agent *Agent) Run(ctx context.Context) error {
 			go func() {
 				defer workers.Done()
 				defer func() { <-semaphore }()
-				agent.execute(command)
+				agent.execute(ctx, command)
 			}()
 		}
 	}
@@ -146,8 +147,8 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	})
 }
 
-func (agent *Agent) execute(command hostcommand.Command) {
-	ctx, cancel := context.WithTimeout(context.Background(), agent.config.CommandTimeout)
+func (agent *Agent) execute(parent context.Context, command hostcommand.Command) {
+	ctx, cancel := context.WithTimeout(parent, agent.config.CommandTimeout)
 	defer cancel()
 	var err error
 	result := map[string]any(nil)

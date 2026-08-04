@@ -1,56 +1,86 @@
 # DF-016 实施与验收证据
 
-## 当前结论
+## 结论
 
-镜像 digest 验证、`validate_image` Host Command、固定目标 Controller、池镜像参数接口、并发锁、容量限制、失败隔离和退避已实现。Android 16/API 36 `r3` 镜像已经在 Ubuntu 22.04 x86_64 Linux KVM 服务器完成 Docker 生命周期、Appium 和 UiAutomator2 真实验收；Go、PostgreSQL 和 migration 回归也全部通过。
+DF-016 已完成。镜像验证、按 Image 运行引用、固定目标自动补池、单设备容量限制、释放重建、隔离补回、失败退避和真实 Host Agent 链路均已在 Linux KVM 服务器通过验收。
 
-DF-016 当前状态转为 `in_progress`，尚不能标记 `completed`。剩余工作是实际启动 Device Farm Server、Host Agent 和数据库链路，使用 `min_ready=1/max_instances=1/max_concurrency=1` 验证 Controller 自动登记、创建、入池、补回和第二个预约不突破容量。
-
-## 已完成交付
-
-- `POST /api/v1/device-images/{id}/validations` 将 Image 置为 `validating`；
-- Controller 选择 online、非 draining 且有空闲槽位的 Docker/Hybrid Host，创建 `validate_image` Host Command；
-- Agent 校验 `DEVICE_FARM_DOCKER_IMAGE` 的本机真实 digest，启动临时 Emulator，并检查 ADB、boot 和 Appium；
-- 每条正式 create Host Command 都携带已验证 digest，Agent 创建前再次核对，防止验证后镜像配置漂移；
-- 临时验证实例在成功或失败后清理；只有完整验证结果才能令 Image 进入 `ready`，失败进入 `failed` 并保存稳定错误码；
-- 新增 Pool Image GET/PUT/DELETE 接口，设置 `min_ready/max_instances/enabled` 后由后台异步消费；
-- Controller 原子登记 provisioning Device、Pool membership 和 create Host Command，Server 不访问 Docker；
-- 两个 Controller 并发运行通过 PostgreSQL 行锁不超建；
-- 当前 `1/1` 时 reserved/busy 设备仍占上限，不因任务压力创建第二台；
-- 运行中把 Pool 并发、Host 槽位和 Image 目标从 `2` 调到 `N` 时只补创建缺少的 Emulator，不需要修改代码或数据库结构；
-- 降低目标或禁用配置不自动删除设备；
-- create 最终失败后隔离设备、写健康事件并指数退避；
-- Controller 只处理 Docker Emulator Image，不自动创建 USB 真机；
-- Server 启动时按 `warm_pool.interval` 运行 Controller。
-
-## 本地验证结果
-
-执行：
-
-```powershell
-./scripts/dev.ps1 -Task check
-./scripts/verify-migrations.ps1 -RunRepositoryTests
-```
-
-通过项：
+当前验收配置固定为：
 
 ```text
-PASS TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding
-PASS TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges
-PASS TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown
-PASS TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm
-PASS TestImageValidationCommandGatesWarmPoolCreation
-PASS TestFailedImageValidationDoesNotCreateEmulator
-PASS TestManagementAPICompleteMockFlow
-PASS TestEveryManagementRouteIsProtected
-PASS TestManagementAPIRejectsInvalidParameters
-PASS migration up/down/up
-PASS repository/scheduler/reaper/reconcile/hostcommand/api suites
+min_ready=1
+max_instances=1
+max_concurrency=1
+DEVICE_FARM_AGENT_CONCURRENCY=1
+DEVICE_FARM_DOCKER_CPUS=4
+DEVICE_FARM_DOCKER_MEMORY=5g
 ```
 
-## Linux 服务器源码与数据库回归
+数量和资源均来自配置或数据库，没有写死在 Provider、Scheduler、Reservation、Device 或 migration 中。后续增加模拟器只改容量参数；接入 USB 真机仍复用现有上层架构。
 
-2026-08-04 将当前工作区源码上传至 Linux 服务器，在 Go 进程与 PostgreSQL 同机的条件下执行：
+## 验收环境
+
+- 服务器：`10.0.30.171`，Ubuntu 22.04、x86_64、Linux KVM；
+- Host：12 核 CPU、15 GiB 内存，验收前约 12 GiB 可用；
+- Docker：28.1.1，`/dev/kvm` 为 `root:kvm 660`；
+- PostgreSQL：16，使用独立临时验收数据库和 `127.0.0.1:55432`；
+- Device Farm Server：`127.0.0.1:18080`；
+- 镜像：`alcor-device-farm/android-emulator:16.0-api36-r3`；
+- 摘要：`sha256:8afadfa4c342194c360edaf8302fb082ca29896002fcd9a1c44e494fd550c400`；
+- Android：16 / API 36 / x86_64；
+- 设备模板：`Pixel 9`；
+- Appium：3.5.2，UiAutomator2 8.2.2。
+
+单台模拟器稳定运行时实测约 `3.954 GiB / 5 GiB`。`5g` 和 `4` 核都是容器上限，不是启动时预占。
+
+## 真实运行链路
+
+| 验收项 | 结果 |
+|---|---|
+| Agent 心跳和容量 | Host `online`，`device_slots=1` |
+| Image validation | 1 次成功；摘要、ADB、boot、Appium 全部通过，Image 进入 `ready` |
+| 验证资源清理 | 临时 validation 容器、网络、卷全部自动删除 |
+| 固定目标补池 | 设置 `1/1/1` 后，Controller 自动登记 Device、Pool membership 和 create Host Command |
+| 正式设备健康 | Android 16 设备进入 `ready/healthy`，ADB 和 Appium Endpoint 完整 |
+| Appium Session | 使用 `emulator-5554` 创建并删除真实 UiAutomator2 Session 成功 |
+| 单并发限制 | 第一条 Reservation 进入 `active`；第二条保持 `pending`；运行容器始终为 1 |
+| 释放和数据清理 | 两条 Reservation 依次释放，产生 2 次 rebuild，旧容器、网络、卷均被替换 |
+| 隔离补回 | 原 Device 进入 `quarantined/unhealthy`，Controller 自动登记并创建新的 `ready/healthy` Device |
+| 错误摘要 | 错误 digest 的 Image 进入 `failed/IMAGE_DIGEST_MISMATCH` |
+| 命令风暴保护 | 错误摘要只产生 1 条 validation Command、1 次 attempt，且没有创建第二个容器 |
+| 最终资源数 | `managed_containers=1`、`managed_networks=1`、`managed_volumes=1` |
+
+最终验收数据库中的 Host Command 汇总：
+
+```text
+create         succeeded attempts=1 count=2
+rebuild        succeeded attempts=1 count=2
+validate_image succeeded attempts=1 count=1
+validate_image failed    attempts=1 error=IMAGE_DIGEST_MISMATCH count=1
+```
+
+两条测试 Reservation 最终均为 `released`。隔离前旧设备为 `quarantined/unhealthy`，替代设备为 `ready/healthy`。
+
+## 真实链路发现并修复的问题
+
+### 1. Agent 容量与单机配置不一致
+
+systemd 原来把 `--concurrency 2` 写死，Host 会错误上报两个槽位。现改为 `DEVICE_FARM_AGENT_CONCURRENCY`，样例和当前环境默认 `1`；扩容只改环境配置。
+
+### 2. Host Command 租约短于 Android 启动时间
+
+原租约 60 秒，但 Android 16 validation 可能超过 60 秒，导致成功结果被拒绝为 `STALE_COMMAND_LEASE`。现使用 300 秒租约和 270 秒执行超时，并在 Agent 启动时校验“执行超时必须严格短于租约”。
+
+### 3. Agent 退出时在途验证可能残留资源
+
+原执行上下文基于 `context.Background()`，Agent 收到退出信号后不能及时取消在途命令。现改为继承 Agent 运行上下文；退出会触发 validation/create 的受控清理，再等待 worker 结束。
+
+### 4. Android 16 镜像不支持旧设备模板
+
+镜像内 `avdmanager list device` 不包含 `Samsung Galaxy S10`，会造成 AVD 创建失败并表现为持续 `ADB_OFFLINE`。默认模板已改为镜像真实支持的 `Pixel 9`，并在部署文档明确设备模板必须来自镜像列表。
+
+## 自动化回归
+
+Linux 上使用 Go 1.24.6 完成：
 
 ```text
 PASS gofmt -l .（无输出）
@@ -64,27 +94,19 @@ PASS ./internal/hostcommand
 PASS ./internal/metrics
 PASS ./internal/api
 PASS ./internal/warmpool
-PASS migration 000001~000004 up
-PASS migrations/test/constraints.sql
-PASS migration down，public table count = 0
-PASS migration 再次 up，public table count = 12
+PASS migration constraints
+PASS migration up -> down -> up，最终 12 张表
 ```
 
-本轮验证覆盖两个 Image 产生不同 `docker_image` Host Command、Agent 传递所选运行镜像、运行引用与 digest 不匹配时拒绝执行、rebuild 保持原 Image、`latest` 引用被拒绝，以及修改已验证 Image 后强制重新验证。测试使用独立临时数据库，结束后已自动删除；未操作服务器已有业务数据库和业务容器。
+并发 Controller、并发 Scheduler/Reaper、KVM/ADB/Appium 故障、创建失败隔离、指数退避和不形成命令风暴继续由上述 PostgreSQL、Agent、Provider 和 Controller 自动化测试覆盖；真实服务器同时验证了 KVM、ADB、boot、Appium 成功链路以及错误 digest 的失败链路。
 
-## Linux KVM 服务器必须补做
+## 业务服务保护和清理
 
-1. 固定 `DEVICE_FARM_DOCKER_IMAGE`，登记其真实 `sha256` digest；
-2. 发起 Image validation，确认 Agent 创建临时 Emulator，ADB、boot 和 Appium 全部成功后 Image 进入 `ready`，且临时容器、网络和卷已清理；
-3. 创建 `max_concurrency=1` 的 Pool，并设置 `min_ready=1/max_instances=1/enabled=true`；
-4. 不手工创建设备，等待 Controller 自动创建、加入池并令设备进入 `ready/healthy`；
-5. 创建 Appium Session，确认 Endpoint 和 UDID 正确；
-6. 创建第二个并发预约，确认保持 pending/capacity unavailable，且不会创建第二台；
-7. 隔离或受控删除设备，确认 Controller 自动补回一台；
-8. 注入错误 digest、KVM、ADB、Appium 故障，确认 Image/Device 状态、错误码、隔离和退避符合设计且无命令风暴；
-9. 资源允许时把目标从 `1/1` 提高到 `2/2`，确认只补一台；再降低到 `1/1`，确认不会自动删除正在使用的设备；
-10. 保存脱敏日志、数据库查询和容器清单作为最终证据。
+验收过程中未停止、未重启服务器已有业务容器：
 
-## 阻塞解除条件
+```text
+vega-face-search_nginx_1 restart_count=0
+vega-face-search_app1_1  restart_count=0
+```
 
-上述单机 Linux KVM 自动补池验收全部通过后，将 DF-016 改为 `completed` 并单独提交真实验收证据。任何 Mock、仅 PostgreSQL 或仅 Provider/Appium 的结果都不能替代该步骤。
+验收结束后删除独立 PostgreSQL 容器及卷、Device Farm 临时进程、模拟器容器及专属网络/卷、临时源码/工具链/日志和 PostgreSQL 临时镜像；只保留正式 Android 16 r3 镜像。密钥只存在于服务器临时目录和本地 Git 忽略的 `.env.server`，未写入 Git。

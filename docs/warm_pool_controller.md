@@ -132,4 +132,4 @@ Host Agent 的 `DEVICE_FARM_DOCKER_IMAGE` 必须是固定 tag 或 digest，禁�
 
 ## 当前验收状态
 
-PostgreSQL、并发锁、接口、状态门禁、容量限制、失败隔离和退避已在 Windows 本地自动化测试通过。真实 Docker/KVM、当前一台 Emulator 自动补齐、删除/隔离后补回以及 Appium 就绪仍必须在 Linux KVM 服务器执行，Mock 结果不能替代该验收。
+DF-016 已在 Linux KVM 服务器完成真实验收：Android 16 Image validation、`min_ready=1/max_instances=1/max_concurrency=1` 自动建机、Appium 就绪、第二预约 pending、释放重建、隔离补回、错误 digest 和单容器上限均通过。详细证据见 [DF-016 验收记录](evidence/DF-016/acceptance.md)。

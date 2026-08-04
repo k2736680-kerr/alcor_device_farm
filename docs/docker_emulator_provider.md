@@ -83,11 +83,14 @@ DEVICE_FARM_DOCKER_APPIUM_PORT=4723
 DEVICE_FARM_DOCKER_ADB_SERIAL=emulator-5554
 DEVICE_FARM_APPIUM_HEALTH_TIMEOUT=5s
 DEVICE_FARM_DOCKER_DATA_MOUNT_PATH=/home/androidusr
-DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Samsung Galaxy S10
+DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Pixel 9
 DEVICE_FARM_DOCKER_CPUS=4
 DEVICE_FARM_DOCKER_MEMORY=5g
+DEVICE_FARM_AGENT_CONCURRENCY=1
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
+
+设备型号必须存在于镜像内 `avdmanager list device` 的列表。当前 Android 16/API 36 镜像使用 `Pixel 9`；不存在的旧第三方型号会导致 AVD 创建失败，不能进入重试循环冒充启动中。
 
 `DEVICE_FARM_AGENT_PROVIDER` 是必填项，也可用命令行 `--provider` 显式传入。仓库 `.env.example` 的 `mock` 只用于本地控制面开发；Linux Host 的部署样例固定为 `docker`。不要删除该配置来依赖默认行为，因为 Agent 不提供默认 Provider。
 

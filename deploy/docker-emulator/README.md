@@ -40,10 +40,13 @@ sudoedit /etc/alcor-device-farm/host-agent.env
 - `DEVICE_FARM_AGENT_SERVER_URL`；
 - `DEVICE_FARM_AGENT_HOST_ID`；
 - `DEVICE_FARM_SECURITY_AGENT_TOKEN`；
+- `DEVICE_FARM_AGENT_CONCURRENCY=1`（当前单台验收；以后扩容只改此值）；
 - `DEVICE_FARM_DOCKER_IMAGE`；
 - `DEVICE_FARM_DOCKER_ADVERTISE_HOST`。
 
 Provider 没有默认值。漏配或填写未知值时 Agent 会直接退出，绝不会改用 Mock 冒充真实设备；正式 Linux Host 必须保持部署样例中的 `docker`。
+
+Host Command 使用 300 秒租约，Agent 的单命令执行超时为 270 秒且必须短于租约，避免 Android 启动尚未结束时命令被重复领取。部署代码会在启动时拒绝超时大于或等于租约的不安全配置。
 
 当前测试服务器使用一台模拟器验收：
 
