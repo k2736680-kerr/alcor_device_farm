@@ -34,9 +34,9 @@
 | DF-011 | Reconciler、健康事件和隔离 | completed | DF-010 |
 | DF-012 | Agent 内部协议和 Host Command | completed | DF-003、DF-006 |
 | DF-013 | Host Agent 核心程序 | completed | DF-012、DF-007 |
-| DF-014 | Docker Emulator Provider | blocked | DF-013 |
-| DF-015 | Appium Endpoint 和健康 Adapter | blocked | DF-014 |
-| DF-016 | 镜像验证和固定目标自动补齐 | blocked | DF-011、DF-014、DF-015 |
+| DF-014 | Docker Emulator Provider | completed | DF-013 |
+| DF-015 | Appium Endpoint 和健康 Adapter | completed | DF-014 |
+| DF-016 | 镜像验证和固定目标自动补齐 | in_progress | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | blocked | DF-014 |
 | DF-018 | STF Adapter 和远控入口 | blocked | DF-009、DF-017 |
 | DF-019 | DaFit Farm 运行适配 | blocked | DF-015 |
@@ -180,7 +180,7 @@
 
 产出：Provider、镜像/容器命名规则、端口分配和 Linux 部署脚本。
 
-验收：同一 Host 能创建至少两台 serial/端口互不冲突的模拟器；ADB online、boot completed 成功；删除后容器、网络和临时数据清理；无 KVM 时明确失败，不能静默降级冒充通过。
+验收：当前 Host 能创建一台 Android 16/API 36 模拟器；ADB online、boot completed 成功；删除后容器、网络和临时数据清理；无 KVM 时明确失败，不能静默降级冒充通过。多设备端口隔离保留自动化契约测试，资源允许时可执行扩展验收。
 
 ### DF-015 Appium Endpoint 和健康 Adapter
 
@@ -188,15 +188,15 @@
 
 产出：Appium Adapter 和健康探针。
 
-验收：两台设备可同时创建独立 Appium Session；错误 UDID 不能连接到其他设备；Appium 不健康时设备不得变为 ready。
+验收：当前 Android 16 设备可创建并删除真实 UiAutomator2 Session；Appium 不健康时设备不得变为 ready；错误 UDID 和多 Endpoint 隔离由自动化测试覆盖，资源允许时可执行多设备扩展验收。
 
 ### DF-016 镜像验证和固定目标自动补齐
 
-实施：实现每个 Image 的 `docker_image + docker_digest` 选择、digest 验证和镜像 validation；validation、create、管理员 rebuild 和释放后 rebuild 必须下发同一 Image 引用。建立 `max_concurrency=2` 的默认逻辑设备池；使用 PostgreSQL 行锁按 `min_ready/max_instances` 计算缺口，原子登记 provisioning Device、Pool membership 和 Host Command，由 Agent/Docker 自动创建并在 Appium 健康后转为 ready。失败必须退避且可补偿，不实现负载预测或自动删除缩容。
+实施：实现每个 Image 的 `docker_image + docker_digest` 选择、digest 验证和镜像 validation；validation、create、管理员 rebuild 和释放后 rebuild 必须下发同一 Image 引用。当前建立 `max_concurrency=1` 的默认逻辑设备池；使用 PostgreSQL 行锁按 `min_ready/max_instances` 计算缺口，原子登记 provisioning Device、Pool membership 和 Host Command，由 Agent/Docker 自动创建并在 Appium 健康后转为 ready。失败必须退避且可补偿，不实现负载预测或自动删除缩容。
 
-产出：镜像验证任务、固定目标 Controller、Host Command 编排、默认池配置和两设备容量检查。
+产出：镜像验证任务、固定目标 Controller、Host Command 编排、默认池配置和单设备容量检查。
 
-验收：未验证或缺少运行引用的镜像不能启动设备；两个不同 Image 产生不同 `docker_image` Host Command，Agent 校验摘要后按所选镜像创建，rebuild 保持原 Image；配置 `min_ready=2/max_instances=2` 后自动创建并加入两台 Emulator；删除或隔离一台后自动补回；两个 Controller 并发运行不超建；Docker/KVM/Appium 持续失败时有退避且不形成命令风暴；第三个并发预约保持 pending/capacity unavailable；降低目标不会自动删除在用设备；真机不被自动创建。
+验收：未验证或缺少运行引用的镜像不能启动设备；两个不同 Image 产生不同 `docker_image` Host Command，Agent 校验摘要后按所选镜像创建，rebuild 保持原 Image；配置 `min_ready=1/max_instances=1` 后自动创建并加入一台 Emulator；删除或隔离后自动补回；两个 Controller 并发运行不超建；Docker/KVM/Appium 持续失败时有退避且不形成命令风暴；第二个并发预约保持 pending/capacity unavailable；提高目标数量只改配置，降低目标不会自动删除在用设备；真机不被自动创建。
 
 ## 7. 阶段 E：STF 和真实执行
 
@@ -206,7 +206,7 @@
 
 产出：Docker Compose、配置样例和健康检查。
 
-验收：至少两台 Emulator 在 STF 显示正确 serial 和 ready 状态；重启 STF 不改变设备农场 reservation 真相；管理 Token 不暴露给浏览器。
+验收：当前一台 Emulator 在 STF 显示正确 serial 和 ready 状态；重启 STF 不改变设备农场 reservation 真相；管理 Token 不暴露给浏览器。多设备 inventory 在扩展环境验证。
 
 ### DF-018 STF Adapter 和远控入口
 

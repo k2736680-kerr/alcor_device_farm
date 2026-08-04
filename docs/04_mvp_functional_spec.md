@@ -21,7 +21,7 @@
 - Scheduler、Reaper、Reconciler；
 - STF inventory、claim、release、remoteConnect Adapter；
 - Appium Endpoint、端口和健康检查；
-- 单一默认逻辑设备池，参数化自动维持最多两台 Emulator；
+- 单一默认逻辑设备池，当前参数化自动维持一台 Emulator；
 - DaFit 端到端联调 Harness；
 - 服务身份、Agent 身份、审计事件和敏感日志脱敏；
 - OpenAPI、部署说明、故障处理和验收证据。
@@ -142,15 +142,15 @@ stopped → deleted
 
 设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认/最大租期、最大并发、启停状态和设备成员关系。
 
-MVP 只配置一个默认 Android 设备池：
+MVP 只配置一个默认 Android 设备池，当前测试环境使用单机配置：
 
-- `max_concurrency=2`；
-- `device_pool_images.min_ready=2/max_instances=2`；
+- `max_concurrency=1`；
+- `device_pool_images.min_ready=1/max_instances=1`；
 - Controller 自动创建缺少的 Emulator，并在同一编排中登记 Device、Host Command 和 Pool membership；
 - 自动创建必须经 Host Agent 执行 Docker Provider，不能由 Server 直连 Docker 或创建 Mock 设备；
 - 多 Server 使用 PostgreSQL 行锁重新计算缺口，避免超额创建；
 - 创建失败按有上限退避重试，设备只有通过 ADB、boot 和 Appium 健康检查后才计入 ready；
-- 两台设备均占用时第三个 Reservation 保持 pending/capacity unavailable，不因请求压力突破 `max_instances`；
+- 单台设备占用时第二个 Reservation 保持 pending/capacity unavailable，不因请求压力突破 `max_instances`；
 - Controller 不自动删除设备；降低目标后只停止补充，通过 drain/人工删除缩容。
 
 后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。
@@ -359,8 +359,8 @@ Reconciler：
 满足以下条件才算设备农场 MVP 完成：
 
 1. Mock 环境可完整演示镜像、Host、Pool、Device、Reservation 全链路；
-2. Linux KVM 环境能由 Agent 创建至少两台 Docker Emulator；
-3. 两台模拟器可以并发预约且不会双占；
+2. Linux KVM 环境能由 Agent 自动创建一台 Android 16 Docker Emulator；
+3. 单台模拟器只能产生一个 active reservation，第二个并发预约不能双占或突破容量；
 4. 每台设备可建立独立 Appium Session；
 5. STF 可看屏、claim、release，且不作为数据库真相；
 6. DaFit 冒烟用例能够申请设备、运行、收集报告并释放；

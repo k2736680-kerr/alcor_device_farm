@@ -75,9 +75,9 @@ Host Agent 内部协议已提供 heartbeat、command claim 和 completion。命�
 
 `device-host-agent` 已是可运行进程：使用已注册 Host ID 和独立 Agent Token，周期发现本机 Provider 设备并心跳，长轮询领取命令，按并发上限执行显式选择的 Provider 操作；收到退出信号后先停止领取，再等待在途命令完成，超时未完成的命令由 Server lease recovery 接管。
 
-Host Agent 必须通过 `DEVICE_FARM_AGENT_PROVIDER=mock|docker` 或 `--provider` 显式选择 Provider，缺失或未知值会直接拒绝启动，不会自动降级到 Mock；仓库 `.env.example` 已为本地控制面开发显式配置 `mock`，Linux 部署样例显式配置 `docker`。Docker 模式只允许在具备可读写 `/dev/kvm` 的 Linux Host 启动，并使用固定版本镜像、独立网络/数据卷、Docker 随机 ADB 端口和 CPU/内存/PID 限制；配置与 Linux 双设备验收入口见 [Docker Emulator Provider](docs/docker_emulator_provider.md)。
+Host Agent 必须通过 `DEVICE_FARM_AGENT_PROVIDER=mock|docker` 或 `--provider` 显式选择 Provider，缺失或未知值会直接拒绝启动，不会自动降级到 Mock；仓库 `.env.example` 已为本地控制面开发显式配置 `mock`，Linux 部署样例显式配置 `docker`。Docker 模式只允许在具备可读写 `/dev/kvm` 的 Linux Host 启动，并使用固定版本镜像、独立网络/数据卷、Docker 随机 ADB 端口和 CPU/内存/PID 限制；配置与 Linux 真实验收入口见 [Docker Emulator Provider](docs/docker_emulator_provider.md)。
 
-镜像 validation 和固定目标 Controller 已通过 Host Command 接入 Agent。管理端设置 `device_pool_images.min_ready/max_instances` 后，后台会自动登记并补齐 Emulator，不需要手工创建设备；默认两台时设置 `2/2`，以后扩容只改参数。详细边界与操作见 [固定目标模拟器池](docs/warm_pool_controller.md)。
+镜像 validation 和固定目标 Controller 已通过 Host Command 接入 Agent。管理端设置 `device_pool_images.min_ready/max_instances` 后，后台会自动登记并补齐 Emulator，不需要手工创建设备；当前测试环境使用 `1/1`，以后扩容只改参数。详细边界与操作见 [固定目标模拟器池](docs/warm_pool_controller.md)。
 
 STF 与 RethinkDB 的最小内网部署已固定为 DeviceFarmer/STF `3.7.9` 和 RethinkDB `2.4.2`。默认只绑定本机回环地址，RethinkDB、ADB server 和管理 Token 不暴露给浏览器；部署和真实验收见 [STF 单机内网部署](deploy/stf/README.md)。
 

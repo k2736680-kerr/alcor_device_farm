@@ -30,7 +30,7 @@ func TestBuildProviderRejectsUnknownProvider(t *testing.T) {
 
 func TestDockerEnvironmentEnablesAppiumAndDisablesBuiltInVNC(t *testing.T) {
 	values := dockerEnvironment(" Samsung Galaxy S10 ")
-	if values["EMULATOR_DEVICE"] != "Samsung Galaxy S10" || values["WEB_VNC"] != "false" || values["APPIUM"] != "true" {
+	if values["EMULATOR_DEVICE"] != "Samsung Galaxy S10" || values["WEB_VNC"] != "false" || values["WEB_LOG"] != "false" || values["APPIUM"] != "true" || values["USER_BEHAVIOR_ANALYTICS"] != "false" {
 		t.Fatalf("docker environment=%#v", values)
 	}
 	values = dockerEnvironment(" ")

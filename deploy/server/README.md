@@ -68,7 +68,7 @@ Compose 不挂载 Docker Socket、不创建第二套 PostgreSQL，并默认只�
 2. 阅读发布说明，只执行本次新增的 `*.up.sql`，不要重放旧迁移；
 3. 运行新二进制 `--check-config`；
 4. 先停止一个旧实例，再启动一个新实例；MVP 单实例期间保持短维护窗口；
-5. 验证 `/readyz`、`/metrics`、Host Agent heartbeat、pending Reservation 和两台设备状态；
+5. 验证 `/readyz`、`/metrics`、Host Agent heartbeat、pending Reservation 和当前单台设备状态；
 6. 观察至少一个 Scheduler/Reaper 周期后再完成升级。
 
 备份、故障处理和回滚分别见：

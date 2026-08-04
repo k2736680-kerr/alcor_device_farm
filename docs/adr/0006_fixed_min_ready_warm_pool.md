@@ -2,7 +2,7 @@
 
 ## 状态
 
-已确定。
+已确定；默认数量和当前真实验收规模由 ADR-0008 更新，其余自动补齐决策继续有效。
 
 ## 背景
 
@@ -14,7 +14,7 @@ ADR-0005 原决定由管理员显式创建两台设备。该方式虽然简单�
 
 - 保留逻辑 Pool、Reservation `pool_id` 和现有 Scheduler；
 - DF-016 实现固定目标补齐 Controller：当可用及正在创建的 Emulator 少于 `min_ready` 时自动创建，且任何时候不得超过 `max_instances`；
-- MVP 默认 `min_ready=2`、`max_instances=2`，数值来自数据库或配置，不写死在 Provider、Scheduler 或数据库约束中；
+- `min_ready`、`max_instances` 来自数据库或配置，不写死在 Provider、Scheduler 或数据库约束中；当前测试环境的默认值见 ADR-0008；
 - 自动创建必须走 PostgreSQL Host Command → Host Agent → Docker Provider，Server 不能调用 Mock Provider 冒充真实设备，也不能访问 Docker Socket；
 - Controller 在一个数据库事务内锁定对应 `device_pool_images` 行、重新统计容量并登记 provisioning Device/Command，避免多个 Server 同时超额创建；
 - Agent 的创建结果和后续心跳更新同一 Device；只有容器 running、ADB online、boot completed、Appium healthy 后才进入 ready；
@@ -26,8 +26,8 @@ ADR-0005 原决定由管理员显式创建两台设备。该方式虽然简单�
 
 ## 后果
 
-- 日常部署只需设置目标数量，默认自动维持两台 Emulator；
+- 日常部署只需设置目标数量，Controller 自动维持配置数量的 Emulator；
 - 未来增加到 N 台固定模拟器只调整 Host `device_slots`、Pool `max_concurrency` 和 Image `min_ready/max_instances`，不修改架构或 migration；
 - 自动补齐必须等待 DF-014 真实 Docker Provider 和 DF-015 Appium 健康链路验收后才能标记 DF-016 完成；
-- 本地可以先做数据库锁、命令编排和 Mock Adapter 测试，但这些测试不能替代 Linux KVM 双设备验收；
+- 本地可以先做数据库锁、命令编排和 Mock Adapter 测试，但这些测试不能替代 ADR-0008 规定的 Linux KVM 真实验收；
 - 真机继续复用 Device、Reservation、Scheduler 和 Pool，创建方式与 Emulator 明确分离。

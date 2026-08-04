@@ -471,10 +471,10 @@ func withDefaults(config Config) Config {
 		config.DataMountPath = "/home/androidusr"
 	}
 	if config.CPUs == 0 {
-		config.CPUs = 2
+		config.CPUs = 4
 	}
 	if config.Memory == "" {
-		config.Memory = "4g"
+		config.Memory = "5g"
 	}
 	if config.PidsLimit == 0 {
 		config.PidsLimit = 512

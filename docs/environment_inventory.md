@@ -89,7 +89,7 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 | 本地真机 DaFit | 技术上可做 | 非当前 MVP 验收范围，未经用户要求不执行 |
 | Docker Emulator | 不可 | 缺 Linux KVM Host 和 Docker |
 | STF 完整环境 | 不可 | 等 DF-017 部署环境 |
-| 两设备并发 Appium/DaFit | 不可 | 等 Linux KVM、两台 Emulator、STF/Appium |
+| 单设备 Android 16/Appium | 可在 Linux KVM 服务器执行 | 当前使用一台 Emulator；多设备并发为 P2 扩展验收 |
 | 新版 Alcor 联调 | 不可 | 等新版实际分支和 OpenAPI |
 
 ## 8. 依赖准备顺序

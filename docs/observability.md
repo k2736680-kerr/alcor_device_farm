@@ -28,7 +28,7 @@
 | `device_farm_health_events_total` | 按 severity 累计健康事件 | Appium/STF/Agent 错误增长 |
 | `device_farm_metric_collection_errors_total` | 指标查询失败次数 | 指标本身失真告警 |
 
-MVP 只有两台模拟器，不按 Device ID、Reservation ID、owner ID 建指标标签，避免高基数和业务标识泄露。排障明细使用 request ID、审计表和健康事件查询。
+当前 MVP 只有一台模拟器，不按 Device ID、Reservation ID、owner ID 建指标标签，避免高基数和业务标识泄露。排障明细使用 request ID、审计表和健康事件查询。
 
 ## Dashboard 最小面板
 
@@ -56,7 +56,7 @@ MVP 只有两台模拟器，不按 Device ID、Reservation ID、owner ID 建指�
 | HTTP5xx | 5 分钟 5xx 比例大于 5% | P1 | 按路由和 request ID 排查 |
 | MetricCollectionError | collection error 增长 | P1 | 指标可能不完整，检查 DB 查询 |
 
-阈值是两台设备 MVP 的起始值。增加模拟器或接入真机后只调整阈值，不修改指标和架构。
+阈值是单台设备 MVP 的起始值。增加模拟器或接入真机后只调整阈值，不修改指标和架构。
 
 ## 故障注入验收
 

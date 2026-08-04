@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,11 @@ func TestDockerProviderLinuxKVMIntegration(t *testing.T) {
 		KVMDevice:          envValue("DEVICE_FARM_DOCKER_KVM_DEVICE", "/dev/kvm"),
 		ContainerADBSerial: envValue("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"),
 		DataMountPath:      envValue("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"),
-		Environment:        map[string]string{"APPIUM": "false", "WEB_VNC": "false"},
+		CPUs:               dockerIntegrationCPUs(t),
+		Memory:             envValue("DEVICE_FARM_DOCKER_MEMORY", "5g"),
+		Environment: map[string]string{
+			"APPIUM": "false", "WEB_VNC": "false", "WEB_LOG": "false", "USER_BEHAVIOR_ANALYTICS": "false",
+		},
 	}
 	if device := strings.TrimSpace(os.Getenv("DEVICE_FARM_DOCKER_EMULATOR_DEVICE")); device != "" {
 		config.Environment["EMULATOR_DEVICE"] = device
@@ -36,7 +41,11 @@ func TestDockerProviderLinuxKVMIntegration(t *testing.T) {
 	}
 	suffix := time.Now().UTC().Format("20060102-150405")
 	hostID := "host_integration_" + suffix
-	refs := []string{"integration-one-" + suffix, "integration-two-" + suffix}
+	deviceCount := dockerIntegrationDeviceCount(t)
+	refs := make([]string, deviceCount)
+	for index := range refs {
+		refs[index] = fmt.Sprintf("integration-%d-%s", index+1, suffix)
+	}
 	for _, ref := range refs {
 		ref := ref
 		t.Cleanup(func() {
@@ -62,7 +71,7 @@ func TestDockerProviderLinuxKVMIntegration(t *testing.T) {
 		}
 		connections = append(connections, started.Connection)
 	}
-	if connections[0].Serial == connections[1].Serial || connections[0].ADBEndpoint == connections[1].ADBEndpoint {
+	if len(connections) > 1 && (connections[0].Serial == connections[1].Serial || connections[0].ADBEndpoint == connections[1].ADBEndpoint) {
 		t.Fatalf("Docker assigned duplicate serial or ADB endpoint: %#v", connections)
 	}
 
@@ -70,7 +79,7 @@ func TestDockerProviderLinuxKVMIntegration(t *testing.T) {
 		waitForAndroidBoot(t, ctx, provider, ref)
 	}
 	discovered, err := provider.Discover(ctx, hostID)
-	if err != nil || len(discovered) != 2 {
+	if err != nil || len(discovered) != deviceCount {
 		t.Fatalf("discover=%#v error=%v", discovered, err)
 	}
 	for _, ref := range refs {
@@ -83,6 +92,29 @@ func TestDockerProviderLinuxKVMIntegration(t *testing.T) {
 	if err != nil || len(discovered) != 0 {
 		t.Fatalf("resources remained after delete: %#v error=%v", discovered, err)
 	}
+}
+
+func dockerIntegrationDeviceCount(t *testing.T) int {
+	t.Helper()
+	raw := strings.TrimSpace(os.Getenv("DEVICE_FARM_DOCKER_INTEGRATION_COUNT"))
+	if raw == "" {
+		return 2
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 || value > 2 {
+		t.Fatalf("DEVICE_FARM_DOCKER_INTEGRATION_COUNT=%q must be 1 or 2", raw)
+	}
+	return value
+}
+
+func dockerIntegrationCPUs(t *testing.T) float64 {
+	t.Helper()
+	raw := envValue("DEVICE_FARM_DOCKER_CPUS", "4")
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || value <= 0 {
+		t.Fatalf("DEVICE_FARM_DOCKER_CPUS=%q must be greater than zero", raw)
+	}
+	return value
 }
 
 func waitForAndroidBoot(t *testing.T, ctx context.Context, provider *Provider, ref string) {

@@ -1,6 +1,6 @@
 # STF 单机内网部署
 
-该目录复用 DeviceFarmer/STF，不实现第二套看屏、触控、设备日志、文件管理、claim、release 或 remoteConnect。MVP 面向两台 Emulator，采用官方支持的最小单机拓扑：
+该目录复用 DeviceFarmer/STF，不实现第二套看屏、触控、设备日志、文件管理、claim、release 或 remoteConnect。当前 MVP 面向一台 Emulator，采用官方支持的最小单机拓扑；增加设备不改变拓扑：
 
 ```text
 authorized browser / reverse proxy

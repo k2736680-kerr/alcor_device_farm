@@ -2,9 +2,23 @@
 
 ## 当前结论
 
-Docker Emulator Provider 的代码、Host Agent 接入、配置说明、Linux KVM 双设备集成测试和验收脚本已经完成。本机没有 Docker CLI/Engine，WSL Ubuntu 虚拟磁盘路径损坏；2026-08-04 已连接一台内网 Ubuntu 22.04 候选服务器，但该机 BIOS 关闭 VMX、没有 `/dev/kvm`，且 Docker Hub Registry 连接超时。因此 DF-014 当前状态仍为 `blocked`，不能标记 `completed`，也不能用 Fake Backend、Mock Provider 或无 KVM 软件模拟代替真实 Linux KVM 验收。
+DF-014 已按 ADR-0008 的单台测试环境范围完成真实 Linux KVM 验收。2026-08-04 在 Ubuntu 22.04 x86_64 服务器使用 `alcor-device-farm/android-emulator:16.0-api36-r3` 创建一台 Android 16/API 36 Emulator，ADB online、`sys.boot_completed=1`、discover 和受管资源清理全部通过。
 
-候选服务器开启 VT-x/VMX、受控重启并提供可读写 `/dev/kvm`，同时具备固定 Emulator 镜像拉取路径后，不需要调整现有架构，只需部署当前 Host Agent、注入固定镜像和 Host 地址，然后执行本文件中的真实验收命令。当前服务器已有业务容器和 MicroK8s 等服务，未经维护窗口不得重启或清理现有 Docker 资源。
+真实 Docker 生命周期测试耗时 46.57 秒。测试结束后受管容器、网络和卷均为空；`/dev/kvm` 前后保持 `root:kvm 660`；服务器现有 `vega-face-search` 容器和设备农场专用 PostgreSQL 测试容器持续运行。多设备端口隔离保留自动化契约和 P2 扩展验收，不再阻塞当前 DF-014。
+
+## 最终 Linux KVM 证据
+
+```text
+PASS Android 16 / API 36 / x86_64
+PASS DEVICE_FARM_DOCKER_INTEGRATION_COUNT=1
+PASS DEVICE_FARM_DOCKER_CPUS=4（上限）
+PASS DEVICE_FARM_DOCKER_MEMORY=5g（上限）
+PASS TestDockerProviderLinuxKVMIntegration (46.57s)
+PASS ADB online、boot_completed=1
+PASS 删除后 managed container/network/volume = 0
+PASS /dev/kvm = root:kvm 660（前后未改变）
+PASS 现有业务容器未停止、未重启
+```
 
 ## 候选服务器脱敏预检证据
 
@@ -101,19 +115,13 @@ export DEVICE_FARM_DOCKER_BIND_ADDRESS='<127.0.0.1、设备内网 IP 或按网�
 
 必须真实满足：
 
-1. 同一 Host 创建并启动两台 Android Emulator；
-2. 两台设备的 serial 和 ADB Host 端口不同；
-3. 两台设备均达到 container running、ADB online、`sys.boot_completed=1`；
-4. `discover` 返回两台正确 Host/Device/Image 元数据；
+1. 当前 Host 创建并启动一台 Android 16 Emulator；
+2. 设备连接信息包含明确 serial 和 ADB Host 端口；
+3. 设备达到 container running、ADB online、`sys.boot_completed=1`；
+4. `discover` 返回正确 Host/Device/Image 元数据；
 5. 删除后对应容器、受管网络和独立数据卷全部为空；
 6. 无 KVM、Docker 不可用、浮动镜像、ADB 失败、boot timeout 或清理残留时命令必须失败。
 
-## 阻塞解除条件
+## 完成说明
 
-在真实 Linux KVM 服务器执行 `scripts/verify-docker-emulator.sh` 全部通过，并把脱敏输出保存到本目录后：
-
-- 将 DF-014 从 `blocked` 改为 `completed`；
-- 记录实际 Docker Engine、Emulator 镜像 tag/digest、CPU/内存和启动时间；
-- 确认没有容器、网络、数据卷或完整设备序列号残留；
-- 单独提交真实验收结果；
-- 然后才进入 DF-015 Appium Endpoint 和健康 Adapter。
+阻塞条件已经解除，DF-014 状态改为 `completed`。后续增加模拟器数量时只调整配置并执行 P2 多设备扩展验收，不修改 Provider 架构。

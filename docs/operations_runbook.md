@@ -69,7 +69,7 @@ Reservation claim/release 按既有补偿策略处理。不要直接修改 `devi
 1. `device-farm-server --version` 与发布 commit 一致；
 2. `--check-config` 成功，`/readyz` 为 200；
 3. `/metrics` 的 build info、database ready 和 Agent 状态正确；
-4. 两台设备最终为 ready+healthy；
+4. 当前单台设备最终为 ready+healthy；
 5. 创建并释放一次测试 Reservation；
 6. 释放后设备完成 recycling/rebuild 并回池；
 7. 日志、审计和数据库普通字段无 canary Secret。

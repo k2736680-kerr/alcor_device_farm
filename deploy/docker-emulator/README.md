@@ -45,14 +45,17 @@ sudoedit /etc/alcor-device-farm/host-agent.env
 
 Provider 没有默认值。漏配或填写未知值时 Agent 会直接退出，绝不会改用 Mock 冒充真实设备；正式 Linux Host 必须保持部署样例中的 `docker`。
 
-再执行真实双设备验收：
+当前测试服务器使用一台模拟器验收：
 
 ```sh
 set -a
 . /etc/alcor-device-farm/host-agent.env
 set +a
+export DEVICE_FARM_DOCKER_INTEGRATION_COUNT=1
 ./scripts/verify-docker-emulator.sh
 ```
+
+资源允许时可以把数量改为 `2` 执行多设备端口隔离扩展验收；生产容量仍由 Pool 和 Image 参数控制，不由该测试变量控制。
 
 验收通过后启动：
 
@@ -67,4 +70,4 @@ sudo systemctl status alcor-device-host-agent.service
 
 部署时必须填写固定 tag 或 digest，不能使用 `latest`。DF-016 会在真实 Host 上记录最终镜像 digest 并完成 Image validation；在此之前不要把未验证镜像加入正式设备池。
 
-Host Agent 会开启镜像内置 Appium、关闭 `WEB_VNC`，并为每个 Emulator 随机发布独立 Host Appium 端口。Appium 必须通过 `/status` 健康检查后设备才能 ready；远控仍在 DF-017/DF-018 复用 STF，不使用镜像自带 VNC 形成第二套入口。
+Host Agent 会开启镜像内置 Appium、关闭 `WEB_VNC` 和上游匿名使用统计，并为每个 Emulator 随机发布独立 Host Appium 端口。Appium 必须通过 `/status` 健康检查后设备才能 ready；远控仍在 DF-017/DF-018 复用 STF，不使用镜像自带 VNC 形成第二套入口。

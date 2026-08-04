@@ -1,0 +1,144 @@
+diff --git a/cli/src/app.py b/cli/src/app.py
+index d5bf718..bccfdb6 100644
+--- a/cli/src/app.py
++++ b/cli/src/app.py
+@@ -1,5 +1,6 @@
+ #!/usr/bin/env python3
+ import subprocess
++import time
+ from typing import Union
+ 
+ import click
+@@ -60,6 +61,7 @@ def cli():
+ 
+ def start_appium() -> None:
+     if convert_str_to_bool(os.getenv(ENV.APPIUM)):
++        wait_for_emulator_appium_prerequisites()
+         cmd = f"/usr/local/bin/appium"
+         app_appium = Application("Appium", cmd,
+                                  os.getenv(ENV.APPIUM_ADDITIONAL_ARGS, ""), False)
+@@ -68,6 +70,59 @@ def start_appium() -> None:
+         logger.info("env APPIUM cannot be found, Appium is not started!")
+ 
+ 
++def wait_for_emulator_appium_prerequisites() -> None:
++    if os.getenv(ENV.DEVICE_TYPE, "").lower() != DeviceType.EMULATOR.value.lower():
++        return
++
++    serial = os.getenv("ANDROID_SERIAL", "emulator-5554")
++    deadline = time.monotonic() + 12 * 60
++    last_error = "Android services are not ready"
++    while time.monotonic() < deadline:
++        try:
++            boot = subprocess.run(
++                ["adb", "-s", serial, "shell", "getprop", "sys.boot_completed"],
++                capture_output=True, text=True, timeout=30, check=False,
++            )
++            package_service = subprocess.run(
++                ["adb", "-s", serial, "shell", "service", "check", "package"],
++                capture_output=True, text=True, timeout=30, check=False,
++            )
++            settings_service = subprocess.run(
++                ["adb", "-s", serial, "shell", "settings", "get", "global", "device_provisioned"],
++                capture_output=True, text=True, timeout=30, check=False,
++            )
++            package_manager = subprocess.run(
++                ["adb", "-s", serial, "shell", "pm", "path", "android"],
++                capture_output=True, text=True, timeout=30, check=False,
++            )
++            if (
++                boot.stdout.strip() == "1"
++                and "found" in package_service.stdout.lower()
++                and settings_service.returncode == 0
++                and package_manager.returncode == 0
++                and "package:" in package_manager.stdout
++            ):
++                logger.info("Android package and settings services are ready")
++                time.sleep(30)
++                return
++            errors = " ".join(
++                value.strip()
++                for value in (
++                    package_service.stderr,
++                    settings_service.stderr,
++                    package_manager.stderr,
++                )
++                if value.strip()
++            )
++            if errors:
++                last_error = errors
++        except (OSError, subprocess.SubprocessError) as error:
++            last_error = str(error)
++        time.sleep(5)
++
++    raise RuntimeError(f"Android services did not become Appium-ready: {last_error}")
++
++
+ def start_device() -> None:
+     given_pt = get_env_value_or_raise(ENV.DEVICE_TYPE)
+     selected_device = get_device(given_pt)
+diff --git a/cli/src/device/__init__.py b/cli/src/device/__init__.py
+index e8de345..40b9569 100644
+--- a/cli/src/device/__init__.py
++++ b/cli/src/device/__init__.py
+@@ -20,7 +20,8 @@ class DeviceType(Enum):
+ 
+ 
+ class Device(ABC):
+-    FORM_ID = "1FAIpQLSdrKWQdMh6Nt8v8NQdYvTIntohebAgqWCpXT3T9NofAoxcpkw"
++    # The internal device farm does not send upstream usage analytics.
++    FORM_ID = ""
+     FORM_USER = "user"
+     FORM_CITY = "city"
+     FORM_REGION = "region"
+@@ -42,7 +43,7 @@ class Device(ABC):
+         self.logger = logging.getLogger(self.__class__.__name__)
+         self.device_type = None
+         self.interval_waiting = int(os.getenv(ENV.DEVICE_INTERVAL_WAITING, 2))
+-        self.user_behavior_analytics = convert_str_to_bool(os.getenv(ENV.USER_BEHAVIOR_ANALYTICS, "true"))
++        self.user_behavior_analytics = False
+         self.form_field = {
+             Device.FORM_USER: "entry.108751316",
+             Device.FORM_CITY: "entry.2083022547",
+diff --git a/cli/src/device/emulator.py b/cli/src/device/emulator.py
+index 224f5d7..7e36e04 100644
+--- a/cli/src/device/emulator.py
++++ b/cli/src/device/emulator.py
+@@ -34,7 +34,8 @@ class Emulator(Device):
+         "11.0": "30",
+         "12.0": "32",
+         "13.0": "33",
+-        "14.0": "34"
++        "14.0": "34",
++        "16.0": "36"
+     }
+ 
+     adb_name_id = 5554
+@@ -164,14 +165,11 @@ class Emulator(Device):
+ 
+     def change_permission(self) -> None:
+         kvm_path = "/dev/kvm"
+-        if os.path.exists(kvm_path):
+-            cmds = (f"sudo chown 1300:1301 {kvm_path}",
+-                    "sudo sed -i '1d' /etc/passwd")
+-            for c in cmds:
+-                subprocess.check_call(c, shell=True)
+-            self.logger.info("KVM permission is granted!")
+-        else:
++        if not os.path.exists(kvm_path):
+             raise RuntimeError("/dev/kvm cannot be found!")
++        if not os.access(kvm_path, os.R_OK | os.W_OK):
++            raise RuntimeError("/dev/kvm is not readable and writable!")
++        self.logger.info("KVM permission is available")
+ 
+     def deploy(self):
+         self.logger.info(f"Deploying the {self.device_type}")
+@@ -227,7 +225,7 @@ class Emulator(Device):
+         booting_cmd = f"adb -s {self.adb_name} wait-for-device shell getprop sys.boot_completed"
+         focus_cmd = f"adb -s {self.adb_name} shell dumpsys window | grep -i mCurrentFocus"
+         self.check_adb_command(self.ReadinessCheck.BOOTED,
+-                               booting_cmd, "1", 60, self.interval_waiting)
++                               booting_cmd, "1", 180, self.interval_waiting)
+         time.sleep(self.interval_after_booting)
+ 
+         interval_pop_up = 0

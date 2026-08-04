@@ -26,7 +26,7 @@
 - Docker Engine；
 - Host Agent；
 - 至少一个通过验证的 Android x86_64 镜像；
-- 资源足以稳定运行两台 Emulator。
+- 资源足以稳定运行一台 Android 16 Emulator，容器内存上限 5 GiB。
 
 用途：真实创建、启动、ADB、boot、清理、重建和固定目标自动补齐。
 
@@ -47,7 +47,7 @@
 | G0 文档基线 | DF-000 | 环境、依赖、端口和阻塞项清楚，无密钥泄露 |
 | G1 Mock 控制面 | DF-001~DF-008 | E0 可管理全部核心资源，状态机和 migration 通过 |
 | G2 预约正确性 | DF-009~DF-011 | E0 并发预约无双占，租约和状态可收敛 |
-| G3 Docker 设备 | DF-012~DF-016 | E1 两台 Emulator 可创建、健康、补池和重建 |
+| G3 Docker 设备 | DF-012~DF-016 | E1 一台 Android 16 Emulator 可创建、健康、补池和重建，第二个预约不突破容量 |
 | G4 STF/Appium | DF-017~DF-018 | E2 可远控、claim/release，Appium 端口隔离 |
 | G5 DaFit 闭环 | DF-019~DF-021 | E2 冒烟成功/失败均可释放和清理 |
 | G6 可交付 | DF-022~DF-025 | 安全、运维、回滚、全量验收和 Adapter 契约齐全 |
@@ -101,13 +101,14 @@
 | AT-AGT-002 | P0 | Agent 停止心跳 | 超时后 Host offline，不再接收新分配 |
 | AT-AGT-003 | P0 | 命令重复领取/完成 | Provider 操作只执行一次，旧完成不能覆盖新结果 |
 | AT-AGT-004 | P0 | Agent 执行中重启 | 命令最终可恢复、重领或明确失败，无永久 executing |
-| AT-EMU-001 | P0 | 创建两台 Emulator | serial、ADB/Appium 端口、容器名互不冲突 |
+| AT-EMU-001 | P0 | 创建一台 Android 16 Emulator | Android 16/API 36、ADB online、boot completed，连接信息完整 |
 | AT-EMU-002 | P0 | 启动健康检查 | ADB online、boot completed、Appium healthy 后才 ready |
 | AT-EMU-003 | P0 | 无 `/dev/kvm` | 明确返回 KVM_UNAVAILABLE，不标记 ready |
 | AT-EMU-004 | P0 | rebuild | 新实例不保留上一次 App 和测试文件 |
 | AT-EMU-005 | P0 | 创建两个不同 Device Image | Host Command、Agent 校验和 Docker 容器分别使用各自 `docker_image`，rebuild 不串换版本 |
-| AT-EMU-005 | P1 | 删除设备 | 容器、网络、端口、卷和数据库引用按策略清理 |
-| AT-EMU-006 | P1 | `min_ready=2/max_instances=2` 且池为空 | 自动创建并加入两台；两个 Controller 并发不超建；第三个预约不突破上限 |
+| AT-EMU-006 | P1 | 删除设备 | 容器、网络、端口、卷和数据库引用按策略清理 |
+| AT-EMU-007 | P0 | `min_ready=1/max_instances=1` 且池为空 | 自动创建并加入一台；两个 Controller 并发不超建；第二个预约不突破上限 |
+| AT-EMU-008 | P2 | 资源允许时创建两台 Emulator | serial、ADB/Appium 端口、容器名互不冲突 |
 
 ### 4.5 STF 和 Appium
 
@@ -119,8 +120,9 @@
 | AT-STF-004 | P0 | release 暂时失败 | 后台重试并审计，不能静默关闭底层占用 |
 | AT-STF-005 | P0 | 请求远控入口 | 只返回短时入口，不返回管理 Token |
 | AT-STF-006 | P0 | A 用户访问 B 预约远控 | 403，不能越权 |
-| AT-APP-001 | P0 | 两台设备并发 Appium Session | 两个 Session 同时成功且 UDID 不串设备 |
+| AT-APP-001 | P0 | 单台设备创建 Appium Session | `/status` healthy，UiAutomator2 Session 创建和删除成功 |
 | AT-APP-002 | P0 | Appium unhealthy | Device 不进入 ready 或被隔离 |
+| AT-APP-003 | P2 | 资源允许时并发两台 Appium Session | 两个 Session 同时成功且 UDID 不串设备 |
 
 ### 4.6 DaFit 闭环和数据隔离
 
@@ -204,7 +206,7 @@ docs/evidence/
 
 1. 所有 P0、P1 用例通过；
 2. DF-000~DF-025 全部 completed；
-3. Linux KVM、两台 Emulator、STF、Appium 和 DaFit 冒烟真实通过；
+3. Linux KVM、一台 Android 16 Emulator、STF、Appium 和 DaFit 冒烟真实通过；
 4. 无双占、无永久悬挂、无跨任务数据残留、无密钥泄露；
 5. OpenAPI、migration、部署、监控、故障处理和回滚文档齐全；
 6. 新版 Alcor 团队可使用 Mock 契约包开发 Device Farm Adapter；

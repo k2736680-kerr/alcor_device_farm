@@ -63,7 +63,9 @@ export DEVICE_FARM_DOCKER_ADVERTISE_HOST='<Worker 可访问的 Host 内网地址
 ./scripts/verify-appium-endpoints.sh
 ```
 
-真实验收会创建两台 Emulator，等待两套 Appium 健康，确认 Endpoint 不同，使用 UiAutomator2 并发创建两个 Session，并验证第一套 Endpoint 不接受第二台容器的外部 UDID。测试结束必须删除 Session、容器、网络和数据卷。
+当前真实验收创建一台 Android 16 Emulator，等待 Appium 健康，使用 UiAutomator2 创建并删除真实 Session。设置 `DEVICE_FARM_DOCKER_INTEGRATION_COUNT=2` 时继续验证两套 Endpoint 隔离和错误 UDID；该扩展验收不影响当前单机 P0。测试结束必须删除 Session、容器、网络和数据卷。
+
+Android 16/API 36 的 Appium Settings 辅助初始化和 hidden-api 策略恢复在当前镜像中不稳定，验收使用 `appium:skipDeviceInitialization=true`、`appium:ignoreHiddenApiPolicyError=true`，但不会跳过 UiAutomator2 Server 安装和 Session。DaFit 已有 `APPIUM_SKIP_DEVICE_INITIALIZATION=1` 开关，hidden-api 选项在 DF-019 薄适配中配置；正式用例是否启用由执行器决定，设备农场不执行页面动作，也不在 Agent 中硬编码业务 capability。
 
 ## 6. 避免事项
 

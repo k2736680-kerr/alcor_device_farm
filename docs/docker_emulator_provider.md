@@ -84,8 +84,8 @@ DEVICE_FARM_DOCKER_ADB_SERIAL=emulator-5554
 DEVICE_FARM_APPIUM_HEALTH_TIMEOUT=5s
 DEVICE_FARM_DOCKER_DATA_MOUNT_PATH=/home/androidusr
 DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Samsung Galaxy S10
-DEVICE_FARM_DOCKER_CPUS=2
-DEVICE_FARM_DOCKER_MEMORY=4g
+DEVICE_FARM_DOCKER_CPUS=4
+DEVICE_FARM_DOCKER_MEMORY=5g
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
 
@@ -105,7 +105,7 @@ export DEVICE_FARM_DOCKER_ADVERTISE_HOST='<Host 内网地址>'
 ./scripts/verify-docker-emulator.sh
 ```
 
-脚本会真实创建并启动两台 Emulator，等待 ADB online 和 Android boot completed，验证 serial/端口不冲突，然后删除全部容器、网络和数据卷。任何 KVM、Docker、镜像、ADB、启动或清理错误都会直接失败。
+脚本按 `DEVICE_FARM_DOCKER_INTEGRATION_COUNT` 创建一台或两台 Emulator。当前 P0 使用 `1`，等待 ADB online 和 Android boot completed 后删除全部容器、网络和数据卷；设置 `2` 时额外验证 serial/端口不冲突。任何 KVM、Docker、镜像、ADB、启动或清理错误都会直接失败。
 
 ## 8. 当前环境限制
 

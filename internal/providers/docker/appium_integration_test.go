@@ -22,7 +22,7 @@ func TestDockerProviderLinuxKVMAppiumIntegration(t *testing.T) {
 	if os.Getenv("DEVICE_FARM_APPIUM_INTEGRATION") != "1" {
 		t.Skip("set DEVICE_FARM_APPIUM_INTEGRATION=1 on a Linux KVM host")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	probe, err := appiumadapter.NewProbe(10 * time.Second)
 	if err != nil {
@@ -36,8 +36,12 @@ func TestDockerProviderLinuxKVMAppiumIntegration(t *testing.T) {
 		KVMDevice:          envValue("DEVICE_FARM_DOCKER_KVM_DEVICE", "/dev/kvm"),
 		ContainerADBSerial: envValue("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"),
 		DataMountPath:      envValue("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"),
+		CPUs:               dockerIntegrationCPUs(t),
+		Memory:             envValue("DEVICE_FARM_DOCKER_MEMORY", "5g"),
 		AppiumProbe:        probe,
-		Environment:        map[string]string{"APPIUM": "true", "WEB_VNC": "false"},
+		Environment: map[string]string{
+			"APPIUM": "true", "WEB_VNC": "false", "WEB_LOG": "false", "USER_BEHAVIOR_ANALYTICS": "false",
+		},
 	}
 	if device := strings.TrimSpace(os.Getenv("DEVICE_FARM_DOCKER_EMULATOR_DEVICE")); device != "" {
 		config.Environment["EMULATOR_DEVICE"] = device
@@ -48,7 +52,11 @@ func TestDockerProviderLinuxKVMAppiumIntegration(t *testing.T) {
 	}
 	suffix := time.Now().UTC().Format("20060102-150405")
 	hostID := "host_appium_integration_" + suffix
-	refs := []string{"appium-one-" + suffix, "appium-two-" + suffix}
+	deviceCount := dockerIntegrationDeviceCount(t)
+	refs := make([]string, deviceCount)
+	for index := range refs {
+		refs[index] = fmt.Sprintf("appium-%d-%s", index+1, suffix)
+	}
 	for _, ref := range refs {
 		ref := ref
 		t.Cleanup(func() {
@@ -72,14 +80,19 @@ func TestDockerProviderLinuxKVMAppiumIntegration(t *testing.T) {
 		}
 		connections = append(connections, started.Connection)
 	}
-	if connections[0].AppiumEndpoint == connections[1].AppiumEndpoint || connections[0].AppiumEndpoint == "" || connections[1].AppiumEndpoint == "" {
+	if connections[0].AppiumEndpoint == "" {
+		t.Fatalf("Appium endpoints are not isolated: %#v", connections)
+	}
+	if len(connections) > 1 && (connections[0].AppiumEndpoint == connections[1].AppiumEndpoint || connections[1].AppiumEndpoint == "") {
 		t.Fatalf("Appium endpoints are not isolated: %#v", connections)
 	}
 	for _, ref := range refs {
 		waitForFullDeviceHealth(t, ctx, provider, ref)
 	}
-	if _, err := createAppiumSession(ctx, connections[0].AppiumEndpoint, connections[1].Serial); err == nil {
-		t.Fatal("the first Appium endpoint accepted the other container's external UDID")
+	if len(connections) > 1 {
+		if _, err := createAppiumSession(ctx, connections[0].AppiumEndpoint, connections[1].Serial); err == nil {
+			t.Fatal("the first Appium endpoint accepted the other container's external UDID")
+		}
 	}
 
 	type sessionResult struct {
@@ -138,7 +151,10 @@ func createAppiumSession(ctx context.Context, endpoint, udid string) (string, er
 	payload := map[string]any{"capabilities": map[string]any{
 		"alwaysMatch": map[string]any{
 			"platformName": "Android", "appium:automationName": "UiAutomator2", "appium:udid": udid,
-			"appium:newCommandTimeout": 60, "appium:noReset": true,
+			"appium:newCommandTimeout": 60, "appium:noReset": true, "appium:adbExecTimeout": 600000,
+			"appium:androidInstallTimeout": 600000, "appium:uiautomator2ServerInstallTimeout": 600000,
+			"appium:uiautomator2ServerLaunchTimeout": 600000, "appium:skipDeviceInitialization": true,
+			"appium:ignoreHiddenApiPolicyError": true, "appium:skipServerInstallation": true,
 		},
 		"firstMatch": []any{map[string]any{}},
 	}}

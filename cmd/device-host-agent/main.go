@@ -39,8 +39,8 @@ func main() {
 	appiumHealthTimeout := flag.Duration("appium-health-timeout", envDuration("DEVICE_FARM_APPIUM_HEALTH_TIMEOUT", 5*time.Second), "Appium status request timeout")
 	dockerDataMountPath := flag.String("docker-data-mount-path", envOr("DEVICE_FARM_DOCKER_DATA_MOUNT_PATH", "/home/androidusr"), "container path backed by the per-device data volume")
 	dockerEmulatorDevice := flag.String("docker-emulator-device", envOr("DEVICE_FARM_DOCKER_EMULATOR_DEVICE", "Samsung Galaxy S10"), "docker-android emulator device profile")
-	dockerCPUs := flag.Float64("docker-cpus", envFloat("DEVICE_FARM_DOCKER_CPUS", 2), "CPU limit per emulator")
-	dockerMemory := flag.String("docker-memory", envOr("DEVICE_FARM_DOCKER_MEMORY", "4g"), "memory limit per emulator")
+	dockerCPUs := flag.Float64("docker-cpus", envFloat("DEVICE_FARM_DOCKER_CPUS", 4), "CPU limit per emulator")
+	dockerMemory := flag.String("docker-memory", envOr("DEVICE_FARM_DOCKER_MEMORY", "5g"), "memory limit per emulator")
 	dockerPidsLimit := flag.Int("docker-pids-limit", envInt("DEVICE_FARM_DOCKER_PIDS_LIMIT", 512), "PID limit per emulator")
 	flag.Parse()
 
@@ -138,7 +138,12 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 }
 
 func dockerEnvironment(emulatorDevice string) map[string]string {
-	values := map[string]string{"WEB_VNC": "false", "APPIUM": "true"}
+	values := map[string]string{
+		"WEB_VNC":                 "false",
+		"WEB_LOG":                 "false",
+		"APPIUM":                  "true",
+		"USER_BEHAVIOR_ANALYTICS": "false",
+	}
 	if emulatorDevice = strings.TrimSpace(emulatorDevice); emulatorDevice != "" {
 		values["EMULATOR_DEVICE"] = emulatorDevice
 	}

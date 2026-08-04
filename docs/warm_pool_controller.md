@@ -40,7 +40,7 @@ sequenceDiagram
     Agent->>Docker: 检查 ADB、boot、Appium，随后清理临时资源
     Agent->>DB: 回传成功或失败
     Controller->>DB: Image 进入 ready 或 failed
-    Admin->>Server: 设置 min_ready=2/max_instances=2
+    Admin->>Server: 设置 min_ready=1/max_instances=1
     Server->>DB: Upsert device_pool_images
     Controller->>DB: 锁配置行并计算缺口
     Controller->>DB: 原子写 Device、Pool membership、create Host Command
@@ -99,7 +99,7 @@ missing = min(min_ready - ready_or_creating,
               max_instances - active_instances)
 ```
 
-`reserved/busy/recycling/stopped` 仍占 `max_instances`，所以默认最多两台时，即使两台都在使用也不会创建第三台。隔离或删除一台会产生缺口并触发补回。两个 Server 同时运行时，PostgreSQL 行锁保证不会超建。
+`reserved/busy/recycling/stopped` 仍占 `max_instances`，所以当前最多一台时，设备正在使用也不会创建第二台。隔离或删除后会产生缺口并触发补回。两个 Server 同时运行时，PostgreSQL 行锁保证不会超建。
 
 `recycling` 不是可调度终态。Controller 以最后一次 released/expired/force_released Reservation ID 生成唯一重建命令，Server 重启或多实例重复扫描不会重复创建。Agent 执行 rebuild 时先幂等删除旧容器、专属网络和数据卷，再重新创建并等待完整健康；因此 App、缓存和外部存储测试文件不会跨 Reservation 复用。
 
@@ -128,8 +128,8 @@ warm_pool:
 
 Host Agent 的 `DEVICE_FARM_DOCKER_IMAGE` 必须是固定 tag 或 digest，禁止 `latest`。Image validation 会把该本机镜像的真实 ID/RepoDigest 与 `device_images.docker_digest` 对比；每条正式 create 命令执行前还会再次核对 digest，避免 Agent 配置在验证后被替换而启动错误镜像。
 
-需要从两台增加到更多 Emulator 时，不改代码，只同步调整三处容量：Host 的 `capacity.device_slots`、Pool 的 `max_concurrency`、Pool Image 的 `min_ready/max_instances`。Controller 只创建新增缺口。例如从 `2/2` 调到 `4/4` 时补两台；调低目标不会直接删除现有或正在使用的设备，缩容需先 drain，再走受控删除。
+需要从一台增加到更多 Emulator 时，不改代码，只同步调整三处容量：Host 的 `capacity.device_slots`、Pool 的 `max_concurrency`、Pool Image 的 `min_ready/max_instances`。Controller 只创建新增缺口。例如从 `1/1` 调到 `2/2` 时补一台；调低目标不会直接删除现有或正在使用的设备，缩容需先 drain，再走受控删除。
 
 ## 当前验收状态
 
-PostgreSQL、并发锁、接口、状态门禁、容量限制、失败隔离和退避已在 Windows 本地自动化测试通过。真实 Docker/KVM、两台 Emulator 自动补齐、删除/隔离后补回以及 Appium 就绪仍必须在 Linux KVM 服务器执行，Mock 结果不能替代该验收。
+PostgreSQL、并发锁、接口、状态门禁、容量限制、失败隔离和退避已在 Windows 本地自动化测试通过。真实 Docker/KVM、当前一台 Emulator 自动补齐、删除/隔离后补回以及 Appium 就绪仍必须在 Linux KVM 服务器执行，Mock 结果不能替代该验收。

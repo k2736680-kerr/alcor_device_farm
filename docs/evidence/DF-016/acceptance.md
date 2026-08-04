@@ -2,7 +2,9 @@
 
 ## 当前结论
 
-镜像 digest 验证、`validate_image` Host Command、固定目标 Controller、池镜像参数接口、并发锁、容量限制、失败隔离和退避已实现。最新版源码已在 Ubuntu 22.04 x86_64 Linux KVM 服务器完成 Go、PostgreSQL 和 migration 回归；服务器尚未部署固定 digest 的 Android 16 Emulator 镜像，因此“两台 Emulator 自动创建并 ready、Appium 并发、删除或隔离后真实补回”仍未执行。DF-016 当前状态保持 `blocked`，不能标记 `completed`。
+镜像 digest 验证、`validate_image` Host Command、固定目标 Controller、池镜像参数接口、并发锁、容量限制、失败隔离和退避已实现。Android 16/API 36 `r3` 镜像已经在 Ubuntu 22.04 x86_64 Linux KVM 服务器完成 Docker 生命周期、Appium 和 UiAutomator2 真实验收；Go、PostgreSQL 和 migration 回归也全部通过。
+
+DF-016 当前状态转为 `in_progress`，尚不能标记 `completed`。剩余工作是实际启动 Device Farm Server、Host Agent 和数据库链路，使用 `min_ready=1/max_instances=1/max_concurrency=1` 验证 Controller 自动登记、创建、入池、补回和第二个预约不突破容量。
 
 ## 已完成交付
 
@@ -14,7 +16,7 @@
 - 新增 Pool Image GET/PUT/DELETE 接口，设置 `min_ready/max_instances/enabled` 后由后台异步消费；
 - Controller 原子登记 provisioning Device、Pool membership 和 create Host Command，Server 不访问 Docker；
 - 两个 Controller 并发运行通过 PostgreSQL 行锁不超建；
-- 默认 `2/2` 时 reserved/busy 设备仍占上限，不因任务压力创建第三台；
+- 当前 `1/1` 时 reserved/busy 设备仍占上限，不因任务压力创建第二台；
 - 运行中把 Pool 并发、Host 槽位和 Image 目标从 `2` 调到 `N` 时只补创建缺少的 Emulator，不需要修改代码或数据库结构；
 - 降低目标或禁用配置不自动删除设备；
 - create 最终失败后隔离设备、写健康事件并指数退避；
@@ -74,15 +76,15 @@ PASS migration 再次 up，public table count = 12
 
 1. 固定 `DEVICE_FARM_DOCKER_IMAGE`，登记其真实 `sha256` digest；
 2. 发起 Image validation，确认 Agent 创建临时 Emulator，ADB、boot 和 Appium 全部成功后 Image 进入 `ready`，且临时容器、网络和卷已清理；
-3. 创建 `max_concurrency=2` 的 Pool，并设置 `min_ready=2/max_instances=2/enabled=true`；
-4. 不手工创建设备，等待 Controller 自动创建、加入池并令两台设备进入 `ready/healthy`；
-5. 同时创建两个 Appium Session，确认 Endpoint 和 UDID 不串设备；
-6. 创建第三个并发预约，确认保持 pending/capacity unavailable，且不会创建第三台；
-7. 隔离或受控删除一台，确认 Controller 自动补回一台；
+3. 创建 `max_concurrency=1` 的 Pool，并设置 `min_ready=1/max_instances=1/enabled=true`；
+4. 不手工创建设备，等待 Controller 自动创建、加入池并令设备进入 `ready/healthy`；
+5. 创建 Appium Session，确认 Endpoint 和 UDID 正确；
+6. 创建第二个并发预约，确认保持 pending/capacity unavailable，且不会创建第二台；
+7. 隔离或受控删除设备，确认 Controller 自动补回一台；
 8. 注入错误 digest、KVM、ADB、Appium 故障，确认 Image/Device 状态、错误码、隔离和退避符合设计且无命令风暴；
-9. 将目标降低为 `1/1`，确认不会自动删除正在使用的设备；
+9. 资源允许时把目标从 `1/1` 提高到 `2/2`，确认只补一台；再降低到 `1/1`，确认不会自动删除正在使用的设备；
 10. 保存脱敏日志、数据库查询和容器清单作为最终证据。
 
 ## 阻塞解除条件
 
-上述 Linux KVM 真实验收全部通过后，将 DF-016 改为 `completed` 并单独提交真实验收证据。任何 Mock 或仅 PostgreSQL 的结果都不能替代该步骤。
+上述单机 Linux KVM 自动补池验收全部通过后，将 DF-016 改为 `completed` 并单独提交真实验收证据。任何 Mock、仅 PostgreSQL 或仅 Provider/Appium 的结果都不能替代该步骤。

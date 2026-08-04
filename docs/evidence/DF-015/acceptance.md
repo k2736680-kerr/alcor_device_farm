@@ -2,7 +2,11 @@
 
 ## 当前结论
 
-Appium Endpoint 分配、健康 Adapter、Host Agent 配置、单元测试和 Linux KVM 双设备真实验收入口已经完成。本机没有 Docker、可用 WSL 和 Linux `/dev/kvm`，不能真实启动两台 Emulator 或创建 UiAutomator2 Session，因此 DF-015 当前状态为 `blocked`，不能标记 `completed`。
+DF-015 已按 ADR-0008 的单台测试环境范围完成真实验收。Android 16/API 36 Emulator 的 Appium `/status` 健康检查通过，UiAutomator2 8.2.2 Session 创建成功，测试结束后 Session、容器、网络和卷全部清理。
+
+最终镜像为 `alcor-device-farm/android-emulator:16.0-api36-r3`，本机镜像 ID 为 `sha256:8afadfa4c342194c360edaf8302fb082ca29896002fcd9a1c44e494fd550c400`。真实 Appium 验收耗时 149.01 秒；容器使用 4 核、5 GiB 上限，实际资源按需使用。
+
+Android 16 使用 `skipDeviceInitialization`、`ignoreHiddenApiPolicyError` 和已校验 UiAutomator2 Server 预装链路，规避 API 36 的 Appium Settings/hidden-api 辅助故障；真实 UiAutomator2 instrumentation 和 Session 没有跳过。
 
 ## 已完成交付
 
@@ -43,7 +47,7 @@ PASS cmd/device-host-agent
 set DEVICE_FARM_APPIUM_INTEGRATION=1 on a Linux KVM host
 ```
 
-该 SKIP 只表示代码可编译和本地契约通过，不能替代两台真实 Emulator 的 Appium 验收。
+该 SKIP 只表示代码可编译和本地契约通过，不能替代 ADR-0008 规定的真实 Emulator Appium 验收；该验收现已在 Linux KVM 服务器通过。
 
 ## Linux KVM 服务器验收
 
@@ -57,18 +61,24 @@ export DEVICE_FARM_DOCKER_BIND_ADDRESS='<设备内网 IP 或按网络策略使�
 
 必须真实满足：
 
-1. 两台 Emulator 的 ADB 和 Appium Host 端口均互不冲突；
-2. 两个 Appium `/status` 均返回 `value.ready=true`；
-3. 两个 UiAutomator2 Session 可以同时建立；
-4. 每个 Session 只控制所属容器设备，错误 UDID 不会连到另一台；
+1. 当前 Emulator 返回明确且独立的 ADB、Appium Endpoint；
+2. Appium `/status` 返回 `value.ready=true`；
+3. UiAutomator2 Session 可以建立并删除；
+4. Android 版本为 16、API Level 为 36；
 5. 任一 Appium 不健康时对应 Device 不进入 ready；
 6. Session 和测试设备删除后无容器、网络、数据卷或端口残留。
 
-## 阻塞解除条件
+## 最终 Linux KVM 证据
 
-在真实 Linux KVM 服务器执行 `scripts/verify-appium-endpoints.sh` 全部通过并保存脱敏输出后：
+```text
+PASS Android 16 / API 36
+PASS Appium 3.5.2 / UiAutomator2 8.2.2
+PASS TestDockerProviderLinuxKVMAppiumIntegration (149.01s)
+PASS Appium /status healthy
+PASS UiAutomator2 Session 创建和删除
+PASS managed container/network/volume = 0
+PASS /dev/kvm = root:kvm 660（前后未改变）
+PASS 现有业务容器持续运行
+```
 
-- 将 DF-015 从 `blocked` 改为 `completed`；
-- 记录固定 Emulator 镜像 digest、Appium 和 UiAutomator2 版本；
-- 确认两套 Endpoint 从 DaFit/Worker 所在网络可达，但不对公网开放；
-- 单独提交真实验收结果。
+DF-015 状态改为 `completed`。多设备并发 Session 和错误 UDID 隔离保留 P2 扩展验收，不阻塞当前单机交付。

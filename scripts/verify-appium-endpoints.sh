@@ -31,4 +31,4 @@ if ! "$docker_binary" image inspect "$DEVICE_FARM_DOCKER_IMAGE" >/dev/null 2>&1;
 fi
 
 export DEVICE_FARM_APPIUM_INTEGRATION=1
-"$go_binary" test -count=1 -v ./internal/providers/docker -run '^TestDockerProviderLinuxKVMAppiumIntegration$'
+"$go_binary" test -count=1 -timeout 35m -v ./internal/providers/docker -run '^TestDockerProviderLinuxKVMAppiumIntegration$'

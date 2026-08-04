@@ -133,7 +133,7 @@ Reconciler 通过 STF inventory 按 Device `serial` 做精确可见性匹配：
 - 连续失败按既有 Reconciler 阈值进入隔离；
 - STF inventory 不写 Device lifecycle、Reservation status 或 Session status。
 
-首期固定两台模拟器时，每个 Reconcile 周期最多产生少量 inventory 请求。后续设备数量明显增加时，可以在 Adapter 内增加单周期缓存，但不得改变上层接口或真相源。
+当前单台模拟器每个 Reconcile 周期只产生少量 inventory 请求。后续设备数量明显增加时，可以在 Adapter 内增加单周期缓存，但不得改变上层接口或真相源。
 
 ## 7. 失败分类与避免事项
 
@@ -150,4 +150,4 @@ Reconciler 通过 STF inventory 按 Device `serial` 做精确可见性匹配：
 
 Windows/PostgreSQL 本地自动测试覆盖 claim 顺序、成功激活、可重试/不可重试失败补偿、并发上限、release 失败保留 active、审计、owner 越权、remoteConnect 幂等和过期 remoteDisconnect。
 
-最终通过仍需 Linux 环境中的 STF 3.7.9、两台真实 Docker Emulator 和真实网络故障验收，详见 `docs/evidence/DF-018/acceptance.md`。
+最终通过仍需 Linux 环境中的 STF 3.7.9、一台真实 Android 16 Docker Emulator 和真实网络故障验收；多设备隔离为扩展验收，详见 `docs/evidence/DF-018/acceptance.md`。
