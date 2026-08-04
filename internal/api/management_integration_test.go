@@ -95,6 +95,17 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	if _, err := environment.db.Pool().Exec(context.Background(), "UPDATE device_images SET status='ready' WHERE id=$1", image.ID); err != nil {
 		t.Fatal(err)
 	}
+	runtimeUpdate := validImageInput()
+	runtimeUpdate["name"] = "android-14-updated"
+	runtimeUpdate["docker_image"] = "registry.example/alcor/android-emulator:api34-r2"
+	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-images/"+image.ID, runtimeUpdate, serviceToken, ""), http.StatusOK)
+	if storedImage, err := environment.store.GetImage(context.Background(), image.ID); err != nil || storedImage.Status != "draft" ||
+		storedImage.ValidationError == nil || *storedImage.ValidationError != "IMAGE_REVALIDATION_REQUIRED" {
+		t.Fatalf("changed runtime image was not invalidated: %#v error=%v", storedImage, err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(), "UPDATE device_images SET status='ready',validation_error=NULL WHERE id=$1", image.ID); err != nil {
+		t.Fatal(err)
+	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-hosts/"+host.ID+"/drains", reasonBody(), serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/device-hosts/"+host.ID+"/drains", reasonBody(), serviceToken, ""), http.StatusOK)
 
@@ -140,6 +151,15 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01"), http.StatusAccepted)
 	assertCommandCount(t, environment.db, device.ID, "rebuild", 1)
+	var rebuildImage, rebuildDigest string
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT payload->>'docker_image',payload->>'docker_digest'
+		FROM device_host_commands WHERE command_type='rebuild' AND payload->>'device_id'=$1`, device.ID).
+		Scan(&rebuildImage, &rebuildDigest); err != nil {
+		t.Fatal(err)
+	}
+	if rebuildImage != "registry.example/alcor/android-emulator:api34-r2" || rebuildDigest != "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatalf("rebuild image=%q digest=%q", rebuildImage, rebuildDigest)
+	}
 	completeNextManagementCommand(t, environment, host.ID, "rebuild", true)
 
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-failure"), http.StatusAccepted)
@@ -404,7 +424,7 @@ func decodeData(t *testing.T, response responseEnvelope, target any) {
 	}
 }
 func validImageInput() map[string]any {
-	return map[string]any{"name": "android-14", "docker_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "api_level": 34, "abi": "x86_64", "resolution": "1080x2400", "resource_config": map[string]any{"cpu": 2, "memory_mb": 4096}}
+	return map[string]any{"name": "android-14", "docker_image": "registry.example/alcor/android-emulator:api34", "docker_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "api_level": 34, "abi": "x86_64", "resolution": "1080x2400", "resource_config": map[string]any{"cpu": 2, "memory_mb": 4096}}
 }
 func validHostInput() map[string]any {
 	return map[string]any{"name": "mock-host", "host_type": "docker_emulator", "address": "10.0.0.1", "capabilities": map[string]any{"kvm": true}, "capacity": map[string]any{"cpu": 8, "memory_mb": 16384, "device_slots": 4}}

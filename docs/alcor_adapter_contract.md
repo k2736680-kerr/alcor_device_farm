@@ -4,7 +4,7 @@
 
 本契约包用于新版 Alcor Worker 在正式接口完成前独立开发和联调 Device Farm Adapter。它只处理 RunAttempt 与设备预约的映射，不创建或保存 Alcor 的 Case、Run、RunAttempt、结果、评分、报告和 Artifact，也不访问 Alcor 数据库。
 
-权威接口为 `openapi/device-farm-v1.yaml`，冻结版本为 `1.0.0`。示例客户端位于 `adapters/alcor`，独立 Mock Server 位于 `adapters/alcor/mockserver` 和 `cmd/device-farm-adapter-mock`。
+权威接口为 `openapi/device-farm-v1.yaml`，冻结版本为 `1.1.0`。示例客户端位于 `adapters/alcor`，独立 Mock Server 位于 `adapters/alcor/mockserver` 和 `cmd/device-farm-adapter-mock`。
 
 ## 2. Worker 调用规则
 

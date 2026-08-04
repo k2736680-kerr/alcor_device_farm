@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.0.0
+  version: 1.1.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-03
   x-platform-semantics: Case/Run/RunAttempt
@@ -434,7 +434,7 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceImageInput"}
-          example: {name: android-14-x86_64, docker_digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", api_level: 34, abi: x86_64, resolution: 1080x2400, resource_config: {cpu: 2, memory_mb: 4096}}
+          example: {name: android-16-x86_64, docker_image: "registry.example/alcor/android-emulator:api36-2026.08", docker_digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", api_level: 36, abi: x86_64, resolution: 1080x2400, resource_config: {cpu: 2, memory_mb: 4096}}
     DeviceHostInput:
       required: true
       content:
@@ -598,6 +598,12 @@ components:
       required: [name, docker_digest, api_level, abi, resolution, resource_config]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
+        docker_image:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: "^[A-Za-z0-9._:/@-]+$"
+          description: Required before validation; use an explicit version tag or immutable digest reference.
         docker_digest: {type: string, pattern: "^sha256:[a-fA-F0-9]{64}$"}
         api_level: {type: integer, minimum: 21}
         abi: {type: string, enum: [x86_64, arm64-v8a]}

@@ -192,11 +192,11 @@
 
 ### DF-016 镜像验证和固定目标自动补齐
 
-实施：实现 digest 验证和镜像 validation；建立 `max_concurrency=2` 的默认逻辑设备池；使用 PostgreSQL 行锁按 `min_ready/max_instances` 计算缺口，原子登记 provisioning Device、Pool membership 和 Host Command，由 Agent/Docker 自动创建并在 Appium 健康后转为 ready。失败必须退避且可补偿，不实现负载预测或自动删除缩容。
+实施：实现每个 Image 的 `docker_image + docker_digest` 选择、digest 验证和镜像 validation；validation、create、管理员 rebuild 和释放后 rebuild 必须下发同一 Image 引用。建立 `max_concurrency=2` 的默认逻辑设备池；使用 PostgreSQL 行锁按 `min_ready/max_instances` 计算缺口，原子登记 provisioning Device、Pool membership 和 Host Command，由 Agent/Docker 自动创建并在 Appium 健康后转为 ready。失败必须退避且可补偿，不实现负载预测或自动删除缩容。
 
 产出：镜像验证任务、固定目标 Controller、Host Command 编排、默认池配置和两设备容量检查。
 
-验收：未验证镜像不能启动设备；配置 `min_ready=2/max_instances=2` 后自动创建并加入两台 Emulator；删除或隔离一台后自动补回；两个 Controller 并发运行不超建；Docker/KVM/Appium 持续失败时有退避且不形成命令风暴；第三个并发预约保持 pending/capacity unavailable；降低目标不会自动删除在用设备；真机不被自动创建。
+验收：未验证或缺少运行引用的镜像不能启动设备；两个不同 Image 产生不同 `docker_image` Host Command，Agent 校验摘要后按所选镜像创建，rebuild 保持原 Image；配置 `min_ready=2/max_instances=2` 后自动创建并加入两台 Emulator；删除或隔离一台后自动补回；两个 Controller 并发运行不超建；Docker/KVM/Appium 持续失败时有退避且不形成命令风暴；第三个并发预约保持 pending/capacity unavailable；降低目标不会自动删除在用设备；真机不被自动创建。
 
 ## 7. 阶段 E：STF 和真实执行
 

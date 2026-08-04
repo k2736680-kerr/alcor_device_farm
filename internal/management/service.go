@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"time"
 	"unicode"
@@ -43,8 +44,12 @@ func (service *Service) CreateImage(ctx context.Context, clientID, key string, i
 	if input.Enabled != nil && !*input.Enabled {
 		status = domain.ImageDisabled
 	}
-	image := Image{ID: id, Name: input.Name, DockerDigest: input.DockerDigest, APILevel: input.APILevel,
+	image := Image{ID: id, Name: input.Name, DockerImage: strings.TrimSpace(input.DockerImage), DockerDigest: input.DockerDigest, APILevel: input.APILevel,
 		ABI: input.ABI, Resolution: input.Resolution, ResourceConfig: cloneMap(input.ResourceConfig), Status: status}
+	if image.DockerImage == "" {
+		reason := "IMAGE_REFERENCE_REQUIRED"
+		image.ValidationError = &reason
+	}
 	meta, err := idempotency(clientID, "create_device_image", key, "device_image", id, input, 201)
 	if err != nil {
 		return Image{}, err
@@ -68,6 +73,16 @@ func (service *Service) UpdateImage(ctx context.Context, id string, input ImageI
 		return Image{}, err
 	}
 	from, target := current.Status, current.Status
+	dockerImage := strings.TrimSpace(input.DockerImage)
+	if dockerImage == "" {
+		dockerImage = current.DockerImage
+	}
+	definitionChanged := dockerImage != current.DockerImage || input.DockerDigest != current.DockerDigest ||
+		input.APILevel != current.APILevel || input.ABI != current.ABI || input.Resolution != current.Resolution ||
+		!reflect.DeepEqual(input.ResourceConfig, current.ResourceConfig)
+	if definitionChanged && current.Status != domain.ImageDraft && current.Status != domain.ImageDisabled {
+		target = domain.ImageDraft
+	}
 	if input.Enabled != nil {
 		if !*input.Enabled && current.Status != domain.ImageDisabled {
 			target = domain.ImageDisabled
@@ -84,8 +99,17 @@ func (service *Service) UpdateImage(ctx context.Context, id string, input ImageI
 			return Image{}, err
 		}
 	}
-	current.Name, current.DockerDigest, current.APILevel = input.Name, input.DockerDigest, input.APILevel
+	current.Name, current.DockerImage, current.DockerDigest, current.APILevel = input.Name, dockerImage, input.DockerDigest, input.APILevel
 	current.ABI, current.Resolution, current.ResourceConfig, current.Status = input.ABI, input.Resolution, cloneMap(input.ResourceConfig), target
+	if current.DockerImage == "" {
+		reason := "IMAGE_REFERENCE_REQUIRED"
+		current.ValidationError = &reason
+	} else if definitionChanged {
+		reason := "IMAGE_REVALIDATION_REQUIRED"
+		current.ValidationError = &reason
+	} else if current.ValidationError != nil && *current.ValidationError == "IMAGE_REFERENCE_REQUIRED" {
+		current.ValidationError = nil
+	}
 	return service.store.UpdateImage(ctx, current, from)
 }
 
@@ -93,6 +117,9 @@ func (service *Service) StartImageValidation(ctx context.Context, id string) (Im
 	current, err := service.store.GetImage(ctx, id)
 	if err != nil {
 		return Image{}, err
+	}
+	if !providers.ValidRuntimeImageReference(current.DockerImage) {
+		return Image{}, ErrImageUnavailable
 	}
 	aggregate, err := domain.RestoreImage(current.ID, current.Status)
 	if err != nil {
@@ -300,7 +327,7 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 	}
 	snapshot, err := service.provider.Create(ctx, providers.CreateRequest{
 		DeviceID: input.ID, HostID: input.HostID, ImageID: input.ImageID,
-		ProviderRef: input.ProviderRef, Capabilities: cloneMap(input.Capabilities),
+		RuntimeImage: image.DockerImage, ProviderRef: input.ProviderRef, Capabilities: cloneMap(input.Capabilities),
 	})
 	if err != nil {
 		return Device{}, err
@@ -454,7 +481,16 @@ func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempoten
 		"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
 		"capabilities": cloneMap(current.Capabilities)}
 	if current.ImageID != nil {
+		image, imageErr := service.store.GetImage(ctx, *current.ImageID)
+		if imageErr != nil {
+			return Device{}, imageErr
+		}
+		if !providers.ValidRuntimeImageReference(image.DockerImage) {
+			return Device{}, ErrImageUnavailable
+		}
 		payload["image_id"] = *current.ImageID
+		payload["docker_image"] = image.DockerImage
+		payload["docker_digest"] = image.DockerDigest
 	}
 	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
 		CommandID: commandID, CommandType: "rebuild",
@@ -531,7 +567,8 @@ func validReason(reason string) bool {
 func validateImageInput(input ImageInput) error {
 	if strings.TrimSpace(input.Name) == "" || !strings.HasPrefix(input.DockerDigest, "sha256:") ||
 		input.APILevel < 21 || strings.TrimSpace(input.ABI) == "" || strings.TrimSpace(input.Resolution) == "" ||
-		sensitive.ContainsMap(input.ResourceConfig) {
+		sensitive.ContainsMap(input.ResourceConfig) ||
+		(strings.TrimSpace(input.DockerImage) != "" && !providers.ValidRuntimeImageReference(input.DockerImage)) {
 		return ErrInvalidArgument
 	}
 	return nil

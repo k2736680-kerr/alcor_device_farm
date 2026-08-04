@@ -14,9 +14,9 @@ const (
 
 var imageTransitions = map[ImageStatus]map[ImageStatus]struct{}{
 	ImageDraft:      allowed(ImageValidating, ImageDisabled),
-	ImageValidating: allowed(ImageReady, ImageFailed, ImageDisabled),
-	ImageReady:      allowed(ImageValidating, ImageDisabled),
-	ImageFailed:     allowed(ImageValidating, ImageDisabled),
+	ImageValidating: allowed(ImageDraft, ImageReady, ImageFailed, ImageDisabled),
+	ImageReady:      allowed(ImageDraft, ImageValidating, ImageDisabled),
+	ImageFailed:     allowed(ImageDraft, ImageValidating, ImageDisabled),
 	ImageDisabled:   allowed(ImageDraft),
 }
 

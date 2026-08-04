@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type Operation string
@@ -33,6 +34,7 @@ type CreateRequest struct {
 	DeviceID     string
 	HostID       string
 	ImageID      string
+	RuntimeImage string
 	ProviderRef  string
 	Serial       string
 	Capabilities map[string]any
@@ -87,7 +89,38 @@ type Provider interface {
 // ImageDigestVerifier is deliberately separate from Provider so USB and other
 // physical-device providers do not need to implement Docker image behavior.
 type ImageDigestVerifier interface {
-	VerifyImageDigest(context.Context, string) error
+	VerifyImageDigest(context.Context, string, string) error
+}
+
+// ValidRuntimeImageReference accepts immutable digest references or explicit
+// non-latest tags. Digest verification remains a separate mandatory step for
+// Docker commands issued by the production Host Agent.
+func ValidRuntimeImageReference(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.Contains(value, "://") {
+		return false
+	}
+	if separator := strings.LastIndex(value, "@sha256:"); separator >= 0 {
+		if separator == 0 || strings.Count(value, "@") != 1 || len(value[separator+len("@sha256:"):]) != 64 {
+			return false
+		}
+		for _, character := range value[separator+len("@sha256:"):] {
+			if !strings.ContainsRune("0123456789abcdef", character) {
+				return false
+			}
+		}
+		return true
+	}
+	if strings.Contains(value, "@") {
+		return false
+	}
+	lastSlash := strings.LastIndex(value, "/")
+	lastColon := strings.LastIndex(value, ":")
+	if lastColon <= lastSlash {
+		return false
+	}
+	tag := strings.TrimSpace(value[lastColon+1:])
+	return tag != "" && !strings.EqualFold(tag, "latest")
 }
 
 type Error struct {

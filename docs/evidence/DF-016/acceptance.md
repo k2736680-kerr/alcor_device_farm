@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-镜像 digest 验证、`validate_image` Host Command、固定目标 Controller、池镜像参数接口、并发锁、容量限制、失败隔离和退避已实现。本机没有 Docker、Linux KVM 和真实 Emulator，因此“两台 Emulator 自动创建并 ready、删除或隔离后真实补回”尚未执行，DF-016 当前状态为 `blocked`，不能标记 `completed`。
+镜像 digest 验证、`validate_image` Host Command、固定目标 Controller、池镜像参数接口、并发锁、容量限制、失败隔离和退避已实现。最新版源码已在 Ubuntu 22.04 x86_64 Linux KVM 服务器完成 Go、PostgreSQL 和 migration 回归；服务器尚未部署固定 digest 的 Android 16 Emulator 镜像，因此“两台 Emulator 自动创建并 ready、Appium 并发、删除或隔离后真实补回”仍未执行。DF-016 当前状态保持 `blocked`，不能标记 `completed`。
 
 ## 已完成交付
 
@@ -45,6 +45,30 @@ PASS TestManagementAPIRejectsInvalidParameters
 PASS migration up/down/up
 PASS repository/scheduler/reaper/reconcile/hostcommand/api suites
 ```
+
+## Linux 服务器源码与数据库回归
+
+2026-08-04 将当前工作区源码上传至 Linux 服务器，在 Go 进程与 PostgreSQL 同机的条件下执行：
+
+```text
+PASS gofmt -l .（无输出）
+PASS go test ./...
+PASS go vet ./...
+PASS ./internal/repository
+PASS ./internal/scheduler
+PASS ./internal/reaper
+PASS ./internal/reconcile
+PASS ./internal/hostcommand
+PASS ./internal/metrics
+PASS ./internal/api
+PASS ./internal/warmpool
+PASS migration 000001~000004 up
+PASS migrations/test/constraints.sql
+PASS migration down，public table count = 0
+PASS migration 再次 up，public table count = 12
+```
+
+本轮验证覆盖两个 Image 产生不同 `docker_image` Host Command、Agent 传递所选运行镜像、运行引用与 digest 不匹配时拒绝执行、rebuild 保持原 Image、`latest` 引用被拒绝，以及修改已验证 Image 后强制重新验证。测试使用独立临时数据库，结束后已自动删除；未操作服务器已有业务数据库和业务容器。
 
 ## Linux KVM 服务器必须补做
 

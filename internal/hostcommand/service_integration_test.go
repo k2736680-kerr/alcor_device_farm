@@ -318,8 +318,8 @@ func seedHost(t *testing.T, db *database.DB) {
 		t.Fatal(err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images
-        (id,name,docker_digest,api_level,abi,resolution,status)
-        VALUES ('image_00000000000001','command-image','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x1920','ready')`); err != nil {
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,status)
+		VALUES ('image_00000000000001','command-image','registry.example/alcor/android-emulator:api34','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x1920','ready')`); err != nil {
 		t.Fatal(err)
 	}
 }

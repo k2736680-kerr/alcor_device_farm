@@ -104,17 +104,21 @@ func (provider *Provider) Discover(ctx context.Context, hostID string) ([]provid
 	return result, nil
 }
 
-func (provider *Provider) VerifyImageDigest(ctx context.Context, expected string) error {
+func (provider *Provider) VerifyImageDigest(ctx context.Context, runtimeImage, expected string) error {
+	runtimeImage = strings.TrimSpace(runtimeImage)
+	if !providers.ValidRuntimeImageReference(runtimeImage) {
+		return providerError(providers.OperationValidateImage, "INVALID_IMAGE_REFERENCE", "runtime image must use a fixed tag or digest", false, nil)
+	}
 	expected = strings.ToLower(strings.TrimSpace(expected))
 	if !validSHA256Digest(expected) {
 		return providerError(providers.OperationValidateImage, "INVALID_IMAGE_DIGEST", "expected image digest must be sha256", false, nil)
 	}
-	metadata, err := provider.backend.InspectImage(ctx, provider.config.Image)
+	metadata, err := provider.backend.InspectImage(ctx, runtimeImage)
 	if errors.Is(err, errNotFound) {
-		return providerError(providers.OperationValidateImage, "IMAGE_NOT_FOUND", "configured emulator image is not present on the host", false, err)
+		return providerError(providers.OperationValidateImage, "IMAGE_NOT_FOUND", "selected emulator image is not present on the host", false, err)
 	}
 	if err != nil {
-		return providerError(providers.OperationValidateImage, "IMAGE_INSPECT_FAILED", "cannot inspect configured emulator image", true, err)
+		return providerError(providers.OperationValidateImage, "IMAGE_INSPECT_FAILED", "cannot inspect selected emulator image", true, err)
 	}
 	if strings.ToLower(metadata.ID) == expected {
 		return nil
@@ -124,7 +128,7 @@ func (provider *Provider) VerifyImageDigest(ctx context.Context, expected string
 			return nil
 		}
 	}
-	return providerError(providers.OperationValidateImage, "IMAGE_DIGEST_MISMATCH", "configured emulator image does not match the registered digest", false, nil)
+	return providerError(providers.OperationValidateImage, "IMAGE_DIGEST_MISMATCH", "selected emulator image does not match the registered digest", false, nil)
 }
 
 func (provider *Provider) Create(ctx context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
@@ -132,6 +136,11 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 }
 
 func (provider *Provider) create(ctx context.Context, request providers.CreateRequest, generation int) (providers.Snapshot, error) {
+	runtimeImage := strings.TrimSpace(request.RuntimeImage)
+	if runtimeImage == "" {
+		runtimeImage = strings.TrimSpace(provider.config.Image)
+	}
+	request.RuntimeImage = runtimeImage
 	if err := validateCreateRequest(request); err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", err.Error(), false, nil)
 	}
@@ -140,7 +149,7 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 	if err == nil {
 		if existing.Labels[labelProviderRef] != request.ProviderRef || existing.Labels[labelDeviceID] != request.DeviceID ||
 			existing.Labels[labelHostID] != request.HostID || existing.Labels[labelImageID] != request.ImageID ||
-			existing.Labels[labelRuntimeImage] != provider.config.Image {
+			existing.Labels[labelRuntimeImage] != runtimeImage {
 			return providers.Snapshot{}, providerError(providers.OperationCreate, "PROVIDER_REF_CONFLICT", "container name belongs to another device", false, nil)
 		}
 		return provider.snapshot(existing)
@@ -158,7 +167,7 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 	}
 	labels := map[string]string{
 		labelManaged: "true", labelProviderRef: request.ProviderRef, labelHostID: request.HostID,
-		labelDeviceID: request.DeviceID, labelImageID: request.ImageID, labelRuntimeImage: provider.config.Image,
+		labelDeviceID: request.DeviceID, labelImageID: request.ImageID, labelRuntimeImage: runtimeImage,
 		labelGeneration: strconv.Itoa(generation), labelCapabilities: string(capabilities),
 	}
 	resourceLabels := map[string]string{labelManaged: "true", labelProviderRef: request.ProviderRef, labelHostID: request.HostID}
@@ -170,7 +179,7 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
 	}
 	err = provider.backend.CreateContainer(ctx, containerSpec{
-		Name: name, Hostname: name, Image: provider.config.Image, Network: networkName, Volume: volumeName,
+		Name: name, Hostname: name, Image: runtimeImage, Network: networkName, Volume: volumeName,
 		DataMountPath: provider.config.DataMountPath, KVMDevice: provider.config.KVMDevice,
 		BindAddress: provider.config.BindAddress, ContainerADBPort: provider.config.ContainerADBPort,
 		ContainerAppiumPort: provider.config.ContainerAppiumPort,
@@ -408,7 +417,7 @@ func requestFromContainer(value container) (providers.CreateRequest, int, error)
 	}
 	request := providers.CreateRequest{
 		DeviceID: value.Labels[labelDeviceID], HostID: value.Labels[labelHostID], ImageID: value.Labels[labelImageID],
-		ProviderRef: value.Labels[labelProviderRef], Capabilities: capabilities,
+		RuntimeImage: value.Labels[labelRuntimeImage], ProviderRef: value.Labels[labelProviderRef], Capabilities: capabilities,
 	}
 	if err := validateCreateRequest(request); err != nil {
 		return providers.CreateRequest{}, 0, err
@@ -474,8 +483,8 @@ func withDefaults(config Config) Config {
 }
 
 func validateConfig(config Config) error {
-	if strings.TrimSpace(config.Image) == "" || !fixedImageReference(config.Image) {
-		return errors.New("docker emulator image must use a fixed tag or digest and cannot use latest")
+	if strings.TrimSpace(config.Image) != "" && !providers.ValidRuntimeImageReference(config.Image) {
+		return errors.New("default Docker emulator image must use a fixed tag or digest and cannot use latest")
 	}
 	if strings.TrimSpace(config.AdvertiseHost) == "" {
 		return errors.New("docker advertise host is required")
@@ -504,22 +513,11 @@ func validSHA256Digest(value string) bool {
 	return true
 }
 
-func fixedImageReference(image string) bool {
-	if strings.Contains(image, "@sha256:") {
-		return true
-	}
-	lastSlash := strings.LastIndex(image, "/")
-	lastColon := strings.LastIndex(image, ":")
-	if lastColon <= lastSlash {
-		return false
-	}
-	return !strings.EqualFold(strings.TrimSpace(image[lastColon+1:]), "latest")
-}
-
 func validateCreateRequest(request providers.CreateRequest) error {
 	if strings.TrimSpace(request.DeviceID) == "" || strings.TrimSpace(request.HostID) == "" ||
-		strings.TrimSpace(request.ImageID) == "" || strings.TrimSpace(request.ProviderRef) == "" {
-		return errors.New("device, host, image and provider ref are required")
+		strings.TrimSpace(request.ImageID) == "" || strings.TrimSpace(request.ProviderRef) == "" ||
+		!providers.ValidRuntimeImageReference(request.RuntimeImage) {
+		return errors.New("device, host, image, fixed runtime image and provider ref are required")
 	}
 	if len(request.ProviderRef) > 128 {
 		return errors.New("provider ref is too long")

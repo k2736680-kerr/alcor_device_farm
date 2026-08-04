@@ -125,7 +125,7 @@ GetConnectionInfo
 
 ### 4.4 设备与镜像
 
-镜像必须记录不可变 digest、API Level、ABI、分辨率和资源配置。未经验证或已禁用镜像不能进入设备池。
+镜像必须记录明确的 `docker_image` 运行引用、不可变 digest、API Level、ABI、分辨率和资源配置。后台选择 Image 后，validation、create 和 rebuild 必须使用该 Image 自身的运行引用；未经验证、缺少运行引用或已禁用的镜像不能进入设备池。
 
 设备生命周期：
 
@@ -306,7 +306,7 @@ Reconciler：
 
 | 表 | MVP 关键字段 |
 |---|---|
-| `device_images` | id、name、docker_digest、api_level、abi、resolution、resource_config、status |
+| `device_images` | id、name、docker_image、docker_digest、api_level、abi、resolution、resource_config、status |
 | `device_hosts` | id、name、host_type、capabilities、capacity、used_capacity、status、draining、last_heartbeat_at |
 | `device_host_commands` | id、host_id、command_type、payload、status、lease_token、lease_expires_at、attempts、idempotency_key、result |
 | `device_pools` | id、name、default_lease_seconds、max_lease_seconds、status |

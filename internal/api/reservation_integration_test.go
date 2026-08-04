@@ -348,8 +348,8 @@ func seedReservationDevice(t *testing.T, environment *managementEnvironment) {
 	statements := []string{
 		`INSERT INTO device_hosts (id,name,host_type,status,draining)
             VALUES ('host_000000000000001','reservation-api-host','docker_emulator','online',false)`,
-		`INSERT INTO device_images (id,name,docker_digest,api_level,abi,resolution,status)
-            VALUES ('image_00000000000001','reservation-api-image','sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',34,'x86_64','1080x2400','ready')`,
+		`INSERT INTO device_images (id,name,docker_image,docker_digest,api_level,abi,resolution,status)
+			VALUES ('image_00000000000001','reservation-api-image','registry.example/alcor/android-emulator:api34','sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',34,'x86_64','1080x2400','ready')`,
 		`INSERT INTO device_pools (id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status)
             VALUES ('pool_000000000000001','reservation-lifecycle-pool',600,1200,1,'active')`,
 		`INSERT INTO devices (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,

@@ -23,9 +23,9 @@ func (store *Store) CreateImage(ctx context.Context, meta management.Idempotency
 	return createIdempotent(ctx, store.db, meta,
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `INSERT INTO device_images
-                (id,name,docker_digest,api_level,abi,resolution,resource_config,status)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, image.ID, image.Name, image.DockerDigest,
-				image.APILevel, image.ABI, image.Resolution, mustJSON(image.ResourceConfig), image.Status)
+				(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status,validation_error)
+				VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10)`, image.ID, image.Name, image.DockerImage, image.DockerDigest,
+				image.APILevel, image.ABI, image.Resolution, mustJSON(image.ResourceConfig), image.Status, image.ValidationError)
 			return err
 		},
 		func(query database.Querier, id string) (management.Image, error) { return getImage(ctx, query, id) },
@@ -55,10 +55,10 @@ func (store *Store) GetImage(ctx context.Context, id string) (management.Image, 
 
 func (store *Store) UpdateImage(ctx context.Context, image management.Image, expected domain.ImageStatus) (management.Image, error) {
 	value, err := scanImage(store.db.Pool().QueryRow(ctx, `UPDATE device_images SET
-		name=$2,docker_digest=$3,api_level=$4,abi=$5,resolution=$6,resource_config=$7,status=$8,validation_error=$9,updated_at=clock_timestamp()
-		WHERE id=$1 AND status=$10
-		RETURNING id,name,docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at`,
-		image.ID, image.Name, image.DockerDigest, image.APILevel, image.ABI, image.Resolution,
+		name=$2,docker_image=NULLIF($3,''),docker_digest=$4,api_level=$5,abi=$6,resolution=$7,resource_config=$8,status=$9,validation_error=$10,updated_at=clock_timestamp()
+		WHERE id=$1 AND status=$11
+		RETURNING id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at`,
+		image.ID, image.Name, image.DockerImage, image.DockerDigest, image.APILevel, image.ABI, image.Resolution,
 		mustJSON(image.ResourceConfig), image.Status, image.ValidationError, expected))
 	return value, rowError(err)
 }
@@ -355,7 +355,7 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 	return value, normalize(err)
 }
 
-const imageSelect = `SELECT id,name,docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
+const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
 const hostSelect = `SELECT id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
 const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
@@ -381,7 +381,7 @@ type rowScanner interface{ Scan(...any) error }
 func scanImage(row rowScanner) (management.Image, error) {
 	var v management.Image
 	var raw []byte
-	err := row.Scan(&v.ID, &v.Name, &v.DockerDigest, &v.APILevel, &v.ABI, &v.Resolution, &raw, &v.Status, &v.ValidationError, &v.CreatedAt, &v.UpdatedAt)
+	err := row.Scan(&v.ID, &v.Name, &v.DockerImage, &v.DockerDigest, &v.APILevel, &v.ABI, &v.Resolution, &raw, &v.Status, &v.ValidationError, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {
 		err = json.Unmarshal(raw, &v.ResourceConfig)
 	}

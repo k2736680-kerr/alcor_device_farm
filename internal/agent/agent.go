@@ -156,19 +156,11 @@ func (agent *Agent) execute(command hostcommand.Command) {
 	case "create":
 		var snapshot providers.Snapshot
 		created := false
-		if digest := stringValue(command.Payload, "docker_digest"); digest != "" {
-			verifier, supported := agent.provider.(providers.ImageDigestVerifier)
-			if !supported {
-				err = &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_VALIDATION_UNSUPPORTED",
-					Message: "provider does not support image digest validation", Retryable: false}
-			} else {
-				err = verifier.VerifyImageDigest(ctx, digest)
-			}
-		}
+		err = agent.verifyRuntimeImage(ctx, command.Payload)
 		if err == nil {
 			snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
 				DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
-				ImageID: stringValue(command.Payload, "image_id"), ProviderRef: providerRef,
+				ImageID: stringValue(command.Payload, "image_id"), RuntimeImage: stringValue(command.Payload, "docker_image"), ProviderRef: providerRef,
 				Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
 			})
 			created = err == nil
@@ -254,6 +246,9 @@ func (agent *Agent) execute(command hostcommand.Command) {
 
 func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snapshot providers.Snapshot, returnErr error) {
 	providerRef := stringValue(payload, "provider_ref")
+	if err := agent.verifyRuntimeImage(ctx, payload); err != nil {
+		return providers.Snapshot{}, err
+	}
 	if err := agent.provider.Delete(ctx, providerRef); err != nil && providers.ErrorCode(err) != "PROVIDER_DEVICE_NOT_FOUND" {
 		return providers.Snapshot{}, err
 	}
@@ -267,7 +262,7 @@ func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snaps
 	}()
 	snapshot, returnErr = agent.provider.Create(ctx, providers.CreateRequest{
 		DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
-		ImageID: stringValue(payload, "image_id"), ProviderRef: providerRef,
+		ImageID: stringValue(payload, "image_id"), RuntimeImage: stringValue(payload, "docker_image"), ProviderRef: providerRef,
 		Capabilities: mapValue(payload, "capabilities"),
 	})
 	if returnErr != nil {
@@ -316,12 +311,7 @@ func (agent *Agent) cleanupProvider(providerRef string) error {
 }
 
 func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (map[string]any, error) {
-	verifier, ok := agent.provider.(providers.ImageDigestVerifier)
-	if !ok {
-		return nil, &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_VALIDATION_UNSUPPORTED",
-			Message: "provider does not support image digest validation", Retryable: false}
-	}
-	if err := verifier.VerifyImageDigest(ctx, stringValue(payload, "docker_digest")); err != nil {
+	if err := agent.verifyRuntimeImage(ctx, payload); err != nil {
 		return nil, err
 	}
 	providerRef := stringValue(payload, "provider_ref")
@@ -336,7 +326,7 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 	}
 	_, err := agent.provider.Create(ctx, providers.CreateRequest{
 		DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
-		ImageID: stringValue(payload, "image_id"), ProviderRef: providerRef,
+		ImageID: stringValue(payload, "image_id"), RuntimeImage: stringValue(payload, "docker_image"), ProviderRef: providerRef,
 		Capabilities: mapValue(payload, "capabilities"),
 	})
 	if err != nil {
@@ -366,6 +356,28 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+func (agent *Agent) verifyRuntimeImage(ctx context.Context, payload map[string]any) error {
+	runtimeImage := stringValue(payload, "docker_image")
+	digest := stringValue(payload, "docker_digest")
+	if agent.config.ProviderType != "docker" && runtimeImage == "" && digest == "" {
+		return nil
+	}
+	if !providers.ValidRuntimeImageReference(runtimeImage) {
+		return &providers.Error{Operation: providers.OperationValidateImage, Code: "INVALID_IMAGE_REFERENCE",
+			Message: "Docker command must include a fixed runtime image", Retryable: false}
+	}
+	if digest == "" {
+		return &providers.Error{Operation: providers.OperationValidateImage, Code: "INVALID_IMAGE_DIGEST",
+			Message: "Docker command must include the registered image digest", Retryable: false}
+	}
+	verifier, ok := agent.provider.(providers.ImageDigestVerifier)
+	if !ok {
+		return &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_VALIDATION_UNSUPPORTED",
+			Message: "provider does not support image digest validation", Retryable: false}
+	}
+	return verifier.VerifyImageDigest(ctx, runtimeImage, digest)
 }
 
 func waitWorkers(workers *sync.WaitGroup, timeout time.Duration) error {

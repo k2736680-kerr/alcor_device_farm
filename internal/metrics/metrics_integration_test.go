@@ -25,8 +25,8 @@ func TestDatabaseMetricsExposeDeviceSchedulerAgentAndReservationState(t *testing
 		device_idempotency_records,device_audit_events,device_health_events,device_sessions,device_reservations,
 		device_pool_devices,devices,device_pool_images,device_pools,device_host_commands,device_hosts,device_images
 		RESTART IDENTITY CASCADE;
-		INSERT INTO device_images (id,name,docker_digest,api_level,abi,resolution,status)
-		VALUES ('image_metrics_0000001','metrics-image','sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',34,'x86_64','1080x2400','ready');
+		INSERT INTO device_images (id,name,docker_image,docker_digest,api_level,abi,resolution,status)
+		VALUES ('image_metrics_0000001','metrics-image','registry.example/alcor/android-emulator:api34','sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',34,'x86_64','1080x2400','ready');
 		INSERT INTO device_hosts (id,name,host_type,status,last_heartbeat_at)
 		VALUES ('host_metrics_00000001','metrics-host','docker_emulator','online',clock_timestamp());
 		INSERT INTO device_host_commands (id,host_id,command_type,status,idempotency_key)

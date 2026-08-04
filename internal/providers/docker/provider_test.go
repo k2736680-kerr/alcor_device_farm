@@ -82,16 +82,50 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 }
 
 func TestDockerProviderVerifiesConfiguredImageDigest(t *testing.T) {
-	provider, err := newProvider(context.Background(), testConfig(), newFakeBackend(), staticHostProbe{})
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := provider.VerifyImageDigest(context.Background(), "sha256:"+strings.Repeat("a", 64)); err != nil {
+	runtimeImage := "registry.example/android-emulator:2026.08"
+	if err := provider.VerifyImageDigest(context.Background(), runtimeImage, "sha256:"+strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
 	}
-	err = provider.VerifyImageDigest(context.Background(), "sha256:"+strings.Repeat("b", 64))
+	engine.images["registry.example/android-emulator:api36"] = imageMetadata{ID: "sha256:" + strings.Repeat("c", 64)}
+	err = provider.VerifyImageDigest(context.Background(), "registry.example/android-emulator:api36", "sha256:"+strings.Repeat("a", 64))
 	if providers.ErrorCode(err) != "IMAGE_DIGEST_MISMATCH" {
 		t.Fatalf("digest mismatch error=%v", err)
+	}
+}
+
+func TestDockerProviderUsesSelectedRuntimeImageAndPreservesItOnRebuild(t *testing.T) {
+	engine := newFakeBackend()
+	config := testConfig()
+	config.Image = ""
+	provider, err := newProvider(context.Background(), config, engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRequest := dockerCreateRequest("device_0000000000001", "emulator-api34")
+	firstRequest.RuntimeImage = "registry.example/alcor/android-emulator:api34"
+	secondRequest := dockerCreateRequest("device_0000000000002", "emulator-api36")
+	secondRequest.RuntimeImage = "registry.example/alcor/android-emulator:api36"
+	if _, err := provider.Create(context.Background(), firstRequest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Create(context.Background(), secondRequest); err != nil {
+		t.Fatal(err)
+	}
+	firstName, _, _ := resourceNames(firstRequest.ProviderRef)
+	secondName, _, _ := resourceNames(secondRequest.ProviderRef)
+	if engine.specs[firstName].Image != firstRequest.RuntimeImage || engine.specs[secondName].Image != secondRequest.RuntimeImage {
+		t.Fatalf("runtime images=%q/%q", engine.specs[firstName].Image, engine.specs[secondName].Image)
+	}
+	if _, err := provider.Rebuild(context.Background(), firstRequest.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	if engine.specs[firstName].Image != firstRequest.RuntimeImage {
+		t.Fatalf("rebuild changed runtime image to %q", engine.specs[firstName].Image)
 	}
 }
 
@@ -166,7 +200,8 @@ func testConfig() Config {
 func dockerCreateRequest(deviceID, providerRef string) providers.CreateRequest {
 	return providers.CreateRequest{
 		DeviceID: deviceID, HostID: "host_000000000000001", ImageID: "image_00000000000001",
-		ProviderRef: providerRef, Capabilities: map[string]any{"apiLevel": 34, "abi": "x86_64"},
+		RuntimeImage: "registry.example/android-emulator:2026.08", ProviderRef: providerRef,
+		Capabilities: map[string]any{"apiLevel": 34, "abi": "x86_64"},
 	}
 }
 
@@ -188,6 +223,7 @@ type fakeBackend struct {
 	volumes        map[string]map[string]string
 	nextADBPort    int
 	nextAppiumPort int
+	images         map[string]imageMetadata
 }
 
 func newFakeBackend() *fakeBackend {
@@ -195,12 +231,16 @@ func newFakeBackend() *fakeBackend {
 		containers: map[string]container{}, specs: map[string]containerSpec{},
 		networks: map[string]map[string]string{}, volumes: map[string]map[string]string{},
 		nextADBPort: 31000, nextAppiumPort: 32000,
+		images: map[string]imageMetadata{},
 	}
 }
 
 func (*fakeBackend) Ping(context.Context) error { return nil }
 
-func (*fakeBackend) InspectImage(context.Context, string) (imageMetadata, error) {
+func (engine *fakeBackend) InspectImage(_ context.Context, runtimeImage string) (imageMetadata, error) {
+	if value, ok := engine.images[runtimeImage]; ok {
+		return value, nil
+	}
 	return imageMetadata{ID: "sha256:" + strings.Repeat("a", 64)}, nil
 }
 

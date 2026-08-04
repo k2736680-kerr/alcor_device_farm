@@ -57,7 +57,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -统一Device模型和状态机；
 -Docker Emulator Provider；
 -USB设备基础设施Provider；
--Device Image与不可变镜像验证；
+-Device Image、每 Image 运行镜像选择与不可变摘要验证；
 -Device Pool与容量；
 -Reservation、Lease、续租和释放；
 -Scheduler和数据库并发锁；

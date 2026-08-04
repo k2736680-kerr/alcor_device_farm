@@ -51,6 +51,7 @@ type DeviceOperation struct {
 type Image struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
+	DockerImage     string             `json:"docker_image,omitempty"`
 	DockerDigest    string             `json:"docker_digest"`
 	APILevel        int                `json:"api_level"`
 	ABI             string             `json:"abi"`
@@ -121,6 +122,7 @@ type Device struct {
 
 type ImageInput struct {
 	Name           string         `json:"name"`
+	DockerImage    string         `json:"docker_image,omitempty"`
 	DockerDigest   string         `json:"docker_digest"`
 	APILevel       int            `json:"api_level"`
 	ABI            string         `json:"abi"`

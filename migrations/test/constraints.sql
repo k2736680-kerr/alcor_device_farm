@@ -1,13 +1,54 @@
-INSERT INTO device_images (id, name, docker_digest, api_level, abi, resolution, status)
+INSERT INTO device_images (id, name, docker_image, docker_digest, api_level, abi, resolution, status)
 VALUES (
     'img_0000000000000001',
     'android-14-test',
+    'registry.example/alcor/android-emulator:api34',
     'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     34,
     'x86_64',
     '1080x2400',
     'ready'
 );
+
+DO $test$
+DECLARE
+    rejected boolean := false;
+BEGIN
+    BEGIN
+        INSERT INTO device_images (id, name, docker_digest, api_level, abi, resolution, status)
+        VALUES (
+            'img_0000000000000002', 'missing-runtime-image',
+            'sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            36, 'x86_64', '1080x2400', 'ready'
+        );
+    EXCEPTION WHEN check_violation THEN
+        rejected := true;
+    END;
+    IF NOT rejected THEN
+        RAISE EXCEPTION 'ready image without runtime reference was accepted';
+    END IF;
+END
+$test$;
+
+DO $test$
+DECLARE
+    rejected boolean := false;
+BEGIN
+    BEGIN
+        INSERT INTO device_images (id, name, docker_image, docker_digest, api_level, abi, resolution, status)
+        VALUES (
+            'img_0000000000000003', 'floating-runtime-image', 'registry.example/alcor/android-emulator:latest',
+            'sha256:2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            36, 'x86_64', '1080x2400', 'draft'
+        );
+    EXCEPTION WHEN check_violation THEN
+        rejected := true;
+    END;
+    IF NOT rejected THEN
+        RAISE EXCEPTION 'floating latest runtime image was accepted';
+    END IF;
+END
+$test$;
 
 INSERT INTO device_hosts (id, name, host_type, status)
 VALUES ('host_000000000000001', 'df004-host', 'docker_emulator', 'online');

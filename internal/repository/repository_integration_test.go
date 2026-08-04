@@ -323,9 +323,10 @@ func seedDeviceGraph(t *testing.T, db *database.DB) {
 	seedPool(t, db)
 	seedHost(t, db)
 	_, err := db.Pool().Exec(context.Background(), `
-        INSERT INTO device_images (id, name, docker_digest, api_level, abi, resolution, status)
+        INSERT INTO device_images (id, name, docker_image, docker_digest, api_level, abi, resolution, status)
         VALUES (
             'image_00000000000001', 'repository-test-image',
+            'registry.example/alcor/android-emulator:api34',
             'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
             34, 'x86_64', '1080x2400', 'ready'
         );

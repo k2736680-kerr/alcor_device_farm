@@ -104,6 +104,8 @@ type recyclingDevice struct {
 	ID            string
 	HostID        string
 	ImageID       string
+	DockerImage   string
+	DockerDigest  string
 	ProviderRef   string
 	ReservationID string
 	Capabilities  map[string]any
@@ -217,13 +219,13 @@ func (controller *Controller) reconcileRecyclingDevices(ctx context.Context) (Re
 func lockRecyclingDevice(ctx context.Context, tx pgx.Tx, id string) (recyclingDevice, error) {
 	var value recyclingDevice
 	var capabilities []byte
-	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.image_id,d.provider_ref,r.id,d.capabilities,d.lifecycle_status,d.health_status,
+	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.image_id,i.docker_image,i.docker_digest,d.provider_ref,r.id,d.capabilities,d.lifecycle_status,d.health_status,
 		(h.status='online' AND NOT h.draining)
-		FROM devices d JOIN device_hosts h ON h.id=d.host_id
+		FROM devices d JOIN device_hosts h ON h.id=d.host_id JOIN device_images i ON i.id=d.image_id
 		JOIN LATERAL (SELECT id FROM device_reservations WHERE device_id=d.id
 			AND status IN ('released','expired','force_released') ORDER BY COALESCE(released_at,updated_at) DESC,id DESC LIMIT 1) r ON true
 		WHERE d.id=$1 AND d.device_kind='emulator' AND d.lifecycle_mode='rebuild' AND d.lifecycle_status='recycling'
-		FOR UPDATE OF d`, id).Scan(&value.ID, &value.HostID, &value.ImageID, &value.ProviderRef, &value.ReservationID,
+		FOR UPDATE OF d`, id).Scan(&value.ID, &value.HostID, &value.ImageID, &value.DockerImage, &value.DockerDigest, &value.ProviderRef, &value.ReservationID,
 		&capabilities, &value.Lifecycle, &value.Health, &value.HostOnline)
 	if err == nil {
 		err = json.Unmarshal(capabilities, &value.Capabilities)
@@ -237,6 +239,7 @@ func (controller *Controller) queueRecycleRebuild(ctx context.Context, tx pgx.Tx
 		return err
 	}
 	payload, err := json.Marshal(map[string]any{"device_id": device.ID, "host_id": device.HostID, "image_id": device.ImageID,
+		"docker_image": device.DockerImage, "docker_digest": device.DockerDigest,
 		"provider_ref": device.ProviderRef, "reservation_id": device.ReservationID, "capabilities": device.Capabilities})
 	if err != nil {
 		return err
@@ -355,13 +358,13 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 	result := Result{}
 	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var status domain.ImageStatus
-		var digest, abi, resolution string
+		var runtimeImage, digest, abi, resolution string
 		var apiLevel int
 		var resourceConfig []byte
 		var requestedAt time.Time
-		if err := tx.QueryRow(ctx, `SELECT status,docker_digest,api_level,abi,resolution,resource_config,updated_at
+		if err := tx.QueryRow(ctx, `SELECT status,docker_image,docker_digest,api_level,abi,resolution,resource_config,updated_at
 			FROM device_images WHERE id=$1 FOR UPDATE`, imageID).
-			Scan(&status, &digest, &apiLevel, &abi, &resolution, &resourceConfig, &requestedAt); err != nil {
+			Scan(&status, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &resourceConfig, &requestedAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -433,7 +436,7 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 			}
 		}
 		payload, err := json.Marshal(map[string]any{"image_id": imageID, "device_id": "validation-" + commandID,
-			"provider_ref": "validation-" + commandID, "docker_digest": digest, "capabilities": capabilities})
+			"provider_ref": "validation-" + commandID, "docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities})
 		if err != nil {
 			return err
 		}
@@ -476,13 +479,13 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var minReady, maxInstances int
 		var apiLevel int
-		var digest, abi, resolution string
+		var runtimeImage, digest, abi, resolution string
 		var resourceConfig []byte
-		if err := tx.QueryRow(ctx, `SELECT pi.min_ready,pi.max_instances,i.docker_digest,i.api_level,i.abi,i.resolution,i.resource_config
+		if err := tx.QueryRow(ctx, `SELECT pi.min_ready,pi.max_instances,i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,i.resource_config
 			FROM device_pool_images pi JOIN device_pools p ON p.id=pi.pool_id
 			JOIN device_images i ON i.id=pi.image_id
 			WHERE pi.pool_id=$1 AND pi.image_id=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
-			FOR UPDATE OF pi`, poolID, imageID).Scan(&minReady, &maxInstances, &digest, &apiLevel, &abi, &resolution, &resourceConfig); err != nil {
+			FOR UPDATE OF pi`, poolID, imageID).Scan(&minReady, &maxInstances, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &resourceConfig); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -536,7 +539,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			if err != nil {
 				return err
 			}
-			if err := controller.createDeviceCommand(ctx, tx, poolID, imageID, digest, hostID, capabilities); err != nil {
+			if err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities); err != nil {
 				return err
 			}
 			result.DevicesCreated++
@@ -648,7 +651,7 @@ func (controller *Controller) quarantineCreateResult(
 	return err
 }
 
-func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, digest, hostID string, capabilities map[string]any) error {
+func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any) error {
 	deviceID, err := controller.newID()
 	if err != nil {
 		return err
@@ -673,7 +676,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 		return err
 	}
 	payload, err := json.Marshal(map[string]any{"device_id": deviceID, "image_id": imageID, "provider_ref": providerRef,
-		"docker_digest": digest, "capabilities": capabilities})
+		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities})
 	if err != nil {
 		return err
 	}

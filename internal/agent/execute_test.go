@@ -73,10 +73,11 @@ func TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability(t *testin
 		ID: "command_0000000000001", CommandType: "create", LeaseToken: &token, Attempt: 2,
 		Payload: map[string]any{
 			"device_id": "device_0000000000001", "image_id": "image_00000000000001",
-			"provider_ref": "emulator-1", "capabilities": map[string]any{"apiLevel": float64(34)},
+			"provider_ref": "emulator-1", "docker_image": "registry.example/alcor/android-emulator:api34",
+			"docker_digest": "sha256:" + strings.Repeat("a", 64), "capabilities": map[string]any{"apiLevel": float64(34)},
 		},
 	})
-	if provider.request.Capabilities["apiLevel"] != float64(34) {
+	if provider.request.Capabilities["apiLevel"] != float64(34) || provider.request.RuntimeImage != "registry.example/alcor/android-emulator:api34" {
 		t.Fatalf("create request=%#v", provider.request)
 	}
 	if client.completion.Status != "failed" || client.completion.Error == nil ||
@@ -91,7 +92,7 @@ func TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability(t *testin
 func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
 	client := &completionClient{}
 	base := providermock.New(providermock.Config{})
-	provider := &digestVerifyingProvider{Provider: base, expected: "sha256:" + strings.Repeat("a", 64)}
+	provider := &digestVerifyingProvider{Provider: base, expectedImage: "registry.example/alcor/android-emulator:api34", expected: "sha256:" + strings.Repeat("a", 64)}
 	runtime, err := New(Config{
 		HostID: "host_000000000000001", ProviderType: "docker", HeartbeatInterval: time.Second,
 		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
@@ -103,7 +104,7 @@ func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
 	token := "lease_token_000000000001"
 	runtime.execute(hostcommand.Command{ID: "command_0000000000003", CommandType: "validate_image", LeaseToken: &token, Attempt: 1,
 		Payload: map[string]any{"device_id": "validation-device-01", "image_id": "image_00000000000001",
-			"provider_ref": "validation-command-01", "docker_digest": provider.expected,
+			"provider_ref": "validation-command-01", "docker_image": provider.expectedImage, "docker_digest": provider.expected,
 			"capabilities": map[string]any{"apiLevel": float64(34)}}})
 	if client.completion.Status != "succeeded" || client.completion.Result["digest_verified"] != true || client.completion.Result["ready"] != true {
 		t.Fatalf("completion=%#v", client.completion)
@@ -169,11 +170,12 @@ type createFailureProvider struct{ request providers.CreateRequest }
 
 type digestVerifyingProvider struct {
 	providers.Provider
-	expected string
+	expectedImage string
+	expected      string
 }
 
-func (provider *digestVerifyingProvider) VerifyImageDigest(_ context.Context, digest string) error {
-	if digest != provider.expected {
+func (provider *digestVerifyingProvider) VerifyImageDigest(_ context.Context, runtimeImage, digest string) error {
+	if runtimeImage != provider.expectedImage || digest != provider.expected {
 		return &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_DIGEST_MISMATCH", Message: "digest mismatch"}
 	}
 	return nil
@@ -182,6 +184,7 @@ func (provider *digestVerifyingProvider) VerifyImageDigest(_ context.Context, di
 func (*createFailureProvider) Discover(context.Context, string) ([]providers.Snapshot, error) {
 	return nil, nil
 }
+func (*createFailureProvider) VerifyImageDigest(context.Context, string, string) error { return nil }
 func (provider *createFailureProvider) Create(_ context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
 	provider.request = request
 	return providers.Snapshot{}, &providers.Error{

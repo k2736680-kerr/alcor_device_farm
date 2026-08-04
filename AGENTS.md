@@ -15,6 +15,7 @@
    - `docs/adr/0004_align_with_alcor_next_generation.md`
    - `docs/adr/0005_fixed_two_device_pool.md`
    - `docs/adr/0006_fixed_min_ready_warm_pool.md`
+   - `docs/adr/0007_per_image_runtime_selection.md`
 2. 开发前必须先搜索以下现有项目，确认没有可直接复用的能力：
    - `E:/AutoTestTools/Projects/Alcor`
    - `E:/AutoTestTools/Projects/dafit_auto_platform`

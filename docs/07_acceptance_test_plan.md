@@ -105,6 +105,7 @@
 | AT-EMU-002 | P0 | 启动健康检查 | ADB online、boot completed、Appium healthy 后才 ready |
 | AT-EMU-003 | P0 | 无 `/dev/kvm` | 明确返回 KVM_UNAVAILABLE，不标记 ready |
 | AT-EMU-004 | P0 | rebuild | 新实例不保留上一次 App 和测试文件 |
+| AT-EMU-005 | P0 | 创建两个不同 Device Image | Host Command、Agent 校验和 Docker 容器分别使用各自 `docker_image`，rebuild 不串换版本 |
 | AT-EMU-005 | P1 | 删除设备 | 容器、网络、端口、卷和数据库引用按策略清理 |
 | AT-EMU-006 | P1 | `min_ready=2/max_instances=2` 且池为空 | 自动创建并加入两台；两个 Controller 并发不超建；第三个预约不突破上限 |
 

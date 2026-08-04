@@ -17,6 +17,7 @@
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
 | Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
+| Device Image 运行选择 | 当前新增 | Eval Console 未来只维护 Image；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Docker Emulator Provider | 当前新增 | 由设备农场调度 | 不把 Docker Socket 暴露给 Alcor/浏览器 |
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置 | 继续作为远控/可见性工具 | 不作为预约和占用真相源 |
@@ -27,6 +28,7 @@
 ## 3. 当前必须实现的设备域
 
 - Device Image、Host、Host Command、Pool、Device、Reservation；
+- Device Image 自带固定运行引用和摘要；validation/create/rebuild 命令必须沿同一链路下发；
 - Host Agent 注册、心跳、命令领取、回报和排空；
 - Docker Emulator 生命周期和 USB Provider 扩展接口；
 - Scheduler、租约、续租、释放、数据库并发约束；

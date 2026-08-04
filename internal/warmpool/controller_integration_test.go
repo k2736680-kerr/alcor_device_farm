@@ -42,12 +42,38 @@ func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testi
 	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create' AND status='pending'", 2)
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
 		AND payload->>'docker_digest'='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'`, 2)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'docker_image'='registry.example/alcor/android-emulator:api34'`, 2)
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE provider_type='docker_emulator' AND lifecycle_status='provisioning'", 2)
 	result, err := controllers[0].RunOnce(context.Background())
 	if err != nil || result.DevicesCreated != 0 {
 		t.Fatalf("second reconciliation result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 2)
+}
+
+func TestDifferentDeviceImagesCreateCommandsWithIndependentRuntimeImages(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 2)
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status)
+		VALUES('image_00000000000002','android-16','registry.example/alcor/android-emulator:api36',
+		'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',36,'x86_64','1080x2400','{}','ready');
+		INSERT INTO device_pool_images(pool_id,image_id,min_ready,max_instances,enabled)
+		VALUES('pool_000000000000001','image_00000000000002',1,1,true)`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := warmpool.New(db, sequentialGenerator(), nil).RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 2 {
+		t.Fatalf("multi-image result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'image_id'='image_00000000000001'
+		AND payload->>'docker_image'='registry.example/alcor/android-emulator:api34'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'image_id'='image_00000000000002'
+		AND payload->>'docker_image'='registry.example/alcor/android-emulator:api36'
+		AND payload->>'docker_digest'='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'`, 1)
 }
 
 func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.T) {
@@ -171,6 +197,8 @@ func TestImageValidationCommandGatesWarmPoolCreation(t *testing.T) {
 		t.Fatalf("validation queue result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='validate_image' AND status='pending'", 1)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='validate_image'
+		AND payload->>'docker_image'='registry.example/alcor/android-emulator:api34'`, 1)
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
 		result='{"digest_verified":true,"ready":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
 		WHERE command_type='validate_image'`); err != nil {
@@ -217,7 +245,9 @@ func TestReleasedEmulatorQueuesOneRebuildAndReturnsReadyOnlyAfterCleanSnapshot(t
 		t.Fatalf("idempotent result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='rebuild'
-		AND payload->>'reservation_id'='reservation_00000001'`, 1)
+		AND payload->>'reservation_id'='reservation_00000001'
+		AND payload->>'docker_image'='registry.example/alcor/android-emulator:api34'
+		AND payload->>'docker_digest'='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'`, 1)
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
 		result='{"generation":2,"connection":{"serial":"10.0.0.20:31001","adb_endpoint":"10.0.0.20:31001",
 		"appium_endpoint":"http://10.0.0.20:32001","appium_udid":"emulator-5554"},
@@ -281,8 +311,8 @@ func seedWarmPool(t *testing.T, db *database.DB, imageStatus string, minReady, m
 		t.Fatal(err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images
-		(id,name,docker_digest,api_level,abi,resolution,resource_config,status)
-		VALUES('image_00000000000001','warm-image','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x1920','{"ramMb":4096}',$1)`, imageStatus); err != nil {
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status)
+		VALUES('image_00000000000001','warm-image','registry.example/alcor/android-emulator:api34','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x1920','{"ramMb":4096}',$1)`, imageStatus); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_hosts(id,name,host_type,capacity,status)
