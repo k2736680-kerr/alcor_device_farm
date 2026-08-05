@@ -7,7 +7,8 @@
 - 设备农场方案中的设备 Host、Provider、Pool、Reservation、Scheduler、STF、Appium、Reconciler 和 Reaper 仍是本项目功能范围；
 - 新版 Alcor 方案第一至第五阶段当前不实现 Device Farm，第六阶段才通过 Worker 的 Device Farm Adapter 接入；
 - 本文阶段一至阶段四用于在等待新版 Alcor 时完成设备域和 DaFit 真实联调；
-- 本文阶段五必须以新版 `Run/RunAttempt/Artifact` 契约接入，不再扩展旧版 `eval_tasks/eval_results`；
+- 本文阶段五交付可独立使用的 Device Farm Console；
+- 本文阶段六必须以新版 `Run/RunAttempt/Artifact` 契约接入，不再扩展旧版 `eval_tasks/eval_results`；
 - 原设备方案中关于旧 Alcor 表、整数 ID、本地 ArtifactStore、`Alcor Console` 和 migration 编号的内容不再作为接入依据。
 
 ## 阶段一：契约与基础骨架
@@ -56,7 +57,19 @@
 
 验收：申请设备、执行 DaFit、保存报告、释放和重建全链路无人值守完成。
 
-## 阶段五：Alcor 接入
+## 阶段五：Device Farm Console
+
+- 使用 React + TypeScript 建立本仓库的设备控制后台；
+- 只调用 `/api/v1/device-*`，不直连数据库、Docker、STF、ADB 或 Appium；
+- 提供设备总览、Image、Host、Pool、Device、Reservation 和设备域审计页面；
+- 提供人工预约、续租、释放、隔离、重建和受控 STF 远控入口；
+- 浏览器使用安全会话或受信任反向代理，不能持有 Service Token 或 STF 管理 Token；
+- 使用 Mock 和真实单台 Android 16 环境完成浏览器端到端测试；
+- 纳入部署、升级、回滚、监控和安全验收。
+
+验收：用户不使用命令行即可通过 Web 完成设备查看、预约、远控和释放；危险操作有确认、原因和审计；页面状态始终以 Server/PostgreSQL 为真相；控制台没有 Alcor 评估业务对象。
+
+## 阶段六：Alcor 接入
 
 - 以新版 Alcor 实际开发分支和 OpenAPI 为准生成/实现 Device Farm Adapter；
 - Alcor Worker 使用 RunAttempt UUID/ULID 调用设备预约接口；
@@ -65,9 +78,9 @@
 - Alcor 将业务元数据写 PostgreSQL、用例级结果写 ClickHouse，并通过 ArtifactStore 上传 Supabase Storage；
 - 终态和异常路径调用释放接口；
 - Alcor API/Worker 与设备农场进行契约和故障注入测试；
-- Eval Console 的设备入口由新版 Alcor 后续阶段统一提供，本项目不新增前端。
+- Eval Console 后续可以链接、嵌入或复用 Device Farm Console 的设备域模块，也可以继续通过 Adapter 调用同一设备 API；具体方式等待新版实际前端确定。
 
-验收：Eval Console 是统一业务入口；RunAttempt 与 Device Session 可追溯；Alcor 与设备农场各自只保存所属领域真相；报告进入 Supabase Storage、用例结果进入 ClickHouse；不存在旧版 Eval Task 依赖、第二套评估业务模型或共享数据库耦合。
+验收：Eval Console 是统一评估业务入口；Device Farm Console 继续是设备域独立入口；RunAttempt 与 Device Session 可追溯；Alcor 与设备农场各自只保存所属领域真相；报告进入 Supabase Storage、用例结果进入 ClickHouse；不存在旧版 Eval Task 依赖、第二套评估业务模型或共享数据库耦合。
 
 ## 每阶段防跑偏检查
 
@@ -80,5 +93,6 @@
 5. API、外部 ID、状态和错误语义是否可映射到新版 RunAttempt；
 6. 是否产生 STF、Appium、DaFit、Run 队列或业务制品的第二套实现；
 7. 是否依赖旧版整数 Task ID、`eval_tasks/eval_results`、`/tasks` 本地报告或进程内 goroutine Runner。
+8. 控制台功能是否只操作设备域，且浏览器没有持有 Service/STF Token 或访问内部基础设施端口。
 
 任一项不满足，停止进入下一阶段，先修正文档、代码或补充经确认的 ADR。

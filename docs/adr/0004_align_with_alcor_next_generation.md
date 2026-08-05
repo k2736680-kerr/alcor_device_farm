@@ -2,7 +2,7 @@
 
 ## 状态
 
-已确定。
+已确定；设备农场独立控制后台的前端归属由 ADR-0009 补充，其他新版 Alcor 对齐决策继续有效。
 
 ## 背景
 
@@ -11,7 +11,7 @@
 ## 决策
 
 - 设备生命周期、调度、预约、STF、Appium、Host Agent 和真机扩展继续遵循设备农场方案；
-- Alcor 平台对象、ID、API、存储、前端、队列和接入方式遵循新版 Alcor 方案；
+- Alcor 平台对象、ID、API、存储、评估业务前端、队列和接入方式遵循新版 Alcor 方案；Device Farm Console 只负责设备域并按 ADR-0009 独立交付；
 - 当前设备农场保持独立设备域和北向 API，新版 Worker 通过 Device Farm Adapter 调用；
 - 新版 Alcor 预约 Owner 使用 `owner_type=run_attempt` 和 RunAttempt UUID/ULID；人工调试和 DaFit 联调分别使用受控的 `manual/test_run`；
 - 正式结果、报告和日志由 Alcor 写入 ClickHouse/Supabase Storage，设备农场不复制；
@@ -26,5 +26,5 @@
 
 - 设备域可以在新版 Alcor 开发期间继续推进；
 - 将来接入点稳定在 RunAttempt → Device Farm Adapter → Reservation，不需要兼容旧 Eval Task；
-- 不会产生第二套 Run、Result、Artifact 或 Eval Console；
+- 不会产生第二套 Run、Result、Artifact 或评估业务 Eval Console；Device Farm Console 不包含这些业务能力；
 - 接入前必须获得新版实际开发分支并执行 OpenAPI 契约测试。

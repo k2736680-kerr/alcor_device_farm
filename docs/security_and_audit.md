@@ -4,6 +4,7 @@
 
 - `/api/v1/device-*` 仅接受 Service Token，供新版 Alcor Worker、Alcor Adapter、DaFit Harness 和受控运维服务使用；
 - `/internal/v1` 仅接受 Agent Token，Host Agent 不能调用北向管理接口；
+- Device Farm Console 必须通过同源短时会话或受信任反向代理访问北向 API；浏览器不得接收或保存 Service Token，控制台身份必须映射为可审计的设备域操作者；
 - Server 不访问 Docker Socket；Docker Socket 只允许 Linux 设备宿主机上的 Host Agent 访问；
 - STF API Token、数据库 URL 和全部 Service/Agent Token 只通过部署 Secret 或环境变量注入，不进入 API 响应。
 
@@ -49,7 +50,7 @@ Alcor Adapter 调用设备管理操作时应设置 `X-Device-Farm-Actor-Id`，�
 - `reason`：脱敏后的操作原因；
 - `created_at`：数据库生成的事件时间。
 
-MVP 不新增第二套审计前端或 Alcor 业务审计 API。运维只读查询示例：
+Device Farm Console 可以提供设备域审计只读页面，只查询 `device_audit_events` 的脱敏技术审计字段；不得建立 Alcor 业务审计表或展示 Run/Result 业务审计。数据库运维只读查询示例：
 
 ```sql
 SELECT created_at, actor_type, actor_id, action, resource_type, resource_id, request_id, reason
@@ -59,6 +60,14 @@ ORDER BY created_at DESC, id DESC;
 ```
 
 后续接入 Alcor 时，由 Adapter 使用现有 Device Farm API 发起操作，并把 Alcor 操作者 ID 透传到请求头；Alcor 自身仍保存平台业务审计，设备农场保存设备域技术审计。
+
+控制台必须额外满足：
+
+- 使用 Secure、HttpOnly、SameSite Cookie 或受信任代理提供等价会话保护；
+- 所有写请求具备 CSRF 防护，退出和过期后会话立即不可继续写操作；
+- 浏览器提交的 actor header 不得直接作为可信身份，操作者由服务端会话或受信任代理确定；
+- 静态构建产物、Source Map、运行时配置、浏览器存储和网络响应中不得包含内部 Token；
+- 内容安全策略禁止任意外部脚本，远控只允许受控 STF 来源和短时入口。
 
 ## 脱敏和禁止项
 

@@ -2,7 +2,7 @@
 
 ## 1. 交付目标
 
-在不等待新版 Alcor 的情况下，先交付一套可独立运行、可自动测试的 Android 设备农场。首期使用 Linux KVM 宿主机上的 Docker Android Emulator；设备申请成功后返回明确的 UDID、Appium Endpoint 和受控 STF 远控入口。
+在不等待新版 Alcor 的情况下，先交付一套可独立运行、可通过 Web 控制、可自动测试的 Android 设备农场。首期使用 Linux KVM 宿主机上的 Docker Android Emulator；设备申请成功后返回明确的 UDID、Appium Endpoint 和受控 STF 远控入口。
 
 未来新版 Alcor 的独立 Worker 只需实现 Device Farm Adapter，便可以 RunAttempt 身份申请、使用和释放设备，不需要改造设备农场核心。
 
@@ -25,6 +25,7 @@
 - DaFit 端到端联调 Harness；
 - 服务身份、Agent 身份、审计事件和敏感日志脱敏；
 - OpenAPI、部署说明、故障处理和验收证据。
+- Device Farm Console：设备总览、资源管理、人工预约、设备操作、设备域审计和 STF 远控入口。
 
 ### 2.2 只预留扩展点
 
@@ -36,7 +37,7 @@
 
 ### 2.3 明确不做
 
-- Eval Console 或独立设备管理前端；
+- Alcor Eval Console 的 Case、Dataset、Run、Result、评分、报告和发布门禁页面；
 - Alcor 的 Case、Dataset、Target、Config、Run、RunAttempt；
 - 评分、门禁、LLM 报告、ClickHouse 业务结果和 Supabase Artifact 管理；
 - 复制 DaFit 页面对象、动作、断言、截图和报告实现；
@@ -47,6 +48,8 @@
 ## 3. 总体架构
 
 ```text
+Device Farm Console（当前独立使用）
+                         ↓ 同源安全访问
 DaFit Harness（当前） / Alcor Worker + Device Farm Adapter（未来）
                          ↓ /api/v1/device-*
                   Device Farm Server
@@ -72,6 +75,8 @@ DaFit Harness（当前） / Alcor Worker + Device Farm Adapter（未来）
 - Server 不直接访问远程 Docker Socket，Docker 操作只能由 Host Agent 执行；
 - Agent 主动访问 Server 领取命令，不要求 Server 反向进入宿主机；
 - STF RethinkDB 不作为设备预约真相源。
+- 控制台不直连 PostgreSQL、Docker、RethinkDB、ADB 或 Appium，只调用 Device Farm Server；
+- 浏览器不持有 Service Token 或 STF 管理 Token，写操作以服务端状态和审计结果为准。
 
 ## 4. 模块与功能
 
@@ -238,7 +243,29 @@ Reconciler：
 6. 无论成功、失败、取消或超时都释放预约；
 7. 验证重建后的设备不保留上一次 App 数据。
 
-### 4.11 其他资源状态
+### 4.11 Device Farm Console
+
+控制台至少提供：
+
+- 设备总览：Host、Device、Pool、Reservation、健康和容量摘要；
+- Image：列表、详情、创建/编辑、验证状态和池配置；
+- Host：列表、心跳、容量、drain/undrain；
+- Pool：列表、租期、并发、Image 和 Device membership；
+- Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine；
+- Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
+- 远程调试：只获取当前预约绑定的短时 STF 入口并跳转或受控嵌入；
+- 设备域审计：按资源查看操作人、原因、request ID、动作和时间。
+
+控制台必须遵守：
+
+- 页面状态来自 Server，不直接读取基础设施；刷新后必须与数据库真相一致；
+- 非法状态下不展示可执行按钮，服务端仍必须再次校验；
+- restart、rebuild、quarantine、unquarantine、drain、release 等危险操作必须二次确认并填写原因；
+- 所有错误显示稳定错误码、request ID 和是否可重试，不能只显示“操作失败”；
+- 浏览器安全访问、CSRF、防缓存、内容安全策略和 Token 隔离由 DF-026 固化并验收；
+- 不能实现 STF 的画面、触控、日志、文件和 ADB 协议，只复用 STF 原生页面和 Adapter。
+
+### 4.12 其他资源状态
 
 | 资源 | 状态 |
 |---|---|
@@ -301,6 +328,13 @@ Reconciler：
 - `POST /internal/v1/devices/:id/health-events`
 
 所有北向请求支持 `Idempotency-Key`、`X-Request-Id`、`X-Eval-Run-Id`、`X-Eval-Attempt-Id` 和 `traceparent`。新版 Alcor 自动执行必须使用 `owner_type=run_attempt`；当前 DaFit 使用 `test_run` 和测试 UUID；人工调试使用 `manual` 和操作记录，字段格式保持一致。
+
+### 5.4 控制台访问
+
+- 静态入口使用 `/console/` 或等价同源路径；
+- 控制台资源操作复用 5.1 和 5.2 的设备 API，不创建第二套资源语义；
+- 浏览器认证、会话和 CSRF 所需接口由 DF-026 在 OpenAPI 中冻结；
+- 浏览器不能接收 Service Token、Agent Token、STF API Token、数据库 URL 或 Docker/ADB/Appium 内部地址。
 
 ## 6. 设备域数据模型
 
@@ -368,3 +402,4 @@ Reconciler：
 8. Server/Agent 重启后两分钟内状态收敛；
 9. 重建后无法读取上一次任务 App 数据；
 10. OpenAPI、migration、部署说明、测试报告和回滚步骤齐全。
+11. 用户可通过 Device Farm Console 完成资源查看、人工预约、STF 远控、续租/释放和受控设备操作，且浏览器无内部 Token。

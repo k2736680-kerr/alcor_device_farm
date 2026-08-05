@@ -2,9 +2,9 @@
 
 ## 1. 项目定位
 
-`alcor_device_farm` 是设备基础设施子系统，不是另一套评估业务平台。
+`alcor_device_farm` 是带独立控制后台的设备基础设施子系统，不是另一套评估业务平台。
 
-当前阶段在新版 Alcor 的 Device Farm Adapter 尚未完成时，使用独立仓库开发和验证设备域。新版 Alcor 负责评估业务和 RunAttempt 真相；本项目负责设备、宿主机、池、预约和技术连接真相。STF 只负责远控和设备可见性，Docker 只负责运行载体。
+当前阶段在新版 Alcor 的 Device Farm Adapter 尚未完成时，使用独立仓库开发和验证设备域。新版 Alcor 负责评估业务和 RunAttempt 真相；本项目负责设备、宿主机、池、预约、技术连接真相以及这些设备域能力的 Web 操作入口。STF 只负责远控和设备可见性，Docker 只负责运行载体。
 
 新版方案将 Device Farm 排在第六阶段，并明确由独立 Worker 通过 Device Farm Adapter 使用。当前先固化可测试的北向 API；接入时由 Adapter 以 RunAttempt 身份申请、续租和释放设备，不直接读取或修改对方数据库。新版方案尚未确定设备域最终是否合仓，因此当前不得假设必须迁入旧 Alcor 目录。
 
@@ -18,11 +18,12 @@
 - 设备预约、租约、并发锁和过期回收；
 - 设备状态机、健康事件、隔离和重建；
 - Appium Endpoint 的启动、端口隔离和健康状态；
+- Device Farm Console：设备总览、资源管理、人工预约、设备操作、设备域审计和受控 STF 入口；
 - 面向外部任务系统的幂等北向 API。
 
 ## 3. 新版 Alcor 负责
 
-- 钉钉用户、权限、审计和 Eval Console；
+- 钉钉用户、平台权限、平台审计和 Eval Console 评估业务页面；
 - Protocol Template、Case、Dataset 及不可变版本；
 - Target、Config 及其版本；
 - Run、RunAttempt、独立 Worker 和 PostgreSQL 租约队列；
@@ -30,6 +31,8 @@
 - ClickHouse 中的大数据集明细、用例级结果和指标摘要；
 - Supabase Storage 中的媒体、报告、日志和制品；
 - 通过 Device Farm Adapter 将 RunAttempt ID 作为设备预约 Owner ID。
+
+新版 Alcor 可以在后续阶段链接、嵌入或复用 Device Farm Console 的设备域模块，但当前设备控制后台必须在不依赖新版 Alcor 的情况下独立可用。
 
 ## 4. DaFit 项目当前负责
 
@@ -69,8 +72,10 @@ DaFit 生成的 HTML/JSON、截图和日志只在联调阶段由 Harness 返回�
 - 不在本项目创建旧版 `eval_tasks/eval_results`，也不创建新版 `runs/run_attempts/run_results` 或评分规则；
 - 不在 STF RethinkDB 保存业务预约真相；
 - 不允许浏览器直接持有 STF Token；
+- 不允许浏览器持有 Device Farm Service Token，或直接访问 PostgreSQL、RethinkDB、Docker Socket、ADB 和 Appium 内部端口；
 - 不允许 Alcor 或服务端直接暴露 Docker Socket；
 - 不使用进程内锁代替 PostgreSQL 并发约束；
 - 不把 DaFit 业务代码变成设备农场的一部分。
+- 不把 Device Farm Console 扩展成包含 Case、Dataset、Target、Config、Run、评分、门禁和业务报告的第二套 Eval Console。
 
 现有能力的具体归属和允许新建范围以 [现有能力复用矩阵](01_existing_capability_reuse_matrix.md) 为准。

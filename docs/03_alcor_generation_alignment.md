@@ -14,7 +14,7 @@
 
 | 主题 | 本地旧版 master | 设备农场原方案中的假设 | 新版 Alcor 目标 | 本项目采用 |
 |---|---|---|---|---|
-| 前端 | 无已跟踪前端 | `alcor_console` | `eval_console` | 不建前端；未来进入 Eval Console |
+| 前端 | 无已跟踪前端；本地只有不可作为源码复用的未跟踪构建产物 | `alcor_console` | `eval_console` | 本仓库新增只负责设备域的 Device Farm Console；未来可接入 Eval Console，但不实现评估业务页面 |
 | 用例 | `test_items`，整数 ID，历史字段 | 复用 `test_items` | `cases` + Protocol Template，UUID/ULID | 不依赖旧表；未来只接新版 Case 语义 |
 | 数据集 | `datasets/dataset_items` | 扩展旧 Dataset | PostgreSQL 元数据 + 不可变版本 + ClickHouse 明细 | 设备农场不保存 Dataset |
 | 任务 | `eval_tasks` | Eval Task + Attempt | `runs` + `run_attempts` | Reservation Owner 指向 RunAttempt UUID/ULID |
@@ -39,10 +39,11 @@
 - 超时、重试、隔离、重建、人工释放和审计事件；
 - `/api/v1/device-*` 和 `/internal/v1` 的资源化接口方向；
 - 后续接真机只增加 Provider，不重做调度、预约和执行链路。
+- 设备总览、镜像、Host、Pool、Device、Reservation 和受控 STF 入口属于设备域，可以由独立 Device Farm Console 管理。
 
 ### 被新版 Alcor 覆盖
 
-- `Alcor Console/alcor_console` 改为 `Eval Console/eval_console`；
+- Alcor 评估业务前端从 `Alcor Console/alcor_console` 改为 `Eval Console/eval_console`；Device Farm Console 按 ADR-0009 独立交付，不沿用旧 Alcor 业务页面；
 - `test_items/eval_tasks/eval_results` 不再是新系统对象；
 - 顶层整数 Task ID 不再作为设备预约关联 ID；
 - 本地任务目录和报告 URL 不再是正式 Artifact 方案；
@@ -75,9 +76,9 @@
 
 ## 5. 当前可安全开发的范围
 
-在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试和故障测试。
+在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。
 
-当前不能安全定稿：新版 Eval Console 的设备页面、Android Case/Template 结构、App/APK Build 正式模型、Worker 内 Android Executor 代码位置、Device Farm Adapter 的具体 Go 接口。它们必须等待新版实际分支或专项接口文档，不能根据旧 master 猜测。
+当前不能安全定稿：新版 Eval Console 如何链接、嵌入或复用 Device Farm Console、Android Case/Template 结构、App/APK Build 正式模型、Worker 内 Android Executor 代码位置、Device Farm Adapter 的具体 Go 接口。它们必须等待新版实际分支或专项接口文档，不能根据旧 master 猜测；这不阻塞 Device Farm Console 独立交付。
 
 ## 6. 接入前检查点
 

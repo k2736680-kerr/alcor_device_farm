@@ -40,6 +40,16 @@
 
 用途：远控、Appium 并发、DaFit 冒烟和全链路故障恢复。
 
+### E3：设备控制后台环境
+
+- E0 的 Device Farm Server、PostgreSQL 和 Mock Provider，用于页面功能和故障自动化；
+- E2 的真实单台 Android 16 Emulator、STF、RethinkDB 和 Appium，用于最终 Web 验收；
+- Device Farm Console 生产构建；
+- HTTPS 或受控内网反向代理、浏览器安全会话和可审计操作者身份；
+- Chromium 系浏览器以及浏览器端到端自动化入口。
+
+用途：资源管理、人工预约、远控、设备操作、权限、安全、部署和回滚验收。
+
 ## 3. 阶段验收门
 
 | Gate | 对应任务 | 通过条件 |
@@ -51,6 +61,7 @@
 | G4 STF/Appium | DF-017~DF-018 | E2 可远控、claim/release，Appium 端口隔离 |
 | G5 DaFit 闭环 | DF-019~DF-021 | E2 冒烟成功/失败均可释放和清理 |
 | G6 可交付 | DF-022~DF-025 | 安全、运维、回滚、全量验收和 Adapter 契约齐全 |
+| G7 Web 可用 | DF-026~DF-028 | E3 可通过浏览器完成设备管理、预约、远控和释放，且无内部 Token 泄露 |
 
 未通过前一 Gate，不进入下一阶段的真实环境部署。
 
@@ -160,6 +171,23 @@
 | AT-ALC-004 | P0 | Attempt 取消/超时 | release 接口幂等，设备最终回收 |
 | AT-ALC-005 | P1 | OpenAPI 生成客户端对 Mock Server 运行 | 申请、查询、续租、释放全部通过 |
 
+### 4.9 Device Farm Console
+
+| 编号 | 优先级 | 场景 | 预期结果 |
+|---|---|---|---|
+| AT-WEB-001 | P0 | 未认证浏览器访问控制台和设备 API | 不返回设备数据，跳转登录或返回 401/403，静态资源不含内部 Token |
+| AT-WEB-002 | P0 | 检查浏览器网络、Cookie、LocalStorage、SessionStorage 和构建产物 | 不存在 Service Token、Agent Token、STF 管理 Token、数据库 URL 或内部凭证 |
+| AT-WEB-003 | P0 | 打开总览、Image、Host、Pool、Device、Reservation 页面 | 数据与 Server API/PostgreSQL 真相一致，状态和 request ID 可追踪 |
+| AT-WEB-004 | P0 | 执行 restart/rebuild/quarantine/drain/release 等危险操作 | 必须二次确认并填写 reason；服务端非法状态拒绝被页面正确展示 |
+| AT-WEB-005 | P0 | 创建一条人工预约并轮询 | 单台 ready 设备进入 active，连接信息属于当前预约；第二条预约不突破容量 |
+| AT-WEB-006 | P0 | 从当前预约打开远控 | 使用 STF Adapter 返回的短时入口；不重写 STF 远控，不暴露管理 Token |
+| AT-WEB-007 | P0 | 续租并释放预约 | expires_at 正确更新；释放后设备进入清理并最终回 ready，页面状态随 Server 收敛 |
+| AT-WEB-008 | P0 | A 操作者访问或操作 B 的受控资源 | 按设备域权限返回 403，不能越权远控或释放 |
+| AT-WEB-009 | P0 | 构造 CSRF、过期会话和伪造 actor 请求 | 请求被拒绝，审计中不接受浏览器伪造身份 |
+| AT-WEB-010 | P0 | STF、Server 或网络故障时执行操作 | 页面显示稳定错误码、request ID 和重试提示，不出现虚假成功状态 |
+| AT-WEB-011 | P1 | Server/STF/Console 重启并刷新页面 | 120 秒内恢复真实状态，不依赖浏览器缓存维持业务状态 |
+| AT-WEB-012 | P1 | 新环境部署和版本回滚 | 控制台可访问、静态资源版本一致；回滚后 API 和设备状态不受损 |
+
 ## 5. 非功能指标
 
 | 指标 | MVP 标准 |
@@ -174,6 +202,9 @@
 | 密钥泄露 | 响应、日志、报告和普通数据库字段中为 0 |
 | migration | up/down/up 全通过 |
 | 真机扩展 | Provider 接口编译级契约测试通过，不改上层模型 |
+| 控制台首屏 | 正常内网下 p95 ≤ 3 秒，资源列表查询仍满足 API p95 标准 |
+| 浏览器密钥泄露 | Service/Agent/STF Token、数据库 URL 和内部凭证为 0 |
+| Web 状态一致性 | 刷新后不得依赖前端缓存产生与 Server 不一致的资源状态 |
 
 若验收机器资源不足导致性能指标不可比，必须记录机器规格和实测基线；不得删除正确性、安全性和双占标准。
 
@@ -205,9 +236,10 @@ docs/evidence/
 设备农场 MVP 只有满足以下条件才能签收：
 
 1. 所有 P0、P1 用例通过；
-2. DF-000~DF-025 全部 completed；
+2. DF-000~DF-028 全部 completed；
 3. Linux KVM、一台 Android 16 Emulator、STF、Appium 和 DaFit 冒烟真实通过；
 4. 无双占、无永久悬挂、无跨任务数据残留、无密钥泄露；
 5. OpenAPI、migration、部署、监控、故障处理和回滚文档齐全；
 6. 新版 Alcor 团队可使用 Mock 契约包开发 Device Farm Adapter；
 7. ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收。
+8. 用户可以通过 Device Farm Console 完成设备查看、人工预约、STF 远控、续租/释放和受控设备操作，不需要使用命令行或直接访问内部服务。

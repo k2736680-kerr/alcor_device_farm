@@ -1,6 +1,6 @@
-# DF-003～DF-025 实施与证据清单
+# DF-003～DF-028 实施与证据清单
 
-本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代。
+本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代；`pending` 表示已建立正式任务和验收模板，但尚未开始实现。
 
 | 任务 | 当前状态 | 主要提交 | 验收证据 |
 |---|---|---|---|
@@ -15,9 +15,9 @@
 | DF-011 | completed | `29d27c3 加入设备健康上报和自动隔离` | `docs/evidence/DF-011/acceptance.md` |
 | DF-012 | completed | `fb92644 加入主机心跳和命令租约协议` | `docs/evidence/DF-012/acceptance.md` |
 | DF-013 | completed | `a5ad7bc 加入主机代理运行和优雅退出`、`2701fcb`、`ce58864` | `docs/evidence/DF-013/acceptance.md` |
-| DF-014 | blocked | `0573568 加入Docker模拟器Provider和验收入口`、`63707ed` | `docs/evidence/DF-014/acceptance.md` |
-| DF-015 | blocked | `03215e1 加入独立Appium端点和健康检查` | `docs/evidence/DF-015/acceptance.md` |
-| DF-016 | blocked | `24c2c56 加入参数化模拟器自动补齐控制器` | `docs/evidence/DF-016/acceptance.md` |
+| DF-014 | completed | `0573568 加入Docker模拟器Provider和验收入口`、`63707ed`、`2c1468a 支持单台Android16模拟器验收` | `docs/evidence/DF-014/acceptance.md` |
+| DF-015 | completed | `03215e1 加入独立Appium端点和健康检查`、`2c1468a 支持单台Android16模拟器验收` | `docs/evidence/DF-015/acceptance.md` |
+| DF-016 | completed | `24c2c56 加入参数化模拟器自动补齐控制器`、`2c1468a 支持单台Android16模拟器验收`、`c3fd757 完成单台模拟器自动补池` | `docs/evidence/DF-016/acceptance.md` |
 | DF-017 | blocked | `c617b34 加入固定版本STF内网部署` | `docs/evidence/DF-017/acceptance.md` |
 | DF-018 | blocked | `78cc97f 接入STF预约和远程连接` | `docs/evidence/DF-018/acceptance.md` |
 | DF-019 | blocked | `84b3331 记录DaFit设备农场适配`、`14e2928` | `docs/evidence/DF-019/acceptance.md` |
@@ -27,9 +27,13 @@
 | DF-023 | blocked | `ef28201 补齐设备指标部署和回滚手册` | `docs/evidence/DF-023/acceptance.md` |
 | DF-024 | blocked | `392c93a 整理设备农场全量验收证据` | `docs/evidence/DF-024/acceptance.md` |
 | DF-025 | completed | `df975e1 补齐新版Alcor设备接入契约` | `docs/evidence/DF-025/acceptance.md` |
+| DF-026 | pending | — | `docs/evidence/DF-026/acceptance.md` |
+| DF-027 | pending | — | `docs/evidence/DF-027/acceptance.md` |
+| DF-028 | pending | — | `docs/evidence/DF-028/acceptance.md` |
 
 ## 当前剩余条件
 
-1. Linux KVM/Docker/真实 Android 环境完成 DF-014～DF-024 的真实验收并将对应状态改为 `completed`；
-2. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
-3. 所有状态变化继续保存验收证据并使用简洁中文 Git 提交。
+1. Linux KVM/Docker/真实 Android 环境继续完成 DF-017～DF-024 的真实验收并将对应状态改为 `completed`；
+2. 完成 DF-026～DF-028 的 Device Farm Console、真实 Web 验收和独立交付；
+3. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
+4. 所有状态变化继续保存验收证据并使用简洁中文 Git 提交。

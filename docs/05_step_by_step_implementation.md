@@ -14,7 +14,7 @@
 
 每个 DF 任务验收通过后必须单独 Git commit。提交说明统一使用简洁中文，直接说明完成内容，例如“建立 Go 工程骨架”“加入预约和调度能力”。
 
-任何任务都不能通过提前实现新版 Alcor 的 Run、Result、Artifact 或前端来“顺便完成”。
+任何任务都不能通过提前实现新版 Alcor 的 Run、Result、Artifact 或评估业务前端来“顺便完成”。Device Farm Console 只按 DF-026～DF-028 实现设备域页面。
 
 ## 2. 全部任务状态
 
@@ -46,7 +46,10 @@
 | DF-023 | 指标、部署、运维和回滚手册 | blocked | DF-022 |
 | DF-024 | MVP 全量验收 | blocked | DF-023 |
 | DF-025 | 新版 Alcor Adapter 契约包 | completed | DF-024 |
-| ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-025、新版 Alcor OpenAPI |
+| DF-026 | Device Farm Console 工程和只读页面 | pending | DF-022、DF-023、DF-025 |
+| DF-027 | 设备操作、人工预约和 STF 远控页面 | pending | DF-018、DF-026 |
+| DF-028 | 控制台部署、安全和真实 Web 验收 | pending | DF-021、DF-023、DF-027 |
+| ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -274,6 +277,34 @@
 
 验收：不启动真实设备即可用 Mock 完成申请、active、续租、release、capacity unavailable、infra failure 流程；契约只使用 Case/Run/RunAttempt 新语义，不出现旧 Eval Task。
 
+## 9. 阶段 G：独立设备控制后台
+
+### DF-026 Device Farm Console 工程和只读页面
+
+实施：创建 `console` React + TypeScript 工程，固化构建、路由、布局、OpenAPI 类型/API Client、浏览器安全访问和统一错误处理；实现设备总览以及 Image、Host、Pool、Device、Reservation 的列表和详情只读页面。浏览器认证必须使用同源短时会话或受信任反向代理等价方案，不能把 Service Token 注入源码、静态文件、LocalStorage 或浏览器响应。
+
+产出：`console/` 源码、构建入口、静态部署配置、浏览器认证/会话说明、组件测试和 Mock API 页面测试。
+
+验收：全新环境可安装依赖并构建；未认证用户不能读取设备数据；登录或代理认证后可以查看全部设备域资源和 request ID；刷新页面后状态与 Server 一致；浏览器网络、存储、构建产物和错误信息中不存在 Service/Agent/STF Token；前端没有 Case、Dataset、Run、Result、评分和报告模块。
+
+### DF-027 设备操作、人工预约和 STF 远控页面
+
+实施：在 DF-026 基础上实现 Image validation、Host drain/undrain、Pool 配置、Device restart/rebuild/quarantine/unquarantine、人工 Reservation 创建/轮询/续租/释放、设备域审计展示和当前预约的 STF 短时入口。危险操作必须二次确认、填写 `reason` 并显示服务端 request ID；页面不得直接调用 STF、Docker、ADB、Appium 或数据库。
+
+产出：完整设备控制流程页面、状态与权限映射、表单校验、错误/重试体验、端到端浏览器自动化测试和 `docs/evidence/DF-027/` 证据。
+
+验收：用户可在 Web 中完成“查看容量 → 创建人工预约 → 等待 active → 打开受控 STF → 续租或释放 → 查看审计”的完整流程；非法状态操作被页面和 Server 同时拒绝；第二个预约不突破单设备容量；STF 原生能力被复用，浏览器拿不到 STF 管理 Token；刷新或 Server 重启后页面不保留虚假成功状态。
+
+### DF-028 控制台部署、安全和真实 Web 验收
+
+实施：把 Console 纳入正式部署、健康检查、升级、回滚和运维手册；配置 HTTPS/受控内网访问、内容安全策略、Cookie/CSRF、防缓存和静态资源版本；在一台 Android 16 Emulator、STF、RethinkDB、Appium 和真实 Device Farm Server 上执行 Web 端到端验收，完成后清理临时资源。
+
+产出：生产构建与部署配置、Web 安全清单、浏览器端到端报告、关键页面截图、回滚演练和 `docs/evidence/DF-028/acceptance.md`。
+
+验收：新环境按文档可部署并访问；未认证、越权、CSRF、过期会话和直接内部端口访问均被拒绝；用户通过浏览器完成资源查看、预约、远控、释放、隔离/恢复或重建验证；页面不泄露任何内部 Token；Server/STF/Console 任一重启后状态收敛；回滚成功且无临时容器、网络、卷、会话或凭证残留。
+
+## 10. 阶段 H：新版 Alcor 接入
+
 ### ALCOR-001 新版 Alcor 真实接口联调
 
 该任务必须等待新版 Alcor 实际分支和 OpenAPI，不能提前标记完成。
@@ -282,9 +313,9 @@
 
 实施：核对认证、RunAttempt、取消、ArtifactStore 和关联 Header；实现 Worker Device Farm Adapter；执行双方契约和真实 DaFit/Android 冒烟。
 
-验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed。
+验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed；Alcor 设备入口与独立 Device Farm Console 不产生两套设备状态或操作语义。
 
-## 9. 单任务完成定义
+## 11. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：
 
