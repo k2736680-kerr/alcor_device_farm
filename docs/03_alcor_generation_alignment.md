@@ -76,7 +76,7 @@
 
 ## 5. 当前可安全开发的范围
 
-在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。
+在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。Console 可使用独立配置用户和设备域短时会话，但不得复制 Alcor 钉钉用户、平台 RBAC 或业务审计模型。
 
 当前不能安全定稿：新版 Eval Console 如何链接、嵌入或复用 Device Farm Console、Android Case/Template 结构、App/APK Build 正式模型、Worker 内 Android Executor 代码位置、Device Farm Adapter 的具体 Go 接口。它们必须等待新版实际分支或专项接口文档，不能根据旧 master 猜测；这不阻塞 Device Farm Console 独立交付。
 

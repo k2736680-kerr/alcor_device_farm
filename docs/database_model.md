@@ -28,6 +28,8 @@ erDiagram
 
 `device_idempotency_records` 只保存设备 API 的 client、scope、key、请求哈希和设备资源 ID，用于 Image/Host/Pool 等创建请求重放；不保存请求正文、Token 或 Alcor 业务对象。
 
+`device_console_sessions` 只保存设备控制后台的短时技术会话。用户定义和 Argon2id 密码哈希来自部署机受限的 `console-users.yaml`，不在数据库建立 Alcor 用户表；Session Token 与 CSRF Token 只保存 SHA-256，不保存原值。
+
 ## 核心数据库保证
 
 - `devices.serial` 和 `(provider_type, provider_ref)` 唯一；已分配的 STF serial、ADB Endpoint、Appium Endpoint 也分别唯一；
@@ -39,6 +41,7 @@ erDiagram
 - active Reservation 和 Session 必须具有完整的设备、开始与到期信息；
 - Docker Emulator 的容器内 `appiumUdid` 保存于 `devices.capabilities`，激活预约时与外部 serial、ADB/Appium Endpoint 一起固化到 `device_sessions.connection_metadata`；不为不同运行环境复制 Device 记录；
 - 外键默认 `RESTRICT` 保留历史，只有纯成员关系随 Pool 删除而级联。
+- Console 会话使用数据库时间判断最大 8 小时有效期和 30 分钟空闲期；撤销、过期或配置中已删除的用户不能继续访问。
 
 ## 迁移与回滚
 
@@ -50,5 +53,9 @@ erDiagram
 - `migrations/000002_api_idempotency.down.sql`
 - `migrations/000003_image_validation_command.up.sql`
 - `migrations/000003_image_validation_command.down.sql`
+- `migrations/000004_device_image_runtime_reference.up.sql`
+- `migrations/000004_device_image_runtime_reference.down.sql`
+- `migrations/000005_console_sessions.up.sql`
+- `migrations/000005_console_sessions.down.sql`
 
 执行必须使用单事务和 `ON_ERROR_STOP`。生产回滚前先停止 Server、Agent、Scheduler、Reaper 和 Reconciler；down migration 会删除全部设备域数据，只用于空环境演练或已确认恢复点的回滚。

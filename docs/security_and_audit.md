@@ -4,7 +4,7 @@
 
 - `/api/v1/device-*` 仅接受 Service Token，供新版 Alcor Worker、Alcor Adapter、DaFit Harness 和受控运维服务使用；
 - `/internal/v1` 仅接受 Agent Token，Host Agent 不能调用北向管理接口；
-- Device Farm Console 必须通过同源短时会话或受信任反向代理访问北向 API；浏览器不得接收或保存 Service Token，控制台身份必须映射为可审计的设备域操作者；
+- Device Farm Console 使用同一个 Go Server 的短时会话访问北向 API；浏览器不得接收或保存 Service Token，Console Principal 必须映射为可审计的设备域操作者；Server 不用 Service Token 回调自身；
 - Server 不访问 Docker Socket；Docker Socket 只允许 Linux 设备宿主机上的 Host Agent 访问；
 - STF API Token、数据库 URL 和全部 Service/Agent Token 只通过部署 Secret 或环境变量注入，不进入 API 响应。
 
@@ -68,6 +68,9 @@ ORDER BY created_at DESC, id DESC;
 - 浏览器提交的 actor header 不得直接作为可信身份，操作者由服务端会话或受信任代理确定；
 - 静态构建产物、Source Map、运行时配置、浏览器存储和网络响应中不得包含内部 Token；
 - 内容安全策略禁止任意外部脚本，远控只允许受控 STF 来源和短时入口。
+- Console 用户来自受限 `console-users.yaml`，密码只保存 Argon2id 哈希；PostgreSQL 只保存会话和 Token/CSRF 哈希；
+- 默认会话最长 8 小时、空闲 30 分钟，登录按用户和来源地址限制 15 分钟最多 5 次失败；
+- viewer 只读，operator 只能管理自己的 manual Reservation 和 STF 入口，admin 才能执行设备/Host/Image/Pool 管理操作和读取全部设备域审计。
 
 ## 脱敏和禁止项
 

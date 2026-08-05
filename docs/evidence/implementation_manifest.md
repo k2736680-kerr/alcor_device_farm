@@ -27,13 +27,13 @@
 | DF-023 | blocked | `ef28201 补齐设备指标部署和回滚手册` | `docs/evidence/DF-023/acceptance.md` |
 | DF-024 | blocked | `392c93a 整理设备农场全量验收证据` | `docs/evidence/DF-024/acceptance.md` |
 | DF-025 | completed | `df975e1 补齐新版Alcor设备接入契约` | `docs/evidence/DF-025/acceptance.md` |
-| DF-026 | pending | — | `docs/evidence/DF-026/acceptance.md` |
+| DF-026 | in_progress | — | `docs/evidence/DF-026/acceptance.md` |
 | DF-027 | pending | — | `docs/evidence/DF-027/acceptance.md` |
 | DF-028 | pending | — | `docs/evidence/DF-028/acceptance.md` |
 
 ## 当前剩余条件
 
-1. Linux KVM/Docker/真实 Android 环境继续完成 DF-017～DF-024 的真实验收并将对应状态改为 `completed`；
-2. 完成 DF-026～DF-028 的 Device Farm Console、真实 Web 验收和独立交付；
+1. DF-026/DF-027 在 E0 本地环境完成 Console 实现和自动化验收；
+2. Linux KVM/Docker/真实 Android 环境继续完成 DF-017～DF-024，并由 DF-028 完成真实 Web 验收；
 3. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
 4. 所有状态变化继续保存验收证据并使用简洁中文 Git 提交。

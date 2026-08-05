@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending。依赖 DF-018 和 DF-026，尚未开始实现或测试。
+pending。依赖 DF-009～DF-011 和 DF-026；本地使用 Mock Provider、Mock STF 完成验收，不等待 DF-018 真实环境状态。
 
 ## 目标
 

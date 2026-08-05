@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending。依赖 DF-021、DF-023 和 DF-027，尚未开始实现或测试。
+pending。依赖 DF-017～DF-024 和 DF-027，尚未开始真实 Linux Web 验收。
 
 ## 目标
 

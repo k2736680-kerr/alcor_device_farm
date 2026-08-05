@@ -46,9 +46,9 @@
 | DF-023 | 指标、部署、运维和回滚手册 | blocked | DF-022 |
 | DF-024 | MVP 全量验收 | blocked | DF-023 |
 | DF-025 | 新版 Alcor Adapter 契约包 | completed | DF-024 |
-| DF-026 | Device Farm Console 工程和只读页面 | pending | DF-022、DF-023、DF-025 |
-| DF-027 | 设备操作、人工预约和 STF 远控页面 | pending | DF-018、DF-026 |
-| DF-028 | 控制台部署、安全和真实 Web 验收 | pending | DF-021、DF-023、DF-027 |
+| DF-026 | Device Farm Console 工程和只读页面 | in_progress | DF-003、DF-004、DF-008、DF-025 |
+| DF-027 | 设备操作、人工预约和 STF 远控页面 | pending | DF-009、DF-010、DF-011、DF-026 |
+| DF-028 | 控制台部署、安全和真实 Web 验收 | pending | DF-017～DF-024、DF-027 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -281,19 +281,19 @@
 
 ### DF-026 Device Farm Console 工程和只读页面
 
-实施：创建 `console` React + TypeScript 工程，固化构建、路由、布局、OpenAPI 类型/API Client、浏览器安全访问和统一错误处理；实现设备总览以及 Image、Host、Pool、Device、Reservation 的列表和详情只读页面。浏览器认证必须使用同源短时会话或受信任反向代理等价方案，不能把 Service Token 注入源码、静态文件、LocalStorage 或浏览器响应。
+实施：创建 `console` pnpm + Vite + React + TypeScript + Ant Design 工程，使用 Orval + TanStack Query 从 OpenAPI 生成强类型 client；在现有 Go Server 中增加配置用户、`console` Principal、PostgreSQL 可撤销短时会话、CSRF、登录限流和 `/console/` 静态入口；实现设备总览以及 Image、Host、Pool、Device、Reservation、健康事件的列表和详情只读页面。浏览器不能接触 Service Token。
 
 产出：`console/` 源码、构建入口、静态部署配置、浏览器认证/会话说明、组件测试和 Mock API 页面测试。
 
-验收：全新环境可安装依赖并构建；未认证用户不能读取设备数据；登录或代理认证后可以查看全部设备域资源和 request ID；刷新页面后状态与 Server 一致；浏览器网络、存储、构建产物和错误信息中不存在 Service/Agent/STF Token；前端没有 Case、Dataset、Run、Result、评分和报告模块。
+验收：E0 本地 PostgreSQL + Mock Provider 环境可安装依赖、生成 client、构建并执行组件/Playwright 测试；migration up/down/up 通过；登录、错误密码、限流、注销、过期、CSRF、伪造 actor 和 viewer/operator/admin 只读权限通过；未认证用户不能读取设备数据；刷新页面后状态与 Server 一致；浏览器网络、存储、构建产物和错误信息中不存在 Service/Agent/STF Token；前端没有 Case、Dataset、Run、Result、评分和报告模块。无需 Linux/STF/Appium 即可 completed。
 
 ### DF-027 设备操作、人工预约和 STF 远控页面
 
-实施：在 DF-026 基础上实现 Image validation、Host drain/undrain、Pool 配置、Device restart/rebuild/quarantine/unquarantine、人工 Reservation 创建/轮询/续租/释放、设备域审计展示和当前预约的 STF 短时入口。危险操作必须二次确认、填写 `reason` 并显示服务端 request ID；页面不得直接调用 STF、Docker、ADB、Appium 或数据库。
+实施：在 DF-026 基础上实现 Image validation、Host drain/undrain、Pool 配置、Device restart/rebuild/quarantine/unquarantine、人工 Reservation 创建/轮询/续租/释放、设备域审计展示和当前预约的 STF 短时入口。使用 Mock Provider 和 Mock STF 完成本地流程；危险操作必须二次确认、填写 `reason` 并显示服务端 request ID；页面不得直接调用 STF、Docker、ADB、Appium 或数据库。
 
 产出：完整设备控制流程页面、状态与权限映射、表单校验、错误/重试体验、端到端浏览器自动化测试和 `docs/evidence/DF-027/` 证据。
 
-验收：用户可在 Web 中完成“查看容量 → 创建人工预约 → 等待 active → 打开受控 STF → 续租或释放 → 查看审计”的完整流程；非法状态操作被页面和 Server 同时拒绝；第二个预约不突破单设备容量；STF 原生能力被复用，浏览器拿不到 STF 管理 Token；刷新或 Server 重启后页面不保留虚假成功状态。
+验收：E0 本地 Server + PostgreSQL + Mock Provider + Mock STF 中，用户可完成“查看容量 → 创建人工预约 → 等待 active → 打开受控 STF → 续租或释放 → 查看审计”；非法状态操作被页面和 Server 同时拒绝；Console 用户不能修改 owner 或访问他人预约；第二个预约不突破单设备容量；浏览器拿不到 STF 管理 Token；刷新或 Server 重启后不保留虚假成功状态。无需真实 Linux/STF 即可 completed。
 
 ### DF-028 控制台部署、安全和真实 Web 验收
 

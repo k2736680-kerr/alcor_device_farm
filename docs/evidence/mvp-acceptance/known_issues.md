@@ -2,7 +2,7 @@
 
 | 编号 | 问题 | 影响 | 处理计划 |
 |---|---|---|---|
-| KI-001 | 内网候选服务器已有 Ubuntu 22.04 和 Docker 28.1.1，但 BIOS 关闭 VMX、没有 `/dev/kvm`，Docker Hub Registry 443 连接超时；本机 WSL2 仍因 `ext4.vhdx` 路径不存在而无法启动 | G3～G5 不能签收，当前不能启动真实 Docker Emulator | 由服务器管理员开启 Intel VT-x/VMX 并安排受控重启，确认 `/dev/kvm` 可读写；开放 Docker Hub 或提供内网镜像仓库/代理后，再执行 DF-014～DF-021 和 AT-EMU/APP/STF/DFT |
+| KI-001 | `/dev/kvm` 和 VMX 阻塞已于 2026-08-04 解除，DF-014～DF-016 已使用一台 Android 16 Emulator 真实通过；Docker daemon 仍配置失效代理，不能直接访问 Docker Hub | 不再阻塞 G3；新增镜像拉取和 DF-017～DF-028 部署仍需使用已保留正式镜像、宿主机网络下载工具或受控镜像代理 | 保留 `alcor-device-farm/android-emulator:16.0-api36-r3`；不重启 Docker；需要新镜像时继续使用临时 crane/国内代理并在完成后清理 |
 | KI-002 | 当前没有 Prometheus/Alertmanager 和真实 systemd | 部署、告警和回滚只能做静态/本地验证 | 按 DF-023 手册完成从零部署、故障告警和恢复演练 |
 | KI-003 | PostgreSQL 短暂断连后的未确认事务未做真实网络故障注入 | AT-DB-006 尚未签收 | 在 Linux 测试库使用网络阻断验证客户端重试和幂等 |
 | KI-004 | 稳定性未运行 8 小时或 50 次真实循环 | 资源泄漏和长期悬挂风险未关闭 | 在 E2 运行循环并保存 Docker/DB/指标前后快照 |

@@ -265,6 +265,10 @@ Reconciler：
 - 浏览器安全访问、CSRF、防缓存、内容安全策略和 Token 隔离由 DF-026 固化并验收；
 - 不能实现 STF 的画面、触控、日志、文件和 ADB 协议，只复用 STF 原生页面和 Adapter。
 
+技术栈固定为 pnpm 11、Vite、React、TypeScript、Ant Design、React Router、TanStack Query 和 Orval；Orval 从设备 OpenAPI 生成 fetch client、类型和 Query hooks。测试使用 Vitest、React Testing Library、MSW 和 Playwright。生产构建嵌入现有 Go Server 并由 `/console/` 同源提供。
+
+DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现有 Service Bearer 和 `/api/v1/device-*` 路径保持兼容，只增加 Console 会话、安全方案、精确成功响应和分页元数据。
+
 ### 4.12 其他资源状态
 
 | 资源 | 状态 |
@@ -333,7 +337,12 @@ Reconciler：
 
 - 静态入口使用 `/console/` 或等价同源路径；
 - 控制台资源操作复用 5.1 和 5.2 的设备 API，不创建第二套资源语义；
-- 浏览器认证、会话和 CSRF 所需接口由 DF-026 在 OpenAPI 中冻结；
+- `POST /console/api/v1/sessions` 创建短时会话；
+- `GET /console/api/v1/me` 返回当前设备域用户和角色；
+- `DELETE /console/api/v1/sessions/current` 撤销当前会话；
+- `GET /api/v1/device-audit-events` 查询脱敏设备域审计；
+- `GET /api/v1/devices/:id/health-events` 查询设备健康事件；
+- `/api/v1/device-*` 同时接受 Service Bearer 或 Console Cookie；Console Principal 的 actor、client ID 和人工预约 owner 由服务端会话确定；
 - 浏览器不能接收 Service Token、Agent Token、STF API Token、数据库 URL 或 Docker/ADB/Appium 内部地址。
 
 ## 6. 设备域数据模型
@@ -352,6 +361,7 @@ Reconciler：
 | `device_health_events` | id、device_id、source、event_type、severity、reason、payload、created_at |
 | `device_audit_events` | id、actor_type、actor_id、action、resource_type、resource_id、request_id、summary、created_at |
 | `device_idempotency_records` | client_id、scope、idempotency_key、request_hash、resource_type、resource_id、response_status、expires_at |
+| `device_console_sessions` | id、token_hash、user_id、display_name、role、csrf_hash、created_at、last_seen_at、expires_at、revoked_at |
 
 必须具有：
 
@@ -361,6 +371,7 @@ Reconciler：
 - 外键、时间检查和合法状态检查；
 - migration up/down；
 - 不对 Alcor RunAttempt 建跨库外键。
+- Console 用户来自部署 Secret 文件，不建用户业务表；会话 Token 和 CSRF Token 只保存不可逆哈希，过期或撤销会话不能继续访问。
 
 ## 7. 错误分类
 

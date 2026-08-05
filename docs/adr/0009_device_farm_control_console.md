@@ -22,15 +22,18 @@
 - 控制台不得实现 Alcor 的 Protocol Template、Case、Dataset、Target、Config、Run、RunAttempt、Result、Artifact、评分、门禁、业务报告或 CI 发布入口；
 - 控制台只调用现有 `/api/v1/device-*` 设备接口，不直接访问 PostgreSQL、Docker Socket、RethinkDB、ADB 或 Appium 内部端口；
 - 远程看屏、日志、文件和触控继续使用 STF 原生能力。控制台只通过 STF Adapter 获取与当前预约绑定的短时入口，不持有或返回 STF 管理 Token；
-- 浏览器不得持有 Device Farm Service Token。DF-026 必须实现同源、短时、可审计且具备 CSRF 防护的浏览器访问方式，或使用受信任反向代理提供等价保护；
+- 浏览器不得持有 Device Farm Service Token。DF-026 在同一个 Go Server 中实现 Console Gateway：浏览器会话直接转换为 `console` Principal 并复用现有 handler/service，不使用 Service Token 回调自身 API；
+- 本地用户来自部署机受限的 `console-users.yaml`，只保存用户 ID、显示名、`viewer/operator/admin` 角色和 Argon2id 密码哈希；PostgreSQL 只新增可撤销短时会话，不建立 Alcor 用户表；
+- 会话 Cookie 使用 Secure、HttpOnly、SameSite=Strict；写请求必须通过与会话绑定的 CSRF Token 校验。非 HTTPS 只允许显式开发模式且 Server 绑定 loopback；
 - 控制台写操作必须遵循服务端状态机、权限、幂等、确认和 `reason` 规则，页面不能自行把操作显示为成功；
-- 前端工程使用 React + TypeScript，与新版 Eval Console 的技术方向一致；具体构建工具和组件库在 DF-026 固化，但不得复制不可追溯的旧 Alcor 构建产物；
+- 前端工程固定使用 pnpm 11、Vite、React、TypeScript、Ant Design、React Router、TanStack Query 和 Orval；测试使用 Vitest、React Testing Library、MSW 和 Playwright；
+- Orval 必须从 `openapi/device-farm-v1.yaml` 生成强类型 fetch client 和 Query hooks；设备契约版本提升为 `1.2.0`，先补齐精确成功响应和分页结构，禁止生成代码退化为通用 `Record<string, unknown>`；
 - 以后接入新版 Alcor 时，Eval Console 可以链接、嵌入或复用 Device Farm Console 的设备域模块，也可以通过同一 API 提供统一入口；该接入不得成为当前控制后台可用性的前置条件。
 
 ## 任务安排
 
-- DF-026：控制台工程、浏览器安全访问和只读资源页面；
-- DF-027：设备操作、人工预约和 STF 远控流程；
+- DF-026：控制台工程、浏览器安全访问和只读资源页面；只依赖已完成的 DF-003、DF-004、DF-008 和 DF-025，本地 E0 验收通过即可 completed；
+- DF-027：设备操作、人工预约和 STF 远控流程；只依赖 DF-009～DF-011 和 DF-026，使用 Mock STF 完成本地验收，不等待 DF-018 真实验收；
 - DF-028：部署、安全、真实单设备 Web 端到端验收和最终签收。
 
 ALCOR-001 必须依赖 DF-028；设备农场在控制后台验收完成前不得宣称 MVP 可独立交付。

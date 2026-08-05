@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending。当前仅建立任务和验收模板，尚未开始实现或测试。
+in_progress。已确认使用 E0 本地 PostgreSQL、Mock Provider 和浏览器自动化完成本任务，不等待 Linux/STF/Appium 真实验收。
 
 ## 目标
 

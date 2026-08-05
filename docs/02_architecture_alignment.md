@@ -11,6 +11,7 @@
 | 组件 | 当前工作区处理 | 新版 Alcor 接入方式 | 禁止跑偏 |
 |---|---|---|---|
 | Device Farm Console | 当前新增可独立使用的设备控制后台 | 新版 Alcor 可链接、嵌入或复用设备域模块，也可继续通过 Adapter 调用同一 API | 不实现 Alcor 评估业务页面，不复制 STF 远控，不让浏览器接触内部 Token |
+| Console Gateway 与会话 | 当前在 Device Farm Server 新增 `console` Principal、配置用户和 PostgreSQL 短时会话 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表 |
 | Eval Console 设备入口 | 当前不开发 Alcor 页面 | 新版 Alcor 后续按实际前端架构接入 Device Farm Console 或设备 API | 不把新版 Alcor 完成作为当前设备控制后台的前置条件 |
 | Case、Dataset、Target、Config | 当前不开发 | 由新版 `/api/v1` 和 PostgreSQL/ClickHouse 管理 | 不建临时替代业务表和 API |
 | Run、RunAttempt、Result、Artifact | 当前不开发正式业务模型 | 由独立 Worker、PostgreSQL、ClickHouse、Supabase Storage 管理 | DaFit 报告只作为联调产物 |
@@ -41,6 +42,7 @@
 - 设备 API 通用幂等记录，只保存请求哈希和设备资源 ID；
 - `X-Eval-Run-Id`、`X-Eval-Attempt-Id`、`traceparent` 透传；
 - Device Farm Console、浏览器安全访问、资源状态展示、人工预约和设备操作；
+- `device_console_sessions` 技术会话表、`viewer/operator/admin` 设备域权限和 CSRF 防护；
 - DaFit 端到端 Harness。
 
 ## 4. 当前目录职责

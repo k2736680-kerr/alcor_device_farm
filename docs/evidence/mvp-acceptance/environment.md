@@ -29,3 +29,11 @@ Device Farm commit：执行本地门禁时记录在 `artifacts/local-gate.txt`�
 - 备份恢复到新 PostgreSQL 和版本回滚。
 
 这些项目必须在 Linux KVM 服务器继续执行，Mock 证据不改变其 `BLOCKED` 结论。
+
+## 2026-08-04 环境更新
+
+- 内网服务器已启用 VMX 并提供可读写 `/dev/kvm`；
+- DF-014～DF-016 已完成 Android 16/API 36、ADB、boot、Appium、自动补池、预约、重建和清理真实验收；
+- 当前正式镜像 `alcor-device-farm/android-emulator:16.0-api36-r3` 已保留；
+- Docker daemon 的失效代理仍导致直接 `docker pull` 不可用，但不再影响已保留镜像运行；
+- DF-017～DF-024 和 DF-028 的 STF、DaFit、故障、运维及 Web 真实验收仍需继续执行。
