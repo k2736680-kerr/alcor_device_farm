@@ -4,7 +4,7 @@
 
 ## 方式一：systemd
 
-前置条件：Linux、Go 1.24+、PostgreSQL 客户端、可访问的 PostgreSQL 数据库。
+前置条件：Linux、Go 1.24+、Node.js 24、pnpm 11、PostgreSQL 客户端、可访问的 PostgreSQL 数据库。安装脚本会先从 `console/` 生成带内容哈希的生产静态资源，再编译嵌入资源的 Server；全新源码环境不依赖未纳入 Git 的本地 `dist/`。
 
 ```sh
 sudo ./scripts/install-device-farm-server.sh
@@ -76,3 +76,58 @@ Compose 不挂载 Docker Socket、不创建第二套 PostgreSQL，并默认只�
 - [运维手册](../../docs/operations_runbook.md)
 - [可观测性和告警](../../docs/observability.md)
 - [回滚方案](../../docs/rollback.md)
+
+## Console(Web 控制台)
+
+Console 的静态资源通过 `//go:embed` 内嵌在 Server 二进制中，**部署 Server 即部署 Console**，不需要独立的静态文件服务器或 CDN。
+
+### 启用
+
+在 `server.env` 中开启并指向 Console 用户文件。systemd 部署使用：
+
+```sh
+DEVICE_FARM_CONSOLE_ENABLED=true
+DEVICE_FARM_CONSOLE_USERS_FILE=/etc/alcor-device-farm/console-users.yaml
+```
+
+文件使用 `0640 root:device-farm-server`，父目录使用 `0750 root:device-farm-server`。Compose 部署把 `deploy/server/secrets/` 只读挂载到容器；在该目录创建未纳入 Git 的 `console-users.yaml`，并设置：
+
+```sh
+DEVICE_FARM_CONSOLE_USERS_FILE=/run/secrets/device-farm/console-users.yaml
+```
+
+`console-users.yaml` 只包含 Console 登录用户（Argon2id 哈希密码与角色），例如 `tmp/console-users.yaml` 的本地形态；生产环境由部署机密机制生成。`DEVICE_FARM_CONSOLE_DEVELOPMENT_INSECURE` 仅限开发环境且 Server 必须绑定回环地址，生产环境必须保持 false。
+
+### 访问与健康检查
+
+- 入口：`http://<server>:8080/console/`，SPA 路由由服务端回退到应用壳；
+- 存活与就绪：沿用 `/healthz`、`/readyz`（真实检查 PostgreSQL 与关键表）；
+- Console 入口可用性：`curl --fail http://127.0.0.1:8080/console/`，返回 200 即静态资源可服务。
+
+部署完成后执行自动自检：
+
+```sh
+export DEVICE_FARM_CONSOLE_ORIGIN=https://farm.example.internal
+sh ./scripts/verify-console-deployment.sh
+```
+
+回环开发环境可显式设置 `DEVICE_FARM_CONSOLE_ALLOW_HTTP=1`。脚本验证健康/就绪、未认证拒绝、CSP/HSTS、防缓存、哈希资源长缓存和构建产物凭证扫描；它不接收或输出 Console 密码、Service Token 或 STF Token。
+
+仅在封闭验收环境使用自签名证书时，可临时设置 `DEVICE_FARM_CONSOLE_INSECURE_TLS=1` 跳过证书链校验；正式环境不得设置，必须使用受信任证书。
+
+### 内置 Web 安全（随二进制生效，无需额外配置）
+
+- CSP：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`；
+- `X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Permissions-Policy` 全禁；
+- 会话 Cookie `HttpOnly + SameSite=Strict`，写操作要求 `X-CSRF-Token` 与服务端哈希匹配；
+- 缓存策略：`index.html` 与 SPA 回退路由 `Cache-Control: no-store`，内容哈希资源（`assets/index-<hash>.*`）`public, max-age=31536000, immutable`。
+
+### HTTPS / 受控内网
+
+生产环境必须置于同机 HTTPS 反向代理之后或受控内网，Server 默认只绑定 `127.0.0.1`。可从 `nginx-console.conf.example` 起步，配置正式域名、证书和访问控制；示例同时设置 TLS 1.2/1.3、HSTS、HTTP→HTTPS 跳转和同源代理。CSP `connect-src 'self'` 要求反向代理保持同源路径（例如 `https://farm.example.com/console/`），不得跨域改写或拆分静态资源。
+
+Server 只信任来自回环对端的 `X-Forwarded-For`；反向代理跨主机部署时不会信任该头，登录限流将按代理地址聚合。不要为了显示客户端地址而把 Server 直接发布到私网并信任任意 XFF。
+
+### 升级与回滚
+
+Console 随 Server 二进制整体升级/回滚，无独立版本。升级后验证 `GET /console/` 返回 200 并完成一次浏览器登录；入口 no-store + 内容哈希资源保证用户刷新后立即获得新版本，不会命中旧缓存。

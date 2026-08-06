@@ -73,16 +73,16 @@ func TestParseArgon2idRejectsUnsafeOrMalformedEncodings(t *testing.T) {
 	longHash := base64.RawStdEncoding.EncodeToString(make([]byte, 32))
 	cases := []string{
 		"",
-		"$argon2i$v=19$m=65536,t=2,p=1$" + longSalt + "$" + longHash,  // wrong algorithm
-		"$argon2id$v=18$m=65536,t=2,p=1$" + longSalt + "$" + longHash, // wrong version
-		"$argon2id$v=19$m=1000,t=2,p=1$" + longSalt + "$" + longHash,  // memory below floor
-		"$argon2id$v=19$m=99999999,t=2,p=1$" + longSalt + "$" + longHash, // memory above ceiling
-		"$argon2id$v=19$m=65536,t=1,p=1$" + longSalt + "$" + longHash, // time below floor
-		"$argon2id$v=19$m=65536,t=11,p=1$" + longSalt + "$" + longHash, // time above ceiling
-		"$argon2id$v=19$m=65536,t=2,p=0$" + longSalt + "$" + longHash, // zero parallelism
-		"$argon2id$v=19$m=65536,t=2,p=99$" + longSalt + "$" + longHash, // parallelism above ceiling
-		"$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$" + longHash,           // salt too short
-		"$argon2id$v=19$m=65536,t=2,p=1$" + longSalt + "$c2FsdA",      // hash too short
+		"$argon2i$v=19$m=65536,t=2,p=1$" + longSalt + "$" + longHash,             // wrong algorithm
+		"$argon2id$v=18$m=65536,t=2,p=1$" + longSalt + "$" + longHash,            // wrong version
+		"$argon2id$v=19$m=1000,t=2,p=1$" + longSalt + "$" + longHash,             // memory below floor
+		"$argon2id$v=19$m=99999999,t=2,p=1$" + longSalt + "$" + longHash,         // memory above ceiling
+		"$argon2id$v=19$m=65536,t=1,p=1$" + longSalt + "$" + longHash,            // time below floor
+		"$argon2id$v=19$m=65536,t=11,p=1$" + longSalt + "$" + longHash,           // time above ceiling
+		"$argon2id$v=19$m=65536,t=2,p=0$" + longSalt + "$" + longHash,            // zero parallelism
+		"$argon2id$v=19$m=65536,t=2,p=99$" + longSalt + "$" + longHash,           // parallelism above ceiling
+		"$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$" + longHash,                      // salt too short
+		"$argon2id$v=19$m=65536,t=2,p=1$" + longSalt + "$c2FsdA",                 // hash too short
 		"$argon2id$v=19$m=65536,t=2,p=1$" + longSalt + "$" + longHash + "$extra", // too many parts
 	}
 	for _, encoded := range cases {

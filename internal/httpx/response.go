@@ -38,6 +38,8 @@ func WriteError(writer http.ResponseWriter, request *http.Request, status int, a
 
 func writeJSON(writer http.ResponseWriter, status int, value Envelope) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("Pragma", "no-cache")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(value)
 }

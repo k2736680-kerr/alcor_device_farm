@@ -180,7 +180,7 @@
 | AT-WEB-003 | P0 | 打开总览、Image、Host、Pool、Device、Reservation 页面 | 数据与 Server API/PostgreSQL 真相一致，状态和 request ID 可追踪 |
 | AT-WEB-004 | P0 | 执行 restart/rebuild/quarantine/drain/release 等危险操作 | 必须二次确认并填写 reason；服务端非法状态拒绝被页面正确展示 |
 | AT-WEB-005 | P0 | 创建一条人工预约并轮询 | 单台 ready 设备进入 active，连接信息属于当前预约；第二条预约不突破容量 |
-| AT-WEB-006 | P0 | 从当前预约打开远控 | 使用 STF Adapter 返回的短时入口；不重写 STF 远控，不暴露管理 Token |
+| AT-WEB-006 | P0 | 检查 STF Web 边界 | Console 不展示 `remoteConnect` TCP 地址、不伪造 STF 浏览器入口、不暴露管理 Token；STF 原生页面保持独立受控访问 |
 | AT-WEB-007 | P0 | 续租并释放预约 | expires_at 正确更新；释放后设备进入清理并最终回 ready，页面状态随 Server 收敛 |
 | AT-WEB-008 | P0 | A 操作者访问或操作 B 的受控资源 | 按设备域权限返回 403，不能越权远控或释放 |
 | AT-WEB-009 | P0 | 构造 CSRF、过期会话和伪造 actor 请求 | 请求被拒绝，审计中不接受浏览器伪造身份 |
@@ -242,4 +242,4 @@ docs/evidence/
 5. OpenAPI、migration、部署、监控、故障处理和回滚文档齐全；
 6. 新版 Alcor 团队可使用 Mock 契约包开发 Device Farm Adapter；
 7. ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收。
-8. 用户可以通过 Device Farm Console 完成设备查看、人工预约、STF 远控、续租/释放和受控设备操作，不需要使用命令行或直接访问内部服务。
+8. 用户可以通过 Device Farm Console 完成设备查看、人工预约、续租/释放和受控设备操作，不需要使用命令行或直接访问内部服务；Console 不展示伪 STF Web 入口。

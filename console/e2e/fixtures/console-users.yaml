@@ -1,0 +1,6 @@
+users:
+  - id: admin
+    display_name: 控制台管理员
+    role: admin
+    # E0 自动化专用密码：admin-password。不得用于任何共享或生产环境。
+    password_hash: "$argon2id$v=19$m=19456,t=2,p=1$RjfwfaTXuLA0TKs9k/HCTw$EjLGxhLovuAfeKPF0vYLUHmXEf3l1ZmcLg65S718+38"

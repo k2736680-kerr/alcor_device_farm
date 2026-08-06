@@ -1,14 +1,27 @@
 ARG GO_IMAGE=golang:1.24.6-alpine3.22
+ARG NODE_IMAGE=node:24.14.0-alpine
 ARG RUNTIME_IMAGE=alpine:3.22.1
+ARG GO_PROXY=https://proxy.golang.org,direct
+
+FROM ${NODE_IMAGE} AS console-builder
+WORKDIR /src
+RUN npm install --global pnpm@11.14.0
+COPY console/package.json console/pnpm-lock.yaml console/pnpm-workspace.yaml ./console/
+RUN pnpm --dir console install --frozen-lockfile
+COPY console ./console
+COPY openapi ./openapi
+RUN pnpm --dir console build
 
 FROM ${GO_IMAGE} AS builder
+ARG GO_PROXY
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN GOPROXY=${GO_PROXY} go mod download
 COPY . .
+COPY --from=console-builder /src/internal/consoleui/dist ./internal/consoleui/dist
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo.version=${VERSION} -X github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo.commit=${COMMIT} -X github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo.buildDate=${BUILD_DATE}" \
     -o /out/device-farm-server ./cmd/device-farm-server

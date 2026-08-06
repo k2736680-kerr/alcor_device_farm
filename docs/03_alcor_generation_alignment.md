@@ -39,7 +39,7 @@
 - 超时、重试、隔离、重建、人工释放和审计事件；
 - `/api/v1/device-*` 和 `/internal/v1` 的资源化接口方向；
 - 后续接真机只增加 Provider，不重做调度、预约和执行链路。
-- 设备总览、镜像、Host、Pool、Device、Reservation 和受控 STF 入口属于设备域，可以由独立 Device Farm Console 管理。
+- 设备总览、镜像、Host、Pool、Device、Reservation 属于设备域，可以由独立 Device Farm Console 管理；STF 原生 Web 页面按 ADR-0010 独立受控访问，Console 不展示 `remoteConnect` TCP 地址。
 
 ### 被新版 Alcor 覆盖
 

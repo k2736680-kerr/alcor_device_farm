@@ -18,7 +18,7 @@
 - 设备预约、租约、并发锁和过期回收；
 - 设备状态机、健康事件、隔离和重建；
 - Appium Endpoint 的启动、端口隔离和健康状态；
-- Device Farm Console：设备总览、资源管理、人工预约、设备操作、设备域审计和受控 STF 入口；
+- Device Farm Console：设备总览、资源管理、人工预约、设备操作和设备域审计；STF 原生 Web 页面保持独立受控访问，Console 不展示 `remoteConnect` TCP 地址；
 - 面向外部任务系统的幂等北向 API。
 
 ## 3. 新版 Alcor 负责

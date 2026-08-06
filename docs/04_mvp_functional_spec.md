@@ -2,7 +2,7 @@
 
 ## 1. 交付目标
 
-在不等待新版 Alcor 的情况下，先交付一套可独立运行、可通过 Web 控制、可自动测试的 Android 设备农场。首期使用 Linux KVM 宿主机上的 Docker Android Emulator；设备申请成功后返回明确的 UDID、Appium Endpoint 和受控 STF 远控入口。
+在不等待新版 Alcor 的情况下，先交付一套可独立运行、可通过 Web 控制、可自动测试的 Android 设备农场。首期使用 Linux KVM 宿主机上的 Docker Android Emulator；设备申请成功后返回明确的 UDID 和 Appium Endpoint。STF 原生 Web 页面保持独立受控访问，Console 不把 `remoteConnect` TCP 地址展示为浏览器入口。
 
 未来新版 Alcor 的独立 Worker 只需实现 Device Farm Adapter，便可以 RunAttempt 身份申请、使用和释放设备，不需要改造设备农场核心。
 
@@ -25,7 +25,7 @@
 - DaFit 端到端联调 Harness；
 - 服务身份、Agent 身份、审计事件和敏感日志脱敏；
 - OpenAPI、部署说明、故障处理和验收证据。
-- Device Farm Console：设备总览、资源管理、人工预约、设备操作、设备域审计和 STF 远控入口。
+- Device Farm Console：设备总览、资源管理、人工预约、设备操作和设备域审计；不展示伪 STF Web 入口。
 
 ### 2.2 只预留扩展点
 
@@ -215,7 +215,7 @@ Reconciler：
 只封装：inventory、claim、release、remoteConnect 和健康检查。
 
 - STF Token 只保存在 Server 配置；
-- 浏览器或 Alcor 只获得短时远控入口；
+- 可信服务端调用方可按技术契约获得短时 `remoteConnect` TCP Endpoint；浏览器 Console 不接收或展示该地址；
 - claim 失败不能继续返回 active reservation；
 - release 失败进入重试和审计，不得直接忘记占用。
 
@@ -253,7 +253,7 @@ Reconciler：
 - Pool：列表、租期、并发、Image 和 Device membership；
 - Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine；
 - Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
-- 远程调试：只获取当前预约绑定的短时 STF 入口并跳转或受控嵌入；
+- STF 原生远控：保持独立受控服务；当前 Console 不提供入口，除非未来具备与 Reservation 绑定的短时 Web 授权契约；
 - 设备域审计：按资源查看操作人、原因、request ID、动作和时间。
 
 控制台必须遵守：
@@ -395,7 +395,7 @@ DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现�
 - 数据库、STF、Docker、Supabase 或 Target 密钥不得出现在 API、日志和审计摘要；
 - Agent Token 只保存 hash 或由部署配置注入；
 - Docker Socket 只在 Agent 宿主机本地使用；
-- 远控入口短时有效，不能返回 STF 管理 Token；
+- `remoteConnect` 技术 Endpoint 短时有效且不能返回 STF 管理 Token；Console 不展示该 TCP 地址；
 - 强制释放、隔离、解除隔离、重建必须记录 actor、reason 和 request ID；
 - connection metadata 只保存必要 Endpoint，不持久化临时访问 Token。
 
@@ -413,4 +413,4 @@ DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现�
 8. Server/Agent 重启后两分钟内状态收敛；
 9. 重建后无法读取上一次任务 App 数据；
 10. OpenAPI、migration、部署说明、测试报告和回滚步骤齐全。
-11. 用户可通过 Device Farm Console 完成资源查看、人工预约、STF 远控、续租/释放和受控设备操作，且浏览器无内部 Token。
+11. 用户可通过 Device Farm Console 完成资源查看、人工预约、续租/释放和受控设备操作，且浏览器无内部 Token、无伪 STF Web 入口；STF claim/release 和原生设备可见性在独立服务中真实通过。

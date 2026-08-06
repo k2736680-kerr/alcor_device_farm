@@ -1,0 +1,97 @@
+:root {
+  color: #142033;
+  background: #f3f6fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f3f6fb; }
+a { color: inherit; }
+
+.console-shell { min-height: 100vh; }
+.console-sider { position: relative; box-shadow: 12px 0 32px rgba(15, 35, 66, .08); }
+.console-brand { height: 82px; display: flex; align-items: center; gap: 12px; padding: 0 22px; color: #fff; }
+.console-brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #fff; font-size: 19px; background: linear-gradient(145deg, #3b82f6, #1d4ed8); box-shadow: 0 8px 18px rgba(37, 99, 235, .35); }
+.console-brand-copy { display: flex; flex-direction: column; line-height: 1.1; }
+.console-brand-copy strong { font-size: 16px; letter-spacing: .1px; }
+.console-brand-copy span { margin-top: 6px; color: #7891ad; font-size: 9px; font-weight: 700; letter-spacing: 1.8px; }
+.console-nav-label { padding: 12px 24px 8px; color: #58708d; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; }
+.console-menu { border-inline-end: 0 !important; padding: 0 10px; }
+.console-menu .ant-menu-item { height: 44px; line-height: 44px; margin-block: 4px; border-radius: 9px; }
+.console-sider-footer { position: absolute; bottom: 22px; left: 20px; right: 20px; display: flex; align-items: center; gap: 9px; padding: 12px; color: #7891ad; font-size: 12px; border: 1px solid #173553; border-radius: 10px; background: #0b213a; }
+.console-header { height: 82px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid #e8edf5; box-shadow: 0 2px 12px rgba(32, 56, 85, .03); }
+.console-eyebrow { display: block; font-size: 11px; letter-spacing: .8px; }
+.console-page-title { margin: 3px 0 0 !important; font-size: 18px !important; }
+.console-role-tag { border-radius: 999px; text-transform: uppercase; }
+.console-content { padding: 24px 28px 32px; overflow: auto; }
+
+.dashboard-page { max-width: 1500px; margin: 0 auto; }
+.dashboard-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding: 8px 2px 22px; }
+.dashboard-hero h2 { margin: 6px 0 5px !important; color: #101b2d; font-size: 28px !important; }
+.dashboard-hero p { margin: 0 !important; color: #6c7a8f; }
+.dashboard-kicker { display: flex; align-items: center; gap: 8px; color: #2563eb; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; }
+.dashboard-kicker span { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,.13); }
+.metric-grid { margin-bottom: 16px; }
+.metric-card { position: relative; overflow: hidden; min-height: 180px; border: 1px solid #e8edf5; box-shadow: 0 9px 28px rgba(37, 61, 91, .06); }
+.metric-card::after { content: ''; position: absolute; right: -28px; top: -28px; width: 110px; height: 110px; border-radius: 50%; opacity: .08; background: currentColor; }
+.metric-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.metric-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; font-size: 19px; background: currentColor; }
+.metric-icon .anticon { color: #fff; }
+.metric-arrow { color: #9aa8ba; }
+.metric-card .ant-statistic-title { color: #637086; font-size: 13px; }
+.metric-card .ant-statistic-content { color: #101b2d; font-size: 30px; font-weight: 700; }
+.metric-blue { color: #2563eb; }
+.metric-cyan { color: #0891b2; }
+.metric-violet { color: #7c3aed; }
+.metric-orange { color: #ea580c; }
+.dashboard-lower-grid { margin-top: 4px; }
+.dashboard-panel { height: 100%; border: 1px solid #e8edf5; box-shadow: 0 9px 28px rgba(37, 61, 91, .05); }
+.dashboard-panel .ant-card-head { min-height: 62px; border-bottom-color: #edf1f6; }
+.health-row { min-height: 72px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #eef2f7; }
+.health-row:last-child { border-bottom: 0; }
+.health-copy { display: flex; align-items: center; gap: 13px; }
+.health-copy div { display: flex; flex-direction: column; }
+.health-copy small { margin-top: 4px; color: #8996a8; }
+.health-icon { width: 36px; height: 36px; display: grid; place-items: center; color: #2563eb; border-radius: 10px; background: #edf4ff; }
+.capacity-panel .ant-card-body { padding-top: 28px; }
+.capacity-number { color: #101b2d; font-size: 46px; line-height: 1; font-weight: 750; }
+.capacity-panel .ant-progress { margin: 22px 0 10px; }
+.capacity-meta { display: flex; gap: 22px; padding: 14px 0 20px; color: #64748b; border-bottom: 1px solid #eef2f7; }
+.capacity-meta span { display: flex; align-items: center; gap: 7px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot-blue { background: #2563eb; }
+.dot-green { background: #22c55e; }
+.capacity-link { display: flex; align-items: center; gap: 8px; padding-top: 18px; color: #2563eb; font-weight: 600; }
+.capacity-link .anticon:last-child { margin-left: auto; }
+
+.login-shell { min-height: 100vh; display: grid; grid-template-columns: minmax(420px, 1.05fr) minmax(460px, .95fr); background: #f4f7fb; }
+.login-hero { position: relative; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 54px 68px; color: #fff; background: radial-gradient(circle at 78% 22%, rgba(59,130,246,.32), transparent 27%), linear-gradient(145deg, #06162a 0%, #0b294d 62%, #123b6b 100%); }
+.login-hero::after { content: ''; position: absolute; right: -150px; bottom: -180px; width: 520px; height: 520px; border: 1px solid rgba(255,255,255,.11); border-radius: 50%; box-shadow: 0 0 0 70px rgba(255,255,255,.025), 0 0 0 140px rgba(255,255,255,.018); }
+.login-brand { display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 800; letter-spacing: 1.8px; }
+.login-brand .anticon { font-size: 24px; color: #60a5fa; }
+.login-hero-copy { position: relative; z-index: 1; max-width: 620px; }
+.login-hero-copy h1.ant-typography { color: #fff !important; font-size: clamp(42px, 5vw, 66px) !important; line-height: 1.08 !important; letter-spacing: -2px; }
+.login-hero-copy .ant-typography { color: #c6d5e5 !important; }
+.login-hero-copy p { max-width: 570px; margin: 24px 0 34px !important; font-size: 16px; line-height: 1.9; }
+.login-feature-list { display: grid; gap: 14px; color: #dbe9f6; }
+.login-feature-list span { display: flex; align-items: center; gap: 11px; }
+.login-feature-list i { width: 8px; height: 8px; border: 2px solid #60a5fa; border-radius: 50%; box-shadow: 0 0 0 4px rgba(96,165,250,.1); }
+.login-hero-foot { position: relative; z-index: 1; display: flex; align-items: center; gap: 9px; color: #8da9c3; font-size: 12px; }
+.login-panel { display: grid; place-items: center; padding: 48px; }
+.login-card { width: min(440px, 100%); background: transparent; box-shadow: none; }
+.login-card .ant-card-body { padding: 0; }
+.login-card-kicker { margin-bottom: 10px; color: #2563eb; font-size: 11px; font-weight: 800; letter-spacing: 1.8px; }
+.login-card h2 { margin-bottom: 8px !important; color: #111c2e; font-size: 30px !important; }
+.login-card > .ant-card-body > p { margin-bottom: 34px; }
+.login-card .ant-form-item { margin-bottom: 22px; }
+.login-card .ant-input-affix-wrapper { height: 48px; border-color: #dbe3ee; box-shadow: 0 4px 14px rgba(36, 59, 85, .03); }
+.login-submit { height: 48px; margin-top: 4px; font-weight: 700; box-shadow: 0 10px 22px rgba(37,99,235,.2); }
+.login-security-note { margin-top: 24px; color: #8491a3; font-size: 12px; text-align: center; }
+
+@media (max-width: 900px) {
+  .login-shell { grid-template-columns: 1fr; }
+  .login-hero { display: none; }
+  .login-panel { min-height: 100vh; padding: 28px; }
+  .dashboard-hero { align-items: flex-start; flex-direction: column; }
+}

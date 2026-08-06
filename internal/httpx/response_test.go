@@ -26,6 +26,12 @@ func TestWriteDataUsesUnifiedEnvelope(t *testing.T) {
 	if envelope.RequestID != "req_test" || envelope.Error != nil || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := response.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q, want no-cache", got)
+	}
 }
 
 func TestWriteErrorUsesUnifiedEnvelope(t *testing.T) {
@@ -43,5 +49,8 @@ func TestWriteErrorUsesUnifiedEnvelope(t *testing.T) {
 	}
 	if envelope.Data != nil || envelope.Error == nil || envelope.Error.Code != "INVALID_ARGUMENT" {
 		t.Fatalf("envelope = %+v", envelope)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
 }

@@ -6,9 +6,10 @@
 curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/readyz
 curl --fail http://127.0.0.1:8080/metrics
+curl --fail http://127.0.0.1:8080/console/
 ```
 
-每天关注：Server/数据库就绪、Agent 心跳、ready 设备数、pending Reservation 年龄、recycling/quarantined 设备和失败 Host Command。
+每天关注：Server/数据库就绪、Console 入口、Agent 心跳、ready 设备数、pending Reservation 年龄、recycling/quarantined 设备和失败 Host Command。Console 入口必须返回 `Cache-Control: no-store`；浏览器显示的状态必须来自刷新后的 Server API。
 
 ## 备份
 
@@ -73,3 +74,6 @@ Reservation claim/release 按既有补偿策略处理。不要直接修改 `devi
 5. 创建并释放一次测试 Reservation；
 6. 释放后设备完成 recycling/rebuild 并回池；
 7. 日志、审计和数据库普通字段无 canary Secret。
+8. 对正式 HTTPS 入口执行 `DEVICE_FARM_CONSOLE_ORIGIN=https://... sh ./scripts/verify-console-deployment.sh`；
+9. 使用受控 Console 账号登录，完成资源查看和一次人工预约释放，随后注销并确认会话不可复用；
+10. 检查 `index.html` no-store、哈希资源 immutable，并确认浏览器 Cookie/存储/网络中没有 Service、Agent 或 STF Token。

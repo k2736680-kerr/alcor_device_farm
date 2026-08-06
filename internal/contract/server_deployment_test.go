@@ -18,7 +18,7 @@ func TestServerComposeAndImageStayPrivateAndUnprivileged(t *testing.T) {
 	raw := string(content)
 	for _, required := range []string{
 		"DEVICE_FARM_BIND_ADDRESS:-127.0.0.1", "read_only: true", "no-new-privileges:true",
-		"cap_drop:", "- ALL", "server.env", "/readyz",
+		"cap_drop:", "- ALL", "server.env", "/readyz", "./secrets:/run/secrets/device-farm:ro",
 	} {
 		if !strings.Contains(raw, required) {
 			t.Fatalf("Server compose is missing %q", required)
@@ -48,6 +48,9 @@ func TestServerComposeAndImageStayPrivateAndUnprivileged(t *testing.T) {
 	}
 	image := string(dockerfile)
 	if !strings.Contains(image, "USER 65532:65532") || !strings.Contains(image, "CGO_ENABLED=0") ||
+		!strings.Contains(image, "console/pnpm-workspace.yaml") ||
+		!strings.Contains(image, "pnpm --dir console build") ||
+		!strings.Contains(image, "COPY --from=console-builder /src/internal/consoleui/dist") ||
 		!strings.Contains(image, "device-farm-server-entrypoint.sh") || strings.Contains(image, ":latest") {
 		t.Fatalf("Dockerfile does not enforce the release runtime contract:\n%s", image)
 	}
@@ -83,6 +86,39 @@ func TestServerSystemdAndScriptsFailClosed(t *testing.T) {
 	} {
 		if !strings.Contains(rawCheck, required) {
 			t.Fatalf("Server preflight is missing %q", required)
+		}
+	}
+
+	installer, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install-device-farm-server.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawInstaller := string(installer)
+	for _, required := range []string{"pnpm_binary", "--dir console install --frozen-lockfile", "--dir console build", "-m 0750 -o root -g device-farm-server /etc/alcor-device-farm"} {
+		if !strings.Contains(rawInstaller, required) {
+			t.Fatalf("Server installer is missing %q", required)
+		}
+	}
+
+	consoleCheck, err := os.ReadFile(filepath.Join("..", "..", "scripts", "verify-console-deployment.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawConsoleCheck := string(consoleCheck)
+	for _, required := range []string{"DEVICE_FARM_CONSOLE_ORIGIN", "strict-transport-security", "content-security-policy", "cache-control", "UNAUTHORIZED"} {
+		if !strings.Contains(strings.ToLower(rawConsoleCheck), strings.ToLower(required)) {
+			t.Fatalf("Console deployment check is missing %q", required)
+		}
+	}
+
+	nginx, err := os.ReadFile(filepath.Join("..", "..", "deploy", "server", "nginx-console.conf.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawNginx := string(nginx)
+	for _, required := range []string{"listen 443 ssl", "proxy_pass http://127.0.0.1:8080", "Strict-Transport-Security", "X-Forwarded-For $remote_addr", "return 301 https://"} {
+		if !strings.Contains(rawNginx, required) {
+			t.Fatalf("Nginx Console baseline is missing %q", required)
 		}
 	}
 

@@ -31,11 +31,8 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await expect(activeRow).toBeVisible()
     await expect(activeRow).toContainText('admin')
 
-    // 当前预约通过 Server/STF Adapter 获得短时远控入口，浏览器不接触 STF 管理 Token
-    await activeRow.getByRole('button', { name: 'STF 远控' }).click()
-    const remoteDialog = page.getByRole('dialog', { name: /STF 远控入口/ })
-    await expect(remoteDialog.getByText('127.0.0.1:7401')).toBeVisible()
-    await remoteDialog.getByRole('button', { name: /关\s*闭/ }).click()
+    // remoteConnect 返回的是 TCP ADB 地址，不是浏览器页面；控制台不得把它伪装成 Web 远控入口。
+    await expect(activeRow.getByRole('button', { name: 'STF 远控' })).toHaveCount(0)
 
     // 单设备占用期间第二条预约只能保持 pending，不能突破容量
     await page.getByRole('button', { name: '创建人工预约' }).click()
@@ -45,7 +42,6 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     const pendingRow = page.getByRole('row', { name: /pending/ }).first()
     await expect(pendingRow).toBeVisible()
     await expect(pendingRow.getByRole('button', { name: /续\s*租/ })).toHaveCount(0)
-    await expect(pendingRow.getByRole('button', { name: 'STF 远控' })).toHaveCount(0)
     await pendingRow.getByRole('button', { name: /取\s*消/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('e2e 单设备容量验证后取消')
     await page.getByRole('button', { name: '确认执行' }).click()
@@ -69,5 +65,9 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await expect(page.getByText('release_device_reservation').first()).toBeVisible()
     await expect(page.getByText('cancel_pending_device_reservation').first()).toBeVisible()
     await expect(page.getByText('e2e 验证完成').first()).toBeVisible()
+
+    // 验收结束主动撤销浏览器会话，不把技术会话留给清理任务兜底。
+    await page.getByRole('button', { name: /退出/ }).click()
+    await expect(page.getByText('设备农场控制台登录')).toBeVisible()
   })
 })

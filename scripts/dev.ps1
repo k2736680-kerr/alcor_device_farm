@@ -34,7 +34,9 @@ function Invoke-Go {
 function Invoke-FormatCheck {
     $Unformatted = @()
     $Files = Get-ChildItem -LiteralPath $ProjectRoot -Recurse -Filter "*.go" -File |
-        Where-Object { $_.FullName -notmatch '[\\/]vendor[\\/]' }
+        Where-Object {
+            $_.FullName -notmatch '[\\/](vendor|node_modules|tmp|\.git|\.workbuddy)[\\/]'
+        }
 
     foreach ($File in $Files) {
         $Result = & $script:GofmtExecutable -l $File.FullName

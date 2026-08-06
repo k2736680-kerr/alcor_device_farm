@@ -10,6 +10,8 @@ services:
     image: alcor-device-farm:${DEVICE_FARM_VERSION}
     env_file:
       - server.env
+    volumes:
+      - ./secrets:/run/secrets/device-farm:ro
     environment:
       DEVICE_FARM_SERVER_ADDRESS: 0.0.0.0:8080
       DEVICE_FARM_SERVER_BINARY: /usr/local/bin/device-farm-server

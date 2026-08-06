@@ -1,6 +1,6 @@
 import { Spin } from 'antd'
 import type { MenuProps } from 'antd'
-import { Button, Layout, Menu, Space, Tag, Typography } from 'antd'
+import { Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   CalendarOutlined,
@@ -12,6 +12,7 @@ import {
   FileSearchOutlined,
   HeartOutlined,
   LogoutOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -42,6 +43,17 @@ const menuItems: MenuProps['items'] = [
   { key: '/audit', icon: <FileSearchOutlined />, label: <NavLink to="/audit">审计</NavLink> },
 ]
 
+const pageTitles: Record<string, string> = {
+  '/': '运行概览',
+  '/images': '设备镜像',
+  '/hosts': '宿主机',
+  '/pools': '设备池',
+  '/devices': '设备',
+  '/reservations': '预约',
+  '/health-events': '健康事件',
+  '/audit': '审计',
+}
+
 export default function App() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -56,6 +68,7 @@ export default function App() {
     },
   })
   const session = unwrapData<ConsoleSession>(data)
+  const currentTitle = pageTitles[location.pathname] ?? '设备资源管理'
 
   if (isPending) {
     return (
@@ -70,27 +83,40 @@ export default function App() {
   }
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Layout.Sider theme="dark" breakpoint="lg" collapsedWidth={64}>
-        <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 600, fontSize: 15 }}>
-          Alcor 设备农场
+    <Layout className="console-shell">
+      <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={72}>
+        <div className="console-brand">
+          <div className="console-brand-mark"><CloudServerOutlined /></div>
+          <div className="console-brand-copy">
+            <strong>Alcor Farm</strong>
+            <span>DEVICE CONTROL</span>
+          </div>
         </div>
-        <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
+        <div className="console-nav-label">资源与调度</div>
+        <Menu className="console-menu" theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
+        <div className="console-sider-footer">
+          <SafetyCertificateOutlined />
+          <span>设备域安全边界</span>
+        </div>
       </Layout.Sider>
       <Layout>
-        <Layout.Header
-          style={{ background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingInline: 24 }}
-        >
-          <Typography.Text strong>设备农场控制台</Typography.Text>
+        <Layout.Header className="console-header">
+          <div>
+            <Typography.Text type="secondary" className="console-eyebrow">设备农场控制台</Typography.Text>
+            <Typography.Title level={4} className="console-page-title">
+              {currentTitle}
+            </Typography.Title>
+          </div>
           <Space>
-            <Tag color="blue">{session.user.role}</Tag>
-            <Typography.Text>{session.user.display_name}</Typography.Text>
-            <Button size="small" icon={<LogoutOutlined />} loading={logout.isPending} onClick={() => logout.mutate()}>
+            <Tag className="console-role-tag" color="blue">{session.user.role}</Tag>
+            <Avatar size={34}>{session.user.display_name.slice(0, 1)}</Avatar>
+            <Typography.Text strong>{session.user.display_name}</Typography.Text>
+            <Button type="text" icon={<LogoutOutlined />} loading={logout.isPending} onClick={() => logout.mutate()}>
               退出
             </Button>
           </Space>
         </Layout.Header>
-        <Layout.Content style={{ margin: 16 }}>
+        <Layout.Content className="console-content">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/images" element={<ImagesPage />} />

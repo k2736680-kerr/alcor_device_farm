@@ -27,11 +27,11 @@ func TestClientAddressTrustsForwardedForOnlyFromLoopbackPeer(t *testing.T) {
 	}
 }
 
-func TestClientAddressTrustsForwardedForOnlyFromPrivatePeer(t *testing.T) {
+func TestClientAddressIgnoresForwardedForFromPrivatePeer(t *testing.T) {
 	request := requestFrom("192.168.1.10:8080")
 	request.Header.Set("X-Forwarded-For", "198.51.100.23")
-	if got := clientAddress(request); got != "198.51.100.23" {
-		t.Fatalf("clientAddress = %q, want the forwarded address behind a private proxy", got)
+	if got := clientAddress(request); got != "192.168.1.10" {
+		t.Fatalf("clientAddress = %q, want the direct private peer", got)
 	}
 }
 

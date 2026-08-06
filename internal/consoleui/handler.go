@@ -29,6 +29,7 @@ func Handler() http.Handler {
 			// SPA route: serve the app shell so client-side routing takes over.
 			relative = "index.html"
 		}
+		setCacheControl(writer, relative)
 
 		clone := request.Clone(request.Context())
 		if relative == "index.html" {
@@ -41,6 +42,19 @@ func Handler() http.Handler {
 		}
 		files.ServeHTTP(writer, clone)
 	})
+}
+
+// setCacheControl applies the static asset caching policy:
+//   - The SPA entry (index.html, including SPA fallback routes) must never be
+//     cached so browsers always fetch the latest shell after a deployment.
+//   - Everything else is a Vite content-hashed asset (assets/index-<hash>.*),
+//     which is immutable by name and can be cached for a long time.
+func setCacheControl(writer http.ResponseWriter, relative string) {
+	if relative == "index.html" {
+		writer.Header().Set("Cache-Control", "no-store")
+		return
+	}
+	writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 }
 
 func setSecurityHeaders(writer http.ResponseWriter) {

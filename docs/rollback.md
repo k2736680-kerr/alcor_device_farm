@@ -24,8 +24,10 @@
 
 1. 停止新 Reservation 入口或将相关 Host draining；
 2. 停止新 Server，恢复上一版本二进制/镜像和配置；
-3. 启动并检查 `/readyz`、指标、Agent 心跳和 Reservation；
+3. 启动并检查 `/readyz`、`/console/`、指标、Agent 心跳和 Reservation；
 4. 不执行 down migration。
+
+Console 与 Server 使用同一二进制版本。回滚后必须强制刷新浏览器并确认入口 HTML 为 `no-store`、引用的内容哈希资源属于目标旧版本；不得单独回滚或复制静态目录形成与 Server 不一致的 Console。
 
 ## 数据库恢复回滚
 
@@ -45,6 +47,7 @@
 
 - Server version/commit 为目标旧版本；
 - `/healthz`、`/readyz`、`/metrics` 正常；
+- `/console/` 可登录，`verify-console-deployment.sh` 通过，静态资源版本与目标 Server commit 一致；
 - active Reservation、Device、Session 和 STF claim 可核对；
 - Scheduler/Reaper/Reconciler 在两个周期内收敛；
 - 无双占、无永久 recycling、无 Token 泄露；

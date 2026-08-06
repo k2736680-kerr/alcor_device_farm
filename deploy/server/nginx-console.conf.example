@@ -1,0 +1,26 @@
+# 放入同机 Nginx 的 server 配置，并替换域名与证书路径。
+# Device Farm Server 继续只绑定 127.0.0.1:8080。
+server {
+    listen 443 ssl http2;
+    server_name farm.example.internal;
+
+    ssl_certificate     /etc/nginx/tls/farm.crt;
+    ssl_certificate_key /etc/nginx/tls/farm.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 60s;
+    }
+}
+
+server {
+    listen 80;
+    server_name farm.example.internal;
+    return 301 https://$host$request_uri;
+}

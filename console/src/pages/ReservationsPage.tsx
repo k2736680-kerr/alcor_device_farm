@@ -16,14 +16,13 @@ import { useState } from 'react'
 import {
   getListDeviceReservationsQueryKey,
   useCreateDeviceReservation,
-  useCreateRemoteSession,
   useExtendDeviceReservation,
   useListDevicePools,
   useListDeviceReservations,
   useReleaseDeviceReservation,
 } from '../api/generated/device-farm'
-import type { DevicePool, RemoteSession, Reservation } from '../api/generated/models'
-import { unwrapData, unwrapPage } from '../api/unwrap'
+import type { DevicePool, Reservation } from '../api/generated/models'
+import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { PageTable } from '../components/PageTable'
@@ -58,14 +57,12 @@ export function ReservationsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [extendFor, setExtendFor] = useState<Reservation | null>(null)
   const [releaseFor, setReleaseFor] = useState<Reservation | null>(null)
-  const [remote, setRemote] = useState<RemoteSession | null>(null)
   const [createForm] = useCreateForm()
   const [extendForm] = useExtendForm()
 
   const create = useCreateDeviceReservation()
   const extend = useExtendDeviceReservation()
   const release = useReleaseDeviceReservation()
-  const remoteSession = useCreateRemoteSession()
 
   const poolsQuery = useListDevicePools({ page: 1, page_size: 100 })
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
@@ -126,23 +123,6 @@ export function ReservationsPage() {
     )
   }
 
-  const openRemote = (reservation: Reservation) => {
-    remoteSession.mutate(
-      { id: reservation.id, data: { owner_type: reservation.owner_type, owner_id: reservation.owner_id } },
-      {
-        onSuccess: (data) => {
-          const session = unwrapData<RemoteSession>(data)
-          if (session?.remote_connect_url) {
-            setRemote(session)
-          } else {
-            message.warning('未获得远控地址')
-          }
-        },
-        onError: (error) => message.error(`远控入口创建失败：${errorText(error)}`),
-      },
-    )
-  }
-
   const columns: TableColumnsType<Reservation> = [
     { title: 'ID', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor[value] ?? 'default'}>{value}</Tag> },
@@ -162,11 +142,6 @@ export function ReservationsPage() {
         <Space size={4} wrap>
           {reservation.status === 'active' && (
             <Button size="small" onClick={() => setExtendFor(reservation)}>续租</Button>
-          )}
-          {reservation.status === 'active' && reservation.device_id && (
-            <Button size="small" type="primary" ghost loading={remoteSession.isPending} onClick={() => openRemote(reservation)}>
-              STF 远控
-            </Button>
           )}
           {(reservation.status === 'pending' || reservation.status === 'active') && (
             <Button size="small" danger onClick={() => setReleaseFor(reservation)}>
@@ -241,42 +216,6 @@ export function ReservationsPage() {
         onCancel={() => setReleaseFor(null)}
       />
 
-      <Modal
-        open={remote !== null}
-        title="STF 远控入口（短时有效）"
-        okText="复制地址"
-        cancelText="关闭"
-        onOk={() => {
-          if (remote?.remote_connect_url) {
-            void navigator.clipboard?.writeText(remote.remote_connect_url)
-            message.success('远控地址已复制')
-          }
-        }}
-        onCancel={() => setRemote(null)}
-        footer={
-          remote?.remote_connect_url ? (
-            <Space>
-              <Button onClick={() => setRemote(null)}>关闭</Button>
-              <Button
-                type="primary"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(remote.remote_connect_url ?? '')
-                  message.success('远控地址已复制')
-                }}
-              >
-                复制地址
-              </Button>
-            </Space>
-          ) : null
-        }
-      >
-        <Typography.Paragraph>
-          请在受控浏览器中打开以下地址（有效期至 {remote ? formatTime(remote.expires_at) : '-'}）：
-        </Typography.Paragraph>
-        <Typography.Paragraph copyable={{ text: remote?.remote_connect_url }}>
-          <Typography.Text code>{remote?.remote_connect_url}</Typography.Text>
-        </Typography.Paragraph>
-      </Modal>
     </>
   )
 }

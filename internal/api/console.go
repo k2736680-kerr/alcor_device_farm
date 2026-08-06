@@ -126,18 +126,16 @@ func noStore(writer http.ResponseWriter) {
 
 // clientAddress returns the address of the client that originated the request.
 //
-// When the device farm server sits behind a reverse proxy, the proxy connects
-// from a loopback or private address and sets X-Forwarded-For. We only trust
-// that header when the immediate peer is loopback/private, so a directly
-// exposed server cannot be tricked into accepting a spoofed address. The
-// address feeds console login rate limiting, so it must not be attacker
-// controlled unless a trusted proxy is provably in front.
+// When the device farm server sits behind the documented same-host reverse
+// proxy, the proxy connects from loopback and sets X-Forwarded-For. We only
+// trust that header for loopback peers. Trusting every private peer would let
+// a client on the same LAN spoof the address used by login rate limiting.
 func clientAddress(request *http.Request) string {
 	peer := net.ParseIP(strings.TrimSpace(request.RemoteAddr))
 	if host, _, err := net.SplitHostPort(request.RemoteAddr); err == nil {
 		peer = net.ParseIP(strings.TrimSpace(host))
 	}
-	if peer != nil && (peer.IsLoopback() || peer.IsPrivate()) {
+	if peer != nil && peer.IsLoopback() {
 		if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
 			if candidate := net.ParseIP(strings.TrimSpace(strings.Split(forwarded, ",")[0])); candidate != nil {
 				return candidate.String()

@@ -4,9 +4,6 @@
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@11.14.0",
-  "pnpm": {
-    "onlyBuiltDependencies": ["@scarf/scarf", "esbuild", "msw"]
-  },
   "scripts": {
     "dev": "vite",
     "generate": "orval --config orval.config.ts",

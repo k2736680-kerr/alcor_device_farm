@@ -77,6 +77,20 @@ bin/device-farm-server.exe --config config/config.example.yaml
 
 构建产物位于 `bin/`，已被 `.gitignore` 排除。
 
+## Console 本地浏览器验收
+
+DF-027/DF-028 的 E0 浏览器回归使用仓库内固定夹具，不依赖开发者手工保留的 `tmp/seed-e2e.sql` 或后台 Mock STF。先准备已经执行 migrations 的本地 PostgreSQL 测试库，再运行：
+
+```powershell
+$env:DEVICE_FARM_GO = "<go.exe 的绝对路径>"
+$env:DEVICE_FARM_POSTGRES_BIN = "<PostgreSQL bin 绝对路径>"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-console-local-e2e.ps1
+```
+
+脚本会执行 pnpm 冻结安装与生产构建、编译临时 Server、重置 E0 测试夹具、启动 Mock STF、运行完整 Playwright 套件，并在结束时检查开放预约、有效 Console 会话和 reserved/busy 设备均为 0。默认只接受回环 PostgreSQL，且数据库名必须以 `device_farm_` 开头；不允许把该入口指向共享或生产数据库。
+
+真实 Linux/STF/Appium 用例仍需显式设置 `DEVICE_FARM_E3=1` 并使用外部 Server，E0 Mock 结果不能替代 E3 验收。
+
 ## PostgreSQL migration 验证
 
 Windows 不需要安装系统服务。将 `DEVICE_FARM_POSTGRES_BIN` 指向 PostgreSQL 的 `bin` 目录，然后运行：

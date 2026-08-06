@@ -81,7 +81,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 | PostgreSQL Reservation | STF claim | Reservation是跨进程业务占用真相和租约；STF claim是远控工具的技术占用。顺序固定为数据库预约成功后调用STF claim |
 | Device Session | 新版 Alcor RunAttempt | Device Session只描述一次设备占用与技术连接；RunAttempt负责整个业务执行和结果。两者通过外部 UUID/ULID 关联，不互相替代 |
 | Device Farm Console | 新版 Alcor Eval Console | 前者只控制设备资源并可独立运行；后者负责完整评估业务。未来可以通过链接、嵌入或模块复用统一入口，但当前不复制 Alcor 业务对象 |
-| 控制台远控入口 | STF 原生 Web 页面 | 控制台只申请与 Reservation 绑定的短时入口并跳转或受控嵌入，不实现画面流、触控、日志或文件协议 |
+| STF 原生 Web 远控 | STF 原生 Web 页面 | 按 ADR-0010 保持独立受控访问；当前 Console 不展示 `remoteConnect` TCP 地址，也不实现画面流、触控、日志或文件协议 |
 
 ## 6. 开发审查规则
 
