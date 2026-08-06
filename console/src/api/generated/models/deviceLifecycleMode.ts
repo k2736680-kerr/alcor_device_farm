@@ -11,6 +11,7 @@ export type DeviceLifecycleMode = typeof DeviceLifecycleMode[keyof typeof Device
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const DeviceLifecycleMode = {
-  ephemeral: 'ephemeral',
-  persistent: 'persistent',
+  rebuild: 'rebuild',
+  clean: 'clean',
+  factory_reset: 'factory_reset',
 } as const;

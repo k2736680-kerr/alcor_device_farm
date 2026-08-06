@@ -13,4 +13,5 @@ export type DeviceHostInputHostType = typeof DeviceHostInputHostType[keyof typeo
 export const DeviceHostInputHostType = {
   docker_emulator: 'docker_emulator',
   usb_android: 'usb_android',
+  hybrid: 'hybrid',
 } as const;

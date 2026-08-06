@@ -924,7 +924,7 @@ components:
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string}
-        host_type: {type: string, enum: [docker_emulator, usb_android]}
+        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
         address: {type: string}
         capabilities: {type: object, additionalProperties: true}
         capacity: {type: object, additionalProperties: true}
@@ -1177,7 +1177,7 @@ components:
       required: [name, host_type, capacity]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
-        host_type: {type: string, enum: [docker_emulator, usb_android]}
+        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
         address: {type: string, maxLength: 255}
         capabilities: {type: object, additionalProperties: true}
         capacity: {$ref: "#/components/schemas/HostCapacity"}
@@ -1253,7 +1253,7 @@ components:
         device_kind: {type: string, enum: [emulator, physical]}
         provider_type: {type: string, enum: [docker_emulator, usb_android, mock]}
         provider_ref: {type: string}
-        lifecycle_mode: {type: string, enum: [ephemeral, persistent]}
+        lifecycle_mode: {type: string, enum: [rebuild, clean, factory_reset]}
         serial: {type: string, minLength: 1}
         stf_serial: {type: string}
         adb_endpoint: {type: string}
