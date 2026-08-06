@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	providerdocker "github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker"
 )
@@ -15,6 +16,21 @@ func TestAgentConcurrencyDefaultsToSingleSlotAndSupportsConfiguration(t *testing
 	t.Setenv("DEVICE_FARM_AGENT_CONCURRENCY", "3")
 	if got := envInt("DEVICE_FARM_AGENT_CONCURRENCY", 1); got != 3 {
 		t.Fatalf("configured concurrency=%d, want 3", got)
+	}
+}
+
+func TestAgentLeaseAndCommandTimeoutSupportEnvironmentConfiguration(t *testing.T) {
+	t.Setenv("DEVICE_FARM_AGENT_LEASE_SECONDS", "120")
+	if got := envInt("DEVICE_FARM_AGENT_LEASE_SECONDS", 300); got != 120 {
+		t.Fatalf("configured lease seconds=%d, want 120", got)
+	}
+	t.Setenv("DEVICE_FARM_AGENT_COMMAND_TIMEOUT", "30s")
+	if got := envDuration("DEVICE_FARM_AGENT_COMMAND_TIMEOUT", 270*time.Second); got != 30*time.Second {
+		t.Fatalf("configured command timeout=%v, want 30s", got)
+	}
+	t.Setenv("DEVICE_FARM_AGENT_COMMAND_TIMEOUT", "invalid")
+	if got := envDuration("DEVICE_FARM_AGENT_COMMAND_TIMEOUT", 270*time.Second); got != 270*time.Second {
+		t.Fatalf("invalid command timeout fallback=%v, want 270s", got)
 	}
 }
 

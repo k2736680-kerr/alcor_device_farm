@@ -88,12 +88,18 @@ DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Pixel 9
 DEVICE_FARM_DOCKER_CPUS=4
 DEVICE_FARM_DOCKER_MEMORY=5g
 DEVICE_FARM_AGENT_CONCURRENCY=1
+DEVICE_FARM_AGENT_LEASE_SECONDS=300
+DEVICE_FARM_AGENT_COMMAND_TIMEOUT=270s
+DEVICE_FARM_AGENT_STF_ADB_SERVER=127.0.0.1:5038
+DEVICE_FARM_ADB_BINARY=adb
 DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 ```
 
 设备型号必须存在于镜像内 `avdmanager list device` 的列表。当前 Android 16/API 36 镜像使用 `Pixel 9`；不存在的旧第三方型号会导致 AVD 创建失败，不能进入重试循环冒充启动中。
 
 `DEVICE_FARM_AGENT_PROVIDER` 是必填项，也可用命令行 `--provider` 显式传入。仓库 `.env.example` 的 `mock` 只用于本地控制面开发；Linux Host 的部署样例固定为 `docker`。不要删除该配置来依赖默认行为，因为 Agent 不提供默认 Provider。
+
+Host Command 租约必须严格长于单次 Provider 命令超时；生产默认使用 `300s/270s`。只有受控故障验收才临时缩短这两个值，验收后必须恢复默认配置并确认命令租约、设备状态和资源数量全部收敛。
 
 Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。DF-016 已要求 validation 和每次正式 create 都核对本机镜像 ID/RepoDigest 与已登记 digest。
 

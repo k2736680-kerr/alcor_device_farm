@@ -31,6 +31,8 @@ services:
     command: ["adb", "-a", "-P", "5037", "nodaemon", "server"]
     expose:
       - "5037"
+    ports:
+      - "127.0.0.1:${STF_ADB_BIND_PORT:-5038}:5037"
     volumes:
       - stf-adb-keys:/root/.android
     extra_hosts:

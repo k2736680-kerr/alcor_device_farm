@@ -26,7 +26,8 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.Lease.GracePeriod != 30*time.Second || cfg.Lease.ReaperInterval != time.Second {
 		t.Fatalf("lease defaults = %+v", cfg.Lease)
 	}
-	if cfg.Reconcile.FailureThreshold != 3 || cfg.Reconcile.HostTimeout != 30*time.Second {
+	if cfg.Reconcile.FailureThreshold != 3 || cfg.Reconcile.HostTimeout != 30*time.Second ||
+		cfg.Reconcile.STFVisibilityGrace != 30*time.Second {
 		t.Fatalf("reconcile defaults = %+v", cfg.Reconcile)
 	}
 	if cfg.WarmPool.Interval != 30*time.Second {
@@ -72,6 +73,7 @@ stf:
 	t.Setenv("DEVICE_FARM_DATABASE_URL", "postgres://environment-database-secret")
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
+	t.Setenv("DEVICE_FARM_RECONCILE_STF_VISIBILITY_GRACE", "40s")
 	t.Setenv("DEVICE_FARM_WARM_POOL_INTERVAL", "12s")
 	t.Setenv("DEVICE_FARM_STF_BASE_URL", "http://stf-environment.local/base")
 	t.Setenv("DEVICE_FARM_STF_API_TOKEN", "environment-stf-secret")
@@ -99,6 +101,9 @@ stf:
 	}
 	if cfg.Reconcile.FailureThreshold != 5 {
 		t.Fatalf("FailureThreshold = %d", cfg.Reconcile.FailureThreshold)
+	}
+	if cfg.Reconcile.STFVisibilityGrace != 40*time.Second {
+		t.Fatalf("STFVisibilityGrace = %v", cfg.Reconcile.STFVisibilityGrace)
 	}
 	if cfg.WarmPool.Interval != 12*time.Second {
 		t.Fatalf("WarmPool interval = %v", cfg.WarmPool.Interval)

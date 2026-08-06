@@ -20,7 +20,10 @@ func TestClientUsesOfficialInventoryClaimReleaseAndRemoteConnectAPIs(t *testing.
 		}
 		switch request.Method + " " + request.URL.Path {
 		case "GET /base/api/v1/devices":
-			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"serial": "host:32771", "present": true, "ready": true, "using": false}}})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{
+				{"serial": "host:32771", "present": true, "ready": true, "using": false},
+				{"serial": "preparing:32773", "present": true, "ready": false, "using": false},
+			}})
 		case "POST /base/api/v1/user/devices":
 			var payload map[string]any
 			_ = json.NewDecoder(request.Body).Decode(&payload)
@@ -44,7 +47,7 @@ func TestClientUsesOfficialInventoryClaimReleaseAndRemoteConnectAPIs(t *testing.
 		t.Fatal(err)
 	}
 	devices, err := client.Inventory(context.Background())
-	if err != nil || len(devices) != 1 || devices[0].Serial != "host:32771" || !devices[0].Ready {
+	if err != nil || len(devices) != 2 || devices[0].Serial != "host:32771" || !devices[0].Ready {
 		t.Fatalf("inventory=%#v error=%v", devices, err)
 	}
 	visible, err := client.Visible(context.Background(), "host:32771")
@@ -54,6 +57,10 @@ func TestClientUsesOfficialInventoryClaimReleaseAndRemoteConnectAPIs(t *testing.
 	visible, err = client.Visible(context.Background(), "missing:5555")
 	if err != nil || visible {
 		t.Fatalf("missing visible=%t error=%v", visible, err)
+	}
+	visible, err = client.Visible(context.Background(), "preparing:32773")
+	if err != nil || visible {
+		t.Fatalf("preparing visible=%t error=%v", visible, err)
 	}
 	if err := client.Claim(context.Background(), "host:32771", 10*time.Minute); err != nil {
 		t.Fatal(err)

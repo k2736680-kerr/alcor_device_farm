@@ -19,6 +19,10 @@ type Client interface {
 	Complete(context.Context, string, hostcommand.CompletionInput) error
 }
 
+type EndpointRegistrar interface {
+	Register(context.Context, string) error
+}
+
 type Config struct {
 	HostID            string
 	ProviderType      string
@@ -29,13 +33,15 @@ type Config struct {
 	CommandTimeout    time.Duration
 	ShutdownTimeout   time.Duration
 	Capacity          map[string]any
+	STFADBRegistrar   EndpointRegistrar
 }
 
 type Agent struct {
-	config   Config
-	client   Client
-	provider providers.Provider
-	logger   *slog.Logger
+	config    Config
+	client    Client
+	provider  providers.Provider
+	registrar EndpointRegistrar
+	logger    *slog.Logger
 }
 
 func New(config Config, client Client, provider providers.Provider, logger *slog.Logger) (*Agent, error) {
@@ -49,7 +55,7 @@ func New(config Config, client Client, provider providers.Provider, logger *slog
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Agent{config: config, client: client, provider: provider, logger: logger}, nil
+	return &Agent{config: config, client: client, provider: provider, registrar: config.STFADBRegistrar, logger: logger}, nil
 }
 
 func (agent *Agent) Run(ctx context.Context) error {
@@ -134,6 +140,11 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	}
 	devices := make([]hostcommand.DiscoveredDevice, 0, len(snapshots))
 	for _, snapshot := range snapshots {
+		if snapshot.Ready() && agent.registrar != nil {
+			if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
+				agent.logger.Warn("STF ADB endpoint registration failed", "provider_ref", snapshot.ProviderRef, "error", err)
+			}
+		}
 		devices = append(devices, hostcommand.DiscoveredDevice{
 			ProviderRef: snapshot.ProviderRef, Serial: snapshot.Connection.Serial,
 			LifecycleStatus: providerLifecycle(snapshot), HealthStatus: providerHealth(snapshot),
@@ -157,6 +168,7 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 	case "create":
 		var snapshot providers.Snapshot
 		created := false
+		ready := false
 		err = agent.verifyRuntimeImage(ctx, command.Payload)
 		if err == nil {
 			snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
@@ -171,10 +183,14 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		}
 		if err == nil {
 			snapshot, err = agent.waitReady(ctx, snapshot)
+			ready = err == nil
+		}
+		if err == nil {
+			err = agent.registerSTF(ctx, snapshot)
 		}
 		if err == nil {
 			result = snapshotResult(snapshot)
-		} else if created {
+		} else if created && !ready {
 			if cleanupErr := agent.cleanupProvider(providerRef); cleanupErr != nil {
 				err = errors.Join(err, fmt.Errorf("cleanup failed emulator create: %w", cleanupErr))
 			}
@@ -198,6 +214,9 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 			snapshot, err = agent.waitReady(ctx, snapshot)
 		}
 		if err == nil {
+			err = agent.registerSTF(ctx, snapshot)
+		}
+		if err == nil {
 			result = snapshotResult(snapshot)
 		}
 	case "rebuild":
@@ -209,6 +228,9 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 			if err == nil {
 				snapshot, err = agent.waitReady(ctx, snapshot)
 			}
+		}
+		if err == nil {
+			err = agent.registerSTF(ctx, snapshot)
 		}
 		if err == nil {
 			result = snapshotResult(snapshot)
@@ -243,6 +265,17 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 	if completeErr := agent.client.Complete(context.Background(), command.ID, completion); completeErr != nil {
 		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
 	}
+}
+
+func (agent *Agent) registerSTF(ctx context.Context, snapshot providers.Snapshot) error {
+	if agent.registrar == nil {
+		return nil
+	}
+	if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
+		return &providers.Error{Operation: providers.OperationConnectionInfo, Code: "STF_ADB_CONNECT_FAILED",
+			Message: "cannot register emulator endpoint with STF ADB server", Retryable: true, Cause: err}
+	}
+	return nil
 }
 
 func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snapshot providers.Snapshot, returnErr error) {

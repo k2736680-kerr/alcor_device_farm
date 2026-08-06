@@ -2,12 +2,16 @@ package warmpool_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/warmpool"
 )
 
@@ -153,8 +157,9 @@ func TestSuccessfulCreateResultRestoresReadyStateAfterServerRestart(t *testing.T
 	if err != nil || result.DevicesReady != 1 || result.DevicesCreated != 0 {
 		t.Fatalf("restart result=%+v error=%v", result, err)
 	}
-	assertCount(t, db, `SELECT count(*) FROM devices WHERE lifecycle_status='ready' AND health_status='healthy'
-		AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE lifecycle_status='ready' AND health_status='unhealthy'
+		AND health_reason='STF readiness stabilization is in progress'
+		AND consecutive_failures=0 AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
 }
 
 func TestHistoricalCreateResultDoesNotCompleteActiveManagementRebuild(t *testing.T) {
@@ -351,8 +356,19 @@ func TestReleasedEmulatorQueuesOneRebuildAndReturnsReadyOnlyAfterCleanSnapshot(t
 		t.Fatalf("complete result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='device_0000000000001'
-		AND lifecycle_status='ready' AND health_status='healthy' AND serial='10.0.0.20:31001'
-		AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
+		AND lifecycle_status='ready' AND health_status='unhealthy'
+		AND health_reason='STF readiness stabilization is in progress' AND consecutive_failures=0
+		AND serial='10.0.0.20:31001' AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
+	reservationService := reservation.NewService(db, nil)
+	if _, err := reservationService.Create(context.Background(), audit.Service("test-worker"), "recycle-stabilization-reservation", reservation.CreateInput{
+		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000991",
+		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scheduler.New(db, nil, nil).RunOnce(context.Background()); !errors.Is(err, scheduler.ErrCapacityUnavailable) {
+		t.Fatalf("scheduler during recycle stabilization error=%v", err)
+	}
 }
 
 func TestFailedRecycleRebuildQuarantinesDevice(t *testing.T) {

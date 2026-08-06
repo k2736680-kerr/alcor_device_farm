@@ -117,7 +117,7 @@ func (client *Client) Visible(ctx context.Context, serial string) (bool, error) 
 	}
 	for _, device := range devices {
 		if device.Serial == serial {
-			return device.Present, nil
+			return device.Present && device.Ready, nil
 		}
 	}
 	return false, nil

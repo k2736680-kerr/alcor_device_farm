@@ -312,7 +312,7 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	service := management.NewService(store, provider, generator)
 	reservationService := reservation.NewService(db, generator, controllers...)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	healthService := reconcile.New(db, provider, nil, 3, logger)
+	healthService := reconcile.New(db, provider, nil, 3, 0, logger)
 	hostCommands := hostcommand.New(db)
 	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{
 		Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands, Metrics: farmmetrics.New(db),

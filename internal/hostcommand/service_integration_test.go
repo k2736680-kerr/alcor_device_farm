@@ -49,6 +49,36 @@ func TestHeartbeatBringsOfflineHostOnline(t *testing.T) {
 	}
 }
 
+func TestHeartbeatDoesNotMaskSTFUnhealthyState(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "emulator-5554",
+		nil, nil, "ready", "unhealthy")
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET
+		health_reason='device is not visible through STF',consecutive_failures=2
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "emulator-5554",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+				"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var health, reason string
+	var failures int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT health_status,health_reason,consecutive_failures
+		FROM devices WHERE id='device_0000000000001'`).Scan(&health, &reason, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if health != "unhealthy" || reason != "device is not visible through STF" || failures != 2 {
+		t.Fatalf("health=%s reason=%q failures=%d", health, reason, failures)
+	}
+}
+
 func TestStoppedHeartbeatMayOmitConnectionAndPreservesLastKnownEndpoints(t *testing.T) {
 	db := openTestDatabase(t)
 	seedHost(t, db)

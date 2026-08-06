@@ -46,8 +46,12 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 			t.Fatalf("missing STF service %q", service)
 		}
 	}
-	if len(document.Services["rethinkdb"].Ports) != 0 || len(document.Services["stf-adb"].Ports) != 0 {
-		t.Fatal("RethinkDB and ADB server must not publish host ports")
+	if len(document.Services["rethinkdb"].Ports) != 0 {
+		t.Fatal("RethinkDB must not publish host ports")
+	}
+	if ports := document.Services["stf-adb"].Ports; len(ports) != 1 ||
+		!strings.HasPrefix(ports[0], "127.0.0.1:${STF_ADB_BIND_PORT:-5038}:") {
+		t.Fatalf("STF ADB registrar port must be loopback-only: %v", ports)
 	}
 	if strings.Join(document.Services["rethinkdb"].Networks, ",") != "stf-internal" ||
 		!containsSTFNetwork(document.Services["stf-adb"].Networks, "stf-internal") ||

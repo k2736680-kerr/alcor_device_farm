@@ -22,7 +22,7 @@
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Docker Emulator Provider | 当前新增 | 由设备农场调度 | 不把 Docker Socket 暴露给 Alcor/浏览器 |
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
-| STF + RethinkDB | Adapter 和部署配置 | 继续作为远控/可见性工具 | 不作为预约和占用真相源 |
+| STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机、仅 loopback 暴露的 STF ADB server | 继续作为远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
@@ -35,7 +35,7 @@
 - Docker Emulator 生命周期和 USB Provider 扩展接口；
 - Scheduler、租约、续租、释放、数据库并发约束；
 - Reconciler、Reaper、健康事件、隔离和重建；
-- STF inventory/claim/release/remoteConnect Adapter；
+- STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；
 - `/api/v1/device-*` 与 `/internal/v1` 契约；
 - UUID/ULID Owner ID、幂等键和统一错误响应；
@@ -55,6 +55,7 @@
 | `internal/scheduler/reconciler/reaper` | 设备分配、租约和状态收敛 | 对 Alcor 保持内部不可见 |
 | `internal/providers` | Docker Emulator、Mock、USB 扩展 | 上层统一 Device 模型不变 |
 | `internal/adapters/stf` | STF API 封装 | 由设备农场内部调用 |
+| `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
 | `internal/metrics` | 设备域 Prometheus 指标和数据库就绪检查 | 只暴露基础设施聚合状态，不保存或计算 Alcor 业务指标 |
 | `migrations` | 设备域表和约束 | 不并入新版 Run/Case migration，不跨库外键 |

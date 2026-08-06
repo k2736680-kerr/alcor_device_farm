@@ -27,13 +27,15 @@ type Visibility interface {
 }
 
 type EventInput struct {
-	Source          string         `json:"source"`
-	EventType       string         `json:"event_type"`
-	Severity        string         `json:"severity"`
-	Reason          string         `json:"reason"`
-	ObservedAt      time.Time      `json:"observed_at"`
-	Payload         map[string]any `json:"payload,omitempty"`
-	ForceQuarantine bool           `json:"-"`
+	Source               string         `json:"source"`
+	EventType            string         `json:"event_type"`
+	Severity             string         `json:"severity"`
+	Reason               string         `json:"reason"`
+	ObservedAt           time.Time      `json:"observed_at"`
+	Payload              map[string]any `json:"payload,omitempty"`
+	ForceQuarantine      bool           `json:"-"`
+	SuppressQuarantine   bool           `json:"-"`
+	SuppressFailureCount bool           `json:"-"`
 }
 
 type Event struct {
@@ -55,9 +57,12 @@ type DeviceState struct {
 	Serial              string
 	Lifecycle           domain.DeviceLifecycleStatus
 	Health              domain.HealthStatus
+	HealthReason        string
 	ConsecutiveFailures int
 	HostStatus          domain.HostStatus
 	OperationInFlight   bool
+	LatestProvisionedAt *time.Time
+	STFFailureStartedAt *time.Time
 }
 
 type Result struct {
@@ -71,19 +76,24 @@ type Service struct {
 	db               *database.DB
 	provider         providers.Provider
 	visibility       Visibility
+	visibilityGrace  time.Duration
 	failureThreshold int
 	newID            func() (string, error)
 	logger           *slog.Logger
 }
 
-func New(db *database.DB, provider providers.Provider, visibility Visibility, failureThreshold int, logger *slog.Logger) *Service {
+func New(db *database.DB, provider providers.Provider, visibility Visibility, failureThreshold int, visibilityGrace time.Duration, logger *slog.Logger) *Service {
 	if failureThreshold < 1 {
 		failureThreshold = 3
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{db: db, provider: provider, visibility: visibility, failureThreshold: failureThreshold, newID: identifier.New, logger: logger}
+	if visibilityGrace < 0 {
+		visibilityGrace = 0
+	}
+	return &Service{db: db, provider: provider, visibility: visibility, visibilityGrace: visibilityGrace,
+		failureThreshold: failureThreshold, newID: identifier.New, logger: logger}
 }
 
 func (service *Service) Report(ctx context.Context, deviceID string, input EventInput) (Event, error) {
@@ -123,7 +133,8 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 				return err
 			}
 		}
-		if (input.ForceQuarantine || failures >= service.failureThreshold) && aggregate.Lifecycle() != domain.DeviceQuarantined {
+		if (input.ForceQuarantine || (!input.SuppressQuarantine && failures >= service.failureThreshold)) &&
+			aggregate.Lifecycle() != domain.DeviceQuarantined {
 			if err := aggregate.Transition(domain.DeviceQuarantined, input.Reason, now); err != nil {
 				return err
 			}
@@ -178,6 +189,11 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", "device host is offline or unavailable"
+		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
+			service.withinVisibilityGrace(device, input.ObservedAt) {
+			input.EventType, input.Severity, input.Reason = "stf_stabilizing", "error", domain.STFReadinessStabilizationReason
+			input.SuppressFailureCount = true
+			input.SuppressQuarantine = true
 		} else if service.provider != nil {
 			health, inspectErr := service.provider.InspectHealth(ctx, device.ProviderRef)
 			switch {
@@ -199,21 +215,32 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 					}
 				}
 			}
-		} else if service.visibility != nil && device.Health == domain.HealthHealthy &&
-			(device.Lifecycle == domain.DeviceReady || device.Lifecycle == domain.DeviceReserved || device.Lifecycle == domain.DeviceBusy) {
+		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
+			(device.Health == domain.HealthHealthy || domain.IsSTFFailureReason(device.HealthReason)) {
 			visible, visibilityErr := service.visibility.Visible(ctx, device.Serial)
 			if visibilityErr == nil && visible {
-				continue
+				if device.Health == domain.HealthHealthy && device.ConsecutiveFailures == 0 {
+					continue
+				}
+				input.EventType, input.Severity, input.Reason = "health_recovered", "info", "STF visibility recovered"
+			} else {
+				input.EventType, input.Severity, input.Reason = "stf_not_visible", "error", "device is not visible through STF"
+				if visibilityErr != nil {
+					input.Reason = visibilityErr.Error()
+				}
 			}
-			input.EventType, input.Severity, input.Reason = "stf_not_visible", "error", "device is not visible through STF"
-			if visibilityErr != nil {
-				input.Reason = visibilityErr.Error()
-			}
-		} else if device.Health != domain.HealthHealthy &&
-			(device.Lifecycle == domain.DeviceReady || device.Lifecycle == domain.DeviceReserved || device.Lifecycle == domain.DeviceBusy) {
+		} else if device.Health != domain.HealthHealthy && schedulableLifecycle(device.Lifecycle) {
 			input.EventType, input.Severity, input.Reason = "agent_reported_unhealthy", "error", "agent heartbeat reported an assigned or schedulable device is not healthy"
 		} else {
 			continue
+		}
+		if input.EventType == "stf_not_visible" {
+			if service.withinVisibilityGrace(device, input.ObservedAt) {
+				input.SuppressFailureCount = true
+				input.SuppressQuarantine = true
+			} else if service.withinSTFOutageGrace(device, input.ObservedAt) {
+				input.SuppressQuarantine = true
+			}
 		}
 		before := device.Lifecycle
 		if _, err := service.Report(ctx, device.ID, input); err != nil {
@@ -231,6 +258,30 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		}
 	}
 	return result, nil
+}
+
+func schedulableLifecycle(lifecycle domain.DeviceLifecycleStatus) bool {
+	return lifecycle == domain.DeviceReady || lifecycle == domain.DeviceReserved || lifecycle == domain.DeviceBusy
+}
+
+func (service *Service) withinVisibilityGrace(device DeviceState, observedAt time.Time) bool {
+	if service.visibilityGrace <= 0 || device.LatestProvisionedAt == nil {
+		return false
+	}
+	age := observedAt.Sub(*device.LatestProvisionedAt)
+	return age >= 0 && age < service.visibilityGrace
+}
+
+func (service *Service) withinSTFOutageGrace(device DeviceState, observedAt time.Time) bool {
+	if service.visibilityGrace <= 0 {
+		return false
+	}
+	startedAt := observedAt
+	if device.STFFailureStartedAt != nil {
+		startedAt = *device.STFFailureStartedAt
+	}
+	age := observedAt.Sub(startedAt)
+	return age >= 0 && age < service.visibilityGrace
 }
 
 func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout time.Duration) (int, error) {
@@ -331,6 +382,10 @@ func validEvent(deviceID string, input EventInput) bool {
 }
 
 func healthOutcome(device DeviceState, input EventInput) (domain.HealthStatus, int) {
+	failures := device.ConsecutiveFailures
+	if !input.SuppressFailureCount {
+		failures++
+	}
 	switch input.Severity {
 	case "info":
 		if input.EventType == "health_recovered" {
@@ -338,9 +393,9 @@ func healthOutcome(device DeviceState, input EventInput) (domain.HealthStatus, i
 		}
 		return device.Health, device.ConsecutiveFailures
 	case "warning":
-		return domain.HealthDegraded, device.ConsecutiveFailures + 1
+		return domain.HealthDegraded, failures
 	default:
-		return domain.HealthUnhealthy, device.ConsecutiveFailures + 1
+		return domain.HealthUnhealthy, failures
 	}
 }
 
@@ -351,10 +406,17 @@ type queryer interface {
 
 func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.serial,d.lifecycle_status,
-		d.health_status,d.consecutive_failures,h.status,
+		d.health_status,COALESCE(d.health_reason,''),d.consecutive_failures,h.status,
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
-			AND c.status IN ('pending','leased'))
+			AND c.status IN ('pending','leased')),
+		(SELECT max(c.completed_at) FROM device_host_commands c
+			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild') AND c.status='succeeded'),
+		(SELECT min(recent.observed_at) FROM (
+			SELECT e.observed_at FROM device_health_events e
+			WHERE e.device_id=d.id AND e.event_type='stf_not_visible'
+			ORDER BY e.created_at DESC LIMIT d.consecutive_failures
+		) recent)
 		FROM devices d JOIN device_hosts h ON h.id=d.host_id ORDER BY d.created_at,d.id`)
 	if err != nil {
 		return nil, err
@@ -364,7 +426,8 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	for rows.Next() {
 		var device DeviceState
 		if err := rows.Scan(&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
-			&device.Lifecycle, &device.Health, &device.ConsecutiveFailures, &device.HostStatus, &device.OperationInFlight); err != nil {
+			&device.Lifecycle, &device.Health, &device.HealthReason, &device.ConsecutiveFailures, &device.HostStatus,
+			&device.OperationInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, device)

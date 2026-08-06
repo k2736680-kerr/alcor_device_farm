@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -15,10 +16,11 @@ import (
 
 func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 	client := &completionClient{}
+	registrar := &fakeRegistrar{}
 	runtime, err := New(Config{
 		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: time.Second,
 		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
-		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1}, STFADBRegistrar: registrar,
 	}, client, providermock.New(providermock.Config{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +43,36 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 	connection, ok := client.completion.Result["connection"].(map[string]any)
 	if !ok || connection["serial"] != "mock-emulator-1" || connection["adb_endpoint"] == "" || connection["appium_udid"] != "mock-emulator-1" {
 		t.Fatalf("connection=%#v", client.completion.Result["connection"])
+	}
+	if registrar.calls != 1 || registrar.endpoint == "" {
+		t.Fatalf("registrar=%+v", registrar)
+	}
+}
+
+func TestAgentKeepsReadyEmulatorWhenSTFRegistrationIsTemporarilyUnavailable(t *testing.T) {
+	client := &completionClient{}
+	provider := providermock.New(providermock.Config{})
+	runtime, err := New(Config{
+		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: time.Second,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		STFADBRegistrar: &fakeRegistrar{err: errors.New("STF ADB unavailable")},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "lease_token_000000000001"
+	runtime.execute(context.Background(), hostcommand.Command{
+		ID: "command_000000000008", CommandType: "create", LeaseToken: &token, Attempt: 1,
+		Payload: map[string]any{"device_id": "device_0000000000001", "image_id": "image_00000000000001",
+			"provider_ref": "emulator-stf-retry"},
+	})
+	if client.completion.Status != "failed" || client.completion.Error == nil ||
+		client.completion.Error.Code != "STF_ADB_CONNECT_FAILED" || !client.completion.Error.Retryable {
+		t.Fatalf("completion=%#v", client.completion)
+	}
+	if _, err := provider.GetConnectionInfo(context.Background(), "emulator-stf-retry"); err != nil {
+		t.Fatalf("ready emulator was deleted after registrar failure: %v", err)
 	}
 }
 
@@ -154,6 +186,18 @@ func TestAgentCreateWaitsForReadinessClassifiesFailureAndCleans(t *testing.T) {
 }
 
 type completionClient struct{ completion hostcommand.CompletionInput }
+
+type fakeRegistrar struct {
+	endpoint string
+	calls    int
+	err      error
+}
+
+func (registrar *fakeRegistrar) Register(_ context.Context, endpoint string) error {
+	registrar.endpoint = endpoint
+	registrar.calls++
+	return registrar.err
+}
 
 func (*completionClient) Heartbeat(context.Context, string, hostcommand.HeartbeatInput) error {
 	return nil

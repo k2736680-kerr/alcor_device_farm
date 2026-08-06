@@ -220,9 +220,12 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	if err != nil {
 		return err
 	}
+	preserveSTFHealth := false
 	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
 		incomingHealth := domain.HealthStatus(discovered.HealthStatus)
-		if aggregate.Health() != incomingHealth {
+		preserveSTFHealth = incomingHealth == domain.HealthHealthy && current.healthReason != nil &&
+			domain.IsSTFFailureReason(*current.healthReason)
+		if !preserveSTFHealth && aggregate.Health() != incomingHealth {
 			if err := aggregate.UpdateHealth(incomingHealth, "agent heartbeat health observation", now); err != nil {
 				return err
 			}
@@ -234,7 +237,8 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 	}
 	healthReason := current.healthReason
-	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
+	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted &&
+		!current.operationInFlight && !preserveSTFHealth {
 		healthReason = nil
 		if aggregate.Health() != domain.HealthHealthy {
 			value := "agent heartbeat reported " + string(aggregate.Health())
@@ -507,12 +511,20 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		if err := aggregate.Transition(domain.DeviceReady, reason, now); err != nil {
 			return err
 		}
+		var healthReason *string
+		if record.CommandType == "create" || record.CommandType == "rebuild" {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
+				return err
+			}
+			value := domain.STFReadinessStabilizationReason
+			healthReason = &value
+		}
 		if _, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
 			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),
-			lifecycle_status=$6,health_status=$7,health_reason=NULL,consecutive_failures=0,
-			last_seen_at=$8,updated_at=$8 WHERE id=$1 AND lifecycle_status=$9`,
+			lifecycle_status=$6,health_status=$7,health_reason=$8,consecutive_failures=0,
+			last_seen_at=$9,updated_at=$9 WHERE id=$1 AND lifecycle_status=$10`,
 			deviceID, result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint,
-			result.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), now, lifecycle); err != nil {
+			result.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), healthReason, now, lifecycle); err != nil {
 			return err
 		}
 	} else {

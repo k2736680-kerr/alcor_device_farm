@@ -52,20 +52,20 @@ docker compose --env-file .env -f compose.yaml up -d
 | 7110 | STF WebSocket | 与 7100 同一安全边界 |
 | 7400-7500 | STF 官方默认设备 worker/远控端口范围 | 仅授权浏览器和 Worker 可达 |
 | 28015 | RethinkDB driver | 仅 Compose internal network，不发布 |
-| 5037 | ADB server | 仅 Compose internal network，不发布 |
+| 5038（Host）→5037（容器） | ADB endpoint registrar | 只绑定 `127.0.0.1`，供同机 Host Agent 使用 |
 | 8080 | RethinkDB 管理页面 | 不发布 |
 
 STF 内部进程通信本身不适合不可信网络，因此整个部署必须位于设备内网。Docker Socket 不挂载给任何 STF 服务。
 
 ## 接入 Emulator
 
-Docker Provider 为每台 Emulator 发布独立随机 ADB Host 端口。DF-017 验收时将 Device Farm 返回的 `adb_endpoint` 连接到 STF 的 ADB server：
+Docker Provider 为每台 Emulator 发布独立随机 ADB Host 端口。DF-017 验收时可将 Device Farm 返回的 `adb_endpoint` 手工连接到 STF 的 ADB server：
 
 ```sh
 ./scripts/stf-connect-emulators.sh 10.0.0.10:32771
 ```
 
-这一步不创建 Emulator、不改 Pool membership、不改 Reservation，只让 STF 复用已存在的 ADB Endpoint。最终运行时的自动同步属于 DF-018 Adapter 编排，不以 STF 数据覆盖 Device Farm PostgreSQL 真相。
+这一步不创建 Emulator、不改 Pool membership、不改 Reservation，只让 STF 复用已存在的 ADB Endpoint。最终运行时由 Host Agent 的受限 STF ADB registrar 自动执行同一 `adb connect`；Compose 只把 ADB server 发布到 Host loopback 的 `STF_ADB_BIND_PORT`，默认 5038。自动同步不以 STF 数据覆盖 Device Farm PostgreSQL 真相。
 
 随后在 STF 页面创建专用 API Token。Token 只保存到 Device Farm Server 的秘密配置或验收进程环境，不写入 Compose `.env`，不发送给浏览器，不记录到日志。
 

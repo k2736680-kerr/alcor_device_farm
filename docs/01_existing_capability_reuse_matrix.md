@@ -65,7 +65,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -Scheduler和数据库并发锁；
 -Reconciler和Reaper；
 -设备健康事件、隔离、恢复和重建；
--STF Adapter；
+-STF Adapter，包括官方 REST API 封装和 Host Agent 将动态 ADB Endpoint 注册到同机 STF ADB server；
 -Appium Endpoint/端口/健康管理Adapter；
 -面向未来Alcor的设备北向API；
 -Device Farm Console，只展示和操作设备域资源；

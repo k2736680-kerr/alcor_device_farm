@@ -284,11 +284,14 @@ func (controller *Controller) completeRecycle(ctx context.Context, tx pgx.Tx, cu
 	if err := aggregate.Transition(domain.DeviceReady, "rebuild removed previous run data and passed readiness checks", now); err != nil {
 		return err
 	}
+	if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
+		return err
+	}
 	result, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
 		capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),lifecycle_status=$6,health_status=$7,
-		health_reason=NULL,consecutive_failures=0,last_seen_at=$8,updated_at=$8 WHERE id=$1 AND lifecycle_status='recycling'`,
+		health_reason=$8,consecutive_failures=0,last_seen_at=$9,updated_at=$9 WHERE id=$1 AND lifecycle_status='recycling'`,
 		current.ID, value.Connection.Serial, value.Connection.ADBEndpoint, value.Connection.AppiumEndpoint,
-		value.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), now)
+		value.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now)
 	if err != nil {
 		return err
 	}
@@ -623,11 +626,14 @@ func (controller *Controller) completeSuccessfulCreates(ctx context.Context, tx 
 		if err := aggregate.Transition(domain.DeviceReady, "create readiness checks passed", now); err != nil {
 			return completed, invalid, err
 		}
+		if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
+			return completed, invalid, err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
 			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),lifecycle_status=$6,health_status=$7,
-			health_reason=NULL,consecutive_failures=0,last_seen_at=$8,updated_at=$8 WHERE id=$1`, current.id,
+			health_reason=$8,consecutive_failures=0,last_seen_at=$9,updated_at=$9 WHERE id=$1`, current.id,
 			snapshot.Connection.Serial, snapshot.Connection.ADBEndpoint, snapshot.Connection.AppiumEndpoint,
-			snapshot.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), now); err != nil {
+			snapshot.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now); err != nil {
 			return completed, invalid, err
 		}
 		completed++

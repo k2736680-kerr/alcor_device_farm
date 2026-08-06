@@ -22,7 +22,7 @@
 | DF-018 | completed | `78cc97f 接入STF预约和远程连接`、`完成DF-018真实STF适配验收` | `docs/evidence/DF-018/acceptance.md` |
 | DF-019 | completed | `84b3331 记录DaFit设备农场适配`、`14e2928`、`完成DF-019真实DaFit Farm验收` | `docs/evidence/DF-019/acceptance.md` |
 | DF-020 | completed | `65abd2d 加入DaFit端到端运行工具`、`完成DF-020真实Harness和Reaper验收` | `docs/evidence/DF-020/acceptance.md` |
-| DF-021 | blocked | `a3d2bf5 补齐设备故障恢复和重建清理` | `docs/evidence/DF-021/acceptance.md` |
+| DF-021 | completed | `a3d2bf5 补齐设备故障恢复和重建清理`、`完成DF-021真实故障恢复验收` | `docs/evidence/DF-021/acceptance.md` |
 | DF-022 | blocked | `f1acdf5 加固设备权限审计和敏感数据` | `docs/evidence/DF-022/acceptance.md` |
 | DF-023 | blocked | `ef28201 补齐设备指标部署和回滚手册` | `docs/evidence/DF-023/acceptance.md` |
 | DF-024 | blocked | `392c93a 整理设备农场全量验收证据` | `docs/evidence/DF-024/acceptance.md` |
@@ -34,6 +34,6 @@
 ## 当前剩余条件
 
 1. DF-026/DF-027 在 E0 本地环境完成 Console 实现和自动化验收；
-2. Linux KVM/Docker/真实 Android 环境继续完成 DF-021～DF-024，并由 DF-028 完成真实 Web 验收；
+2. Linux KVM/Docker/真实 Android 环境继续完成 DF-022～DF-024，并由 DF-028 完成真实 Web 验收；
 3. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
 4. 所有状态变化继续保存验收证据并使用简洁中文 Git 提交。

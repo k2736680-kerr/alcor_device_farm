@@ -128,10 +128,16 @@ DEVICE_FARM_STF_RETRY_DELAY=200ms
 
 Reconciler 通过 STF inventory 按 Device `serial` 做精确可见性匹配：
 
-- serial 存在且 `present=true`：只表示 STF 可见；
+- serial 存在且 `present=true/ready=true`：表示 STF device worker 已完成准备，可通过健康门；`present=true/ready=false` 仍处于准备期，不能恢复 Device 健康或参与 claim；
 - serial 缺失、不可见或 inventory 请求失败：记录 `stf_not_visible` 健康事件；
-- 连续失败按既有 Reconciler 阈值进入隔离；
+- 连续失败按既有 Reconciler 阈值进入隔离；为避免 STF ADB/API 正常重启时间刚好耗尽次数阈值，已稳定设备在 `stf_visibility_grace` 内只转为 unhealthy 并停止调度，不自动隔离；
+- create/rebuild 成功写入新 serial 后，Reconciler 仍检查 `present/ready`；grace 内尚未 ready 时把 Device 标记为 unhealthy、停止调度，但不消耗失败计数且不自动隔离，给 STF 官方 provider 启动 device worker 的时间；
+- grace 内恢复可见时记录 `health_recovered` 并把失败计数清零；超过 grace 且仍达到失败阈值时才进入隔离；
 - STF inventory 不写 Device lifecycle、Reservation status 或 Session status。
+
+动态 Docker Emulator 每次 rebuild 都可能获得新的 Host ADB 端口。Host Agent 在 ADB、boot 和 Appium 已健康后，通过 `internal/adapters/stfadb` 调用既有 `adb -H <loopback-host> -P <port> connect <device-endpoint>`；只有注册成功才回报 create/rebuild succeeded。后续 heartbeat 对 ready 设备继续做幂等注册，以便 STF ADB 服务重启后自动恢复。该 registrar 不持有 STF API Token，不调用 claim、release 或 remoteConnect，也不读取或覆盖 Reservation。
+
+STF ADB server 只允许绑定 Host loopback，例如 `127.0.0.1:5038`。禁止把 5037/5038 暴露到办公网或公网。
 
 当前单台模拟器每个 Reconcile 周期只产生少量 inventory 请求。后续设备数量明显增加时，可以在 Adapter 内增加单周期缓存，但不得改变上层接口或真相源。
 

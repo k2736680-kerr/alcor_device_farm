@@ -22,6 +22,7 @@ lease:
 reconcile:
   interval: 2s
   host_timeout: 30s
+  stf_visibility_grace: 30s
   failure_threshold: 3
 
 # The controller turns device_pool_images min_ready/max_instances targets into
