@@ -2,56 +2,108 @@
 
 ## 当前结论
 
-DaFit 端到端 Harness 已完成本地可验证实现：申请设备、等待分配、注入连接信息、调用 DaFit 原入口、检查报告并在所有退出路径释放预约。当前机器没有 Linux KVM、Docker Emulator、STF 和远程 Appium，无法完成真实无人值守冒烟与 Reaper 实机兜底验证，因此 DF-020 状态为 `blocked`，不能标记 `completed`。
+DF-020 已在真实 Linux KVM、Docker Android 16 Emulator、STF 3.7.9、独立 Appium 3.5.2 和 DaFit 主线入口上完成验收，状态为 `completed`。
 
-## 已完成交付
+Harness 已覆盖申请、等待、连接信息注入、DaFit 执行、独立报告目录、finally release、等待超时、运行超时、可处理终止和进程强制终止。强制终止后，Reservation 由 Server Reaper 通过正式 STF Adapter 和 Repository 状态机回收，没有直接修改数据库。
 
-- 新增 `cmd/dafit-farm-harness` 单一命令入口；
-- 使用服务 Token 创建 `owner_type=test_run` 的 Reservation，并轮询到 `active`；
-- 从同一分配 Device 读取宿主机 ADB Endpoint、容器内 Appium UDID 和 Appium Endpoint；
-- 网络 ADB Endpoint 先执行明确的 `adb connect`，不自动选择第一台设备；
-- 调用 DaFit 原有 `python tools/run_full.py --case STEPS_SMOKE_001`，未复制 Appium Session、页面、动作、断言、Runner 或报告；
-- 为每次运行注入独立绝对报告目录，并检查原有 `report.html`、`report.json`；
-- 成功、用例失败、等待容量超时、DaFit 命令超时、Ctrl+C 和进程终止均通过独立清理上下文释放 Reservation；
-- pending 且未分配设备的预约可取消为 `failed/RESERVATION_CANCELED`，并写入审计；
-- Scheduler 正在 claim 时，Harness 对 release 做短时重试；已经进入终态的 release 保持幂等；
-- DaFit 子进程不会继承 Device Farm 服务 Token、数据库地址或 STF Token；
-- Harness 标准输出只返回 Reservation、Device 和报告路径，不把服务 Token 放入参数或结果。
+## 真实环境
 
-## 本地验收结果
+- Device Farm Server：`http://10.0.30.171:18080`；
+- Linux/KVM Host：`10.0.30.171`，`kerr` 属于 `kvm`、`docker` 组；
+- Emulator：Android 16 / API 36 / x86_64，独立 ADB 与 Appium 动态端口；
+- STF：DeviceFarmer/STF 3.7.9；
+- Appium：3.5.2；
+- DaFit：`E:/AutoTestTools/Projects/dafit_auto_platform` 主线 `tools/run_full.py`，未复制 Runner、页面、动作、断言或报告实现；
+- 逻辑设备池：`8b97a9e7-ab6c-41ff-bc1e-bd922b829ab3`；
+- 验收日期：2026-08-06。
 
-执行：
+## 场景结果
 
-```powershell
-$env:DEVICE_FARM_GO='E:\AutoTestTools\Tools\go1.26.5\go\bin\go.exe'
-$env:DEVICE_FARM_POSTGRES_BIN='E:\AutoTestTools\Tools\PostgreSQL-17.10\pgsql\bin'
-.\scripts\dev.ps1 -Task check
-.\scripts\verify-migrations.ps1 -RunRepositoryTests
-```
+| 场景 | Reservation | 结果 |
+|---|---|---|
+| 无人值守成功冒烟 | `46d6f634-14a1-4518-a10b-ff07676ba022` | DaFit `STEPS_SMOKE_001` 为 1 passed；HTML/JSON 报告生成；finally 自动释放 |
+| 故意失败 | `d6f5948c-58b4-43d3-b5cc-2138606b648d` | 保留首次启动状态后 DaFit 返回失败；HTML/JSON 报告保留；finally 自动释放 |
+| 等待 active 超时 | `d27ac5f9-6f68-4a92-bc22-22bc2d93cef4` | pending 被正式取消，最终 `failed/RESERVATION_CANCELED` |
+| 运行前置失败 | `f6b7798f-0a96-430c-9d7e-cd1f94de659f` | App 未安装时 Harness 明确失败，Reservation 仍自动释放 |
+| 5 秒 DaFit 运行超时 | `d994f4ca-337d-4f75-9523-9f1da02d94f1` | 约 6 秒终止子进程；未生成报告时明确报错；Reservation 自动释放 |
+| 可处理的任务中断 | `208aed72-73c9-4d4a-9363-8183012138bd` | 终止信号进入 Harness signal/finally 路径，最终 released |
+| Harness 与 Python 被强制杀死 | `4b8f045e-3ba1-47d9-95c7-85e7604fb7b4` | 进程无法执行 finally；租约过期后由 Reaper 回收为 expired，并触发设备 rebuild |
 
-通过项：
+成功报告目录：
 
 ```text
-PASS Harness 成功运行、报告收集和 finally release
-PASS DaFit 故意失败仍保留报告并 release
-PASS 等待 active 超时仍取消 pending Reservation
-PASS DaFit 命令超时仍 release
-PASS DaFit 子进程不继承 Device Farm 敏感变量
-PASS pending Reservation 取消状态和审计集成测试
-PASS gofmt、go vet、go test、三程序 build
-PASS migration up/down/up 和 Repository 集成测试
+D:\dafit-farm-runs\df020-success-20260806-02
 ```
 
-## 真实环境验收步骤
+故意失败报告目录：
 
-1. 在 Linux KVM 服务器部署 Device Farm、两台 Docker Emulator、STF 和独立 Appium Endpoint；
-2. 启动 Server、Agent、Scheduler、Reaper 和 Reconciler；
-3. 使用 Harness 执行 DaFit `STEPS_SMOKE_001`，确认无人值守完成并生成独立 HTML/JSON 报告；
-4. 故意制造 DaFit 断言失败，确认报告保留且设备释放；
-5. 执行期间终止 Harness，确认 finally release 成功；再模拟进程被强制杀死，确认租约过期后 Reaper 回收；
-6. 检查 Reservation、Session、Device、STF claim 和审计最终一致，无永久 reserved/busy 悬挂；
-7. 保存脱敏命令、状态查询、日志、报告路径和清理结果。
+```text
+D:\dafit-farm-runs\df020-failure-20260806
+```
 
-## 阻塞解除条件
+## 强制终止与 Reaper 兜底
 
-DF-014～DF-019 的真实环境依赖可用，并完成上述成功、故意失败、中断和 Reaper 兜底场景后，将 DF-020 改为 `completed`。本地单元测试和 Mock API 只证明编排逻辑，不替代真实 Emulator/Appium/DaFit 验收。
+强制杀死 Harness 和 Python 后，STF 已经显示设备空闲：
+
+```text
+present=true
+ready=true
+using=false
+owner=null
+GET /api/v1/user/devices -> devices=[]
+```
+
+STF 3.7.9 对重复 release 返回：
+
+```text
+HTTP 403
+{"success":false,"description":"You cannot release this device. Not owned by you"}
+```
+
+旧 Adapter 只把 DELETE 404 视为幂等成功，导致已释放设备的 Reservation 保持 active。修复后只在以下条件同时满足时接受该 403：
+
+1. release 的 HTTP 状态确实为 403；
+2. 随后通过官方 inventory 查询到同一 serial；
+3. inventory 明确返回 `using=false`。
+
+如果 inventory 失败、设备不存在于结果中或仍为 `using=true`，403 继续作为 `STF_RELEASE_FAILED` 返回，不能笼统吞掉拒绝响应。对应测试同时覆盖“已空闲成功”和“仍占用保持失败”。
+
+部署 `alcor-device-farm:df020-releasefix-20260806` 后，Server 启动不到 1 秒记录：
+
+```text
+expired device reservation reaped
+reservation_id=4b8f045e-3ba1-47d9-95c7-85e7604fb7b4
+device_id=67434725-32ff-4870-8c55-ad46fd5d9486
+```
+
+只读查询确认最终 Reservation 为：
+
+```text
+4b8f045e-3ba1-47d9-95c7-85e7604fb7b4 | expired
+```
+
+## 回归门禁
+
+使用固定 Go 1.24.6 工具链和隔离源码上下文执行：
+
+```text
+gofmt -l internal/adapters/stf/client.go internal/adapters/stf/client_test.go
+go test ./internal/adapters/stf -count=1
+go test ./internal/... -p=1 -count=1
+```
+
+结果：gofmt 无输出，定向 STF Adapter 测试通过，`internal/...` 全部通过。构建上下文基于提交 `e37d13f`，仅叠加本任务的 STF Adapter、测试和文档修改，没有混入工作区中未完成的 DF-028 Console 改动。
+
+## 最终清理与后续项
+
+Reaper 触发 rebuild 后，设备获得新连接：
+
+```text
+ADB     10.0.30.171:32799
+Appium http://10.0.30.171:32798/status -> HTTP 200, ready=true
+STF     present=true, ready=true, using=false
+```
+
+本轮再次复现“rebuild 完成时 STF 尚未重新连接，设备先变为 ready/unhealthy，随后被隔离”的时序问题。验收使用现有 `stf-connect-emulators.sh` 和正式 `DELETE /api/v1/devices/{id}/quarantines` 恢复，最终设备为 `ready/healthy`。该自动重连和健康判定竞态属于 DF-021 的故障恢复范围，不在 DF-020 中用数据库修改或放宽健康条件规避。
+
+DF-020 的验收目标已满足：成功、故意失败、超时和中断路径均无永久 active Reservation；强制终止由 Reaper 兜底回收；DaFit 报告属于对应运行目录；清理使用正式 Adapter/API 链路。

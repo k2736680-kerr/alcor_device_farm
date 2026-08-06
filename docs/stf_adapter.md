@@ -48,9 +48,9 @@ STF claim 在 PostgreSQL 事务之外执行，避免网络调用长期占用数�
 
 1. 读取 active Reservation 对应的 Device serial；
 2. 调用 STF release，客户端按配置进行最多 3 次短重试；
-3. 只有 STF release 成功或 STF 返回 404（已释放）时，才关闭 Device Session、终结 Reservation 并把 Device 送入 recycling；
+3. 只有 STF release 成功、STF 返回 404（设备不存在），或 STF 3.7.9 返回 403 且随后的 inventory 明确确认同一设备 `using=false`（重复释放已空闲设备）时，才关闭 Device Session、终结 Reservation 并把 Device 送入 recycling；
 4. STF release 最终失败时，Reservation 保持 active，写入 `stf_release_failed` 审计，API 返回可重试错误或 Reaper 下个周期继续处理；
-5. STF 已释放但数据库提交失败时，后续同一幂等请求再次调用 release；STF 404 被视为成功，然后继续完成数据库关闭。
+5. STF 已释放但数据库提交失败时，后续同一幂等请求再次调用 release；STF 404，或“403 + inventory 明确未占用”被视为成功，然后继续完成数据库关闭。其他 403、inventory 查询失败或仍为 `using=true` 时保持失败，不能笼统吞掉拒绝响应。
 
 该顺序不会出现“数据库显示已释放，但 STF 仍占用设备”的静默分裂。
 
