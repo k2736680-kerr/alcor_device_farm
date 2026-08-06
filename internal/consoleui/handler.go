@@ -4,7 +4,6 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
-	"path"
 	"strings"
 )
 
@@ -19,19 +18,27 @@ func Handler() http.Handler {
 	files := http.FileServer(http.FS(dist))
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		setSecurityHeaders(writer)
-		if request.URL.Path == "/console" {
-			http.Redirect(writer, request, "/console/", http.StatusPermanentRedirect)
-			return
-		}
-		relative := strings.TrimPrefix(path.Clean(request.URL.Path), "/console/")
-		if relative == "." || relative == "" {
+
+		// Map the /console/* URL space onto the embedded dist directory.
+		relative := strings.TrimPrefix(request.URL.Path, "/console")
+		relative = strings.Trim(relative, "/")
+		if relative == "" {
 			relative = "index.html"
 		}
 		if _, err := fs.Stat(dist, relative); err != nil {
+			// SPA route: serve the app shell so client-side routing takes over.
 			relative = "index.html"
 		}
+
 		clone := request.Clone(request.Context())
-		clone.URL.Path = "/" + relative
+		if relative == "index.html" {
+			// http.FileServer deliberately redirects any request ending in
+			// "/index.html" to "./"; serve the directory root instead so its
+			// index.html is rendered without a redirect loop.
+			clone.URL.Path = "/"
+		} else {
+			clone.URL.Path = "/" + relative
+		}
 		files.ServeHTTP(writer, clone)
 	})
 }
