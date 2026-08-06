@@ -40,7 +40,6 @@ const statusColor: Record<string, string> = {
 
 interface CreateFormValues {
   pool_id: string
-  owner_id: string
   lease_seconds: number
 }
 
@@ -77,11 +76,12 @@ export function ReservationsPage() {
 
   const submitCreate = (values: CreateFormValues) => {
     create.mutate(
-      { data: { pool_id: values.pool_id, owner_type: 'manual', owner_id: values.owner_id.trim(), lease_seconds: values.lease_seconds } },
+      { data: { pool_id: values.pool_id, owner_type: 'manual', owner_id: '', lease_seconds: values.lease_seconds } },
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
           message.success(`预约已创建（request_id: ${requestID}），等待分配设备…`)
+          createForm.resetFields()
           setCreateOpen(false)
           invalidate()
         },
@@ -117,7 +117,7 @@ export function ReservationsPage() {
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`预约已释放（request_id: ${requestID}）`)
+          message.success(`${releaseFor.status === 'pending' ? '预约已取消' : '预约已释放'}（request_id: ${requestID}）`)
           setReleaseFor(null)
           invalidate()
         },
@@ -160,7 +160,7 @@ export function ReservationsPage() {
       fixed: 'right',
       render: (_, reservation) => (
         <Space size={4} wrap>
-          {(reservation.status === 'pending' || reservation.status === 'active') && (
+          {reservation.status === 'active' && (
             <Button size="small" onClick={() => setExtendFor(reservation)}>续租</Button>
           )}
           {reservation.status === 'active' && reservation.device_id && (
@@ -168,8 +168,10 @@ export function ReservationsPage() {
               STF 远控
             </Button>
           )}
-          {reservation.status === 'active' && (
-            <Button size="small" danger onClick={() => setReleaseFor(reservation)}>释放</Button>
+          {(reservation.status === 'pending' || reservation.status === 'active') && (
+            <Button size="small" danger onClick={() => setReleaseFor(reservation)}>
+              {reservation.status === 'pending' ? '取消' : '释放'}
+            </Button>
           )}
         </Space>
       ),
@@ -202,7 +204,10 @@ export function ReservationsPage() {
         okText="创建"
         cancelText="取消"
         confirmLoading={create.isPending}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={() => {
+          createForm.resetFields()
+          setCreateOpen(false)
+        }}
         onOk={() => createForm.submit()}
         destroyOnClose
       >
@@ -228,8 +233,8 @@ export function ReservationsPage() {
 
       <ReasonActionModal
         open={releaseFor !== null}
-        title={releaseFor ? `释放预约 · ${shortID(releaseFor.id)}` : ''}
-        description="释放后设备立即归还池，危险操作。"
+        title={releaseFor ? `${releaseFor.status === 'pending' ? '取消' : '释放'}预约 · ${shortID(releaseFor.id)}` : ''}
+        description={releaseFor?.status === 'pending' ? '取消后不再等待设备，操作会写入审计。' : '释放后设备立即进入清理流程，危险操作。'}
         danger
         confirmLoading={release.isPending}
         onSubmit={submitRelease}
@@ -307,8 +312,8 @@ function FormValues({
           options={pools.map((pool) => ({ value: pool.id, label: `${pool.name} · ${pool.status}` }))}
         />
       </Form.Item>
-      <Form.Item name="owner_id" label="owner ID" rules={[{ required: true, whitespace: true, message: '请输入 owner ID' }]}>
-        <Input placeholder="例如 alcor-user-01" maxLength={64} />
+      <Form.Item label="预约所有者">
+        <Input aria-label="预约所有者" value="由当前登录会话确定，浏览器不可修改" disabled />
       </Form.Item>
       <Form.Item name="lease_seconds" label="租期(s)" initialValue={1800} rules={[{ required: true, message: '请输入租期' }]}>
         <InputNumber min={60} max={86400} style={{ width: '100%' }} />

@@ -24,6 +24,10 @@ export async function deviceFarmFetch<T>(url: string, options: RequestInit): Pro
   const headers = new Headers(options.headers)
   const method = (options.method ?? 'GET').toUpperCase()
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    if (!headers.has('Idempotency-Key')) {
+      const requestKey = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+      headers.set('Idempotency-Key', `console-${requestKey}`)
+    }
     const csrf = cookie('device_farm_csrf')
     if (csrf) headers.set('X-CSRF-Token', decodeURIComponent(csrf))
   }
