@@ -46,7 +46,7 @@
 | DF-023 | 指标、部署、运维和回滚手册 | blocked | DF-022 |
 | DF-024 | MVP 全量验收 | blocked | DF-023 |
 | DF-025 | 新版 Alcor Adapter 契约包 | completed | DF-024 |
-| DF-026 | Device Farm Console 工程和只读页面 | in_progress | DF-003、DF-004、DF-008、DF-025 |
+| DF-026 | Device Farm Console 工程和只读页面 | completed | DF-003、DF-004、DF-008、DF-025 |
 | DF-027 | 设备操作、人工预约和 STF 远控页面 | pending | DF-009、DF-010、DF-011、DF-026 |
 | DF-028 | 控制台部署、安全和真实 Web 验收 | pending | DF-017～DF-024、DF-027 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
