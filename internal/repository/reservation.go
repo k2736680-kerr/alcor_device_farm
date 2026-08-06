@@ -560,8 +560,10 @@ func (ReservationRepository) CloseActive(
 		return ReservationRecord{}, fmt.Errorf("finish device session: %w", err)
 	}
 	result, err := tx.Exec(ctx, `
-        UPDATE devices SET lifecycle_status='recycling',updated_at=$2::timestamptz
-        WHERE id=$1 AND lifecycle_status IN ('busy','reserved')`, deviceID, closedAt)
+		UPDATE devices SET
+			lifecycle_status=CASE WHEN lifecycle_status='quarantined' THEN lifecycle_status ELSE 'recycling' END,
+			updated_at=$2::timestamptz
+		WHERE id=$1 AND lifecycle_status IN ('busy','reserved','quarantined')`, deviceID, closedAt)
 	if err != nil {
 		return ReservationRecord{}, fmt.Errorf("recycle released device: %w", err)
 	}

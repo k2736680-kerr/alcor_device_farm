@@ -36,6 +36,7 @@ erDiagram
 - `device_reservations(client_id, idempotency_key)` 唯一，同一调用方重复提交不会重复占用；
 - 部分唯一索引保证同一设备最多存在一个 `active` 预约；
 - Pool 默认租期不得超过最大租期；`min_ready` 不得超过 `max_instances`。当前测试环境使用 `min_ready=1/max_instances=1`，Controller 必须锁定配置行后原子登记 provisioning Device、Pool membership 和 Host Command，避免并发超建；
+- `provider_type + provider_ref` 始终全局唯一；Docker Emulator 的 serial、STF serial、ADB Endpoint 和 Appium Endpoint 是可复用的运行时连接身份，只对非 `quarantined/deleted` 设备保持唯一。退出 Pool 的隔离审计记录可以保留旧连接值，但不得阻塞新实例复用宿主机动态端口；
 - Host Command 的 leased 状态必须同时拥有 lease token 和到期时间，完成状态必须有完成时间；
 - `validate_image` Host Command 由后台 Controller 分配给 Docker/Hybrid Host；Server 不接触 Docker Socket。只有 Agent 同时验证本机固定镜像 digest、ADB、启动完成和 Appium 健康，Image 才能进入 `ready`；
 - active Reservation 和 Session 必须具有完整的设备、开始与到期信息；

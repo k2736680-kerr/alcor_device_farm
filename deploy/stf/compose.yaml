@@ -26,7 +26,7 @@ services:
     logging: *default-logging
 
   stf-adb:
-    image: ${STF_IMAGE:-devicefarmer/stf:3.7.9}
+    image: ${STF_ADB_IMAGE:-devicefarmer/adb@sha256:a699fafbc63d8a145f816257b1cd366ea3c5f0aff657e3bb135309bf7da45759}
     restart: unless-stopped
     command: ["adb", "-a", "-P", "5037", "nodaemon", "server"]
     expose:
@@ -37,6 +37,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - stf-internal
+      - stf-edge
     healthcheck:
       test: ["CMD-SHELL", "adb -H 127.0.0.1 -P 5037 devices >/dev/null 2>&1"]
       interval: 10s

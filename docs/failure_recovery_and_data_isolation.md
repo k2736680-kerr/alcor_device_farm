@@ -17,6 +17,7 @@
 | STF claim 失败 | Scheduler STF Adapter | 可重试错误保留 pending 并恢复设备；不可重试错误结束 Reservation | pending 或 failed，设备 ready | STF 长期不可用 |
 | STF release 失败 | Release/Reaper | Reservation 保持 active，记录审计并重试，不提前释放数据库占用 | active 后续收敛到 released/expired | 超过告警窗口仍失败 |
 | Appium 不健康 | Agent create/rebuild 健康等待、heartbeat/Reconciler | 命令按 retryable 最多三次；ready/busy 设备重复异常后隔离 | failed/timed_out 或 quarantined | Appium 配置、镜像或端口需修复 |
+| create/rebuild 启动中 | PostgreSQL Host Command + Agent heartbeat | `pending/leased` 的 create/rebuild 由命令租约负责收敛；heartbeat 只刷新 Provider 存在性与 Endpoint，不提前把旧容器或启动中容器改成 ready，Reconciler 也不累计 STF/Appium 失败；命令完成或耗尽后再进入 ready/quarantined | ready 或 quarantined | 检查命令 lease、Agent 日志与启动超时 |
 | Emulator boot timeout | Agent 命令超时 | 返回 `DEVICE_BOOT_TIMEOUT`，清理部分资源并重试 | failed/timed_out，设备 quarantined | 镜像、KVM 或宿主机资源需修复 |
 | 命令执行超时/Agent 中断 | Host Command lease | 未到最大次数回 pending；达到上限转 timed_out | succeeded/failed/timed_out | 同一错误连续耗尽次数 |
 | 清理失败 | Agent Delete/rebuild | 返回 retryable，旧卷不复用，命令重新领取；成功前设备保持不可调度 | ready 或 quarantined | Docker 资源持续无法删除 |

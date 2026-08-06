@@ -93,15 +93,17 @@ DELETE /api/v1/device-pools/{pool_id}/images/{image_id}
 ## 缺口计算
 
 ```text
-active_instances = 非 quarantined/deleted 的 Emulator 数量
+active_instances = 非 deleted 且仍占逻辑容量的 Emulator 数量
 ready_or_creating = provisioning/booting/ready 的 Emulator 数量
 missing = min(min_ready - ready_or_creating,
               max_instances - active_instances)
 ```
 
-`reserved/busy/recycling/stopped` 仍占 `max_instances`，所以当前最多一台时，设备正在使用也不会创建第二台。隔离或删除后会产生缺口并触发补回。两个 Server 同时运行时，PostgreSQL 行锁保证不会超建。
+`reserved/busy/recycling/stopped` 仍占 `max_instances`，所以当前最多一台时，设备正在使用也不会创建第二台。`quarantined` 设备只有在最新 Agent heartbeat 仍发现其 Provider 资源时继续占用实例和 Host slot；后续 heartbeat 不再报告该资源后才产生缺口并触发补回。Host 选址同时取数据库占位数与 Agent 最新 `used_capacity.device_slots` 的较大值，避免未知或隔离资源造成超建。`deleted` 不占容量。两个 Server 同时运行时，PostgreSQL 行锁保证不会超建。
 
 `recycling` 不是可调度终态。Controller 以最后一次 released/expired/force_released Reservation ID 生成唯一重建命令，Server 重启或多实例重复扫描不会重复创建。Agent 执行 rebuild 时先幂等删除旧容器、专属网络和数据卷，再重新创建并等待完整健康；因此 App、缓存和外部存储测试文件不会跨 Reservation 复用。
+
+管理端 rebuild 进行期间，设备虽然同样处于 `provisioning/booting`，但 Controller 不得复用该设备历史 create 的成功结果提前转为 ready；只有当前 rebuild 命令的完整健康结果可以完成这次恢复。
 
 ## 失败处理
 

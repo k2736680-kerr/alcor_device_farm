@@ -157,6 +157,37 @@ func TestSuccessfulCreateResultRestoresReadyStateAfterServerRestart(t *testing.T
 		AND capabilities->>'appiumUdid'='emulator-5554'`, 1)
 }
 
+func TestHistoricalCreateResultDoesNotCompleteActiveManagementRebuild(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"generation":1,"connection":{"serial":"10.0.0.20:31000","adb_endpoint":"10.0.0.20:31000",
+		"appium_endpoint":"http://10.0.0.20:32000","appium_udid":"emulator-5554"},
+		"health":{"online":true,"adb_online":true,"boot_completed":true,"appium_healthy":true}}',
+		completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE command_type='create'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DevicesReady != 1 {
+		t.Fatalf("initial completion result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET
+		lifecycle_status='provisioning',health_status='unknown',health_reason='management rebuild queued';
+		INSERT INTO device_host_commands(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES('management_rebuild_01','host_000000000000001','rebuild',
+		'{"device_id":"generated_0000000000000001","operation_source":"management"}','pending',3,'management-rebuild-active')`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesReady != 0 || result.DevicesCreated != 0 {
+		t.Fatalf("active rebuild result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning' AND health_status='unknown'", 1)
+}
+
 func TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 2, 2, 2)
@@ -186,6 +217,66 @@ func TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm(t *testing.T) {
 	}
 	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 3)
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status<>'quarantined'", 2)
+}
+
+func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("initial create result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"generation":1,"connection":{"serial":"10.0.0.20:31000","adb_endpoint":"10.0.0.20:31000",
+		"appium_endpoint":"http://10.0.0.20:32000","appium_udid":"emulator-5554"},
+		"health":{"online":true,"adb_online":true,"boot_completed":true,"appium_healthy":true}}',
+		completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE command_type='create'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DevicesReady != 1 {
+		t.Fatalf("create completion result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `WITH observed AS (SELECT clock_timestamp() AS at)
+		UPDATE device_hosts h SET last_heartbeat_at=observed.at,used_capacity='{"device_slots":1}',updated_at=observed.at
+		FROM observed;
+		UPDATE devices SET lifecycle_status='quarantined',health_status='unhealthy',
+			health_reason='device is not visible through STF',last_seen_at=(SELECT last_heartbeat_at FROM device_hosts),
+			updated_at=clock_timestamp()`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 || result.CapacityMisses != 0 {
+		t.Fatalf("present quarantined result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices", 1)
+
+	// A fresh Agent heartbeat that omits the device proves the Provider resource
+	// is gone. The quarantined audit record remains, while one replacement is allowed.
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET
+		last_heartbeat_at=last_heartbeat_at+interval '1 second',used_capacity='{"device_slots":0}',
+		updated_at=clock_timestamp()`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("missing quarantined replacement result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices", 2)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined'", 1)
+}
+
+func TestLatestAgentUsedCapacityBlocksUnknownProviderOverbuild(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET
+		last_heartbeat_at=clock_timestamp(),used_capacity='{"device_slots":1}',updated_at=clock_timestamp()`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := warmpool.New(db, sequentialGenerator(), nil).RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 || result.CapacityMisses != 1 {
+		t.Fatalf("reported provider capacity result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices", 0)
 }
 
 func TestImageValidationCommandGatesWarmPoolCreation(t *testing.T) {

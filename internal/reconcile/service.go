@@ -57,6 +57,7 @@ type DeviceState struct {
 	Health              domain.HealthStatus
 	ConsecutiveFailures int
 	HostStatus          domain.HostStatus
+	OperationInFlight   bool
 }
 
 type Result struct {
@@ -168,6 +169,9 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 	}
 	for _, device := range devices {
 		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceQuarantined || device.Lifecycle == domain.DeviceRecycling {
+			continue
+		}
+		if device.OperationInFlight && (device.Lifecycle == domain.DeviceProvisioning || device.Lifecycle == domain.DeviceBooting) {
 			continue
 		}
 		result.DevicesChecked++
@@ -347,8 +351,11 @@ type queryer interface {
 
 func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.serial,d.lifecycle_status,
-        d.health_status,d.consecutive_failures,h.status
-        FROM devices d JOIN device_hosts h ON h.id=d.host_id ORDER BY d.created_at,d.id`)
+		d.health_status,d.consecutive_failures,h.status,
+		EXISTS (SELECT 1 FROM device_host_commands c
+			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
+			AND c.status IN ('pending','leased'))
+		FROM devices d JOIN device_hosts h ON h.id=d.host_id ORDER BY d.created_at,d.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +364,7 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	for rows.Next() {
 		var device DeviceState
 		if err := rows.Scan(&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
-			&device.Lifecycle, &device.Health, &device.ConsecutiveFailures, &device.HostStatus); err != nil {
+			&device.Lifecycle, &device.Health, &device.ConsecutiveFailures, &device.HostStatus, &device.OperationInFlight); err != nil {
 			return nil, err
 		}
 		result = append(result, device)

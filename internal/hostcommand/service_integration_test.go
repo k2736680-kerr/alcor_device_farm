@@ -49,6 +49,103 @@ func TestHeartbeatBringsOfflineHostOnline(t *testing.T) {
 	}
 }
 
+func TestStoppedHeartbeatMayOmitConnectionAndPreservesLastKnownEndpoints(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	adbEndpoint, appiumEndpoint := "10.0.0.8:31000", "http://10.0.0.8:4723"
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "emulator-5554",
+		&adbEndpoint, &appiumEndpoint, "ready", "healthy")
+	result, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", LifecycleStatus: "stopped", HealthStatus: "unknown",
+			Connection: map[string]any{"adb_endpoint": "", "appium_endpoint": "", "appium_udid": ""}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "online" || result.Devices != 1 {
+		t.Fatalf("heartbeat result=%+v", result)
+	}
+	var lifecycle, health, serial string
+	var actualADB, actualAppium *string
+	var lastSeen *time.Time
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,
+		adb_endpoint,appium_endpoint,last_seen_at FROM devices WHERE id='device_0000000000001'`).Scan(
+		&lifecycle, &health, &serial, &actualADB, &actualAppium, &lastSeen); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "stopped" || health != "unknown" || serial != "emulator-5554" ||
+		actualADB == nil || *actualADB != adbEndpoint || actualAppium == nil || *actualAppium != appiumEndpoint || lastSeen == nil {
+		t.Fatalf("lifecycle=%s health=%s serial=%s adb=%v appium=%v last_seen=%v",
+			lifecycle, health, serial, actualADB, actualAppium, lastSeen)
+	}
+}
+
+func TestHeartbeatPreservesProvisioningStateDuringInFlightRebuild(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "old-serial",
+		nil, nil, "provisioning", "unknown")
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_host_commands
+		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES('command_000000000001','host_000000000000001','rebuild',
+		'{"device_id":"device_0000000000001","provider_ref":"container-1"}','pending',3,'heartbeat-rebuild-in-flight')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "new-serial",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+				"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health, serial string
+	var lastSeen *time.Time
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,last_seen_at
+		FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial, &lastSeen); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "provisioning" || health != "unknown" || serial != "new-serial" || lastSeen == nil {
+		t.Fatalf("lifecycle=%s health=%s serial=%s last_seen=%v", lifecycle, health, serial, lastSeen)
+	}
+}
+
+func TestHeartbeatMayReuseConnectionIdentityFromQuarantinedPoolExitRecord(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-active", "old-active-serial",
+		nil, nil, "booting", "unknown")
+	staleADB, staleAppium := "10.0.0.8:31000", "http://10.0.0.8:4723"
+	seedDevice(t, db, "device_0000000000002", "host_000000000000001", "container-retired", "reused-serial",
+		&staleADB, &staleAppium, "quarantined", "unhealthy")
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-active", Serial: "reused-serial",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+				"adb_endpoint": staleADB, "appium_endpoint": staleAppium, "appium_udid": "emulator-5554"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health, serial string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial
+		FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "ready" || health != "healthy" || serial != "reused-serial" {
+		t.Fatalf("lifecycle=%s health=%s serial=%s", lifecycle, health, serial)
+	}
+	var count int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE serial='reused-serial'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("devices sharing retired connection identity=%d", count)
+	}
+}
+
 func TestHeartbeatDoesNotCreateOrCrossBindDiscoveredDevice(t *testing.T) {
 	db := openTestDatabase(t)
 	seedHost(t, db)

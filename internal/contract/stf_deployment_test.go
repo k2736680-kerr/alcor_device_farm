@@ -18,13 +18,14 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 	raw := string(content)
 	for _, required := range []string{
 		"devicefarmer/stf:3.7.9", "rethinkdb:2.4.2", "--adb-host", "stf-adb",
+		"devicefarmer/adb@sha256:a699fafbc63d8a145f816257b1cd366ea3c5f0aff657e3bb135309bf7da45759",
 		"--allow-remote", "7400-7500", "STF_AUTH_SECRET", "internal: true",
 	} {
 		if !strings.Contains(raw, required) {
 			t.Fatalf("STF compose is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"devicefarmer/stf:latest", "rethinkdb:latest", "/var/run/docker.sock", "STF_API_TOKEN", "privileged: true", "/dev/bus/usb"} {
+	for _, forbidden := range []string{"devicefarmer/stf:latest", "devicefarmer/adb:latest", "rethinkdb:latest", "/var/run/docker.sock", "STF_API_TOKEN", "privileged: true", "/dev/bus/usb"} {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("STF compose contains forbidden value %q", forbidden)
 		}
@@ -32,8 +33,9 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 
 	var document struct {
 		Services map[string]struct {
-			Ports  []string `yaml:"ports"`
-			Expose []string `yaml:"expose"`
+			Ports    []string `yaml:"ports"`
+			Expose   []string `yaml:"expose"`
+			Networks []string `yaml:"networks"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(content, &document); err != nil {
@@ -47,6 +49,11 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 	if len(document.Services["rethinkdb"].Ports) != 0 || len(document.Services["stf-adb"].Ports) != 0 {
 		t.Fatal("RethinkDB and ADB server must not publish host ports")
 	}
+	if strings.Join(document.Services["rethinkdb"].Networks, ",") != "stf-internal" ||
+		!containsSTFNetwork(document.Services["stf-adb"].Networks, "stf-internal") ||
+		!containsSTFNetwork(document.Services["stf-adb"].Networks, "stf-edge") {
+		t.Fatalf("STF network boundary is invalid: rethinkdb=%v stf-adb=%v", document.Services["rethinkdb"].Networks, document.Services["stf-adb"].Networks)
+	}
 	if len(document.Services["stf"].Ports) != 3 {
 		t.Fatalf("STF published ports=%v", document.Services["stf"].Ports)
 	}
@@ -55,6 +62,15 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 			t.Fatalf("STF port is not private-by-default: %q", port)
 		}
 	}
+}
+
+func containsSTFNetwork(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUSBOverlayLimitsPrivilegeToADBService(t *testing.T) {
@@ -69,5 +85,18 @@ func TestUSBOverlayLimitsPrivilegeToADBService(t *testing.T) {
 	}
 	if strings.Contains(raw, "rethinkdb:") || strings.Contains(raw, "\n  stf:\n") || strings.Contains(raw, "docker.sock") {
 		t.Fatal("USB overlay broadens privileges beyond the ADB service")
+	}
+}
+
+func TestSTFVerificationUsesSingleEmulatorAcceptanceProfile(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "verify-stf-deployment.sh")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(content)
+	if !strings.Contains(raw, "at least one Emulator ADB endpoint") ||
+		strings.Contains(raw, "at least two Emulator ADB endpoints") {
+		t.Fatalf("STF verification is not aligned with ADR-0008:\n%s", raw)
 	}
 }

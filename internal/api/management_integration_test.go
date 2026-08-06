@@ -398,6 +398,12 @@ func completeNextManagementCommand(t *testing.T, environment *managementEnvironm
 	if err != nil || len(commands) != 1 || commands[0].CommandType != commandType || commands[0].LeaseToken == nil {
 		t.Fatalf("claimed management command=%#v error=%v", commands, err)
 	}
+	if commandType == "rebuild" {
+		if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='booting'
+			WHERE id=(SELECT payload->>'device_id' FROM device_host_commands WHERE id=$1)`, commands[0].ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	completion := hostcommand.CompletionInput{
 		LeaseToken: *commands[0].LeaseToken, Attempt: commands[0].Attempt, Status: "succeeded",
 		Result: map[string]any{

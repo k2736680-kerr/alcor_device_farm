@@ -123,15 +123,24 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		device := &input.Devices[index]
 		device.ProviderRef = strings.TrimSpace(device.ProviderRef)
 		device.Serial = strings.TrimSpace(device.Serial)
-		if device.ProviderRef == "" || device.Serial == "" || seenRefs[device.ProviderRef] || seenSerials[device.Serial] ||
+		if device.ProviderRef == "" || seenRefs[device.ProviderRef] ||
 			!validDiscoveredLifecycle(device.LifecycleStatus) || !validDiscoveredHealth(device.HealthStatus) ||
 			(device.LifecycleStatus == string(domain.DeviceReady) && device.HealthStatus != string(domain.HealthHealthy)) {
+			return HeartbeatResult{}, ErrInvalidArgument
+		}
+		if device.Serial == "" && device.LifecycleStatus != string(domain.DeviceStopped) {
+			return HeartbeatResult{}, ErrInvalidArgument
+		}
+		if device.Serial != "" && seenSerials[device.Serial] {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
 		if _, _, _, err := discoveredConnection(device.Connection); err != nil {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
-		seenRefs[device.ProviderRef], seenSerials[device.Serial] = true, true
+		seenRefs[device.ProviderRef] = true
+		if device.Serial != "" {
+			seenSerials[device.Serial] = true
+		}
 	}
 	capacity, err := json.Marshal(sensitive.RedactMap(input.Capacity))
 	if err != nil {
@@ -183,17 +192,20 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 }
 
 type discoveredDeviceState struct {
-	id           string
-	lifecycle    domain.DeviceLifecycleStatus
-	health       domain.HealthStatus
-	healthReason *string
+	id                string
+	lifecycle         domain.DeviceLifecycleStatus
+	health            domain.HealthStatus
+	healthReason      *string
+	operationInFlight bool
 }
 
 func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, discovered DiscoveredDevice, now time.Time) error {
 	var current discoveredDeviceState
-	err := tx.QueryRow(ctx, `SELECT id,lifecycle_status,health_status,health_reason FROM devices
-        WHERE host_id=$1 AND provider_ref=$2 FOR UPDATE`, hostID, discovered.ProviderRef).
-		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason)
+	err := tx.QueryRow(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,d.health_reason,
+		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
+			AND c.command_type IN ('create','rebuild') AND c.status IN ('pending','leased'))
+		FROM devices d WHERE d.host_id=$1 AND d.provider_ref=$2 FOR UPDATE OF d`, hostID, discovered.ProviderRef).
+		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason, &current.operationInFlight)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -208,7 +220,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	if err != nil {
 		return err
 	}
-	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted {
+	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
 		incomingHealth := domain.HealthStatus(discovered.HealthStatus)
 		if aggregate.Health() != incomingHealth {
 			if err := aggregate.UpdateHealth(incomingHealth, "agent heartbeat health observation", now); err != nil {
@@ -222,14 +234,15 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 	}
 	healthReason := current.healthReason
-	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted {
+	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
 		healthReason = nil
 		if aggregate.Health() != domain.HealthHealthy {
 			value := "agent heartbeat reported " + string(aggregate.Health())
 			healthReason = &value
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
+	_, err = tx.Exec(ctx, `UPDATE devices SET serial=CASE WHEN $2='' THEN serial ELSE $2 END,
+		adb_endpoint=COALESCE($3,adb_endpoint),appium_endpoint=COALESCE($4,appium_endpoint),
 		capabilities=CASE WHEN $5::text IS NULL THEN capabilities ELSE jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true) END,
 		lifecycle_status=$6::varchar,health_status=$7::varchar,health_reason=$8,last_seen_at=$9,updated_at=$9
 		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID,
@@ -452,7 +465,8 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		}
 		return err
 	}
-	if lifecycle != expectedState {
+	if lifecycle != expectedState && !(record.CommandType == "rebuild" &&
+		expectedState == domain.DeviceProvisioning && lifecycle == domain.DeviceBooting) {
 		return nil
 	}
 	now, err := database.ClockNow(ctx, tx)

@@ -19,6 +19,7 @@ authorized browser / reverse proxy
 版本基线：
 
 - DeviceFarmer/STF `v3.7.9`，发布于 2026-07-08，对应提交 `36d1a3e4336f2ecdf7885e3644fe34d0a4282c87`；
+- 官方 Compose 使用独立 `devicefarmer/adb` 镜像；该仓库只有浮动 `latest`，本项目按 2026-05-05 发布内容固定为 digest `sha256:a699fafbc63d8a145f816257b1cd366ea3c5f0aff657e3bb135309bf7da45759`；
 - RethinkDB `2.4.2`；
 - Compose 默认镜像均使用固定 tag，验收脚本拒绝 `latest`；正式环境首次拉取后还应记录镜像 digest。
 
@@ -61,7 +62,7 @@ STF 内部进程通信本身不适合不可信网络，因此整个部署必须�
 Docker Provider 为每台 Emulator 发布独立随机 ADB Host 端口。DF-017 验收时将 Device Farm 返回的 `adb_endpoint` 连接到 STF 的 ADB server：
 
 ```sh
-./scripts/stf-connect-emulators.sh 10.0.0.10:32771 10.0.0.10:32773
+./scripts/stf-connect-emulators.sh 10.0.0.10:32771
 ```
 
 这一步不创建 Emulator、不改 Pool membership、不改 Reservation，只让 STF 复用已存在的 ADB Endpoint。最终运行时的自动同步属于 DF-018 Adapter 编排，不以 STF 数据覆盖 Device Farm PostgreSQL 真相。
@@ -73,11 +74,11 @@ Docker Provider 为每台 Emulator 发布独立随机 ADB Host 端口。DF-017 �
 ```sh
 export STF_API_URL='http://127.0.0.1:7100'
 export STF_API_TOKEN='<专用服务 Token>'
-export DEVICE_FARM_ADB_ENDPOINTS='10.0.0.10:32771,10.0.0.10:32773'
+export DEVICE_FARM_ADB_ENDPOINTS='10.0.0.10:32771'
 ./scripts/verify-stf-deployment.sh
 ```
 
-脚本会检查镜像未使用 `latest`、启动服务、连接两个 ADB Endpoint，并通过官方 `/api/v1/devices` 确认两个 serial 均为 `present=true/ready=true`。脚本不会输出 API Token。
+脚本会检查镜像未使用 `latest`、启动服务、连接当前一台 Emulator 的 ADB Endpoint，并通过官方 `/api/v1/devices` 确认该 serial 为 `present=true/ready=true`。如资源允许，可提供逗号分隔的多个 Endpoint 执行多设备扩展验收；当前 P0/P1 按 ADR-0008 的单台模拟器配置执行。脚本不会输出 API Token。
 
 ## 后续接 USB 真机
 

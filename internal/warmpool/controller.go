@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -16,6 +17,14 @@ import (
 )
 
 var ErrNoCapacity = errors.New("no eligible Docker emulator host capacity")
+
+// A quarantined emulator still occupies a slot when the latest Agent heartbeat
+// discovered its Provider resource. A later heartbeat that no longer reports
+// the device advances host.last_heartbeat_at without advancing last_seen_at,
+// allowing the warm pool to replace the missing resource.
+const slotOccupyingDevicePredicate = `(d.lifecycle_status NOT IN ('quarantined','deleted') OR
+	(d.lifecycle_status='quarantined' AND d.last_seen_at IS NOT NULL AND
+	 h.last_heartbeat_at IS NOT NULL AND d.last_seen_at >= h.last_heartbeat_at))`
 
 type Result struct {
 	Configurations       int
@@ -507,12 +516,13 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			return err
 		}
 		var activeInstances, readyOrCreating int
-		if err := tx.QueryRow(ctx, `SELECT
-			count(*) FILTER (WHERE d.lifecycle_status NOT IN ('quarantined','deleted')),
+		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT
+			count(*) FILTER (WHERE %s),
 			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready'))
 			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			JOIN device_hosts h ON h.id=d.host_id
 			WHERE pd.pool_id=$1 AND pd.enabled AND d.image_id=$2 AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
-			poolID, imageID).Scan(&activeInstances, &readyOrCreating); err != nil {
+			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating); err != nil {
 			return err
 		}
 		missing := min(minReady-readyOrCreating, maxInstances-activeInstances)
@@ -555,6 +565,9 @@ func (controller *Controller) completeSuccessfulCreates(ctx context.Context, tx 
 		JOIN LATERAL (SELECT result FROM device_host_commands WHERE command_type='create'
 			AND payload->>'device_id'=d.id AND status='succeeded' ORDER BY completed_at DESC,id DESC LIMIT 1) c ON true
 		WHERE pd.pool_id=$1 AND d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting')
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands active_rebuild
+			WHERE active_rebuild.payload->>'device_id'=d.id AND active_rebuild.command_type='rebuild'
+			AND active_rebuild.status IN ('pending','leased'))
 		FOR UPDATE OF d`, poolID, imageID)
 	if err != nil {
 		return 0, 0, err
@@ -690,13 +703,19 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 
 func lockHostCapacity(ctx context.Context, tx pgx.Tx) (string, error) {
 	var hostID string
-	err := tx.QueryRow(ctx, `SELECT h.id FROM device_hosts h
+	err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT h.id FROM device_hosts h
 		WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')
 		AND CASE WHEN h.capacity->>'device_slots' ~ '^[0-9]+$' THEN (h.capacity->>'device_slots')::int ELSE 0 END >
-			((SELECT count(*) FROM devices d WHERE d.host_id=h.id AND d.lifecycle_status NOT IN ('quarantined','deleted')) +
+			(GREATEST(
+				(SELECT count(*) FROM devices d WHERE d.host_id=h.id AND %s),
+				CASE WHEN h.used_capacity->>'device_slots' ~ '^[0-9]+$' THEN (h.used_capacity->>'device_slots')::int ELSE 0 END
+			) +
 			 (SELECT count(*) FROM device_host_commands c WHERE c.host_id=h.id AND c.command_type='validate_image' AND c.status IN ('pending','leased')))
-		ORDER BY (SELECT count(*) FROM devices d WHERE d.host_id=h.id AND d.lifecycle_status NOT IN ('quarantined','deleted')),h.id
-		FOR UPDATE OF h SKIP LOCKED LIMIT 1`).Scan(&hostID)
+		ORDER BY GREATEST(
+			(SELECT count(*) FROM devices d WHERE d.host_id=h.id AND %s),
+			CASE WHEN h.used_capacity->>'device_slots' ~ '^[0-9]+$' THEN (h.used_capacity->>'device_slots')::int ELSE 0 END
+		),h.id
+		FOR UPDATE OF h SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate, slotOccupyingDevicePredicate)).Scan(&hostID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNoCapacity
 	}

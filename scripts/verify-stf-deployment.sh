@@ -6,9 +6,9 @@ compose_file="${STF_COMPOSE_FILE:-${project_root}/deploy/stf/compose.yaml}"
 env_file="${STF_ENV_FILE:-${project_root}/deploy/stf/.env}"
 : "${STF_API_URL:?set STF_API_URL, for example http://127.0.0.1:7100}"
 : "${STF_API_TOKEN:?set STF_API_TOKEN without writing it to .env or command output}"
-: "${DEVICE_FARM_ADB_ENDPOINTS:?set two comma-separated ADB endpoints}"
+: "${DEVICE_FARM_ADB_ENDPOINTS:?set one or more comma-separated ADB endpoints}"
 
-for tool in docker curl jq; do
+for tool in docker curl python3; do
   command -v "${tool}" >/dev/null 2>&1 || { echo "missing required tool: ${tool}" >&2; exit 1; }
 done
 if [[ ! -f "${env_file}" ]]; then
@@ -33,24 +33,42 @@ done
 curl --fail --silent --show-error --max-time 3 "${STF_API_URL%/}/" >/dev/null
 
 IFS=',' read -r -a endpoints <<<"${DEVICE_FARM_ADB_ENDPOINTS}"
-if ((${#endpoints[@]} < 2)); then
-  echo "at least two Emulator ADB endpoints are required" >&2
+if ((${#endpoints[@]} < 1)) || [[ -z "${endpoints[0]}" ]]; then
+  echo "at least one Emulator ADB endpoint is required" >&2
   exit 1
 fi
 "${project_root}/scripts/stf-connect-emulators.sh" "${endpoints[@]}"
 
-expected_serials="$(printf '%s\n' "${endpoints[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
 for _ in $(seq 1 90); do
   inventory="$(curl --fail --silent --show-error --max-time 5 --config - <<EOF
 header = "Authorization: Bearer ${STF_API_TOKEN}"
 url = "${STF_API_URL%/}/api/v1/devices?fields=serial,present,ready,using"
 EOF
 )"
-  if jq -e --argjson expected "${expected_serials}" '
-      [.devices[] | select(.present == true and .ready == true) | .serial] as $ready
-      | all($expected[] as $serial; $ready | index($serial) != null)
-    ' <<<"${inventory}" >/dev/null; then
-    jq '{devices: [.devices[] | {serial, present, ready, using}]}' <<<"${inventory}"
+  if python3 -c '
+import json
+import sys
+
+expected = sys.argv[1:]
+payload = json.load(sys.stdin)
+ready = {
+    item.get("serial")
+    for item in payload.get("devices", [])
+    if item.get("present") is True and item.get("ready") is True
+}
+raise SystemExit(0 if all(serial in ready for serial in expected) else 1)
+' "${endpoints[@]}" <<<"${inventory}"; then
+    python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+devices = [
+    {key: item.get(key) for key in ("serial", "present", "ready", "using")}
+    for item in payload.get("devices", [])
+]
+print(json.dumps({"devices": devices}, ensure_ascii=False))
+' <<<"${inventory}"
     echo "STF deployment verification passed"
     exit 0
   fi

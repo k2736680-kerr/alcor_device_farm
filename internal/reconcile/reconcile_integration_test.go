@@ -144,6 +144,29 @@ func TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess(t *testing
 	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
 }
 
+func TestInFlightCreateOrRebuildIsNotQuarantinedWhileBooting(t *testing.T) {
+	environment := newEnvironment(t, false)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET
+		lifecycle_status='booting',health_status='unhealthy',provider_ref='missing-provider-device'
+		WHERE id='device_0000000000001';
+		INSERT INTO device_host_commands(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES('command_000000000001','host_000000000000001','rebuild',
+		'{"device_id":"device_0000000000001","provider_ref":"missing-provider-device"}','pending',3,'rebuild-in-flight')`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 2, testLogger())
+	for range 3 {
+		result, err := service.RunOnce(context.Background(), time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.DevicesChecked != 0 || result.EventsRecorded != 0 || result.DevicesQuarantined != 0 {
+			t.Fatalf("in-flight reconcile result=%+v", result)
+		}
+	}
+	assertDevice(t, environment.db, "booting", "unhealthy", 0)
+}
+
 type environment struct {
 	db         *database.DB
 	provider   *providermock.Provider

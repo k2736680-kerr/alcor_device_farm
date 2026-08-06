@@ -18,7 +18,7 @@
 | DF-014 | completed | `0573568 加入Docker模拟器Provider和验收入口`、`63707ed`、`2c1468a 支持单台Android16模拟器验收` | `docs/evidence/DF-014/acceptance.md` |
 | DF-015 | completed | `03215e1 加入独立Appium端点和健康检查`、`2c1468a 支持单台Android16模拟器验收` | `docs/evidence/DF-015/acceptance.md` |
 | DF-016 | completed | `24c2c56 加入参数化模拟器自动补齐控制器`、`2c1468a 支持单台Android16模拟器验收`、`c3fd757 完成单台模拟器自动补池` | `docs/evidence/DF-016/acceptance.md` |
-| DF-017 | blocked | `c617b34 加入固定版本STF内网部署` | `docs/evidence/DF-017/acceptance.md` |
+| DF-017 | completed | `c617b34 加入固定版本STF内网部署`、`完成DF-017真实STF验收和故障收敛` | `docs/evidence/DF-017/acceptance.md` |
 | DF-018 | blocked | `78cc97f 接入STF预约和远程连接` | `docs/evidence/DF-018/acceptance.md` |
 | DF-019 | blocked | `84b3331 记录DaFit设备农场适配`、`14e2928` | `docs/evidence/DF-019/acceptance.md` |
 | DF-020 | blocked | `65abd2d 加入DaFit端到端运行工具` | `docs/evidence/DF-020/acceptance.md` |

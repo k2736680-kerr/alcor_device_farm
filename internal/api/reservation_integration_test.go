@@ -227,6 +227,40 @@ func TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds(t *testing
 	}
 }
 
+func TestReservationReleasePreservesQuarantinedDeviceAndClosesReservation(t *testing.T) {
+	controller := &fakeSTFController{}
+	environment := newManagementEnvironment(t, controller)
+	seedReservationDevice(t, environment)
+	created := createAndActivateReservation(t, environment, controller, "reservation-quarantined-release-create")
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET
+		lifecycle_status='quarantined',health_status='unhealthy',health_reason='STF temporarily unavailable'
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	response := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/releases",
+		map[string]any{"reason": "release reservation after device quarantine"}, serviceToken, "reservation-quarantined-release")
+	assertStatus(t, response, http.StatusOK)
+	var released reservation.View
+	decodeData(t, response, &released)
+	if released.Status != "released" || released.ReleasedAt == nil {
+		t.Fatalf("released reservation=%#v", released)
+	}
+
+	var lifecycle, health, sessionStatus string
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT d.lifecycle_status,d.health_status,s.status
+		FROM devices d JOIN device_sessions s ON s.device_id=d.id WHERE s.reservation_id=$1`, created.ID).
+		Scan(&lifecycle, &health, &sessionStatus); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "quarantined" || health != "unhealthy" || sessionStatus != "closed" {
+		t.Fatalf("device lifecycle=%s health=%s session=%s", lifecycle, health, sessionStatus)
+	}
+	if controller.releaseCalls != 1 || controller.lastReleaseSerial != "emulator-api-lifecycle" {
+		t.Fatalf("release calls=%d serial=%q", controller.releaseCalls, controller.lastReleaseSerial)
+	}
+}
+
 func TestRemoteSessionIsOwnerBoundIdempotentAndDisconnectedAfterExpiry(t *testing.T) {
 	controller := &fakeSTFController{}
 	environment := newManagementEnvironment(t, controller)

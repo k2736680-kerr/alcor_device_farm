@@ -660,8 +660,10 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	if err := deviceState.Transition(domain.DeviceRecycling, reason, now); err != nil {
-		return repository.ReservationRecord{}, err
+	if deviceState.Lifecycle() != domain.DeviceQuarantined {
+		if err := deviceState.Transition(domain.DeviceRecycling, reason, now); err != nil {
+			return repository.ReservationRecord{}, err
+		}
 	}
 	auditID, err := service.newID()
 	if err != nil {
