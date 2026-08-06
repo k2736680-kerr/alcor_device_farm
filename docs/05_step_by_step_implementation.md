@@ -38,7 +38,7 @@
 | DF-015 | Appium Endpoint 和健康 Adapter | completed | DF-014 |
 | DF-016 | 镜像验证和固定目标自动补齐 | completed | DF-011、DF-014、DF-015 |
 | DF-017 | STF 与 RethinkDB 部署 | completed | DF-014 |
-| DF-018 | STF Adapter 和远控入口 | blocked | DF-009、DF-017 |
+| DF-018 | STF Adapter 和远控入口 | completed | DF-009、DF-017 |
 | DF-019 | DaFit Farm 运行适配 | blocked | DF-015 |
 | DF-020 | DaFit 端到端 Harness | blocked | DF-018、DF-019 |
 | DF-021 | 故障恢复、清理和数据隔离 | blocked | DF-020 |
