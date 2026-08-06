@@ -1,0 +1,10 @@
+node_modules/
+playwright-report/
+test-results/
+coverage/
+*.tsbuildinfo
+
+orval.config.js
+orval.config.d.ts
+vite.config.js
+vite.config.d.ts

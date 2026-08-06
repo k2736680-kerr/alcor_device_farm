@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
@@ -88,7 +89,7 @@ func TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter(t *testi
 
 	environment.provider.SetScenario(providermock.Scenario{})
 	if _, err := environment.management.UnquarantineDeviceAudited(context.Background(), "device_0000000000001",
-		"operator confirmed rebuild path", "test-operator", "request-reconcile-recovery"); err != nil {
+		"operator confirmed rebuild path", audit.Service("test-operator"), "request-reconcile-recovery"); err != nil {
 		t.Fatal(err)
 	}
 	assertDevice(t, environment.db, "provisioning", "unknown", 0)

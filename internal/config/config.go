@@ -27,6 +27,7 @@ type Config struct {
 	Reconcile ReconcileConfig `yaml:"reconcile" json:"reconcile"`
 	WarmPool  WarmPoolConfig  `yaml:"warm_pool" json:"warm_pool"`
 	STF       STFConfig       `yaml:"stf" json:"stf"`
+	Console   ConsoleConfig   `yaml:"console" json:"console"`
 }
 
 type DatabaseConfig struct {
@@ -78,6 +79,17 @@ type STFConfig struct {
 	RetryDelay time.Duration `yaml:"retry_delay" json:"retry_delay"`
 }
 
+type ConsoleConfig struct {
+	Enabled             bool          `yaml:"enabled" json:"enabled"`
+	UsersFile           string        `yaml:"users_file" json:"-"`
+	DevelopmentInsecure bool          `yaml:"development_insecure" json:"development_insecure"`
+	SessionMaxAge       time.Duration `yaml:"session_max_age" json:"session_max_age"`
+	SessionIdleTimeout  time.Duration `yaml:"session_idle_timeout" json:"session_idle_timeout"`
+	CleanupInterval     time.Duration `yaml:"cleanup_interval" json:"cleanup_interval"`
+	LoginWindow         time.Duration `yaml:"login_window" json:"login_window"`
+	LoginMaxFailures    int           `yaml:"login_max_failures" json:"login_max_failures"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -100,6 +112,10 @@ func Default() Config {
 		WarmPool:  WarmPoolConfig{Interval: 30 * time.Second},
 		STF: STFConfig{
 			Timeout: 5 * time.Second, Attempts: 3, RetryDelay: 200 * time.Millisecond,
+		},
+		Console: ConsoleConfig{
+			SessionMaxAge: 8 * time.Hour, SessionIdleTimeout: 30 * time.Minute,
+			CleanupInterval: 10 * time.Minute, LoginWindow: 15 * time.Minute, LoginMaxFailures: 5,
 		},
 	}
 }
@@ -166,6 +182,7 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"SECURITY_AGENT_PREVIOUS_TOKEN", &cfg.Security.AgentPreviousToken},
 		{"STF_BASE_URL", &cfg.STF.BaseURL},
 		{"STF_API_TOKEN", &cfg.STF.APIToken},
+		{"CONSOLE_USERS_FILE", &cfg.Console.UsersFile},
 	}
 
 	for _, item := range stringValues {
@@ -190,6 +207,10 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"WARM_POOL_INTERVAL", &cfg.WarmPool.Interval},
 		{"STF_TIMEOUT", &cfg.STF.Timeout},
 		{"STF_RETRY_DELAY", &cfg.STF.RetryDelay},
+		{"CONSOLE_SESSION_MAX_AGE", &cfg.Console.SessionMaxAge},
+		{"CONSOLE_SESSION_IDLE_TIMEOUT", &cfg.Console.SessionIdleTimeout},
+		{"CONSOLE_CLEANUP_INTERVAL", &cfg.Console.CleanupInterval},
+		{"CONSOLE_LOGIN_WINDOW", &cfg.Console.LoginWindow},
 	}
 	if value, ok := lookup(envPrefix + "STF_ENABLED"); ok {
 		parsed, err := strconv.ParseBool(value)
@@ -197,6 +218,27 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 			return fmt.Errorf("parse %sSTF_ENABLED: %w", envPrefix, err)
 		}
 		cfg.STF.Enabled = parsed
+	}
+	if value, ok := lookup(envPrefix + "CONSOLE_ENABLED"); ok {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse %sCONSOLE_ENABLED: %w", envPrefix, err)
+		}
+		cfg.Console.Enabled = parsed
+	}
+	if value, ok := lookup(envPrefix + "CONSOLE_DEVELOPMENT_INSECURE"); ok {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse %sCONSOLE_DEVELOPMENT_INSECURE: %w", envPrefix, err)
+		}
+		cfg.Console.DevelopmentInsecure = parsed
+	}
+	if value, ok := lookup(envPrefix + "CONSOLE_LOGIN_MAX_FAILURES"); ok {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("parse %sCONSOLE_LOGIN_MAX_FAILURES: %w", envPrefix, err)
+		}
+		cfg.Console.LoginMaxFailures = parsed
 	}
 	if value, ok := lookup(envPrefix + "STF_ATTEMPTS"); ok {
 		parsed, err := strconv.Atoi(value)
@@ -235,17 +277,21 @@ func (cfg Config) Validate() error {
 		validationErrors = append(validationErrors, err)
 	}
 	for name, value := range map[string]time.Duration{
-		"server.read_timeout":      cfg.Server.ReadTimeout,
-		"server.write_timeout":     cfg.Server.WriteTimeout,
-		"server.idle_timeout":      cfg.Server.IdleTimeout,
-		"server.shutdown_timeout":  cfg.Server.ShutdownTimeout,
-		"lease.scheduler_interval": cfg.Lease.SchedulerInterval,
-		"lease.reaper_interval":    cfg.Lease.ReaperInterval,
-		"reconcile.interval":       cfg.Reconcile.Interval,
-		"reconcile.host_timeout":   cfg.Reconcile.HostTimeout,
-		"warm_pool.interval":       cfg.WarmPool.Interval,
-		"stf.timeout":              cfg.STF.Timeout,
-		"stf.retry_delay":          cfg.STF.RetryDelay,
+		"server.read_timeout":          cfg.Server.ReadTimeout,
+		"server.write_timeout":         cfg.Server.WriteTimeout,
+		"server.idle_timeout":          cfg.Server.IdleTimeout,
+		"server.shutdown_timeout":      cfg.Server.ShutdownTimeout,
+		"lease.scheduler_interval":     cfg.Lease.SchedulerInterval,
+		"lease.reaper_interval":        cfg.Lease.ReaperInterval,
+		"reconcile.interval":           cfg.Reconcile.Interval,
+		"reconcile.host_timeout":       cfg.Reconcile.HostTimeout,
+		"warm_pool.interval":           cfg.WarmPool.Interval,
+		"stf.timeout":                  cfg.STF.Timeout,
+		"stf.retry_delay":              cfg.STF.RetryDelay,
+		"console.session_max_age":      cfg.Console.SessionMaxAge,
+		"console.session_idle_timeout": cfg.Console.SessionIdleTimeout,
+		"console.cleanup_interval":     cfg.Console.CleanupInterval,
+		"console.login_window":         cfg.Console.LoginWindow,
 	} {
 		if value <= 0 {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be greater than zero", name))
@@ -268,6 +314,20 @@ func (cfg Config) Validate() error {
 		}
 		if strings.TrimSpace(cfg.STF.APIToken) == "" {
 			validationErrors = append(validationErrors, errors.New("stf.api_token is required when STF is enabled"))
+		}
+	}
+	if cfg.Console.Enabled {
+		if strings.TrimSpace(cfg.Console.UsersFile) == "" {
+			validationErrors = append(validationErrors, errors.New("console.users_file is required when Console is enabled"))
+		}
+		if strings.TrimSpace(cfg.Database.URL) == "" {
+			validationErrors = append(validationErrors, errors.New("database.url is required when Console is enabled"))
+		}
+		if cfg.Console.LoginMaxFailures < 1 {
+			validationErrors = append(validationErrors, errors.New("console.login_max_failures must be greater than zero"))
+		}
+		if cfg.Console.DevelopmentInsecure && !isLoopbackAddress(cfg.Server.Address) {
+			validationErrors = append(validationErrors, errors.New("console.development_insecure requires a loopback server.address"))
 		}
 	}
 
@@ -358,5 +418,24 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("stf_timeout", cfg.STF.Timeout),
 		slog.Int("stf_attempts", cfg.STF.Attempts),
 		slog.Duration("stf_retry_delay", cfg.STF.RetryDelay),
+		slog.Bool("console_enabled", cfg.Console.Enabled),
+		slog.Bool("console_development_insecure", cfg.Console.DevelopmentInsecure),
+		slog.Duration("console_session_max_age", cfg.Console.SessionMaxAge),
+		slog.Duration("console_session_idle_timeout", cfg.Console.SessionIdleTimeout),
+		slog.Duration("console_cleanup_interval", cfg.Console.CleanupInterval),
+		slog.Duration("console_login_window", cfg.Console.LoginWindow),
+		slog.Int("console_login_max_failures", cfg.Console.LoginMaxFailures),
 	)
+}
+
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	parsed := net.ParseIP(host)
+	return parsed != nil && parsed.IsLoopback()
 }

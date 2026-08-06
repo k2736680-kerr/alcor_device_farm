@@ -12,6 +12,9 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/api"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/consoleauth"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/consolequery"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/consoleui"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
@@ -33,6 +36,8 @@ type Services struct {
 	Reconcile    *reconcile.Service
 	HostCommands *hostcommand.Service
 	Metrics      *farmmetrics.Registry
+	ConsoleAuth  *consoleauth.Service
+	ConsoleQuery *consolequery.Service
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -61,9 +66,12 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
+	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery)
+	mux.Handle("/console/", consoleui.Handler())
+	mux.Handle("/console", consoleui.Handler())
 	mux.HandleFunc("/", notFoundHandler)
 
-	protected := auth.RouteMiddleware(security, mux)
+	protected := auth.RouteMiddleware(security, mux, services.ConsoleAuth)
 	return correlation.Middleware(requestLogMiddleware(logger, services.Metrics, recoverMiddleware(logger, protected)))
 }
 
@@ -111,6 +119,18 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
 		warmPoolController := warmpool.New(db, nil, logger)
 		go warmPoolController.Run(ctx, cfg.WarmPool.Interval)
+		services.ConsoleQuery = consolequery.New(db)
+		if cfg.Console.Enabled {
+			users, loadErr := consoleauth.LoadUsers(cfg.Console.UsersFile)
+			if loadErr != nil {
+				return loadErr
+			}
+			services.ConsoleAuth, err = consoleauth.New(db, cfg.Console, users)
+			if err != nil {
+				return err
+			}
+			go services.ConsoleAuth.RunCleanup(ctx)
+		}
 	}
 	if services.Metrics == nil {
 		services.Metrics = farmmetrics.New(nil)

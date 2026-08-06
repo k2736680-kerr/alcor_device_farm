@@ -32,11 +32,16 @@ var expectedOperations = map[string][]string{
 	"/api/v1/devices/{id}/restarts":                      {"post"},
 	"/api/v1/devices/{id}/rebuilds":                      {"post"},
 	"/api/v1/devices/{id}/quarantines":                   {"post", "delete"},
+	"/api/v1/devices/{id}/health-events":                 {"get"},
 	"/api/v1/device-reservations":                        {"get", "post"},
 	"/api/v1/device-reservations/{id}":                   {"get"},
 	"/api/v1/device-reservations/{id}/extensions":        {"post"},
 	"/api/v1/device-reservations/{id}/releases":          {"post"},
 	"/api/v1/device-reservations/{id}/remote-sessions":   {"post"},
+	"/api/v1/device-audit-events":                        {"get"},
+	"/console/api/v1/sessions":                           {"post"},
+	"/console/api/v1/me":                                 {"get"},
+	"/console/api/v1/sessions/current":                   {"delete"},
 	"/internal/v1/device-hosts/{id}/heartbeats":          {"post"},
 	"/internal/v1/device-hosts/{id}/commands/claims":     {"post"},
 	"/internal/v1/device-host-commands/{id}/completions": {"post"},
@@ -53,7 +58,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "1.1.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "1.2.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 
@@ -62,7 +67,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatalf("path count = %d, want %d", len(paths), len(expectedOperations))
 	}
 	operationIDs := map[string]bool{}
-	assertSecurity(t, document, "serviceBearer")
+	assertSecurityOR(t, document, "serviceBearer", "consoleCookie")
 	for path, methods := range expectedOperations {
 		pathItem := object(t, paths, path)
 		for _, method := range methods {
@@ -78,6 +83,14 @@ func TestOpenAPIContract(t *testing.T) {
 			}
 			if strings.HasPrefix(path, "/internal/v1/") {
 				assertSecurity(t, operation, "agentBearer")
+			} else if strings.HasPrefix(path, "/console/api/v1/") {
+				if path == "/console/api/v1/sessions" && method == "post" {
+					if security, ok := operation["security"].([]any); !ok || len(security) != 0 {
+						t.Fatalf("console login must be public")
+					}
+				} else {
+					assertSecurity(t, operation, "consoleCookie")
+				}
 			} else if strings.HasPrefix(path, "/api/v1/") {
 				for _, status := range []string{"401", "403"} {
 					if _, ok := responses[status]; !ok {
@@ -94,10 +107,42 @@ func TestOpenAPIContract(t *testing.T) {
 	securitySchemes := object(t, components, "securitySchemes")
 	object(t, securitySchemes, "serviceBearer")
 	object(t, securitySchemes, "agentBearer")
+	object(t, securitySchemes, "consoleCookie")
 	validateLocalReferences(t, document, document, "#")
 	validateRequestExamples(t, components)
 	validateAlcorAdapterContract(t, paths, components)
+	validateConsoleResponseTypes(t, document, paths)
 	validateFrozenHash(t, raw)
+}
+
+func validateConsoleResponseTypes(t *testing.T, document, paths map[string]any) {
+	t.Helper()
+	operations := []struct{ path, method, status string }{
+		{"/console/api/v1/sessions", "post", "201"},
+		{"/console/api/v1/me", "get", "200"},
+		{"/console/api/v1/sessions/current", "delete", "200"},
+		{"/api/v1/device-images", "get", "200"},
+		{"/api/v1/device-hosts", "get", "200"},
+		{"/api/v1/device-pools", "get", "200"},
+		{"/api/v1/devices", "get", "200"},
+		{"/api/v1/device-reservations", "get", "200"},
+		{"/api/v1/device-audit-events", "get", "200"},
+		{"/api/v1/devices/{id}/health-events", "get", "200"},
+	}
+	for _, expected := range operations {
+		response := object(t, object(t, object(t, paths, expected.path), expected.method), "responses")
+		success := object(t, response, expected.status)
+		responseValue, ok := resolveReference(document, success["$ref"].(string))
+		if !ok {
+			t.Fatalf("cannot resolve response for %s %s", expected.method, expected.path)
+		}
+		responseObject := responseValue.(map[string]any)
+		media := object(t, object(t, responseObject, "content"), "application/json")
+		schema := object(t, media, "schema")
+		if schema["$ref"] == "#/components/schemas/SuccessEnvelope" {
+			t.Fatalf("%s %s uses weak SuccessEnvelope", expected.method, expected.path)
+		}
+	}
 }
 
 func validateFrozenHash(t *testing.T, raw string) {
@@ -224,6 +269,29 @@ func assertSecurity(t *testing.T, operation map[string]any, scheme string) {
 	}
 	if _, ok := requirement[scheme]; !ok {
 		t.Fatalf("security requirement = %#v, want %s", requirement, scheme)
+	}
+}
+
+func assertSecurityOR(t *testing.T, operation map[string]any, schemes ...string) {
+	t.Helper()
+	security, ok := operation["security"].([]any)
+	if !ok || len(security) != len(schemes) {
+		t.Fatalf("security = %#v, want OR requirements %v", operation["security"], schemes)
+	}
+	for _, scheme := range schemes {
+		found := false
+		for _, item := range security {
+			requirement, ok := item.(map[string]any)
+			if ok {
+				_, found = requirement[scheme]
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("security = %#v, missing %s", security, scheme)
+		}
 	}
 }
 

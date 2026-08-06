@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.1.0
+  version: 1.2.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-03
   x-platform-semantics: Case/Run/RunAttempt
@@ -17,9 +17,12 @@ tags:
   - name: Pools
   - name: Devices
   - name: Reservations
+  - name: Console
+  - name: Audit
   - name: Agent
 security:
   - serviceBearer: []
+  - consoleCookie: []
 paths:
   /healthz:
     get:
@@ -52,8 +55,8 @@ paths:
       tags: [Images]
       operationId: listDeviceImages
       parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
-      responses: &standardResponses
-        "200": {$ref: "#/components/responses/Success"}
+      responses:
+        "200": {$ref: "#/components/responses/ImageListSuccess"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -65,8 +68,8 @@ paths:
       operationId: createDeviceImage
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       requestBody: {$ref: "#/components/requestBodies/DeviceImageInput"}
-      responses: &createdResponses
-        "201": {$ref: "#/components/responses/Created"}
+      responses:
+        "201": {$ref: "#/components/responses/ImageCreated"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -77,20 +80,33 @@ paths:
     get:
       tags: [Images]
       operationId: getDeviceImage
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/ImageSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
     put:
       tags: [Images]
       operationId: updateDeviceImage
       requestBody: {$ref: "#/components/requestBodies/DeviceImageInput"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/ImageSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-images/{id}/validations:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
       tags: [Images]
       operationId: validateDeviceImage
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
-      responses: &acceptedResponses
-        "202": {$ref: "#/components/responses/Accepted"}
+      responses:
+        "202": {$ref: "#/components/responses/ImageAccepted"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -102,77 +118,160 @@ paths:
       tags: [Hosts]
       operationId: listDeviceHosts
       parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/HostListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
     post:
       tags: [Hosts]
       operationId: createDeviceHost
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       requestBody: {$ref: "#/components/requestBodies/DeviceHostInput"}
-      responses: *createdResponses
+      responses:
+        "201": {$ref: "#/components/responses/HostCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-hosts/{id}:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     get:
       tags: [Hosts]
       operationId: getDeviceHost
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/HostSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
     put:
       tags: [Hosts]
       operationId: updateDeviceHost
       requestBody: {$ref: "#/components/requestBodies/DeviceHostInput"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/HostSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-hosts/{id}/drains:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
       tags: [Hosts]
       operationId: drainDeviceHost
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/HostSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
     delete:
       tags: [Hosts]
       operationId: undrainDeviceHost
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/HostSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools:
     get:
       tags: [Pools]
       operationId: listDevicePools
       parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
     post:
       tags: [Pools]
       operationId: createDevicePool
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       requestBody: {$ref: "#/components/requestBodies/DevicePoolInput"}
-      responses: *createdResponses
+      responses:
+        "201": {$ref: "#/components/responses/PoolCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools/{id}:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     get:
       tags: [Pools]
       operationId: getDevicePool
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
     put:
       tags: [Pools]
       operationId: updateDevicePool
       requestBody: {$ref: "#/components/requestBodies/DevicePoolInput"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools/{id}/devices:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
       tags: [Pools]
       operationId: addDeviceToPool
       requestBody: {$ref: "#/components/requestBodies/PoolDeviceInput"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolMembershipSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
     delete:
       tags: [Pools]
       operationId: removeDeviceFromPool
       requestBody: {$ref: "#/components/requestBodies/PoolDeviceInput"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolMembershipSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools/{id}/images:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     get:
       tags: [Pools]
       operationId: listDevicePoolImages
-      responses: *standardResponses
+      parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
+      responses:
+        "200": {$ref: "#/components/responses/PoolImageListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools/{id}/images/{image_id}:
     parameters:
       - {$ref: "#/components/parameters/ResourceID"}
@@ -181,11 +280,25 @@ paths:
       tags: [Pools]
       operationId: setDevicePoolImageTarget
       requestBody: {$ref: "#/components/requestBodies/DevicePoolImageInput"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolImageSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
     delete:
       tags: [Pools]
       operationId: disableDevicePoolImageTarget
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/PoolImageSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/devices:
     get:
       tags: [Devices]
@@ -196,7 +309,12 @@ paths:
         - {name: pool_id, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
         - {name: lifecycle_status, in: query, schema: {$ref: "#/components/schemas/DeviceLifecycleStatus"}}
         - {name: health_status, in: query, schema: {$ref: "#/components/schemas/HealthStatus"}}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/DeviceListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/devices/{id}:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     get:
@@ -223,7 +341,14 @@ paths:
         - {$ref: "#/components/parameters/IdempotencyKey"}
         - {$ref: "#/components/parameters/ActorID"}
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
-      responses: *acceptedResponses
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/devices/{id}/rebuilds:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -233,7 +358,14 @@ paths:
         - {$ref: "#/components/parameters/IdempotencyKey"}
         - {$ref: "#/components/parameters/ActorID"}
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
-      responses: *acceptedResponses
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/devices/{id}/quarantines:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -241,13 +373,40 @@ paths:
       operationId: quarantineDevice
       parameters: [{$ref: "#/components/parameters/ActorID"}]
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/DeviceSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
     delete:
       tags: [Devices]
       operationId: unquarantineDevice
       parameters: [{$ref: "#/components/parameters/ActorID"}]
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
-      responses: *standardResponses
+      responses:
+        "200": {$ref: "#/components/responses/DeviceSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/devices/{id}/health-events:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    get:
+      tags: [Devices]
+      operationId: listDeviceHealthEvents
+      parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
+      responses:
+        "200": {$ref: "#/components/responses/HealthEventListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-reservations:
     get:
       tags: [Reservations]
@@ -256,8 +415,13 @@ paths:
         - {$ref: "#/components/parameters/Page"}
         - {$ref: "#/components/parameters/PageSize"}
         - {name: owner_type, in: query, schema: {$ref: "#/components/schemas/OwnerType"}}
-        - {name: owner_id, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
-      responses: *standardResponses
+        - {name: owner_id, in: query, schema: {$ref: "#/components/schemas/OwnerID"}}
+      responses:
+        "200": {$ref: "#/components/responses/ReservationListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
     post:
       tags: [Reservations]
       operationId: createDeviceReservation
@@ -340,7 +504,56 @@ paths:
       operationId: createRemoteSession
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       requestBody: {$ref: "#/components/requestBodies/RemoteSessionCreate"}
-      responses: *createdResponses
+      responses:
+        "201": {$ref: "#/components/responses/RemoteSessionCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/v1/device-audit-events:
+    get:
+      tags: [Audit]
+      operationId: listDeviceAuditEvents
+      parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
+      responses:
+        "200": {$ref: "#/components/responses/AuditEventListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /console/api/v1/sessions:
+    post:
+      tags: [Console]
+      operationId: createConsoleSession
+      security: []
+      requestBody: {$ref: "#/components/requestBodies/ConsoleLogin"}
+      responses:
+        "201": {$ref: "#/components/responses/ConsoleSessionCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "429": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /console/api/v1/me:
+    get:
+      tags: [Console]
+      operationId: getConsoleSession
+      security: [{consoleCookie: []}]
+      responses:
+        "200": {$ref: "#/components/responses/ConsoleSessionSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /console/api/v1/sessions/current:
+    delete:
+      tags: [Console]
+      operationId: deleteConsoleSession
+      security: [{consoleCookie: []}]
+      parameters: [{$ref: "#/components/parameters/CSRFToken"}]
+      responses:
+        "200": {$ref: "#/components/responses/ConsoleLogoutSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /internal/v1/device-hosts/{id}/heartbeats:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -348,7 +561,14 @@ paths:
       operationId: heartbeatDeviceHost
       security: [{agentBearer: []}]
       requestBody: {$ref: "#/components/requestBodies/HostHeartbeat"}
-      responses: *standardResponses
+      responses: &standardResponses
+        "200": {$ref: "#/components/responses/Success"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /internal/v1/device-hosts/{id}/commands/claims:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -372,7 +592,14 @@ paths:
       operationId: reportDeviceHealth
       security: [{agentBearer: []}]
       requestBody: {$ref: "#/components/requestBodies/HealthEvent"}
-      responses: *createdResponses
+      responses: &createdResponses
+        "201": {$ref: "#/components/responses/Created"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
 components:
   securitySchemes:
     serviceBearer:
@@ -385,6 +612,11 @@ components:
       scheme: bearer
       bearerFormat: opaque-agent-token
       description: 只允许 Host Agent 调用 internal API。
+    consoleCookie:
+      type: apiKey
+      in: cookie
+      name: device_farm_session
+      description: Device Farm Console 同源短时会话；写请求还必须携带 X-CSRF-Token。
   parameters:
     ResourceID:
       name: id
@@ -428,6 +660,11 @@ components:
       name: page_size
       in: query
       schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 32, maxLength: 128}
   requestBodies:
     DeviceImageInput:
       required: true
@@ -504,7 +741,78 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/HealthEvent"}
+    ConsoleLogin:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ConsoleLogin"}
   responses:
+    ImageListSuccess:
+      description: 镜像分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/ImageListEnvelope"}}}
+    ImageSuccess:
+      description: 镜像操作成功
+      content: {application/json: {schema: {$ref: "#/components/schemas/ImageEnvelope"}}}
+    ImageCreated:
+      description: 镜像已创建
+      content: {application/json: {schema: {$ref: "#/components/schemas/ImageEnvelope"}}}
+    ImageAccepted:
+      description: 镜像验证已接受
+      content: {application/json: {schema: {$ref: "#/components/schemas/ImageEnvelope"}}}
+    HostListSuccess:
+      description: Host 分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/HostListEnvelope"}}}
+    HostSuccess:
+      description: Host 操作成功
+      content: {application/json: {schema: {$ref: "#/components/schemas/HostEnvelope"}}}
+    HostCreated:
+      description: Host 已创建
+      content: {application/json: {schema: {$ref: "#/components/schemas/HostEnvelope"}}}
+    PoolListSuccess:
+      description: Pool 分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/PoolListEnvelope"}}}
+    PoolSuccess:
+      description: Pool 操作成功
+      content: {application/json: {schema: {$ref: "#/components/schemas/PoolEnvelope"}}}
+    PoolCreated:
+      description: Pool 已创建
+      content: {application/json: {schema: {$ref: "#/components/schemas/PoolEnvelope"}}}
+    PoolImageListSuccess:
+      description: Pool 镜像目标分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/PoolImageListEnvelope"}}}
+    PoolImageSuccess:
+      description: Pool 镜像目标操作成功
+      content: {application/json: {schema: {$ref: "#/components/schemas/PoolImageEnvelope"}}}
+    PoolMembershipSuccess:
+      description: Pool 设备成员操作成功
+      content: {application/json: {schema: {$ref: "#/components/schemas/PoolMembershipEnvelope"}}}
+    DeviceListSuccess:
+      description: 设备分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/DeviceListEnvelope"}}}
+    DeviceAccepted:
+      description: 设备异步操作已接受
+      content: {application/json: {schema: {$ref: "#/components/schemas/DeviceEnvelope"}}}
+    ReservationListSuccess:
+      description: 预约分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/ReservationListEnvelope"}}}
+    RemoteSessionCreated:
+      description: STF 短时入口已创建
+      content: {application/json: {schema: {$ref: "#/components/schemas/RemoteSessionEnvelope"}}}
+    AuditEventListSuccess:
+      description: 设备域审计分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/AuditEventListEnvelope"}}}
+    HealthEventListSuccess:
+      description: 设备健康事件分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/HealthEventListEnvelope"}}}
+    ConsoleSessionCreated:
+      description: Console 会话已创建并设置 Cookie
+      content: {application/json: {schema: {$ref: "#/components/schemas/ConsoleSessionEnvelope"}}}
+    ConsoleSessionSuccess:
+      description: 当前 Console 会话
+      content: {application/json: {schema: {$ref: "#/components/schemas/ConsoleSessionEnvelope"}}}
+    ConsoleLogoutSuccess:
+      description: 当前 Console 会话已撤销
+      content: {application/json: {schema: {$ref: "#/components/schemas/ConsoleLogoutEnvelope"}}}
     ReservationCreated:
       description: 预约已创建，初始通常为 pending
       content:
@@ -592,6 +900,259 @@ components:
         message: {type: string}
         details: {type: object, additionalProperties: true}
         retryable: {type: boolean}
+    DeviceImage:
+      type: object
+      additionalProperties: false
+      required: [id, name, docker_digest, api_level, abi, resolution, resource_config, status, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        name: {type: string}
+        docker_image: {type: string}
+        docker_digest: {type: string}
+        api_level: {type: integer}
+        abi: {type: string}
+        resolution: {type: string}
+        resource_config: {type: object, additionalProperties: true}
+        status: {type: string, enum: [draft, validating, ready, failed, disabled]}
+        validation_error: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DeviceHost:
+      type: object
+      additionalProperties: false
+      required: [id, name, host_type, capabilities, capacity, used_capacity, status, draining, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        name: {type: string}
+        host_type: {type: string, enum: [docker_emulator, usb_android]}
+        address: {type: string}
+        capabilities: {type: object, additionalProperties: true}
+        capacity: {type: object, additionalProperties: true}
+        used_capacity: {type: object, additionalProperties: true}
+        status: {type: string, enum: [online, offline, draining, maintenance]}
+        draining: {type: boolean}
+        last_heartbeat_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DevicePool:
+      type: object
+      additionalProperties: false
+      required: [id, name, default_lease_seconds, max_lease_seconds, max_concurrency, status, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        name: {type: string}
+        default_lease_seconds: {type: integer}
+        max_lease_seconds: {type: integer}
+        max_concurrency: {type: integer}
+        status: {type: string, enum: [active, disabled]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DevicePoolImage:
+      type: object
+      additionalProperties: false
+      required: [pool_id, image_id, min_ready, max_instances, enabled, created_at, updated_at]
+      properties:
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        image_id: {$ref: "#/components/schemas/Identifier"}
+        min_ready: {type: integer}
+        max_instances: {type: integer}
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PoolMembership:
+      type: object
+      additionalProperties: false
+      required: [pool_id, device_id, enabled]
+      properties:
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        enabled: {type: boolean}
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, actor_type, actor_id, action, resource_type, resource_id, request_id, summary, created_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        actor_type: {type: string, enum: [service, agent, system, console]}
+        actor_id: {type: string}
+        action: {type: string}
+        resource_type: {type: string}
+        resource_id: {type: string}
+        request_id: {type: string}
+        reason: {type: string}
+        summary: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+    HealthEventRecord:
+      type: object
+      additionalProperties: false
+      required: [id, device_id, source, event_type, severity, reason, payload, observed_at, created_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        source: {type: string, enum: [agent, provider, adb, appium, stf, reconciler]}
+        event_type: {type: string}
+        severity: {type: string, enum: [info, warning, error, critical]}
+        reason: {type: string}
+        payload: {type: object, additionalProperties: true}
+        observed_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    RemoteSession:
+      type: object
+      additionalProperties: false
+      required: [id, reservation_id, expires_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        reservation_id: {$ref: "#/components/schemas/Identifier"}
+        remote_connect_url: {type: string, format: uri}
+        expires_at: {type: string, format: date-time}
+    ConsoleRole:
+      type: string
+      enum: [viewer, operator, admin]
+    ConsoleUser:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, role]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 64}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        role: {$ref: "#/components/schemas/ConsoleRole"}
+    ConsoleSession:
+      type: object
+      additionalProperties: false
+      required: [user, expires_at]
+      properties:
+        user: {$ref: "#/components/schemas/ConsoleUser"}
+        expires_at: {type: string, format: date-time}
+    ConsoleLogin:
+      type: object
+      additionalProperties: false
+      required: [user_id, password]
+      properties:
+        user_id: {type: string, minLength: 1, maxLength: 64}
+        password: {type: string, minLength: 1, maxLength: 1024, format: password}
+    PageMetadata:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1, maximum: 200}
+        total: {type: integer, minimum: 0}
+    DeviceImagePage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/DeviceImage"}}}}
+    DeviceHostPage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/DeviceHost"}}}}
+    DevicePoolPage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/DevicePool"}}}}
+    DevicePoolImagePage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/DevicePoolImage"}}}}
+    DevicePage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/Device"}}}}
+    ReservationPage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/Reservation"}}}}
+    AuditEventPage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/AuditEvent"}}}}
+    HealthEventPage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/HealthEventRecord"}}}}
+    ImageEnvelope: {$ref: "#/components/schemas/DeviceImageEnvelope"}
+    DeviceImageEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DeviceImage"}, error: {nullable: true}}
+    ImageListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DeviceImagePage"}, error: {nullable: true}}
+    HostEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DeviceHost"}, error: {nullable: true}}
+    HostListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DeviceHostPage"}, error: {nullable: true}}
+    PoolEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DevicePool"}, error: {nullable: true}}
+    PoolListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DevicePoolPage"}, error: {nullable: true}}
+    PoolImageEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DevicePoolImage"}, error: {nullable: true}}
+    PoolImageListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DevicePoolImagePage"}, error: {nullable: true}}
+    PoolMembershipEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/PoolMembership"}, error: {nullable: true}}
+    DeviceListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DevicePage"}, error: {nullable: true}}
+    ReservationListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/ReservationPage"}, error: {nullable: true}}
+    RemoteSessionEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/RemoteSession"}, error: {nullable: true}}
+    AuditEventListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/AuditEventPage"}, error: {nullable: true}}
+    HealthEventListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/HealthEventPage"}, error: {nullable: true}}
+    ConsoleSessionEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/ConsoleSession"}, error: {nullable: true}}
+    ConsoleLogoutEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {type: object, additionalProperties: false, required: [revoked], properties: {revoked: {type: boolean}}}
+        error: {nullable: true}
     DeviceImageInput:
       type: object
       additionalProperties: false
@@ -654,6 +1215,11 @@ components:
     OwnerType:
       type: string
       enum: [run_attempt, manual, test_run]
+    OwnerID:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: "^[A-Za-z0-9_.@-]+$"
     ReservationStatus:
       type: string
       enum: [pending, active, released, force_released, expired, failed]
@@ -666,7 +1232,7 @@ components:
         pool_id: {$ref: "#/components/schemas/Identifier"}
         device_id: {$ref: "#/components/schemas/Identifier"}
         owner_type: {$ref: "#/components/schemas/OwnerType"}
-        owner_id: {$ref: "#/components/schemas/Identifier"}
+        owner_id: {$ref: "#/components/schemas/OwnerID"}
         requested_capabilities: {type: object, additionalProperties: true}
         lease_seconds: {type: integer, minimum: 60}
         status: {$ref: "#/components/schemas/ReservationStatus"}
@@ -678,17 +1244,30 @@ components:
         updated_at: {type: string, format: date-time}
     Device:
       type: object
-      additionalProperties: true
-      required: [id, serial, capabilities]
+      additionalProperties: false
+      required: [id, host_id, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        image_id: {$ref: "#/components/schemas/Identifier"}
+        device_kind: {type: string, enum: [emulator, physical]}
+        provider_type: {type: string, enum: [docker_emulator, usb_android, mock]}
+        provider_ref: {type: string}
+        lifecycle_mode: {type: string, enum: [ephemeral, persistent]}
         serial: {type: string, minLength: 1}
+        stf_serial: {type: string}
         adb_endpoint: {type: string}
         appium_endpoint: {type: string, format: uri}
         capabilities:
           type: object
           additionalProperties: true
           description: appiumUdid 存放 Appium 所在网络空间使用的 UDID；缺省时 Adapter 回退 serial。
+        lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
+        health_status: {$ref: "#/components/schemas/HealthStatus"}
+        health_reason: {type: string}
+        consecutive_failures: {type: integer, minimum: 0}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     ReservationEnvelope:
       type: object
       additionalProperties: false
@@ -712,7 +1291,7 @@ components:
       properties:
         pool_id: {$ref: "#/components/schemas/Identifier"}
         owner_type: {$ref: "#/components/schemas/OwnerType"}
-        owner_id: {$ref: "#/components/schemas/Identifier"}
+        owner_id: {$ref: "#/components/schemas/OwnerID"}
         requested_capabilities: {type: object, additionalProperties: true}
         lease_seconds: {type: integer, minimum: 60}
     LeaseExtension:
@@ -738,7 +1317,7 @@ components:
       required: [owner_type, owner_id]
       properties:
         owner_type: {$ref: "#/components/schemas/OwnerType"}
-        owner_id: {$ref: "#/components/schemas/Identifier"}
+        owner_id: {$ref: "#/components/schemas/OwnerID"}
         ttl_seconds: {type: integer, minimum: 30, maximum: 3600, default: 300}
     OperationReason:
       type: object

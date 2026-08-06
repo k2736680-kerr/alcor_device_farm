@@ -9,6 +9,7 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 )
@@ -601,30 +602,46 @@ func (ReservationRepository) InsertAudit(
 	return nil
 }
 
-func (ReservationRepository) List(ctx context.Context, querier database.Querier, filter ReservationFilter) ([]ReservationRecord, error) {
+// List returns one page of reservations plus the number of rows the filter
+// matches. The window is applied by the database so a caller listing page 1
+// never reads the rest of the table.
+func (ReservationRepository) List(
+	ctx context.Context,
+	querier database.Querier,
+	filter ReservationFilter,
+	page paging.Page,
+) ([]ReservationRecord, int, error) {
+	var total int
+	if err := querier.QueryRow(ctx, `
+        SELECT count(*) FROM device_reservations
+        WHERE ($1 = '' OR owner_type = $1) AND ($2 = '' OR owner_id = $2)`,
+		filter.OwnerType, filter.OwnerID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count reservations: %w", err)
+	}
 	rows, err := querier.Query(ctx, `
         SELECT id, client_id, pool_id, device_id, owner_type, owner_id,
                requested_capabilities, lease_seconds, status, idempotency_key,
                starts_at, expires_at, released_at, failure_code, created_at, updated_at
         FROM device_reservations
         WHERE ($1 = '' OR owner_type = $1) AND ($2 = '' OR owner_id = $2)
-        ORDER BY created_at DESC, id DESC`, filter.OwnerType, filter.OwnerID)
+        ORDER BY created_at DESC, id DESC
+        LIMIT $3 OFFSET $4`, filter.OwnerType, filter.OwnerID, page.Limit(), page.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("list reservations: %w", err)
+		return nil, 0, fmt.Errorf("list reservations: %w", err)
 	}
 	defer rows.Close()
 	result := make([]ReservationRecord, 0)
 	for rows.Next() {
 		record, scanErr := scanReservation(rows)
 		if scanErr != nil {
-			return nil, fmt.Errorf("scan reservation: %w", scanErr)
+			return nil, 0, fmt.Errorf("scan reservation: %w", scanErr)
 		}
 		result = append(result, record)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate reservations: %w", err)
+		return nil, 0, fmt.Errorf("iterate reservations: %w", err)
 	}
-	return result, nil
+	return result, total, nil
 }
 
 func (ReservationRepository) GetPoolPolicy(ctx context.Context, querier database.Querier, poolID string) (PoolPolicy, error) {

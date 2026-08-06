@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
@@ -23,24 +24,24 @@ func TestExtensionUsesDatabaseLeaseAndIsIdempotent(t *testing.T) {
 		t.Fatal("active reservation has no expiry")
 	}
 	originalExpiry := *active.ExpiresAt
-	extended, err := service.Extend(context.Background(), "service", "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 300})
+	extended, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 300})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if extended.ExpiresAt == nil || !extended.ExpiresAt.Equal(originalExpiry.Add(300*time.Second)) {
 		t.Fatalf("extended expiry=%v want=%v", extended.ExpiresAt, originalExpiry.Add(300*time.Second))
 	}
-	replayed, err := service.Extend(context.Background(), "service", "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 300})
+	replayed, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 300})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replayed.ExpiresAt == nil || !replayed.ExpiresAt.Equal(*extended.ExpiresAt) {
 		t.Fatalf("replay extended twice: first=%v replay=%v", extended.ExpiresAt, replayed.ExpiresAt)
 	}
-	if _, err := service.Extend(context.Background(), "service", "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 301}); !errors.Is(err, reservation.ErrConflict) {
+	if _, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 301}); !errors.Is(err, reservation.ErrConflict) {
 		t.Fatalf("changed idempotent extension error=%v", err)
 	}
-	if _, err := service.Extend(context.Background(), "service", "extension-key-0002", active.ID, reservation.ExtensionInput{AdditionalSeconds: 600}); !errors.Is(err, reservation.ErrInvalidArgument) {
+	if _, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0002", active.ID, reservation.ExtensionInput{AdditionalSeconds: 600}); !errors.Is(err, reservation.ErrInvalidArgument) {
 		t.Fatalf("over maximum extension error=%v", err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations
@@ -48,7 +49,7 @@ func TestExtensionUsesDatabaseLeaseAndIsIdempotent(t *testing.T) {
         WHERE id=$1`, active.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Extend(context.Background(), "service", "extension-key-0003", active.ID, reservation.ExtensionInput{AdditionalSeconds: 60}); !errors.Is(err, reservation.ErrConflict) {
+	if _, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0003", active.ID, reservation.ExtensionInput{AdditionalSeconds: 60}); !errors.Is(err, reservation.ErrConflict) {
 		t.Fatalf("expired extension error=%v", err)
 	}
 }
@@ -62,7 +63,7 @@ func TestConcurrentReleaseClosesOnlyOnce(t *testing.T) {
 		index := index
 		go func() {
 			<-start
-			_, err := service.Release(context.Background(), "service", fmt.Sprintf("release-key-%08d", index), active.ID,
+			_, err := service.Release(context.Background(), audit.Service("service"), fmt.Sprintf("release-key-%08d", index), active.ID,
 				fmt.Sprintf("request_release_%d", index), reservation.ReleaseInput{Reason: "test run completed"})
 			results <- err
 		}()
@@ -75,7 +76,7 @@ func TestConcurrentReleaseClosesOnlyOnce(t *testing.T) {
 	}
 	assertStateCounts(t, db, active.ID, "released")
 	assertCount(t, db, "SELECT count(*) FROM device_audit_events WHERE resource_id=$1", active.ID, 1)
-	if _, err := service.Release(context.Background(), "service", "release-key-00000000", active.ID,
+	if _, err := service.Release(context.Background(), audit.Service("service"), "release-key-00000000", active.ID,
 		"request_release_replay", reservation.ReleaseInput{Reason: "test run completed"}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestConcurrentReleaseClosesOnlyOnce(t *testing.T) {
 func TestForceReleaseWritesReasonedAudit(t *testing.T) {
 	db := openTestDatabase(t)
 	service, active := seedActiveReservation(t, db, "force")
-	value, err := service.Release(context.Background(), "service", "force-release-key", active.ID,
+	value, err := service.Release(context.Background(), audit.Service("service"), "force-release-key", active.ID,
 		"request_force_release", reservation.ReleaseInput{Reason: "operator stopped unsafe session", Force: true})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +163,7 @@ func seedActiveReservation(t *testing.T, db *database.DB, suffix string) (*reser
 	t.Helper()
 	resetAndSeed(t, db)
 	service := reservation.NewService(db, nil)
-	value, err := service.Create(context.Background(), "service", "create-active-"+suffix, reservation.CreateInput{
+	value, err := service.Create(context.Background(), audit.Service("service"), "create-active-"+suffix, reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "test_run", OwnerID: "attempt_000000000001",
 		RequestedCapabilities: map[string]any{"platformName": "Android", "apiLevel": 34}, LeaseSeconds: 600,
 	})

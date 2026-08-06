@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 )
 
 var (
@@ -163,27 +164,27 @@ type ProvisionMockDeviceInput struct {
 
 type Store interface {
 	CreateImage(context.Context, Idempotency, Image) (Image, error)
-	ListImages(context.Context) ([]Image, error)
+	ListImages(context.Context, paging.Page) ([]Image, int, error)
 	GetImage(context.Context, string) (Image, error)
 	UpdateImage(context.Context, Image, domain.ImageStatus) (Image, error)
 
 	CreateHost(context.Context, Idempotency, Host) (Host, error)
-	ListHosts(context.Context) ([]Host, error)
+	ListHosts(context.Context, paging.Page) ([]Host, int, error)
 	GetHost(context.Context, string) (Host, error)
 	UpdateHost(context.Context, Host, domain.HostStatus) (Host, error)
 
 	CreatePool(context.Context, Idempotency, Pool) (Pool, error)
-	ListPools(context.Context) ([]Pool, error)
+	ListPools(context.Context, paging.Page) ([]Pool, int, error)
 	GetPool(context.Context, string) (Pool, error)
 	UpdatePool(context.Context, Pool, domain.PoolStatus) (Pool, error)
-	ListPoolImages(context.Context, string) ([]PoolImage, error)
+	ListPoolImages(context.Context, string, paging.Page) ([]PoolImage, int, error)
 	SetPoolImage(context.Context, PoolImage) (PoolImage, error)
 	DisablePoolImage(context.Context, string, string) (PoolImage, error)
 	AddDeviceToPool(context.Context, string, string) error
 	RemoveDeviceFromPool(context.Context, string, string) error
 
 	CreateDevice(context.Context, Device) (Device, error)
-	ListDevices(context.Context) ([]Device, error)
+	ListDevices(context.Context, paging.Page) ([]Device, int, error)
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)

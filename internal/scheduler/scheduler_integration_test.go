@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
@@ -56,7 +57,7 @@ func TestOneHundredConcurrentReservationsUseTwoDevicesWithoutDoubleAllocation(t 
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			_, err := reservationService.Create(context.Background(), "service", fmt.Sprintf("reservation-key-%03d", index), reservation.CreateInput{
+			_, err := reservationService.Create(context.Background(), audit.Service("service"), fmt.Sprintf("reservation-key-%03d", index), reservation.CreateInput{
 				PoolID: "pool_000000000000001", OwnerType: "test_run",
 				OwnerID:               fmt.Sprintf("owner_%019d", index),
 				RequestedCapabilities: map[string]any{"platformName": "Android", "apiLevel": 34},
@@ -103,7 +104,7 @@ func TestConcurrentIdempotencyCreatesOneReservation(t *testing.T) {
 	for index := 0; index < requests; index++ {
 		go func() {
 			<-start
-			value, err := service.Create(context.Background(), "service", "same-reservation-key", reservation.CreateInput{
+			value, err := service.Create(context.Background(), audit.Service("service"), "same-reservation-key", reservation.CreateInput{
 				PoolID: "pool_000000000000001", OwnerType: "manual", OwnerID: "owner_00000000000001",
 				RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
 			})
@@ -137,14 +138,14 @@ func TestCapabilityMismatchRemainsPendingWithoutBlockingMatchedRequest(t *testin
 	resetAndSeed(t, db, 2)
 	service := reservation.NewService(db, nil)
 	deviceScheduler := scheduler.New(db, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	unmatched, err := service.Create(context.Background(), "service", "unmatched-capability-key", reservation.CreateInput{
+	unmatched, err := service.Create(context.Background(), audit.Service("service"), "unmatched-capability-key", reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000001",
 		RequestedCapabilities: map[string]any{"platformName": "Android", "apiLevel": 35}, LeaseSeconds: 600,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	matched, err := service.Create(context.Background(), "service", "matched-capability-key", reservation.CreateInput{
+	matched, err := service.Create(context.Background(), audit.Service("service"), "matched-capability-key", reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000002",
 		RequestedCapabilities: map[string]any{"platformName": "Android", "apiLevel": 34}, LeaseSeconds: 600,
 	})
@@ -181,7 +182,7 @@ func TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount(t *testing.T) {
 	service := reservation.NewService(db, nil)
 	deviceScheduler := scheduler.New(db, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for index := 0; index < 2; index++ {
-		if _, err := service.Create(context.Background(), "service", fmt.Sprintf("pool-limit-key-%02d", index), reservation.CreateInput{
+		if _, err := service.Create(context.Background(), audit.Service("service"), fmt.Sprintf("pool-limit-key-%02d", index), reservation.CreateInput{
 			PoolID: "pool_000000000000001", OwnerType: "manual", OwnerID: fmt.Sprintf("owner_%019d", index),
 			RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
 		}); err != nil {
@@ -213,7 +214,7 @@ func TestSTFClaimRunsBeforeReservationActivation(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
 	service := reservation.NewService(db, nil)
-	created, err := service.Create(context.Background(), "service", "stf-claim-success-key", reservation.CreateInput{
+	created, err := service.Create(context.Background(), audit.Service("service"), "stf-claim-success-key", reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000101",
 		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
 	})
@@ -259,7 +260,7 @@ func TestSTFClaimIsReleasedWhenSessionIDGenerationFails(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
 	service := reservation.NewService(db, nil)
-	created, err := service.Create(context.Background(), "service", "stf-session-id-failure", reservation.CreateInput{
+	created, err := service.Create(context.Background(), audit.Service("service"), "stf-session-id-failure", reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "manual", OwnerID: "owner_00000000000101",
 		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
 	})
@@ -291,7 +292,7 @@ func testSTFClaimFailureCompensation(t *testing.T, retryable bool, want domain.R
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
 	service := reservation.NewService(db, nil)
-	created, err := service.Create(context.Background(), "service", fmt.Sprintf("stf-claim-failure-%t", retryable), reservation.CreateInput{
+	created, err := service.Create(context.Background(), audit.Service("service"), fmt.Sprintf("stf-claim-failure-%t", retryable), reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "test_run", OwnerID: "owner_00000000000102",
 		RequestedCapabilities: map[string]any{"platformName": "Android"}, LeaseSeconds: 600,
 	})

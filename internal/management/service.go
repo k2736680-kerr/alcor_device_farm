@@ -11,8 +11,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 )
@@ -57,8 +59,12 @@ func (service *Service) CreateImage(ctx context.Context, clientID, key string, i
 	return service.store.CreateImage(ctx, meta, image)
 }
 
-func (service *Service) ListImages(ctx context.Context) ([]Image, error) {
-	return service.store.ListImages(ctx)
+func (service *Service) ListImages(ctx context.Context, page paging.Page) (paging.Result[Image], error) {
+	items, total, err := service.store.ListImages(ctx, page)
+	if err != nil {
+		return paging.Result[Image]{}, err
+	}
+	return paging.NewResult(items, page, total), nil
 }
 func (service *Service) GetImage(ctx context.Context, id string) (Image, error) {
 	return service.store.GetImage(ctx, id)
@@ -152,8 +158,12 @@ func (service *Service) CreateHost(ctx context.Context, clientID, key string, in
 	return service.store.CreateHost(ctx, meta, host)
 }
 
-func (service *Service) ListHosts(ctx context.Context) ([]Host, error) {
-	return service.store.ListHosts(ctx)
+func (service *Service) ListHosts(ctx context.Context, page paging.Page) (paging.Result[Host], error) {
+	items, total, err := service.store.ListHosts(ctx, page)
+	if err != nil {
+		return paging.Result[Host]{}, err
+	}
+	return paging.NewResult(items, page, total), nil
 }
 func (service *Service) GetHost(ctx context.Context, id string) (Host, error) {
 	return service.store.GetHost(ctx, id)
@@ -218,8 +228,12 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 	return service.store.CreatePool(ctx, meta, pool)
 }
 
-func (service *Service) ListPools(ctx context.Context) ([]Pool, error) {
-	return service.store.ListPools(ctx)
+func (service *Service) ListPools(ctx context.Context, page paging.Page) (paging.Result[Pool], error) {
+	items, total, err := service.store.ListPools(ctx, page)
+	if err != nil {
+		return paging.Result[Pool]{}, err
+	}
+	return paging.NewResult(items, page, total), nil
 }
 func (service *Service) GetPool(ctx context.Context, id string) (Pool, error) {
 	return service.store.GetPool(ctx, id)
@@ -255,11 +269,15 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 	return service.store.UpdatePool(ctx, current, from)
 }
 
-func (service *Service) ListPoolImages(ctx context.Context, poolID string) ([]PoolImage, error) {
+func (service *Service) ListPoolImages(ctx context.Context, poolID string, page paging.Page) (paging.Result[PoolImage], error) {
 	if _, err := service.store.GetPool(ctx, poolID); err != nil {
-		return nil, err
+		return paging.Result[PoolImage]{}, err
 	}
-	return service.store.ListPoolImages(ctx, poolID)
+	items, total, err := service.store.ListPoolImages(ctx, poolID, page)
+	if err != nil {
+		return paging.Result[PoolImage]{}, err
+	}
+	return paging.NewResult(items, page, total), nil
 }
 
 func (service *Service) SetPoolImage(ctx context.Context, poolID, imageID string, input PoolImageInput) (PoolImage, error) {
@@ -300,8 +318,12 @@ func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID st
 func (service *Service) RemoveDeviceFromPool(ctx context.Context, poolID, deviceID string) error {
 	return service.store.RemoveDeviceFromPool(ctx, poolID, deviceID)
 }
-func (service *Service) ListDevices(ctx context.Context) ([]Device, error) {
-	return service.store.ListDevices(ctx)
+func (service *Service) ListDevices(ctx context.Context, page paging.Page) (paging.Result[Device], error) {
+	items, total, err := service.store.ListDevices(ctx, page)
+	if err != nil {
+		return paging.Result[Device]{}, err
+	}
+	return paging.NewResult(items, page, total), nil
 }
 func (service *Service) GetDevice(ctx context.Context, id string) (Device, error) {
 	return service.store.GetDevice(ctx, id)
@@ -358,28 +380,28 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 	return created, err
 }
 
-func (service *Service) QuarantineDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
-	audit, err := service.deviceAudit(actorID, requestID, "quarantine_device", reason)
+func (service *Service) QuarantineDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "quarantine_device", reason)
 	if err != nil {
 		return Device{}, err
 	}
-	return service.transitionDevice(ctx, id, domain.DeviceQuarantined, domain.HealthUnhealthy, reason, audit)
+	return service.transitionDevice(ctx, id, domain.DeviceQuarantined, domain.HealthUnhealthy, reason, event)
 }
 
-func (service *Service) UnquarantineDeviceAudited(ctx context.Context, id, reason, actorID, requestID string) (Device, error) {
-	audit, err := service.deviceAudit(actorID, requestID, "unquarantine_device", reason)
+func (service *Service) UnquarantineDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "unquarantine_device", reason)
 	if err != nil {
 		return Device{}, err
 	}
-	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason, audit)
+	return service.transitionDevice(ctx, id, domain.DeviceProvisioning, domain.HealthUnknown, reason, event)
 }
 
-func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason, actorID, requestID, idempotencyKey string) (Device, error) {
-	audit, err := service.deviceAudit(actorID, requestID, "restart_device", reason)
+func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "restart_device", reason)
 	if err != nil {
 		return Device{}, err
 	}
-	return service.restartDevice(ctx, id, reason, idempotencyKey, audit)
+	return service.restartDevice(ctx, id, reason, idempotencyKey, event)
 }
 
 func (service *Service) restartDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
@@ -432,12 +454,12 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 	})
 }
 
-func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason, actorID, requestID, idempotencyKey string) (Device, error) {
-	audit, err := service.deviceAudit(actorID, requestID, "rebuild_device", reason)
+func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "rebuild_device", reason)
 	if err != nil {
 		return Device{}, err
 	}
-	return service.rebuildDevice(ctx, id, reason, idempotencyKey, audit)
+	return service.rebuildDevice(ctx, id, reason, idempotencyKey, event)
 }
 
 func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
@@ -534,15 +556,15 @@ func (service *Service) transitionDevice(ctx context.Context, id string, target 
 	return service.store.UpdateDeviceState(ctx, current, fromLifecycle, fromHealth, audit)
 }
 
-func (service *Service) deviceAudit(actorID, requestID, action, reason string) (DeviceAudit, error) {
-	if !validAuditIdentity(actorID) || !validAuditIdentity(requestID) || !validReason(reason) {
+func (service *Service) deviceAudit(actor audit.Actor, requestID, action, reason string) (DeviceAudit, error) {
+	if !actor.Valid() || !validAuditIdentity(actor.ID) || !validAuditIdentity(requestID) || !validReason(reason) {
 		return DeviceAudit{}, ErrInvalidArgument
 	}
 	id, err := service.newID()
 	if err != nil {
 		return DeviceAudit{}, err
 	}
-	return DeviceAudit{ID: id, ActorType: "service", ActorID: strings.TrimSpace(actorID), Action: action,
+	return DeviceAudit{ID: id, ActorType: actor.Type, ActorID: strings.TrimSpace(actor.ID), Action: action,
 		RequestID: strings.TrimSpace(requestID), Reason: strings.TrimSpace(reason)}, nil
 }
 

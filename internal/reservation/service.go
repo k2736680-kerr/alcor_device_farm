@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
@@ -124,13 +126,14 @@ func NewService(db *database.DB, generator IDGenerator, controllers ...STFContro
 	return &Service{db: db, repo: repository.ReservationRepository{}, newID: generator, stf: controller}
 }
 
-func (service *Service) Create(ctx context.Context, clientID, key string, input CreateInput) (View, error) {
+func (service *Service) Create(ctx context.Context, actor audit.Actor, key string, input CreateInput) (View, error) {
 	if service == nil || service.db == nil {
 		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
 	}
-	if err := validateCreate(clientID, key, input); err != nil {
+	if err := validateCreate(actor, key, input); err != nil {
 		return View{}, err
 	}
+	clientID := actor.ClientID
 	policy, err := service.repo.GetPoolPolicy(ctx, service.db.Pool(), input.PoolID)
 	if err != nil {
 		return View{}, translateRepositoryError(err)
@@ -173,38 +176,39 @@ func (service *Service) Get(ctx context.Context, id string) (View, error) {
 	return toView(record)
 }
 
-func (service *Service) List(ctx context.Context, filter Filter) ([]View, error) {
+func (service *Service) List(ctx context.Context, filter Filter, page paging.Page) (paging.Result[View], error) {
 	if service == nil || service.db == nil {
-		return nil, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return paging.Result[View]{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
 	}
 	if filter.OwnerType != "" && !validOwnerType(filter.OwnerType) {
-		return nil, ErrInvalidArgument
+		return paging.Result[View]{}, ErrInvalidArgument
 	}
-	if filter.OwnerID != "" && !identifierPattern.MatchString(filter.OwnerID) {
-		return nil, ErrInvalidArgument
+	if filter.OwnerID != "" && !validOwnerID(filter.OwnerType, filter.OwnerID) {
+		return paging.Result[View]{}, ErrInvalidArgument
 	}
-	records, err := service.repo.List(ctx, service.db.Pool(), repository.ReservationFilter{
+	records, total, err := service.repo.List(ctx, service.db.Pool(), repository.ReservationFilter{
 		OwnerType: filter.OwnerType, OwnerID: filter.OwnerID,
-	})
+	}, page)
 	if err != nil {
-		return nil, translateRepositoryError(err)
+		return paging.Result[View]{}, translateRepositoryError(err)
 	}
 	views := make([]View, 0, len(records))
 	for _, record := range records {
 		view, convertErr := toView(record)
 		if convertErr != nil {
-			return nil, convertErr
+			return paging.Result[View]{}, convertErr
 		}
 		views = append(views, view)
 	}
-	return views, nil
+	return paging.NewResult(views, page, total), nil
 }
 
-func (service *Service) Extend(ctx context.Context, clientID, key, id string, input ExtensionInput) (View, error) {
+func (service *Service) Extend(ctx context.Context, actor audit.Actor, key, id string, input ExtensionInput) (View, error) {
 	if service == nil || service.db == nil {
 		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
 	}
-	if strings.TrimSpace(clientID) == "" || len(key) < 8 || len(key) > 128 ||
+	clientID := actor.ClientID
+	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
 		!identifierPattern.MatchString(id) || input.AdditionalSeconds < 60 {
 		return View{}, ErrInvalidArgument
 	}
@@ -259,14 +263,16 @@ func (service *Service) Extend(ctx context.Context, clientID, key, id string, in
 
 func (service *Service) Release(
 	ctx context.Context,
-	clientID, key, id, requestID string,
+	actor audit.Actor,
+	key, id, requestID string,
 	input ReleaseInput,
 ) (View, error) {
 	if service == nil || service.db == nil {
 		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
 	}
+	clientID := actor.ClientID
 	input.Reason = strings.TrimSpace(input.Reason)
-	if strings.TrimSpace(clientID) == "" || len(key) < 8 || len(key) > 128 ||
+	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
 		!identifierPattern.MatchString(id) || len(input.Reason) < 3 || len(input.Reason) > 500 || sensitive.Contains(input.Reason) || requestID == "" {
 		return View{}, ErrInvalidArgument
 	}
@@ -290,7 +296,7 @@ func (service *Service) Release(
 	}
 	if current.Status == domain.ReservationActive {
 		if err := service.releaseSTF(ctx, current); err != nil {
-			auditErr := service.recordSTFFailure(context.Background(), current, "service", clientID, requestID,
+			auditErr := service.recordSTFFailure(context.Background(), current, actor, requestID,
 				"stf_release_failed", "STF release failed; reservation remains active")
 			return View{}, errors.Join(err, auditErr)
 		}
@@ -332,7 +338,7 @@ func (service *Service) Release(
 			if err != nil {
 				return err
 			}
-			return service.repo.InsertAudit(ctx, tx, auditID, "service", clientID, "cancel_pending_device_reservation", current.ID, requestID, input.Reason)
+			return service.repo.InsertAudit(ctx, tx, auditID, actor.Type, actor.ID, "cancel_pending_device_reservation", current.ID, requestID, input.Reason)
 		}
 		if current.Status != domain.ReservationActive {
 			if isClosedStatus(current.Status) {
@@ -347,13 +353,22 @@ func (service *Service) Release(
 			terminal = domain.ReservationForceReleased
 			action = "force_release_device_reservation"
 		}
-		result, err = service.closeActiveLocked(ctx, tx, current, terminal, "service", clientID, action, requestID, input.Reason)
+		result, err = service.closeActiveLocked(ctx, tx, current, terminal, actor, action, requestID, input.Reason)
 		return err
 	})
 	if err != nil {
 		return View{}, translateRepositoryError(err)
 	}
 	return toView(result)
+}
+
+// reaperActor is the identity recorded when the background reaper expires a
+// reservation. No request is involved, so the audit row must not borrow the
+// identity of whoever created the reservation.
+func reaperActor() audit.Actor {
+	actor := audit.System()
+	actor.ID = "reservation_reaper"
+	return actor
 }
 
 func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration) (View, error) {
@@ -370,7 +385,7 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 	}
 	requestID := "reaper_" + selected.ID
 	if err := service.releaseSTF(ctx, selected); err != nil {
-		auditErr := service.recordSTFFailure(context.Background(), selected, "system", "reservation_reaper", requestID,
+		auditErr := service.recordSTFFailure(context.Background(), selected, reaperActor(), requestID,
 			"stf_release_failed", "STF release failed during expiry; reservation remains active")
 		return View{}, errors.Join(err, auditErr)
 	}
@@ -391,7 +406,7 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 			return ErrNothingToReap
 		}
 		result, err = service.closeActiveLocked(
-			ctx, tx, current, domain.ReservationExpired, "system", "reservation_reaper",
+			ctx, tx, current, domain.ReservationExpired, reaperActor(),
 			"expire_device_reservation", requestID, "reservation lease and grace period expired",
 		)
 		return err
@@ -404,18 +419,20 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 
 func (service *Service) CreateRemoteSession(
 	ctx context.Context,
-	clientID, key, reservationID string,
+	actor audit.Actor,
+	key, reservationID string,
 	input RemoteSessionInput,
 ) (RemoteSessionView, error) {
 	if service == nil || service.db == nil || service.stf == nil {
 		return RemoteSessionView{}, fmt.Errorf("%w: STF is not configured", ErrSTFRemoteFailed)
 	}
+	clientID := actor.ClientID
 	if input.TTLSeconds == 0 {
 		input.TTLSeconds = 300
 	}
-	if strings.TrimSpace(clientID) == "" || len(key) < 8 || len(key) > 128 ||
+	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
 		!identifierPattern.MatchString(reservationID) || !validOwnerType(input.OwnerType) ||
-		!identifierPattern.MatchString(input.OwnerID) || input.TTLSeconds < 30 || input.TTLSeconds > 3600 {
+		!validOwnerID(input.OwnerType, input.OwnerID) || input.TTLSeconds < 30 || input.TTLSeconds > 3600 {
 		return RemoteSessionView{}, ErrInvalidArgument
 	}
 	hash, err := requestHash(map[string]any{
@@ -585,7 +602,8 @@ func remoteSessionView(reservationID string, metadata remoteSessionMetadata) Rem
 func (service *Service) recordSTFFailure(
 	ctx context.Context,
 	current repository.ReservationRecord,
-	actorType, actorID, requestID, action, reason string,
+	actor audit.Actor,
+	requestID, action, reason string,
 ) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -594,7 +612,7 @@ func (service *Service) recordSTFFailure(
 		if err != nil {
 			return err
 		}
-		return service.repo.InsertAudit(ctx, tx, auditID, actorType, actorID, action, current.ID, requestID, reason)
+		return service.repo.InsertAudit(ctx, tx, auditID, actor.Type, actor.ID, action, current.ID, requestID, reason)
 	})
 }
 
@@ -603,7 +621,8 @@ func (service *Service) closeActiveLocked(
 	tx pgx.Tx,
 	current repository.ReservationRecord,
 	terminal domain.ReservationStatus,
-	actorType, actorID, action, requestID, reason string,
+	actor audit.Actor,
+	action, requestID, reason string,
 ) (repository.ReservationRecord, error) {
 	if current.DeviceID == nil {
 		return repository.ReservationRecord{}, ErrConflict
@@ -652,15 +671,15 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	if err := service.repo.InsertAudit(ctx, tx, auditID, actorType, actorID, action, current.ID, requestID, reason); err != nil {
+	if err := service.repo.InsertAudit(ctx, tx, auditID, actor.Type, actor.ID, action, current.ID, requestID, reason); err != nil {
 		return repository.ReservationRecord{}, err
 	}
 	return closed, nil
 }
 
-func validateCreate(clientID, key string, input CreateInput) error {
-	if strings.TrimSpace(clientID) == "" || len(key) < 8 || len(key) > 128 ||
-		!identifierPattern.MatchString(input.PoolID) || !identifierPattern.MatchString(input.OwnerID) ||
+func validateCreate(actor audit.Actor, key string, input CreateInput) error {
+	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
+		!identifierPattern.MatchString(input.PoolID) || !validOwnerID(input.OwnerType, input.OwnerID) ||
 		!validOwnerType(input.OwnerType) || input.LeaseSeconds < 60 {
 		return ErrInvalidArgument
 	}
@@ -683,6 +702,23 @@ func validOwnerType(value string) bool {
 	default:
 		return false
 	}
+}
+
+func validOwnerID(ownerType, value string) bool {
+	if ownerType == "manual" {
+		if len(value) < 1 || len(value) > 64 {
+			return false
+		}
+		for _, character := range value {
+			if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+				(character >= '0' && character <= '9') || strings.ContainsRune("_.@-", character) {
+				continue
+			}
+			return false
+		}
+		return true
+	}
+	return identifierPattern.MatchString(value)
 }
 
 func isClosedStatus(status domain.ReservationStatus) bool {

@@ -9,6 +9,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
@@ -32,21 +33,29 @@ func (store *Store) CreateImage(ctx context.Context, meta management.Idempotency
 	)
 }
 
-func (store *Store) ListImages(ctx context.Context) ([]management.Image, error) {
-	rows, err := store.db.Pool().Query(ctx, imageSelect+` ORDER BY created_at,id`)
+func (store *Store) ListImages(ctx context.Context, page paging.Page) ([]management.Image, int, error) {
+	total, err := store.count(ctx, `SELECT count(*) FROM device_images`)
 	if err != nil {
-		return nil, normalize(err)
+		return nil, 0, err
+	}
+	rows, err := store.db.Pool().Query(ctx,
+		imageSelect+` ORDER BY created_at,id LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	if err != nil {
+		return nil, 0, normalize(err)
 	}
 	defer rows.Close()
 	result := make([]management.Image, 0)
 	for rows.Next() {
 		value, err := scanImage(rows)
 		if err != nil {
-			return nil, normalize(err)
+			return nil, 0, normalize(err)
 		}
 		result = append(result, value)
 	}
-	return result, normalize(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, 0, normalize(err)
+	}
+	return result, total, nil
 }
 
 func (store *Store) GetImage(ctx context.Context, id string) (management.Image, error) {
@@ -76,21 +85,29 @@ func (store *Store) CreateHost(ctx context.Context, meta management.Idempotency,
 	)
 }
 
-func (store *Store) ListHosts(ctx context.Context) ([]management.Host, error) {
-	rows, err := store.db.Pool().Query(ctx, hostSelect+` ORDER BY created_at,id`)
+func (store *Store) ListHosts(ctx context.Context, page paging.Page) ([]management.Host, int, error) {
+	total, err := store.count(ctx, `SELECT count(*) FROM device_hosts`)
 	if err != nil {
-		return nil, normalize(err)
+		return nil, 0, err
+	}
+	rows, err := store.db.Pool().Query(ctx,
+		hostSelect+` ORDER BY created_at,id LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	if err != nil {
+		return nil, 0, normalize(err)
 	}
 	defer rows.Close()
 	result := make([]management.Host, 0)
 	for rows.Next() {
 		value, err := scanHost(rows)
 		if err != nil {
-			return nil, normalize(err)
+			return nil, 0, normalize(err)
 		}
 		result = append(result, value)
 	}
-	return result, normalize(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, 0, normalize(err)
+	}
+	return result, total, nil
 }
 
 func (store *Store) GetHost(ctx context.Context, id string) (management.Host, error) {
@@ -121,21 +138,29 @@ func (store *Store) CreatePool(ctx context.Context, meta management.Idempotency,
 	)
 }
 
-func (store *Store) ListPools(ctx context.Context) ([]management.Pool, error) {
-	rows, err := store.db.Pool().Query(ctx, poolSelect+` ORDER BY created_at,id`)
+func (store *Store) ListPools(ctx context.Context, page paging.Page) ([]management.Pool, int, error) {
+	total, err := store.count(ctx, `SELECT count(*) FROM device_pools`)
 	if err != nil {
-		return nil, normalize(err)
+		return nil, 0, err
+	}
+	rows, err := store.db.Pool().Query(ctx,
+		poolSelect+` ORDER BY created_at,id LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	if err != nil {
+		return nil, 0, normalize(err)
 	}
 	defer rows.Close()
 	result := make([]management.Pool, 0)
 	for rows.Next() {
 		value, err := scanPool(rows)
 		if err != nil {
-			return nil, normalize(err)
+			return nil, 0, normalize(err)
 		}
 		result = append(result, value)
 	}
-	return result, normalize(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, 0, normalize(err)
+	}
+	return result, total, nil
 }
 
 func (store *Store) GetPool(ctx context.Context, id string) (management.Pool, error) {
@@ -151,21 +176,30 @@ func (store *Store) UpdatePool(ctx context.Context, pool management.Pool, expect
 	return value, rowError(err)
 }
 
-func (store *Store) ListPoolImages(ctx context.Context, poolID string) ([]management.PoolImage, error) {
-	rows, err := store.db.Pool().Query(ctx, poolImageSelect+` WHERE pool_id=$1 ORDER BY created_at,image_id`, poolID)
+func (store *Store) ListPoolImages(ctx context.Context, poolID string, page paging.Page) ([]management.PoolImage, int, error) {
+	total, err := store.count(ctx, `SELECT count(*) FROM device_pool_images WHERE pool_id=$1`, poolID)
 	if err != nil {
-		return nil, normalize(err)
+		return nil, 0, err
+	}
+	rows, err := store.db.Pool().Query(ctx,
+		poolImageSelect+` WHERE pool_id=$1 ORDER BY created_at,image_id LIMIT $2 OFFSET $3`,
+		poolID, page.Limit(), page.Offset())
+	if err != nil {
+		return nil, 0, normalize(err)
 	}
 	defer rows.Close()
 	values := make([]management.PoolImage, 0)
 	for rows.Next() {
 		value, err := scanPoolImage(rows)
 		if err != nil {
-			return nil, normalize(err)
+			return nil, 0, normalize(err)
 		}
 		values = append(values, value)
 	}
-	return values, normalize(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, 0, normalize(err)
+	}
+	return values, total, nil
 }
 
 func (store *Store) SetPoolImage(ctx context.Context, value management.PoolImage) (management.PoolImage, error) {
@@ -217,13 +251,33 @@ func (store *Store) CreateDevice(ctx context.Context, device management.Device) 
 	return value, rowError(err)
 }
 
-func (store *Store) ListDevices(ctx context.Context) ([]management.Device, error) {
-	rows, err := store.db.Pool().Query(ctx, deviceSelect+` ORDER BY created_at,id`)
+func (store *Store) ListDevices(ctx context.Context, page paging.Page) ([]management.Device, int, error) {
+	total, err := store.count(ctx, `SELECT count(*) FROM devices`)
 	if err != nil {
-		return nil, normalize(err)
+		return nil, 0, err
+	}
+	rows, err := store.db.Pool().Query(ctx,
+		deviceSelect+` ORDER BY created_at,id LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	if err != nil {
+		return nil, 0, normalize(err)
 	}
 	defer rows.Close()
-	return scanDevices(rows)
+	values, err := scanDevices(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return values, total, nil
+}
+
+// count runs the total query separately from the page query. Keeping it out of
+// the page SELECT avoids a window function over every matching row and keeps
+// the two statements independently indexable.
+func (store *Store) count(ctx context.Context, query string, args ...any) (int, error) {
+	var total int
+	if err := store.db.Pool().QueryRow(ctx, query, args...).Scan(&total); err != nil {
+		return 0, normalize(err)
+	}
+	return total, nil
 }
 
 func (store *Store) ListSchedulableDevices(ctx context.Context, poolID string) ([]management.Device, error) {

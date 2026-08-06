@@ -40,6 +40,18 @@ stf:
   attempts: 3
   retry_delay: 200ms
 
+# Browser Console users are loaded from a deployment secret file containing
+# Argon2id hashes. Plain HTTP is accepted only for explicit loopback development.
+console:
+  enabled: false
+  users_file: ""
+  development_insecure: false
+  session_max_age: 8h
+  session_idle_timeout: 30m
+  cleanup_interval: 10m
+  login_window: 15m
+  login_max_failures: 5
+
 # Keep real tokens out of YAML committed to Git. Protected routes fail closed
 # with 401 while the matching token is empty.
 security:

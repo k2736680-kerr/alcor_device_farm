@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
@@ -29,8 +30,11 @@ func (handler *reservationHandler) createRemoteSession(writer http.ResponseWrite
 	if !decode(writer, request, &input) {
 		return
 	}
+	if !handler.enforceOwnerInput(writer, request, &input.OwnerType, &input.OwnerID) || !handler.authorizeReservation(writer, request, request.PathValue("id")) {
+		return
+	}
 	value, err := handler.service.CreateRemoteSession(
-		request.Context(), clientID(request), request.Header.Get("Idempotency-Key"), request.PathValue("id"), input,
+		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"), request.PathValue("id"), input,
 	)
 	handler.write(writer, request, http.StatusCreated, value, err)
 }
@@ -43,8 +47,11 @@ func (handler *reservationHandler) extend(writer http.ResponseWriter, request *h
 	if !decode(writer, request, &input) {
 		return
 	}
+	if !handler.authorizeReservation(writer, request, request.PathValue("id")) {
+		return
+	}
 	value, err := handler.service.Extend(
-		request.Context(), clientID(request), request.Header.Get("Idempotency-Key"),
+		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"),
 		request.PathValue("id"), input,
 	)
 	handler.write(writer, request, http.StatusOK, value, err)
@@ -58,8 +65,15 @@ func (handler *reservationHandler) release(writer http.ResponseWriter, request *
 	if !decode(writer, request, &input) {
 		return
 	}
+	if !handler.authorizeReservation(writer, request, request.PathValue("id")) {
+		return
+	}
+	if principal, ok := auth.FromContext(request.Context()); ok && principal.Role == auth.RoleConsole && input.Force && principal.ConsoleRole != auth.ConsoleAdmin {
+		writeForbidden(writer, request, "only console admins can force release reservations")
+		return
+	}
 	value, err := handler.service.Release(
-		request.Context(), clientID(request), request.Header.Get("Idempotency-Key"),
+		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"),
 		request.PathValue("id"), correlation.FromContext(request.Context()).RequestID, input,
 	)
 	handler.write(writer, request, http.StatusOK, value, err)
@@ -73,7 +87,10 @@ func (handler *reservationHandler) create(writer http.ResponseWriter, request *h
 	if !decode(writer, request, &input) {
 		return
 	}
-	value, err := handler.service.Create(request.Context(), clientID(request), request.Header.Get("Idempotency-Key"), input)
+	if !handler.enforceOwnerInput(writer, request, &input.OwnerType, &input.OwnerID) {
+		return
+	}
+	value, err := handler.service.Create(request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"), input)
 	handler.write(writer, request, http.StatusCreated, value, err)
 }
 
@@ -81,11 +98,20 @@ func (handler *reservationHandler) list(writer http.ResponseWriter, request *htt
 	if !handler.available(writer, request) {
 		return
 	}
-	values, err := handler.service.List(request.Context(), reservation.Filter{
+	page, ok := pagination(request)
+	if !ok {
+		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		return
+	}
+	filter := reservation.Filter{
 		OwnerType: request.URL.Query().Get("owner_type"),
 		OwnerID:   request.URL.Query().Get("owner_id"),
-	})
-	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+	}
+	if principal, exists := auth.FromContext(request.Context()); exists && principal.Role == auth.RoleConsole && principal.ConsoleRole != auth.ConsoleAdmin {
+		filter.OwnerType, filter.OwnerID = "manual", principal.SubjectID
+	}
+	value, err := handler.service.List(request.Context(), filter, page)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 
 func (handler *reservationHandler) get(writer http.ResponseWriter, request *http.Request) {
@@ -93,7 +119,53 @@ func (handler *reservationHandler) get(writer http.ResponseWriter, request *http
 		return
 	}
 	value, err := handler.service.Get(request.Context(), request.PathValue("id"))
+	if err == nil && !reservationVisible(request, value) {
+		writeForbidden(writer, request, "reservation owner does not match")
+		return
+	}
 	handler.write(writer, request, http.StatusOK, value, err)
+}
+
+func (handler *reservationHandler) enforceOwnerInput(writer http.ResponseWriter, request *http.Request, ownerType, ownerID *string) bool {
+	principal, ok := auth.FromContext(request.Context())
+	if !ok || principal.Role != auth.RoleConsole {
+		return true
+	}
+	if (*ownerType != "" && *ownerType != "manual") || (*ownerID != "" && *ownerID != principal.SubjectID) {
+		writeForbidden(writer, request, "console reservation owner is determined by the authenticated session")
+		return false
+	}
+	*ownerType, *ownerID = "manual", principal.SubjectID
+	return true
+}
+
+func (handler *reservationHandler) authorizeReservation(writer http.ResponseWriter, request *http.Request, id string) bool {
+	principal, ok := auth.FromContext(request.Context())
+	if !ok || principal.Role != auth.RoleConsole || principal.ConsoleRole == auth.ConsoleAdmin {
+		return true
+	}
+	value, err := handler.service.Get(request.Context(), id)
+	if err != nil {
+		handler.write(writer, request, http.StatusOK, nil, err)
+		return false
+	}
+	if !reservationVisible(request, value) {
+		writeForbidden(writer, request, "reservation owner does not match")
+		return false
+	}
+	return true
+}
+
+func reservationVisible(request *http.Request, value reservation.View) bool {
+	principal, ok := auth.FromContext(request.Context())
+	if !ok || principal.Role != auth.RoleConsole || principal.ConsoleRole == auth.ConsoleAdmin {
+		return true
+	}
+	return value.OwnerType == "manual" && value.OwnerID == principal.SubjectID
+}
+
+func writeForbidden(writer http.ResponseWriter, request *http.Request, message string) {
+	httpx.WriteError(writer, request, http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: message, Retryable: false})
 }
 
 func (handler *reservationHandler) available(writer http.ResponseWriter, request *http.Request) bool {

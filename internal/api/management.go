@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
@@ -53,8 +52,13 @@ func (handler *managementHandler) listImages(writer http.ResponseWriter, request
 	if !handler.available(writer, request) {
 		return
 	}
-	values, err := handler.service.ListImages(request.Context())
-	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+	page, ok := pagination(request)
+	if !ok {
+		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		return
+	}
+	value, err := handler.service.ListImages(request.Context(), page)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) createImage(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {
@@ -100,8 +104,13 @@ func (handler *managementHandler) listHosts(writer http.ResponseWriter, request 
 	if !handler.available(writer, request) {
 		return
 	}
-	values, err := handler.service.ListHosts(request.Context())
-	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+	page, ok := pagination(request)
+	if !ok {
+		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		return
+	}
+	value, err := handler.service.ListHosts(request.Context(), page)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) createHost(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {
@@ -154,8 +163,13 @@ func (handler *managementHandler) listPools(writer http.ResponseWriter, request 
 	if !handler.available(writer, request) {
 		return
 	}
-	values, err := handler.service.ListPools(request.Context())
-	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+	page, ok := pagination(request)
+	if !ok {
+		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		return
+	}
+	value, err := handler.service.ListPools(request.Context(), page)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) createPool(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {
@@ -190,8 +204,13 @@ func (handler *managementHandler) listPoolImages(writer http.ResponseWriter, req
 	if !handler.available(writer, request) {
 		return
 	}
-	values, err := handler.service.ListPoolImages(request.Context(), request.PathValue("id"))
-	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+	page, ok := pagination(request)
+	if !ok {
+		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		return
+	}
+	value, err := handler.service.ListPoolImages(request.Context(), request.PathValue("id"), page)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) setPoolImage(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {
@@ -242,8 +261,13 @@ func (handler *managementHandler) listDevices(writer http.ResponseWriter, reques
 	if !handler.available(writer, request) {
 		return
 	}
-	values, err := handler.service.ListDevices(request.Context())
-	handler.write(writer, request, http.StatusOK, map[string]any{"items": values}, err)
+	page, ok := pagination(request)
+	if !ok {
+		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		return
+	}
+	value, err := handler.service.ListDevices(request.Context(), page)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) getDevice(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {
@@ -277,15 +301,17 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	}
 	var value management.Device
 	var err error
+	actor := requestActor(request)
+	requestID := correlation.FromContext(request.Context()).RequestID
 	switch action {
 	case "restart":
-		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
+		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "rebuild":
-		value, err = handler.service.RebuildDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
+		value, err = handler.service.RebuildDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "quarantine":
-		value, err = handler.service.QuarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
+		value, err = handler.service.QuarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID)
 	case "unquarantine":
-		value, err = handler.service.UnquarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actorID(request), correlation.FromContext(request.Context()).RequestID)
+		value, err = handler.service.UnquarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID)
 	}
 	status := http.StatusOK
 	if action == "restart" || action == "rebuild" {
@@ -370,18 +396,9 @@ func writeManagementError(writer http.ResponseWriter, request *http.Request, err
 	httpx.WriteError(writer, request, status, apiError)
 }
 
+// clientID is the idempotency scope of the caller. It is deliberately narrower
+// than the audit actor: several service actors share one client namespace,
+// while each console user gets its own.
 func clientID(request *http.Request) string {
-	principal, ok := auth.FromContext(request.Context())
-	if !ok {
-		return "unknown"
-	}
-	return string(principal.Role)
-}
-
-func actorID(request *http.Request) string {
-	value := request.Header.Get("X-Device-Farm-Actor-Id")
-	if value == "" {
-		return clientID(request)
-	}
-	return value
+	return requestActor(request).ClientID
 }
