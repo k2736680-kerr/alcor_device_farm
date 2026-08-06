@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 
@@ -41,7 +42,7 @@ func (handler *consoleHandler) login(writer http.ResponseWriter, request *http.R
 		writeInvalid(writer, request, "user_id and password are required")
 		return
 	}
-	created, err := handler.auth.Login(request.Context(), input.UserID, input.Password, request.RemoteAddr)
+	created, err := handler.auth.Login(request.Context(), input.UserID, input.Password, clientAddress(request))
 	if err != nil {
 		if errors.Is(err, consoleauth.ErrRateLimited) {
 			writer.Header().Set("Retry-After", "900")
@@ -121,4 +122,30 @@ func (handler *consoleHandler) listHealthEvents(writer http.ResponseWriter, requ
 func noStore(writer http.ResponseWriter) {
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Pragma", "no-cache")
+}
+
+// clientAddress returns the address of the client that originated the request.
+//
+// When the device farm server sits behind a reverse proxy, the proxy connects
+// from a loopback or private address and sets X-Forwarded-For. We only trust
+// that header when the immediate peer is loopback/private, so a directly
+// exposed server cannot be tricked into accepting a spoofed address. The
+// address feeds console login rate limiting, so it must not be attacker
+// controlled unless a trusted proxy is provably in front.
+func clientAddress(request *http.Request) string {
+	peer := net.ParseIP(strings.TrimSpace(request.RemoteAddr))
+	if host, _, err := net.SplitHostPort(request.RemoteAddr); err == nil {
+		peer = net.ParseIP(strings.TrimSpace(host))
+	}
+	if peer != nil && (peer.IsLoopback() || peer.IsPrivate()) {
+		if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
+			if candidate := net.ParseIP(strings.TrimSpace(strings.Split(forwarded, ",")[0])); candidate != nil {
+				return candidate.String()
+			}
+		}
+	}
+	if peer != nil {
+		return peer.String()
+	}
+	return "127.0.0.1"
 }
