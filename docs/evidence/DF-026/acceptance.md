@@ -65,7 +65,7 @@ b5ea505 修复反向代理来源地址(6.5)：console登录仅在回环/私网�
 94ad0df Console前端E2E测试(#8b)：Playwright用系统Edge驱动，登录/错误拒绝/仪表盘/列表/退出全流程通过
 484fdaa vitest排除e2e目录，避免误把Playwright用例当组件测试跑
 6843e09 冻结OpenAPI 1.2.0契约哈希(35a6acae)，OpenAPI契约测试转为全绿
-<本证据提交>
+4b1d7d1 DF-026 本地E0验收完成：迁移/全量回归/前端测试/契约冻结/Tokensean全通过，更新验收证据并标记completed
 ```
 
 ## 已知问题与说明
