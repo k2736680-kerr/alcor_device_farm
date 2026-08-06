@@ -25,7 +25,7 @@
 | DF-021 | completed | `a3d2bf5 补齐设备故障恢复和重建清理`、`完成DF-021真实故障恢复验收` | `docs/evidence/DF-021/acceptance.md` |
 | DF-022 | completed | `f1acdf5 加固设备权限审计和敏感数据`、`完成DF-022真实权限审计和秘密验收` | `docs/evidence/DF-022/acceptance.md` |
 | DF-023 | completed | `ef28201 补齐设备指标部署和回滚手册`、`完成DF-023真实部署告警和回滚验收` | `docs/evidence/DF-023/acceptance.md` |
-| DF-024 | blocked | `392c93a 整理设备农场全量验收证据` | `docs/evidence/DF-024/acceptance.md` |
+| DF-024 | completed | `392c93a 整理设备农场全量验收证据`、`完成DF-024设备域MVP全量验收` | `docs/evidence/DF-024/acceptance.md` |
 | DF-025 | completed | `df975e1 补齐新版Alcor设备接入契约` | `docs/evidence/DF-025/acceptance.md` |
 | DF-026 | in_progress | — | `docs/evidence/DF-026/acceptance.md` |
 | DF-027 | pending | — | `docs/evidence/DF-027/acceptance.md` |
