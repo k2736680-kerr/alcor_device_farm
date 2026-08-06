@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-指标、Server 部署包、运维、备份、升级和回滚材料已完成本地实现与静态/自动化验证。当前机器没有 Linux、Docker、systemd、真实 PostgreSQL 远程服务、Prometheus/告警系统和 Linux KVM Host，无法完成新服务器真实部署、告警触发和恢复演练，因此 DF-023 状态为 `blocked`，不能标记 `completed`。
+指标、Server 部署包、运维、备份、升级和回滚材料已完成本地实现、自动化验证和真实 Linux 环境演练。2026-08-06 在 `10.0.30.171` 完成隔离 fresh migration、Compose 部署、配置失败保护、Prometheus 告警、生产库备份、隔离恢复和旧版本 Server 回滚，DF-023 状态为 `completed`。
 
 ## 已完成交付
 
@@ -29,14 +29,59 @@ PASS migration up/down/up 和数据库集成测试
 
 ## 真实环境验收
 
-1. 在全新 Linux Server 按 `deploy/server/README.md` 完成 systemd 或 Compose 部署；
-2. 验证缺数据库 URL、缺 Token、Token 重复和非法配置时服务不会启动；
-3. 应用 fresh migration，启动 Server/Agent/STF，两台 Emulator 自动达到 ready；
-4. Prometheus 抓取 `/metrics`，导入最小 Dashboard；
-5. 分别停止 PostgreSQL、Agent、Appium，并创建不匹配能力的 Reservation，确认关键告警触发；
-6. 完成一次数据库备份、恢复到新库、Server 旧版本回滚和状态核对；
-7. 保存脱敏的部署记录、指标截图、告警事件、备份校验和回滚结果。
+真实证据目录：
 
-## 阻塞解除条件
+```text
+/home/kerr/df023-acceptance-20260806/
+```
 
-在真实 Linux 部署环境完成从零部署、故障告警、备份恢复和版本回滚演练后，将 DF-023 改为 `completed`。本地 HTTP/数据库测试不能替代 systemd、Docker、Prometheus 和真实网络验收。
+主要证据：`fresh-deploy.log`、`alert-injection.log`、`alerts.log`、`alert-final-state.log`、`backup-restore-rollback.log`、`compose.rendered.sanitized.yaml`、`production-metrics-final.txt`、`rollback-metrics.txt` 和 `backups/`。
+
+### 隔离部署和配置门禁
+
+在独立 Docker 网络和独立 PostgreSQL 中按正式 Compose 安全参数部署 Server：
+
+```text
+CONFIG_REJECTED=missing_database
+CONFIG_REJECTED=missing_service_token
+CONFIG_REJECTED=duplicate_tokens
+CONFIG_REJECTED=invalid_duration
+MIGRATION_FRESH_AND_REPEAT_GUARD=PASS
+FRESH_COMPOSE_DEPLOY=healthy|ready_200|metrics_database_ready_1|no_socket|non_root|readonly|cap_drop_all
+DF023_PHASE1_PASS=true
+```
+
+fresh migration 成功，第二次 `--fresh` 因已有设备域表而拒绝。隔离 Server `/healthz`、`/readyz` 和 `/metrics` 正常，无 Docker Socket，用户为 `65532:65532`，根文件系统只读且 `CapDrop=ALL`。当前验收按 ADR-0008 使用单 Emulator 基线，不再沿用旧设计中的“两台 Emulator”要求。
+
+### Prometheus 和故障告警
+
+Docker Hub 代理不可用时，改用 Prometheus 官方 `2.54.1` Linux 发布包；官方 SHA-256 校验为 `31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f`。`promtool` 对正式配置和 9 条规则均检查通过，隔离与生产两个 target 同时为 up。
+
+```text
+ALERT_FIRING=DeviceFarmDatabaseNotReady|127.0.0.1:18082|critical
+ALERT_FIRING=DeviceFarmAgentHeartbeatStale|10.0.30.171:18080|critical
+ALERT_FIRING=DeviceFarmHealthErrors|10.0.30.171:18080|warning
+ALERT_FIRING=DeviceFarmReservationBacklog|10.0.30.171:18080|warning
+ALERT_FINAL_STATE=database_recovered|agent_online|appium_healthy|device_ready|open_reservations_0|prometheus_stopped
+```
+
+- 停止隔离 PostgreSQL 后数据库未就绪告警 firing，恢复后 `/readyz` 回到 200；
+- 停止真实 Host Agent 后心跳过期告警 firing，随后 Agent 与 Host 恢复在线；
+- 停止真实 Appium 进程后健康错误计数增长且告警 firing，Appium 恢复为 HTTP 200，Device 恢复 `ready|healthy|0`；
+- 创建 API 36/ABI 不匹配的 Reservation 后 backlog 告警 firing；清理 pending 预约的正确终态为 `failed/RESERVATION_CANCELED`，开放预约最终为 0。
+
+### 备份、恢复和旧版本回滚
+
+正式 `backup-device-farm.sh` 生成 PostgreSQL custom-format dump 和 0600 校验文件：
+
+```text
+BACKUP_CREATED=device-farm-20260806T190934Z.dump|sha256_03a96a03943afedfd9b98cd9e80cad5cb561063bf8df81c3eb57ede5adf33393|mode_600
+RESTORE_CORE_COUNTS_MATCH=1|1|1|4|86|75|99
+OLD_VERSION_ROLLBACK=version_recovery9|health_200|ready_200|metrics_ok|api_200|state_counts_match|no_down_migration
+EVIDENCE_SECRET_SCAN=exact_runtime_secrets_0
+DF023_PHASE3_PASS=true
+```
+
+备份恢复到隔离新库后，Image、Host、Pool、Device、Reservation、Session 和 Host Command 数量与生产备份点一致。上一版本镜像 `df021-stf-recovery9-20260806` 在隔离端口读取恢复库，健康、就绪、指标和设备 API 均通过；没有执行 down migration，也未覆盖生产数据库。
+
+验收结束后已删除隔离 Server/PostgreSQL、Docker 网络、Prometheus 进程与数据目录、临时 env 和回滚容器。生产 Server 仍为 `df021-stf-recovery10-20260806`，Host `online`，当前 Device `ready|healthy|0`，开放 Reservation 为 0，受管容器/网络/卷为 `1/1/1`。真实数据库密码和 Service/Agent Token 未写入日志、证据文档或 Git 文件。

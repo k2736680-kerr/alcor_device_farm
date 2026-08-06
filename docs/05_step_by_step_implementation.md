@@ -43,7 +43,7 @@
 | DF-020 | DaFit 端到端 Harness | completed | DF-018、DF-019 |
 | DF-021 | 故障恢复、清理和数据隔离 | completed | DF-020 |
 | DF-022 | 权限、审计和敏感数据加固 | completed | DF-018、DF-021 |
-| DF-023 | 指标、部署、运维和回滚手册 | blocked | DF-022 |
+| DF-023 | 指标、部署、运维和回滚手册 | completed | DF-022 |
 | DF-024 | MVP 全量验收 | blocked | DF-023 |
 | DF-025 | 新版 Alcor Adapter 契约包 | completed | DF-024 |
 | DF-026 | Device Farm Console 工程和只读页面 | completed | DF-003、DF-004、DF-008、DF-025 |
