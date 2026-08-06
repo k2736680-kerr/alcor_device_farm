@@ -47,8 +47,8 @@
 | DF-024 | MVP 全量验收 | completed | DF-023 |
 | DF-025 | 新版 Alcor Adapter 契约包 | completed | DF-024 |
 | DF-026 | Device Farm Console 工程和只读页面 | completed | DF-003、DF-004、DF-008、DF-025 |
-| DF-027 | 设备操作、人工预约和 STF 远控页面 | completed | DF-009、DF-010、DF-011、DF-026 |
-| DF-028 | 控制台部署、安全和真实 Web 验收 | pending | DF-017～DF-024、DF-027 |
+| DF-027 | 设备操作和人工预约页面 | completed | DF-009、DF-010、DF-011、DF-026 |
+| DF-028 | 控制台部署、安全和真实 Web 验收 | completed | DF-017～DF-024、DF-027 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -287,13 +287,13 @@
 
 验收：E0 本地 PostgreSQL + Mock Provider 环境可安装依赖、生成 client、构建并执行组件/Playwright 测试；migration up/down/up 通过；登录、错误密码、限流、注销、过期、CSRF、伪造 actor 和 viewer/operator/admin 只读权限通过；未认证用户不能读取设备数据；刷新页面后状态与 Server 一致；浏览器网络、存储、构建产物和错误信息中不存在 Service/Agent/STF Token；前端没有 Case、Dataset、Run、Result、评分和报告模块。无需 Linux/STF/Appium 即可 completed。
 
-### DF-027 设备操作、人工预约和 STF 远控页面
+### DF-027 设备操作和人工预约页面
 
-实施：在 DF-026 基础上实现 Image validation、Host drain/undrain、Pool 配置、Device restart/rebuild/quarantine/unquarantine、人工 Reservation 创建/轮询/续租/释放、设备域审计展示和当前预约的 STF 短时入口。使用 Mock Provider 和 Mock STF 完成本地流程；危险操作必须二次确认、填写 `reason` 并显示服务端 request ID；页面不得直接调用 STF、Docker、ADB、Appium 或数据库。
+实施：在 DF-026 基础上实现 Image validation、Host drain/undrain、Pool 配置、Device restart/rebuild/quarantine/unquarantine、人工 Reservation 创建/轮询/续租/释放和设备域审计展示。使用 Mock Provider 和 Mock STF 完成 claim/release 编排；危险操作必须二次确认、填写 `reason` 并显示服务端 request ID；页面不得直接调用 STF、Docker、ADB、Appium 或数据库。按 ADR-0010，Console 不展示 `remoteConnect` TCP 地址。
 
 产出：完整设备控制流程页面、状态与权限映射、表单校验、错误/重试体验、端到端浏览器自动化测试和 `docs/evidence/DF-027/` 证据。
 
-验收：E0 本地 Server + PostgreSQL + Mock Provider + Mock STF 中，用户可完成“查看容量 → 创建人工预约 → 等待 active → 打开受控 STF → 续租或释放 → 查看审计”；非法状态操作被页面和 Server 同时拒绝；Console 用户不能修改 owner 或访问他人预约；第二个预约不突破单设备容量；浏览器拿不到 STF 管理 Token；刷新或 Server 重启后不保留虚假成功状态。无需真实 Linux/STF 即可 completed。
+验收：E0 本地 Server + PostgreSQL + Mock Provider + Mock STF 中，用户可完成“查看容量 → 创建人工预约 → 等待 active → 续租或释放 → 查看审计”；非法状态操作被页面和 Server 同时拒绝；Console 用户不能修改 owner 或访问他人预约；第二个预约不突破单设备容量；浏览器拿不到 STF 管理 Token，也不展示 ADB TCP 地址；刷新或 Server 重启后不保留虚假成功状态。无需真实 Linux/STF 即可 completed。
 
 ### DF-028 控制台部署、安全和真实 Web 验收
 
@@ -301,7 +301,7 @@
 
 产出：生产构建与部署配置、Web 安全清单、浏览器端到端报告、关键页面截图、回滚演练和 `docs/evidence/DF-028/acceptance.md`。
 
-验收：新环境按文档可部署并访问；未认证、越权、CSRF、过期会话和直接内部端口访问均被拒绝；用户通过浏览器完成资源查看、预约、远控、释放、隔离/恢复或重建验证；页面不泄露任何内部 Token；Server/STF/Console 任一重启后状态收敛；回滚成功且无临时容器、网络、卷、会话或凭证残留。
+验收：新环境按文档可部署并访问；未认证、越权、CSRF、过期会话和直接内部端口访问均被拒绝；用户通过浏览器完成资源查看、预约、续租、释放、隔离/恢复或重建验证；按 ADR-0010 确认页面不展示 STF `remoteConnect` TCP 地址且不泄露任何内部 Token；Server/STF/Console 任一重启后状态收敛；回滚成功且无临时容器、网络、卷、会话或凭证残留。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

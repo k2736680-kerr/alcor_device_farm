@@ -1,4 +1,4 @@
-# DF-027 设备操作、人工预约和 STF 远控页面验收
+# DF-027 设备操作和人工预约页面验收
 
 ## 状态
 
@@ -70,3 +70,9 @@ dfdd383 DF-027d 人工预约：创建/续租/释放/STF远控入口，5秒轮询
 1. WorkBuddy 通过 `NODE_OPTIONS` 注入 safe-delete 守卫，会在 Playwright 清理输出目录时偶发超时；验收使用仓库内 Playwright CLI，并在测试进程清空该注入变量，不影响产品运行。
 2. Node 24 内置 fetch 与 jsdom 的 `AbortSignal` 类型不兼容；Vitest 初始化仅在测试环境移除该 signal，真实浏览器 E2E 继续覆盖请求取消链路。
 3. Vite 报告单入口 bundle 超过 500 kB 的性能提醒，不影响 DF-027 正确性验收；拆包优化可在后续控制台工程优化中处理。
+
+## ADR-0010 后续范围调整
+
+DF-027 当时的 Mock STF 验收只证明后端 `remoteConnect` 的 owner、TTL、Token 隔离和预约编排，没有证明返回值可作为浏览器页面。DF-028 真实 STF 联调确认该返回值是 ADB TCP 地址，因此交付版 Console 已按 ADR-0010 删除“STF 远控”按钮和地址弹窗。
+
+本文件保留上述历史 Mock 测试记录用于追溯 DF-018/DF-027 后端契约；当前产品验收以“不展示 ADB TCP 地址、不泄露 STF Token”为准。STF Adapter 的 claim、release、remoteConnect 能力继续保留，未在本项目重写 STF 原生远控功能。

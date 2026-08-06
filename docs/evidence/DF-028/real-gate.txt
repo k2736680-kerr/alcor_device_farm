@@ -1,0 +1,52 @@
+DF-028 real Linux/Web E3 gate
+target: 10.0.30.171
+console: https://10.0.30.171:18443/console/
+server image: alcor-device-farm:df028-web-final-20260807
+image id: sha256:fc6e9d70298dee35745953da7f1392a782c928bf900336d964dfe3dd937037c3
+stable device id: 67434725-32ff-4870-8c55-ad46fd5d9486
+
+PASS deployment verification
+  - HTTPS Console entry: 200
+  - readyz: 200
+  - server container: running
+  - console nginx proxy: running/healthy
+  - STF 3.7.9: running/healthy
+  - self-signed laboratory certificate accepted only through explicit insecure-TLS test option
+
+PASS Web security E3: 2 passed
+  - unauthenticated request: 401
+  - wrong password rejected
+  - missing CSRF rejected: 403
+  - revoked/logout session rejected: 401
+  - CSP and no-store policies present
+  - hashed static assets use immutable cache policy
+  - production asset credential-marker scan: 0 matches
+
+PASS real browser E3
+  - login and dashboard: 1 passed
+  - reservation -> active -> renew -> release -> audit: 1 passed
+  - reservation page has no fake STF browser remote button
+  - quarantine -> unquarantine -> ready convergence: 1 passed
+  - device tracked by stable Device ID across emulator serial/ADB port changes
+
+PASS restart convergence
+  - Server restart converged
+  - Console proxy restart converged in about 1 second
+  - STF health recovered in about 5 seconds
+  - STF device state recovered in about 2 seconds
+
+PASS rollback rehearsal
+  - rollback image: alcor-device-farm:df021-stf-recovery10-20260806
+  - ROLLBACK converged_seconds=1
+  - forward image: alcor-device-farm:df028-web-final-20260807
+  - FORWARD_RESTORE converged_seconds=0
+  - ROLLBACK_REHEARSAL_OK
+
+PASS cleanup
+  - open reservations: 0
+  - test sessions created by this acceptance: 0
+  - device final state: ready|healthy
+  - temporary rollback containers, temporary build image and remote build directory removed
+  - pre-existing user resources preserved
+
+No administrator password, Service/Agent/STF token or database credential is recorded in this evidence.

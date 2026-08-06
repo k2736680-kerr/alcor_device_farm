@@ -1,0 +1,45 @@
+DF-028 final local gate
+date: 2026-08-06 Asia/Shanghai
+base commit: 190bbc6
+environment: Windows E0, PostgreSQL 17.10 test database, system Microsoft Edge
+
+PASS scripts/dev.ps1 -Task check
+  - gofmt check
+  - go vet ./...
+  - go test ./...
+  - device-farm-server/device-host-agent/dafit-farm-harness/device-farm-adapter-mock build
+  - implementation evidence gate with DF-028 completed: passed
+
+PASS pnpm 11 frozen install
+  - pnpm install --frozen-lockfile
+  - allowBuilds explicitly permits @scarf/scarf, esbuild and msw lifecycle scripts
+
+PASS Console production build
+  - Orval 7.21.0 generation
+  - TypeScript tsc -b
+  - Vite 7.3.6 production build
+  - hashed index-DFR4sXnn.js and index-BCFhMy6H.css
+  - source maps disabled
+
+PASS Vitest
+  - 4 files
+  - 7 tests
+
+PASS Playwright local suite (system Edge)
+  - canonical entry: scripts/run-console-local-e2e.ps1
+  - tracked seed, Console user and Mock STF fixtures; no developer-specific absolute path
+  - destructive reset guard: loopback PostgreSQL + device_farm_* database name only
+  - 4 passed
+  - 3 skipped: DF-028 E3 tests require explicit real-environment settings
+  - login/read/logout regression passed
+  - unauthenticated/CSRF/revoked-session/API-no-store passed
+  - CSP/static cache/token-marker scan passed
+  - manual reservation/renew/release/audit regression passed
+  - reservation page does not expose the STF remoteConnect TCP address
+
+PASS local cleanup query
+  - open reservations: 0
+  - live console sessions: 0
+  - reserved or busy devices: 0
+
+REAL Docker/HTTPS/STF/Appium/browser/restart/rollback results are recorded in real-gate.txt.

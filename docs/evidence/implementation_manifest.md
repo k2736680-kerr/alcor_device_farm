@@ -27,13 +27,12 @@
 | DF-023 | completed | `ef28201 补齐设备指标部署和回滚手册`、`完成DF-023真实部署告警和回滚验收` | `docs/evidence/DF-023/acceptance.md` |
 | DF-024 | completed | `392c93a 整理设备农场全量验收证据`、`完成DF-024设备域MVP全量验收` | `docs/evidence/DF-024/acceptance.md` |
 | DF-025 | completed | `df975e1 补齐新版Alcor设备接入契约` | `docs/evidence/DF-025/acceptance.md` |
-| DF-026 | in_progress | — | `docs/evidence/DF-026/acceptance.md` |
-| DF-027 | pending | — | `docs/evidence/DF-027/acceptance.md` |
-| DF-028 | pending | — | `docs/evidence/DF-028/acceptance.md` |
+| DF-026 | completed | `4b1d7d1 DF-026 本地E0验收完成` | `docs/evidence/DF-026/acceptance.md` |
+| DF-027 | completed | `190bbc6 完成DF-027设备操作、人工预约与STF远控页面验收` | `docs/evidence/DF-027/acceptance.md` |
+| DF-028 | completed | `92fa8a8 实现DF-028控制台部署和真实Web验收链路` | `docs/evidence/DF-028/acceptance.md` |
 
 ## 当前剩余条件
 
-1. DF-026/DF-027 在 E0 本地环境完成 Console 实现和自动化验收；
-2. Linux KVM/Docker/真实 Android 环境继续完成 DF-022～DF-024，并由 DF-028 完成真实 Web 验收；
-3. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
-4. 所有状态变化继续保存验收证据并使用简洁中文 Git 提交。
+1. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
+2. KI-005/KI-007 所列跨仓库接口字段由新版 Alcor 正式契约确认后再联调；
+3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。
