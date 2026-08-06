@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-权限、审计和敏感数据加固已完成本地实现与自动化测试。当前机器没有真实 Linux 部署、Host Agent、Docker Socket 网络隔离环境和集中日志系统，无法完成真实部署秘密扫描与网络边界验收，因此 DF-022 状态为 `blocked`，不能标记 `completed`。
+权限、审计和敏感数据加固已完成本地实现、自动化测试和真实 Linux 环境验收。2026-08-06 在 `10.0.30.171` 完成 Service/Agent Token 轮换、跨身份权限、真实 Host Agent 心跳、设备操作审计、秘密零检出和 Docker Socket 边界验证，DF-022 状态为 `completed`。
 
 ## 已完成交付
 
@@ -35,13 +35,31 @@ PASS migration up/down/up 与全量 Go 门禁
 
 ## 真实环境验收
 
-1. 在 Linux 服务器通过 Secret 管理系统配置新 current + 旧 previous，滚动重启 Server；
-2. 验证新旧 Agent Token 均可心跳，随后清空 previous 并重启，旧 Token 必须返回 401；
-3. 分别使用 Service Token、Agent Token 跨域调用，确认 403；
-4. 从 Alcor Adapter 发起隔离/重建，确认 actor ID、request ID 和 reason 可关联；
-5. 注入仅用于验收的 canary Token，扫描 Server/Agent/STF 日志、数据库导出、API 响应和验收证据，精确检出数必须为 0；
-6. 从 Alcor 网络和浏览器侧验证 Docker Socket 不可达，只有 Host Agent 运行账户具有最小访问权限。
+环境：Ubuntu 22.04、Docker、PostgreSQL、真实 Host Agent、单台 Android Emulator、STF 与 Appium。验收日志位于：
 
-## 阻塞解除条件
+```text
+/home/kerr/df022-acceptance-20260806/acceptance.log
+/home/kerr/df022-acceptance-20260806/final-state.log
+```
 
-完成真实部署 Token 轮换、canary 秘密零检出和 Docker Socket 网络/账户权限验证后，将 DF-022 改为 `completed`。本地 Mock 与单元测试不能替代真实权限边界验收。
+关键结果：
+
+```text
+TOKEN_OVERLAP_PHASE=service_old_new_200|agent_old_heartbeat_online|cross_identity_403
+AGENT_SWITCHED_TO_NEW_TOKEN=true
+TOKEN_REVOCATION_PHASE=old_service_401|old_agent_401|new_credentials_active
+AUDIT_CORRELATION=actor_request_reason_atomic|device_ready_healthy
+SECRET_SCAN=exact_runtime_tokens_and_canary_0|health_regex_0|audit_regex_0
+DOCKER_BOUNDARY=server_socket_absent|server_uid_65532|readonly|cap_drop_all|host_socket_660_root_docker|agent_user_in_docker_group
+DF022_REAL_ACCEPTANCE_PASS=true
+```
+
+- 新旧 Service Token 在重叠期均返回 200；旧 Agent Token 继续产生真实心跳，切换新 Agent Token 后 Host 保持 `online`；
+- Agent Token 调北向接口、Service Token 调内部接口均返回 403；清空 previous 后旧 Service/Agent Token 均返回 401；
+- 正式 restart API 保存唯一的 actor、request ID、action 和 reason 审计记录，设备操作与审计同事务提交；
+- 两次受控 Server 替换期间，设备因短暂心跳窗口被协调器隔离；restart Host Command 实际成功后，通过正式 unquarantine API 留存恢复审计，最终恢复 `ready|healthy|0`；
+- 向敏感 reason 注入随机 canary 后请求返回 400；Server 日志、Agent 日志、数据库 data-only dump 和 API 响应对旧/新 Token 与 canary 的精确命中合计为 0；
+- Server 容器没有 Docker Socket，运行用户为 `65532:65532`，根文件系统只读并 `CapDrop=ALL`；宿主 Socket 为 `660 root:docker`，只有加入 docker 组的 Host Agent 账户可访问；
+- 最终 previous Token 均为空、Agent 与 Server current Token 一致，开放 Reservation 为 0，受管容器/网络/卷为 `1/1/1`，候选和回滚容器残留为 0。
+
+最终 Host 为 `online`，Device 为 `ready|healthy|0`。真实 Token、密码和 canary 值未写入本文档或 Git 文件。

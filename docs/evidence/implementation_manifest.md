@@ -23,7 +23,7 @@
 | DF-019 | completed | `84b3331 记录DaFit设备农场适配`、`14e2928`、`完成DF-019真实DaFit Farm验收` | `docs/evidence/DF-019/acceptance.md` |
 | DF-020 | completed | `65abd2d 加入DaFit端到端运行工具`、`完成DF-020真实Harness和Reaper验收` | `docs/evidence/DF-020/acceptance.md` |
 | DF-021 | completed | `a3d2bf5 补齐设备故障恢复和重建清理`、`完成DF-021真实故障恢复验收` | `docs/evidence/DF-021/acceptance.md` |
-| DF-022 | blocked | `f1acdf5 加固设备权限审计和敏感数据` | `docs/evidence/DF-022/acceptance.md` |
+| DF-022 | completed | `f1acdf5 加固设备权限审计和敏感数据`、`完成DF-022真实权限审计和秘密验收` | `docs/evidence/DF-022/acceptance.md` |
 | DF-023 | blocked | `ef28201 补齐设备指标部署和回滚手册` | `docs/evidence/DF-023/acceptance.md` |
 | DF-024 | blocked | `392c93a 整理设备农场全量验收证据` | `docs/evidence/DF-024/acceptance.md` |
 | DF-025 | completed | `df975e1 补齐新版Alcor设备接入契约` | `docs/evidence/DF-025/acceptance.md` |
