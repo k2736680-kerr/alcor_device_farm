@@ -1201,11 +1201,17 @@ components:
     DevicePoolImageInput:
       type: object
       additionalProperties: false
+      description: Fixed-capacity target. min_ready and max_instances must contain the same target device count.
       required: [min_ready, max_instances, enabled]
       properties:
         min_ready: {type: integer, minimum: 0}
         max_instances: {type: integer, minimum: 1}
         enabled: {type: boolean}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Required when lowering max_instances because automatic scale down deletes emulator resources.
     PoolDeviceInput:
       type: object
       additionalProperties: false

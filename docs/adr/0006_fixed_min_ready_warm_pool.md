@@ -20,14 +20,14 @@ ADR-0005 原决定由管理员显式创建两台设备。该方式虽然简单�
 - Agent 的创建结果和后续心跳更新同一 Device；只有容器 running、ADB online、boot completed、Appium healthy 后才进入 ready；
 - Device 创建时同步建立 Pool membership，不允许“容器创建成功但未加入池”成为无主资源；任何中途失败必须补偿或进入明确的 failed/quarantined 状态；
 - 失败使用有上限的指数退避，避免 Docker/KVM 故障时形成 Host Command 风暴；
-- Controller 只自动向上补齐，不主动删除设备。降低 `min_ready` 后停止补充，已有设备通过 drain/人工删除安全缩容；
+- Controller 最初只自动向上补齐、不主动删除设备；该限制已由 ADR-0011 覆盖，当前降低固定目标后会通过受控 Host Command 自动安全缩容；
 - `min_ready/max_instances` 只适用于 Docker Emulator Image。USB 真机由 Agent 发现并显式加入池，不能自动“创建”真机；
 - 不做负载预测、跨地域弹性和 Kubernetes 调度。
 
 ## 后果
 
 - 日常部署只需设置目标数量，Controller 自动维持配置数量的 Emulator；
-- 未来增加到 N 台固定模拟器只调整 Host `device_slots`、Pool `max_concurrency` 和 Image `min_ready/max_instances`，不修改架构或 migration；
+- 未来增加到 N 台固定模拟器只在控制台调整一个目标设备数；Host slot 高水位、Pool 并发和 Image 固定目标由 Server 同步，不修改架构或 migration；
 - 自动补齐必须等待 DF-014 真实 Docker Provider 和 DF-015 Appium 健康链路验收后才能标记 DF-016 完成；
 - 本地可以先做数据库锁、命令编排和 Mock Adapter 测试，但这些测试不能替代 ADR-0008 规定的 Linux KVM 真实验收；
 - 真机继续复用 Device、Reservation、Scheduler 和 Pool，创建方式与 Emulator 明确分离。

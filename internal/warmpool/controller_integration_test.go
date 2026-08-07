@@ -107,10 +107,132 @@ func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.
 		t.Fatal(err)
 	}
 	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 0 {
+	if err != nil || result.DevicesCreated != 0 || result.DeletesQueued != 0 {
 		t.Fatalf("smaller target result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 4)
+	assertCount(t, db, "SELECT count(*) FROM device_pool_devices WHERE enabled", 4)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='delete'", 0)
+}
+
+func TestControllerScaleDownDeletesOldestIdleDevicesAndKeepsNewest(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 3)
+	seedReadyDevices(t, db, 3)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 2 || result.DevicesCreated != 0 {
+		t.Fatalf("scale down queue result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'operation_source'='warm_pool_scale_down'`, 2)
+	assertCount(t, db, `SELECT count(*) FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+		WHERE pd.enabled AND d.id='scale_device_00000003'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id IN ('scale_device_00000001','scale_device_00000002')
+		AND lifecycle_status='stopped'`, 2)
+
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result=jsonb_build_object('provider_ref',payload->>'provider_ref','deleted',true),
+		completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE command_type='delete'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesCompleted != 2 || result.DeletesQueued != 0 {
+		t.Fatalf("scale down completion result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id IN ('scale_device_00000001','scale_device_00000002')
+		AND lifecycle_status='deleted' AND adb_endpoint IS NULL AND appium_endpoint IS NULL`, 2)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='scale_device_00000003'
+		AND lifecycle_status='ready' AND health_status='healthy'`, 1)
+}
+
+func TestControllerScaleDownWaitsForOldestActiveDevice(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 2)
+	seedReadyDevices(t, db, 2)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='busy'
+		WHERE id='scale_device_00000001';
+		INSERT INTO device_reservations(id,client_id,pool_id,device_id,owner_type,owner_id,lease_seconds,status,
+		idempotency_key,starts_at,expires_at)
+		VALUES('scale_reservation_0001','service','pool_000000000000001','scale_device_00000001','test_run',
+		'scale_owner_00000001',600,'active','scale-active-reservation',clock_timestamp(),clock_timestamp()+interval '10 minutes')`); err != nil {
+		t.Fatal(err)
+	}
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 0 {
+		t.Fatalf("active oldest result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='delete'", 0)
+
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations SET status='released',released_at=clock_timestamp(),
+		updated_at=clock_timestamp() WHERE id='scale_reservation_0001';
+		UPDATE devices SET lifecycle_status='ready' WHERE id='scale_device_00000001'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("released oldest result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'device_id'='scale_device_00000001'`, 1)
+}
+
+func TestConcurrentControllersQueueOneDeletePerExcessDevice(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 3)
+	seedReadyDevices(t, db, 3)
+	generator := sequentialGenerator()
+	controllers := []*warmpool.Controller{warmpool.New(db, generator, nil), warmpool.New(db, generator, nil)}
+	start := make(chan struct{})
+	errorsChannel := make(chan error, len(controllers))
+	var group sync.WaitGroup
+	for _, controller := range controllers {
+		controller := controller
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			_, err := controller.RunOnce(context.Background())
+			errorsChannel <- err
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsChannel)
+	for err := range errorsChannel {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'`, 2)
+	assertCount(t, db, `SELECT count(DISTINCT payload->>'device_id') FROM device_host_commands
+		WHERE command_type='delete'`, 2)
+}
+
+func TestFailedScaleDownDeleteQuarantinesWithoutCreatingReplacement(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 2)
+	seedReadyDevices(t, db, 2)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("delete queue result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='failed',
+		error_code='EMULATOR_DELETE_FAILED',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesFailed != 1 || result.DevicesCreated != 0 {
+		t.Fatalf("delete failure result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='scale_device_00000001'
+		AND lifecycle_status='quarantined' AND health_status='unhealthy'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id='scale_device_00000001'
+		AND event_type='warm_pool_scale_down_failed'`, 1)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 0)
 }
 
 func TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown(t *testing.T) {
@@ -454,6 +576,30 @@ func seedRecyclingDevice(t *testing.T, db *database.DB) {
 	}
 	for _, statement := range statements {
 		if _, err := db.Pool().Exec(context.Background(), statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func seedReadyDevices(t *testing.T, db *database.DB, count int) {
+	t.Helper()
+	for index := 1; index <= count; index++ {
+		id := fmt.Sprintf("scale_device_%08d", index)
+		providerRef := fmt.Sprintf("scale-emulator-%d", index)
+		serial := fmt.Sprintf("10.0.0.20:%d", 31000+index)
+		appium := fmt.Sprintf("http://10.0.0.20:%d", 32000+index)
+		createdOffset := count - index + 1
+		if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+			(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,adb_endpoint,
+			appium_endpoint,capabilities,lifecycle_status,health_status,created_at,updated_at)
+			VALUES($1,'host_000000000000001','image_00000000000001','emulator','docker_emulator',$2,
+			'rebuild',$3,$3,$4,'{"platformName":"Android","appiumUdid":"emulator-5554"}','ready','healthy',
+			clock_timestamp()-make_interval(hours=>$5),clock_timestamp()-make_interval(hours=>$5))`,
+			id, providerRef, serial, appium, createdOffset); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+			VALUES('pool_000000000000001',$1,true)`, id); err != nil {
 			t.Fatal(err)
 		}
 	}

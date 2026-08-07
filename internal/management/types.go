@@ -29,12 +29,13 @@ type Idempotency struct {
 }
 
 type DeviceAudit struct {
-	ID        string
-	ActorType string
-	ActorID   string
-	Action    string
-	RequestID string
-	Reason    string
+	ID                  string
+	ActorType           string
+	ActorID             string
+	Action              string
+	RequestID           string
+	Reason              string
+	DestructiveApproved bool
 }
 
 type DeviceOperation struct {
@@ -149,9 +150,10 @@ type PoolInput struct {
 }
 
 type PoolImageInput struct {
-	MinReady     int   `json:"min_ready"`
-	MaxInstances int   `json:"max_instances"`
-	Enabled      *bool `json:"enabled"`
+	MinReady     int    `json:"min_ready"`
+	MaxInstances int    `json:"max_instances"`
+	Enabled      *bool  `json:"enabled"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 type ProvisionMockDeviceInput struct {
@@ -178,7 +180,8 @@ type Store interface {
 	GetPool(context.Context, string) (Pool, error)
 	UpdatePool(context.Context, Pool, domain.PoolStatus) (Pool, error)
 	ListPoolImages(context.Context, string, paging.Page) ([]PoolImage, int, error)
-	SetPoolImage(context.Context, PoolImage) (PoolImage, error)
+	GetPoolImage(context.Context, string, string) (PoolImage, error)
+	SetPoolImage(context.Context, PoolImage, DeviceAudit) (PoolImage, error)
 	DisablePoolImage(context.Context, string, string) (PoolImage, error)
 	AddDeviceToPool(context.Context, string, string) error
 	RemoveDeviceFromPool(context.Context, string, string) error

@@ -13,6 +13,7 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
@@ -73,6 +74,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-hosts/"+host.ID, nil, serviceToken, ""), http.StatusOK)
 	hostUpdate := validHostInput()
 	hostUpdate["address"] = "10.0.0.2"
+	hostUpdate["capacity"] = map[string]any{"cpu": 8, "memory_mb": 16384, "device_slots": 1}
 	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-hosts/"+host.ID, hostUpdate, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-hosts/"+host.ID+"/drains", reasonBody(), serviceToken, ""), http.StatusConflict)
 
@@ -84,7 +86,60 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-pools/"+pool.ID, nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+pool.ID, validPoolInput(true), serviceToken, ""), http.StatusOK)
 	poolImagePath := "/api/v1/device-pools/" + pool.ID + "/images/" + image.ID
+	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 1, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusBadRequest)
 	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 2, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusOK)
+	var poolConcurrency, hostSlots int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT max_concurrency FROM device_pools WHERE id=$1`, pool.ID).Scan(&poolConcurrency); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (capacity->>'device_slots')::int FROM device_hosts WHERE id=$1`, host.ID).Scan(&hostSlots); err != nil {
+		t.Fatal(err)
+	}
+	if poolConcurrency != 2 || hostSlots != 2 {
+		t.Fatalf("target 2 synchronization pool=%d host_slots=%d", poolConcurrency, hostSlots)
+	}
+	heartbeat := map[string]any{
+		"agent_time": time.Now().UTC(), "capacity": map[string]any{"cpu": 8, "memory_mb": 16384, "device_slots": 1},
+		"environment": map[string]any{"docker": "mock"}, "devices": []any{},
+	}
+	assertStatus(t, environment.request(t, http.MethodPost, "/internal/v1/device-hosts/"+host.ID+"/heartbeats", heartbeat, agentToken, ""), http.StatusOK)
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (capacity->>'device_slots')::int FROM device_hosts WHERE id=$1`, host.ID).Scan(&hostSlots); err != nil {
+		t.Fatal(err)
+	}
+	if hostSlots != 2 {
+		t.Fatalf("heartbeat overwrote backend-managed device_slots: %d", hostSlots)
+	}
+	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 3, "max_instances": 3, "enabled": true}, serviceToken, ""), http.StatusOK)
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT max_concurrency FROM device_pools WHERE id=$1`, pool.ID).Scan(&poolConcurrency); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (capacity->>'device_slots')::int FROM device_hosts WHERE id=$1`, host.ID).Scan(&hostSlots); err != nil {
+		t.Fatal(err)
+	}
+	if poolConcurrency != 3 || hostSlots != 3 {
+		t.Fatalf("target 3 synchronization pool=%d host_slots=%d", poolConcurrency, hostSlots)
+	}
+	if _, err := environment.store.SetPoolImage(context.Background(), management.PoolImage{
+		PoolID: pool.ID, ImageID: image.ID, MinReady: 2, MaxInstances: 2, Enabled: true,
+	}, management.DeviceAudit{
+		ID: "00000000-0000-4000-8000-000000009998", ActorType: "service", ActorID: "integration",
+		Action: "set_device_pool_target", RequestID: "integration-race-guard", Reason: "fixed emulator target updated",
+	}); !errors.Is(err, management.ErrInvalidArgument) {
+		t.Fatalf("transactional scale-down reason guard error=%v", err)
+	}
+	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 2, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusBadRequest)
+	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{
+		"min_ready": 2, "max_instances": 2, "enabled": true, "reason": "reduce integration target",
+	}, serviceToken, ""), http.StatusOK)
+	var scaleDownAudits int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_type='device_pool_image' AND resource_id=$1 AND action='set_device_pool_target'
+		AND reason='reduce integration target'`, image.ID).Scan(&scaleDownAudits); err != nil {
+		t.Fatal(err)
+	}
+	if scaleDownAudits != 1 {
+		t.Fatalf("scale-down audit rows=%d", scaleDownAudits)
+	}
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-pools/"+pool.ID+"/images", nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodDelete, poolImagePath, nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 2, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusOK)

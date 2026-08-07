@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -280,9 +281,15 @@ func (service *Service) ListPoolImages(ctx context.Context, poolID string, page 
 	return paging.NewResult(items, page, total), nil
 }
 
-func (service *Service) SetPoolImage(ctx context.Context, poolID, imageID string, input PoolImageInput) (PoolImage, error) {
+func (service *Service) SetPoolImage(
+	ctx context.Context,
+	poolID, imageID string,
+	input PoolImageInput,
+	actor audit.Actor,
+	requestID string,
+) (PoolImage, error) {
 	if strings.TrimSpace(poolID) == "" || strings.TrimSpace(imageID) == "" || input.Enabled == nil || input.MinReady < 0 ||
-		input.MaxInstances < 1 || input.MinReady > input.MaxInstances {
+		input.MaxInstances < 1 || input.MinReady != input.MaxInstances {
 		return PoolImage{}, ErrInvalidArgument
 	}
 	if _, err := service.store.GetPool(ctx, poolID); err != nil {
@@ -291,8 +298,25 @@ func (service *Service) SetPoolImage(ctx context.Context, poolID, imageID string
 	if _, err := service.store.GetImage(ctx, imageID); err != nil {
 		return PoolImage{}, err
 	}
+	current, err := service.store.GetPoolImage(ctx, poolID, imageID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return PoolImage{}, err
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if err == nil && input.MaxInstances < current.MaxInstances && !validReason(reason) {
+		return PoolImage{}, ErrInvalidArgument
+	}
+	destructiveApproved := validReason(reason)
+	if reason == "" {
+		reason = "fixed emulator target updated"
+	}
+	event, err := service.deviceAudit(actor, requestID, "set_device_pool_target", reason)
+	if err != nil {
+		return PoolImage{}, err
+	}
+	event.DestructiveApproved = destructiveApproved
 	return service.store.SetPoolImage(ctx, PoolImage{PoolID: poolID, ImageID: imageID,
-		MinReady: input.MinReady, MaxInstances: input.MaxInstances, Enabled: *input.Enabled})
+		MinReady: input.MinReady, MaxInstances: input.MaxInstances, Enabled: *input.Enabled}, event)
 }
 
 func (service *Service) DisablePoolImage(ctx context.Context, poolID, imageID string) (PoolImage, error) {

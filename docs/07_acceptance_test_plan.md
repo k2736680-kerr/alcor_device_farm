@@ -62,6 +62,7 @@
 | G5 DaFit 闭环 | DF-019~DF-021 | E2 冒烟成功/失败均可释放和清理 |
 | G6 可交付 | DF-022~DF-025 | 安全、运维、回滚、全量验收和 Adapter 契约齐全 |
 | G7 Web 可用 | DF-026~DF-028 | E3 可通过浏览器完成设备管理、预约、远控和释放，且无内部 Token 泄露 |
+| G8 容量闭环 | DF-029 | 后台单点设置目标即可自动扩缩容；缩容不强删占用设备且真实清理资源 |
 
 未通过前一 Gate，不进入下一阶段的真实环境部署。DF-026/DF-027 的 E0 本地实现可与 G4～G6 的真实验收并行；G7 只有 DF-028 真实 Web 验收通过后才完成。
 
@@ -120,6 +121,11 @@
 | AT-EMU-006 | P1 | 删除设备 | 容器、网络、端口、卷和数据库引用按策略清理 |
 | AT-EMU-007 | P0 | `min_ready=1/max_instances=1` 且池为空 | 自动创建并加入一台；两个 Controller 并发不超建；第二个预约不突破上限 |
 | AT-EMU-008 | P2 | 资源允许时创建两台 Emulator | serial、ADB/Appium 端口、容器名互不冲突 |
+| AT-EMU-009 | P0 | 控制台把目标从 1 调到 2 | 无需修改/重启 Agent；Pool 并发和 Host 槽位自动同步；Controller 自动补齐到 2 |
+| AT-EMU-010 | P0 | 目标从 3 调到 1，三台均空闲 | 删除最旧两台并保留最新；Device 标记 deleted；容器、网络和卷无残留 |
+| AT-EMU-011 | P0 | 最旧设备存在 active Reservation 时缩容 | 不强删、不影响预约；释放后自动继续缩容 |
+| AT-EMU-012 | P0 | 两个 Controller 并发缩容 | 每台超额设备只有一个有效 delete Command，无重复删除或扩缩容振荡 |
+| AT-EMU-013 | P0 | delete 连续失败 | Host Command 按上限重试；设备最终 quarantined/unhealthy、不可调度且有健康事件和审计 |
 
 ### 4.5 STF 和 Appium
 
@@ -187,6 +193,8 @@
 | AT-WEB-010 | P0 | STF、Server 或网络故障时执行操作 | 页面显示稳定错误码、request ID 和重试提示，不出现虚假成功状态 |
 | AT-WEB-011 | P1 | Server/STF/Console 重启并刷新页面 | 120 秒内恢复真实状态，不依赖浏览器缓存维持业务状态 |
 | AT-WEB-012 | P1 | 新环境部署和版本回滚 | 控制台可访问、静态资源版本一致；回滚后 API 和设备状态不受损 |
+| AT-WEB-013 | P0 | 在 Pool 页面只修改目标设备数 | Server 同步并发和 Host 容量，页面显示扩容/缩容收敛状态，不要求用户登录服务器 |
+| AT-WEB-014 | P0 | 降低目标设备数 | 必须二次确认并填写 reason；历史 Device/Reservation 不被首页误计为当前运行容量 |
 
 ## 5. 非功能指标
 

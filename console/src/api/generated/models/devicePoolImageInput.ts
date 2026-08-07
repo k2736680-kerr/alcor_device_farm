@@ -6,10 +6,19 @@
  * OpenAPI spec version: 1.2.0
  */
 
+/**
+ * Fixed-capacity target. min_ready and max_instances must contain the same target device count.
+ */
 export interface DevicePoolImageInput {
   /** @minimum 0 */
   min_ready: number;
   /** @minimum 1 */
   max_instances: number;
   enabled: boolean;
+  /**
+   * Required when lowering max_instances because automatic scale down deletes emulator resources.
+   * @minLength 3
+   * @maxLength 500
+   */
+  reason?: string;
 }

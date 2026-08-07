@@ -169,7 +169,7 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 			target = host.Status()
 		}
 		if _, err := tx.Exec(ctx, `UPDATE device_hosts SET status=$2::varchar,draining=($2::varchar='draining'),
-            capacity=$3,used_capacity=$4,last_heartbeat_at=$5,updated_at=$5 WHERE id=$1`,
+			capacity=capacity || ($3::jsonb-'device_slots'),used_capacity=$4,last_heartbeat_at=$5,updated_at=$5 WHERE id=$1`,
 			hostID, target, capacity, usedCapacity, now); err != nil {
 			return err
 		}
@@ -203,7 +203,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	var current discoveredDeviceState
 	err := tx.QueryRow(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,d.health_reason,
 		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
-			AND c.command_type IN ('create','rebuild') AND c.status IN ('pending','leased'))
+			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased'))
 		FROM devices d WHERE d.host_id=$1 AND d.provider_ref=$2 FOR UPDATE OF d`, hostID, discovered.ProviderRef).
 		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason, &current.operationInFlight)
 	if errors.Is(err, pgx.ErrNoRows) {

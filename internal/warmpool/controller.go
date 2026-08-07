@@ -37,6 +37,9 @@ type Result struct {
 	DevicesCreated       int
 	DevicesReady         int
 	DevicesFailed        int
+	DeletesQueued        int
+	DeletesCompleted     int
+	DeletesFailed        int
 	CapacityMisses       int
 	BackoffSkips         int
 }
@@ -65,6 +68,12 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	if err != nil {
 		return result, err
 	}
+	deletes, err := controller.reconcileScaleDownDeletes(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.DeletesCompleted += deletes.DeletesCompleted
+	result.DeletesFailed += deletes.DeletesFailed
 	validations, err := controller.reconcileImageValidations(ctx)
 	if err != nil {
 		return result, err
@@ -103,10 +112,240 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 		result.DevicesCreated += partial.DevicesCreated
 		result.DevicesReady += partial.DevicesReady
 		result.DevicesFailed += partial.DevicesFailed
+		result.DeletesQueued += partial.DeletesQueued
 		result.CapacityMisses += partial.CapacityMisses
 		result.BackoffSkips += partial.BackoffSkips
 	}
 	return result, nil
+}
+
+type scaleDownDevice struct {
+	ID           string
+	HostID       string
+	ProviderRef  string
+	Lifecycle    domain.DeviceLifecycleStatus
+	Health       domain.HealthStatus
+	HasActiveUse bool
+	HasCommand   bool
+	Shared       bool
+}
+
+func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Result, error) {
+	rows, err := controller.db.Pool().Query(ctx, `SELECT DISTINCT payload->>'device_id'
+		FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'operation_source'='warm_pool_scale_down'
+		AND status IN ('succeeded','failed','timed_out','canceled')
+		AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
+		ORDER BY payload->>'device_id'`)
+	if err != nil {
+		return Result{}, err
+	}
+	var deviceIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return Result{}, err
+		}
+		deviceIDs = append(deviceIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Result{}, err
+	}
+	rows.Close()
+	result := Result{}
+	for _, deviceID := range deviceIDs {
+		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+			var commandID string
+			var status domain.CommandStatus
+			var commandResult []byte
+			var errorCode *string
+			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code FROM device_host_commands
+				WHERE command_type='delete' AND payload->>'operation_source'='warm_pool_scale_down'
+				AND payload->>'device_id'=$1 AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
+				ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, deviceID).
+				Scan(&commandID, &status, &commandResult, &errorCode); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil
+				}
+				return err
+			}
+			if status == domain.CommandPending || status == domain.CommandLeased {
+				return nil
+			}
+			var lifecycle domain.DeviceLifecycleStatus
+			var health domain.HealthStatus
+			if err := tx.QueryRow(ctx, `SELECT lifecycle_status,health_status FROM devices WHERE id=$1 FOR UPDATE`, deviceID).
+				Scan(&lifecycle, &health); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil
+				}
+				return err
+			}
+			now, err := database.ClockNow(ctx, tx)
+			if err != nil {
+				return err
+			}
+			deleted := false
+			if status == domain.CommandSucceeded {
+				var value struct {
+					Deleted bool `json:"deleted"`
+				}
+				deleted = json.Unmarshal(commandResult, &value) == nil && value.Deleted
+			}
+			eventType, severity, reason := "warm_pool_scale_down_completed", "info", "automatic scale down removed emulator resources"
+			if deleted {
+				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+				if err != nil {
+					return err
+				}
+				if aggregate.Lifecycle() != domain.DeviceDeleted {
+					if err := aggregate.Transition(domain.DeviceDeleted, reason, now); err != nil {
+						return err
+					}
+				}
+				if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status='deleted',health_reason=$2,
+					adb_endpoint=NULL,appium_endpoint=NULL,stf_serial=NULL,updated_at=$3 WHERE id=$1`, deviceID, reason, now); err != nil {
+					return err
+				}
+				result.DeletesCompleted++
+			} else {
+				code := "EMULATOR_DELETE_FAILED"
+				if errorCode != nil && *errorCode != "" {
+					code = *errorCode
+				}
+				reason = code + ": automatic scale down could not remove emulator resources"
+				eventType, severity = "warm_pool_scale_down_failed", "error"
+				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+				if err != nil {
+					return err
+				}
+				if aggregate.Health() != domain.HealthUnhealthy {
+					if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+						return err
+					}
+				}
+				if aggregate.Lifecycle() != domain.DeviceQuarantined {
+					if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+						return err
+					}
+				}
+				if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,
+					health_reason=$4,consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1`,
+					deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now); err != nil {
+					return err
+				}
+				result.DeletesFailed++
+			}
+			eventID, err := controller.newID()
+			if err != nil {
+				return err
+			}
+			payload, _ := json.Marshal(map[string]any{"command_id": commandID})
+			if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+				(id,device_id,source,event_type,severity,reason,payload,observed_at)
+				VALUES($1,$2,'reconciler',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID,
+				eventType, severity, reason, payload, now); err != nil {
+				return err
+			}
+			_, err = tx.Exec(ctx, `UPDATE device_host_commands SET
+				payload=jsonb_set(payload,'{scale_down_reconciled}','true'::jsonb,true),updated_at=clock_timestamp()
+				WHERE id=$1`, commandID)
+			return err
+		})
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func (controller *Controller) queueScaleDown(
+	ctx context.Context,
+	tx pgx.Tx,
+	poolID, imageID string,
+	target, excess int,
+) (int, error) {
+	queued := 0
+	for queued < excess {
+		var current scaleDownDevice
+		err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT d.id,d.host_id,d.provider_ref,d.lifecycle_status,d.health_status,
+			EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status='active'),
+			EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased')),
+			EXISTS (SELECT 1 FROM device_pool_devices other WHERE other.device_id=d.id AND other.enabled AND other.pool_id<>$1)
+			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			JOIN device_hosts h ON h.id=d.host_id
+			WHERE pd.pool_id=$1 AND pd.enabled AND d.image_id=$2 AND d.device_kind='emulator'
+			AND d.provider_type='docker_emulator' AND %s
+			ORDER BY d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate),
+			poolID, imageID).Scan(&current.ID, &current.HostID, &current.ProviderRef, &current.Lifecycle,
+			&current.Health, &current.HasActiveUse, &current.HasCommand, &current.Shared)
+		if errors.Is(err, pgx.ErrNoRows) {
+			break
+		}
+		if err != nil {
+			return queued, err
+		}
+		if current.HasActiveUse || current.HasCommand || current.Shared ||
+			(current.Lifecycle != domain.DeviceReady && current.Lifecycle != domain.DeviceStopped && current.Lifecycle != domain.DeviceQuarantined) {
+			break
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return queued, err
+		}
+		nextLifecycle := current.Lifecycle
+		if current.Lifecycle == domain.DeviceReady {
+			aggregate, err := domain.RestoreDevice(current.ID, current.Lifecycle, current.Health)
+			if err != nil {
+				return queued, err
+			}
+			if err := aggregate.Transition(domain.DeviceStopped, "automatic scale down queued", now); err != nil {
+				return queued, err
+			}
+			nextLifecycle = aggregate.Lifecycle()
+		}
+		commandID, err := controller.newID()
+		if err != nil {
+			return queued, err
+		}
+		payload, err := json.Marshal(map[string]any{"operation_source": "warm_pool_scale_down",
+			"device_id": current.ID, "pool_id": poolID, "image_id": imageID, "provider_ref": current.ProviderRef,
+			"target_instances": target})
+		if err != nil {
+			return queued, err
+		}
+		hash := sha256.Sum256([]byte(poolID + "\x00" + imageID + "\x00" + current.ID + "\x00" + fmt.Sprint(target)))
+		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
+			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+			VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`, commandID, current.HostID, payload,
+			"scale-down-"+hex.EncodeToString(hash[:16])); err != nil {
+			return queued, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$3
+			WHERE pool_id=$1 AND device_id=$2 AND enabled`, poolID, current.ID, now); err != nil {
+			return queued, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_reason='automatic scale down queued',updated_at=$3
+			WHERE id=$1 AND lifecycle_status=$4`, current.ID, nextLifecycle, now, current.Lifecycle); err != nil {
+			return queued, err
+		}
+		auditID, err := controller.newID()
+		if err != nil {
+			return queued, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,'system','system','scale_down_device','device',$2,$3,
+			'automatic fixed target scale down',jsonb_build_object('command_id',$4::text,'pool_id',$5::text,
+			'image_id',$6::text,'target_instances',$7::int))`, auditID, current.ID, "scale-down-"+commandID,
+			commandID, poolID, imageID, target); err != nil {
+			return queued, err
+		}
+		queued++
+	}
+	return queued, nil
 }
 
 type recyclingDevice struct {
@@ -527,6 +766,14 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			WHERE pd.pool_id=$1 AND pd.enabled AND d.image_id=$2 AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
 			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating); err != nil {
 			return err
+		}
+		if activeInstances > maxInstances {
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, imageID, maxInstances, activeInstances-maxInstances)
+			if err != nil {
+				return err
+			}
+			result.DeletesQueued += queued
+			return nil
 		}
 		missing := min(minReady-readyOrCreating, maxInstances-activeInstances)
 		if missing <= 0 {

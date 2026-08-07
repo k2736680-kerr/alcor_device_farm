@@ -16,7 +16,7 @@
 - 第二个并发预约必须保持 pending 或返回可重试的容量不足，且不能突破 `max_instances=1`；
 - 双占、两个 Controller/Scheduler/Reaper 并发、目标从 1 调到 N 和多设备端口隔离继续由 PostgreSQL 集成测试、Provider 测试和可选多设备环境覆盖；
 - 数量只存在于配置和数据库，不写死进 Provider、Scheduler、Reservation、Device 或 migration；
-- 以后增加模拟器只调整 Host `device_slots`、Pool `max_concurrency` 和 Image `min_ready/max_instances`；接入真机只增加 USB Provider 和池成员，不修改上层架构。
+- 以后增加模拟器只在 Device Farm Console 调整目标设备数，Server 按 ADR-0011 同步 Host slot 高水位、Pool 并发和 Image 固定目标；设置两台或更多前仍需确认服务器内存和 CPU 能稳定承载。接入真机只增加 USB Provider 和池成员，不修改上层架构。
 
 ## 后果
 

@@ -220,7 +220,10 @@ func (handler *managementHandler) setPoolImage(writer http.ResponseWriter, reque
 	if !decode(writer, request, &input) {
 		return
 	}
-	value, err := handler.service.SetPoolImage(request.Context(), request.PathValue("id"), request.PathValue("image_id"), input)
+	value, err := handler.service.SetPoolImage(
+		request.Context(), request.PathValue("id"), request.PathValue("image_id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID,
+	)
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) disablePoolImage(writer http.ResponseWriter, request *http.Request) {

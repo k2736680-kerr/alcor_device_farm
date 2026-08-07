@@ -101,6 +101,8 @@ DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 
 Host Command 租约必须严格长于单次 Provider 命令超时；生产默认使用 `300s/270s`。只有受控故障验收才临时缩短这两个值，验收后必须恢复默认配置并确认命令租约、设备状态和资源数量全部收敛。
 
+`DEVICE_FARM_AGENT_CONCURRENCY` 是命令执行并发，不是设备数量。保持为 `1` 时 Agent 会顺序创建或删除多台 Emulator；管理员只在 Device Farm Console 修改目标设备数，Server 自动同步 Pool 并发和 Host slot 高水位，不需要编辑 Host 环境文件或重启 Agent。
+
 Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。DF-016 已要求 validation 和每次正式 create 都核对本机镜像 ID/RepoDigest 与已登记 digest。
 
 Linux Host 的 systemd 配置和安装步骤见 [部署包](../deploy/docker-emulator/README.md)。

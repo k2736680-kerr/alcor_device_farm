@@ -18,6 +18,7 @@
 | Device Farm Adapter | 提供北向 OpenAPI 和 Mock | 由新版 Worker 在第六阶段实现 | 不直接依赖旧 `eval_tasks` 或共享数据库 |
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
 | Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
+| 固定容量扩缩容 | Console 设置 Pool Image 目标；Server 同步 Pool 并发和 Host 槽位高水位；Controller 通过 Host Command 自动创建或删除 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Docker Emulator Provider | 当前新增 | 由设备农场调度 | 不把 Docker Socket 暴露给 Alcor/浏览器 |
@@ -35,6 +36,7 @@
 - Docker Emulator 生命周期和 USB Provider 扩展接口；
 - Scheduler、租约、续租、释放、数据库并发约束；
 - Reconciler、Reaper、健康事件、隔离和重建；
+- 控制台统一目标容量、固定目标自动扩容和最旧空闲 Emulator 安全缩容；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；
 - `/api/v1/device-*` 与 `/internal/v1` 契约；

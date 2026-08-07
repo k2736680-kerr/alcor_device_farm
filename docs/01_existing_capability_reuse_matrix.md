@@ -61,6 +61,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -USB设备基础设施Provider；
 -Device Image、每 Image 运行镜像选择与不可变摘要验证；
 -Device Pool与容量；
+-固定目标容量的控制台单点配置、自动扩容和安全缩容；
 -Reservation、Lease、续租和释放；
 -Scheduler和数据库并发锁；
 -Reconciler和Reaper；
@@ -94,5 +95,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 5. 若必须新增，它是否属于第4节允许的设备域？
 6. 是否误用了旧版 `test_items/eval_tasks/eval_results` 或本地报告路径？
 7. 若属于控制台功能，是否只操作设备域资源，且浏览器没有接触 Service/STF Token 或内部基础设施端口？
+
+自动缩容继续复用现有 Host Command、Host Agent 和 Provider `Delete`，不得另建直接访问 Docker Socket 的 Server 删除通道。Device 数据只标记 `deleted` 并保留审计，不通过物理删库伪装缩容完成。
 
 无法回答或没有更新本矩阵时，不进入编码。

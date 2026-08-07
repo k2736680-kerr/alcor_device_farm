@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { Device, DeviceHost, DeviceImage, DevicePool, Reservation, AuditEvent, HealthEventRecord } from '../api/generated/models'
+import type { Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord } from '../api/generated/models'
 
 /** Envelope matching the real backend: { request_id, data, error }. */
 function pageEnvelope<T>(items: T[], total: number, page = 1, pageSize = 20) {
@@ -42,6 +42,13 @@ export const samplePools: DevicePool[] = [
   {
     id: 'pool_000000000000001', name: 'default-android', default_lease_seconds: 1800, max_lease_seconds: 7200,
     max_concurrency: 2, status: 'active', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
+  },
+]
+
+export const samplePoolImages: DevicePoolImage[] = [
+  {
+    pool_id: 'pool_000000000000001', image_id: 'image_00000000000001', min_ready: 2, max_instances: 2,
+    enabled: true, created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
 ]
 
@@ -100,6 +107,11 @@ export const handlers = [
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
     return HttpResponse.json(pageEnvelope(samplePools, samplePools.length, page, size))
+  }),
+  http.get('/api/v1/device-pools/:id/images', ({ request }) => {
+    const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
+    const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
+    return HttpResponse.json(pageEnvelope(samplePoolImages, samplePoolImages.length, page, size))
   }),
   http.get('/api/v1/devices', ({ request }) => {
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)

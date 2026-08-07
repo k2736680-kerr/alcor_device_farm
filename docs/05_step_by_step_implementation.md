@@ -49,6 +49,7 @@
 | DF-026 | Device Farm Console 工程和只读页面 | completed | DF-003、DF-004、DF-008、DF-025 |
 | DF-027 | 设备操作和人工预约页面 | completed | DF-009、DF-010、DF-011、DF-026 |
 | DF-028 | 控制台部署、安全和真实 Web 验收 | completed | DF-017～DF-024、DF-027 |
+| DF-029 | 控制台统一容量和自动安全缩容 | completed | DF-016、DF-023、DF-028 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -302,6 +303,14 @@
 产出：生产构建与部署配置、Web 安全清单、浏览器端到端报告、关键页面截图、回滚演练和 `docs/evidence/DF-028/acceptance.md`。
 
 验收：新环境按文档可部署并访问；未认证、越权、CSRF、过期会话和直接内部端口访问均被拒绝；用户通过浏览器完成资源查看、预约、续租、释放、隔离/恢复或重建验证；按 ADR-0010 确认页面不展示 STF `remoteConnect` TCP 地址且不泄露任何内部 Token；Server/STF/Console 任一重启后状态收敛；回滚成功且无临时容器、网络、卷、会话或凭证残留。
+
+### DF-029 控制台统一容量和自动安全缩容
+
+实施：按 ADR-0011 将 Pool Image 的固定容量收敛为控制台单一“目标设备数”；Server 原子同步 `min_ready/max_instances`、Pool `max_concurrency` 和 Host `device_slots` 高水位；Host 心跳不得用 Agent 命令并发覆盖后台容量；Warm Pool Controller 增加超额计算、最旧空闲设备选择、Pool 退出、delete Host Command、成功标记 deleted、失败隔离和审计。占用设备等待释放，不强制删除。总览区分当前实例与历史 Device/Reservation。
+
+产出：ADR-0011、容量配置 API 语义、自动缩容 Controller、Console 单一目标表单、并发/故障测试和 `docs/evidence/DF-029/`。
+
+验收：当前 ADR-0008 验收主机以两台为安全上限，后台把目标从 1 改为 2 后无需修改或重启 Host Agent 即自动补齐两台，真实 `2 → 1` 删除最旧 Emulator 并保留最新；`3 → 1` 多设备删除语义由真实 PostgreSQL 集成测试覆盖，后续更换高内存服务器时补充容量压力验证。最旧设备 active 时不强删，释放后继续缩容；两个 Controller 并发只为每台超额设备生成一条 delete Command；删除失败三次后设备 quarantined 且不被替代实例掩盖；容器、网络和卷真实清理；Pool 并发与目标一致；历史记录不计入当前运行容量；全部操作有 actor、reason 和 request ID。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

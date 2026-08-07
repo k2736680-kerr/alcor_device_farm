@@ -24,23 +24,23 @@ export function DashboardPage() {
   const imagesQuery = useListDeviceImages({ page: 1, page_size: 1 })
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 1 })
   const poolsQuery = useListDevicePools({ page: 1, page_size: 1 })
-  const devicesQuery = useListDevices({ page: 1, page_size: 1 })
+  const devicesQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready' })
   const reservationsQuery = useListDeviceReservations({ page: 1, page_size: 1 })
   const auditQuery = useListDeviceAuditEvents({ page: 1, page_size: 1 })
 
   const images = unwrapPage(imagesQuery.data)
   const hosts = unwrapPage(hostsQuery.data)
   const pools = unwrapPage(poolsQuery.data)
-  const devices = unwrapPage(devicesQuery.data)
+  const readyDevices = unwrapPage(devicesQuery.data)
   const reservations = unwrapPage(reservationsQuery.data)
   const audit = unwrapPage(auditQuery.data)
   const connected = ![imagesQuery, hostsQuery, poolsQuery, devicesQuery, reservationsQuery, auditQuery].some((query) => query.isError)
 
   const items = [
-    { title: '设备', value: devices?.total ?? 0, note: '当前纳管资源', to: '/devices', icon: <CloudServerOutlined />, tone: 'blue' },
+    { title: '就绪设备', value: readyDevices?.total ?? 0, note: '当前可进入调度', to: '/devices', icon: <CloudServerOutlined />, tone: 'blue' },
     { title: '宿主机', value: hosts?.total ?? 0, note: 'KVM 执行节点', to: '/hosts', icon: <DesktopOutlined />, tone: 'cyan' },
     { title: '设备池', value: pools?.total ?? 0, note: '调度资源池', to: '/pools', icon: <DatabaseOutlined />, tone: 'violet' },
-    { title: '预约', value: reservations?.total ?? 0, note: '设备占用记录', to: '/reservations', icon: <CalendarOutlined />, tone: 'orange' },
+    { title: '预约历史', value: reservations?.total ?? 0, note: '含已释放和失败记录', to: '/reservations', icon: <CalendarOutlined />, tone: 'orange' },
   ]
 
   return (
@@ -94,17 +94,17 @@ export function DashboardPage() {
             <div className="health-row">
               <div className="health-copy">
                 <span className="health-icon"><CloudServerOutlined /></span>
-                <div><strong>设备资源</strong><small>纳管设备与固定暖池容量</small></div>
+                <div><strong>就绪设备</strong><small>历史、隔离和已删除记录不计入当前容量</small></div>
               </div>
-              <Typography.Text strong>{devices?.total ?? 0} 台</Typography.Text>
+              <Typography.Text strong>{readyDevices?.total ?? 0} 台</Typography.Text>
             </div>
           </Card>
         </Col>
         <Col xs={24} xl={9}>
           <Card className="dashboard-panel capacity-panel" title="资源摘要">
-            <div className="capacity-number">{devices?.total ?? 0}</div>
-            <Typography.Text type="secondary">已纳管设备</Typography.Text>
-            <Progress percent={devices?.total ? 100 : 0} showInfo={false} strokeColor="#2563eb" trailColor="#e8eef8" />
+            <div className="capacity-number">{readyDevices?.total ?? 0}</div>
+            <Typography.Text type="secondary">当前就绪设备</Typography.Text>
+            <Progress percent={readyDevices?.total ? 100 : 0} showInfo={false} strokeColor="#2563eb" trailColor="#e8eef8" />
             <div className="capacity-meta">
               <span><i className="dot dot-blue" /> 镜像 {images?.total ?? 0}</span>
               <span><i className="dot dot-green" /> 审计 {audit?.total ?? 0}</span>

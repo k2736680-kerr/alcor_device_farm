@@ -9,7 +9,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Switch,
   Table,
   Tag,
   Typography,
@@ -43,9 +42,8 @@ interface PoolFormValues {
 }
 
 interface TargetFormValues {
-  min_ready: number
-  max_instances: number
-  enabled: boolean
+  target_instances: number
+  reason: string
 }
 
 function errorText(error: unknown): string {
@@ -54,7 +52,7 @@ function errorText(error: unknown): string {
 }
 
 export function PoolsPage() {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [configPool, setConfigPool] = useState<DevicePool | null>(null)
   const [editTarget, setEditTarget] = useState<DevicePoolImage | null>(null)
@@ -101,22 +99,62 @@ export function PoolsPage() {
     )
   }
 
-  const saveTarget = (values: TargetFormValues) => {
+  const updateTarget = (values: TargetFormValues) => {
     if (!configPool || !editTarget) {
       return
     }
     setTarget.mutate(
-      { id: configPool.id, imageId: editTarget.image_id, data: values },
+      {
+        id: configPool.id,
+        imageId: editTarget.image_id,
+        data: {
+          min_ready: values.target_instances,
+          max_instances: values.target_instances,
+          enabled: true,
+          reason: values.reason,
+        },
+      },
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
           message.success(`镜像目标已更新（request_id: ${requestID}）`)
+          const nextConcurrency = Math.max(1, poolImages.reduce((total, target) => {
+            if (target.image_id === editTarget.image_id) {
+              return total + values.target_instances
+            }
+            return target.enabled ? total + target.max_instances : total
+          }, 0))
+          setConfigPool({ ...configPool, max_concurrency: nextConcurrency })
+          poolForm.setFieldValue('max_concurrency', nextConcurrency)
           setEditTarget(null)
           invalidatePoolImages()
+          invalidatePools()
         },
         onError: (error) => message.error(`更新失败：${errorText(error)}`),
       },
     )
+  }
+
+  const saveTarget = (values: TargetFormValues) => {
+    if (!editTarget) {
+      return
+    }
+    if (values.target_instances < editTarget.max_instances) {
+      if (values.reason.trim().length < 3) {
+        targetForm.setFields([{ name: 'reason', errors: ['缩容时请填写至少 3 个字的调整原因'] }])
+        return
+      }
+      modal.confirm({
+        title: `确认缩容到 ${values.target_instances} 台？`,
+        content: '系统会删除最旧的空闲模拟器并保留最新设备；正在占用的设备会等待释放，不会被强制中断。',
+        okText: '确认缩容',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: () => updateTarget(values),
+      })
+      return
+    }
+    updateTarget(values)
   }
 
   const disable = (target: DevicePoolImage) => {
@@ -156,8 +194,7 @@ export function PoolsPage() {
 
   const targetColumns: TableColumnsType<DevicePoolImage> = [
     { title: '镜像 ID', dataIndex: 'image_id', width: 190, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '最低就绪', dataIndex: 'min_ready', width: 90 },
-    { title: '最大实例', dataIndex: 'max_instances', width: 90 },
+    { title: '目标设备数', dataIndex: 'max_instances', width: 110 },
     { title: '启用', dataIndex: 'enabled', width: 70, render: (value: boolean) => (value ? <Tag color="green">是</Tag> : <Tag>否</Tag>) },
     {
       title: '操作',
@@ -169,7 +206,7 @@ export function PoolsPage() {
             size="small"
             onClick={() => {
               setEditTarget(target)
-              targetForm.setFieldsValue({ min_ready: target.min_ready, max_instances: target.max_instances, enabled: target.enabled })
+              targetForm.setFieldsValue({ target_instances: target.max_instances, reason: '' })
             }}
           >
             编辑
@@ -251,9 +288,12 @@ export function PoolsPage() {
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
             <Form.Item name="max_concurrency" label="最大并发" rules={[{ required: true }]}>
-              <InputNumber min={1} max={1000} />
+              <InputNumber min={1} max={1000} disabled />
             </Form.Item>
           </Space>
+          <Typography.Paragraph type="secondary">
+            最大并发由下方所有启用镜像的目标设备数自动同步，无需单独修改。
+          </Typography.Paragraph>
           <Button type="primary" loading={updatePool.isPending} onClick={() => poolForm.submit()}>保存基本信息</Button>
         </Form>
 
@@ -278,22 +318,37 @@ export function PoolsPage() {
 
       <Modal
         open={editTarget !== null}
-        title="编辑镜像目标"
+        title="设置目标设备数"
         okText="保存"
         onCancel={() => setEditTarget(null)}
         onOk={() => targetForm.submit()}
         confirmLoading={setTarget.isPending}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form<TargetFormValues> form={targetForm} layout="vertical" onFinish={saveTarget}>
-          <Form.Item name="min_ready" label="最低就绪实例数" rules={[{ required: true }]}>
-            <InputNumber min={0} max={1000} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="max_instances" label="最大实例数" rules={[{ required: true }]}>
+          <Typography.Paragraph type="secondary">
+            保存后自动扩容或缩容，不需要登录服务器。缩容会删除最旧的空闲模拟器；占用中的设备会等待释放。
+          </Typography.Paragraph>
+          <Form.Item name="target_instances" label="目标设备数" rules={[{ required: true, message: '请输入目标设备数' }]}>
             <InputNumber min={1} max={1000} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="enabled" label="启用" valuePropName="checked">
-            <Switch />
+          <Form.Item
+            name="reason"
+            label="调整原因（缩容时必填并写入审计）"
+            dependencies={['target_instances']}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator: (_, value?: string) => {
+                  const target = Number(getFieldValue('target_instances'))
+                  if (editTarget && target < editTarget.max_instances && (value?.trim().length ?? 0) < 3) {
+                    return Promise.reject(new Error('缩容时请填写至少 3 个字的调整原因'))
+                  }
+                  return Promise.resolve()
+                },
+              }),
+            ]}
+          >
+            <Input.TextArea rows={3} maxLength={200} placeholder="例如：将测试环境固定容量调整为 2 台" />
           </Form.Item>
         </Form>
       </Modal>
@@ -310,7 +365,7 @@ export function PoolsPage() {
           }
         }}
         confirmLoading={addDevice.isPending}
-        destroyOnClose
+        destroyOnHidden
       >
         <DeviceSelect devices={devices} loading={devicesQuery.isFetching} onChange={(id) => setSelectedDevice(id)} />
       </Modal>

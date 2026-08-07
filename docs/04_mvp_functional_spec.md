@@ -21,7 +21,7 @@
 - Scheduler、Reaper、Reconciler；
 - STF inventory、claim、release、remoteConnect Adapter；
 - Appium Endpoint、端口和健康检查；
-- 单一默认逻辑设备池，当前参数化自动维持一台 Emulator；
+- 单一默认逻辑设备池，当前默认自动维持一台 Emulator，并支持控制台统一调整固定目标后自动扩缩容；
 - DaFit 端到端联调 Harness；
 - 服务身份、Agent 身份、审计事件和敏感日志脱敏；
 - OpenAPI、部署说明、故障处理和验收证据。
@@ -32,7 +32,7 @@
 - USB Android 真机 Provider；
 - 多宿主机调度；
 - 多租户配额；
-- 动态容量预测；
+- 动态容量预测；固定目标扩缩容属于 MVP 设备域能力；
 - S3、Kubernetes 和复杂调度策略。
 
 ### 2.3 明确不做
@@ -143,7 +143,7 @@ stopped → deleted
 
 另设健康状态 `unknown/healthy/degraded/unhealthy`，避免把生命周期和健康原因混成一个字段。所有状态转换必须由领域方法校验并写事件。
 
-### 4.5 设备池与固定目标自动补齐
+### 4.5 设备池与固定目标自动扩缩容
 
 设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认/最大租期、最大并发、启停状态和设备成员关系。
 
@@ -156,7 +156,10 @@ MVP 只配置一个默认 Android 设备池，当前测试环境使用单机配�
 - 多 Server 使用 PostgreSQL 行锁重新计算缺口，避免超额创建；
 - 创建失败按有上限退避重试，设备只有通过 ADB、boot 和 Appium 健康检查后才计入 ready；
 - 单台设备占用时第二个 Reservation 保持 pending/capacity unavailable，不因请求压力突破 `max_instances`；
-- Controller 不自动删除设备；降低目标后只停止补充，通过 drain/人工删除缩容。
+- 控制台以一个“目标设备数”写入 `min_ready=max_instances`，Server 自动同步 Pool `max_concurrency` 和可用 Host `device_slots` 高水位，不要求管理员登录 Host 修改 Agent 配置；
+- Controller 在目标降低时删除超出的最旧空闲 Emulator，保留最新实例；占用中、回收中或仍有其他 Pool membership 的设备不得被自动删除；
+- 自动删除走持久化 delete Host Command 和 Agent/Docker Provider，成功后 Device 标记为 `deleted` 并保留历史，失败则隔离和告警；
+- 缩容是最终一致的：占用中的最旧设备先等待释放，不能为立即达到数字而强制中断 Reservation。
 
 后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。
 
@@ -250,7 +253,7 @@ Reconciler：
 - 设备总览：Host、Device、Pool、Reservation、健康和容量摘要；
 - Image：列表、详情、创建/编辑、验证状态和池配置；
 - Host：列表、心跳、容量、drain/undrain；
-- Pool：列表、租期、并发、Image 和 Device membership；
+- Pool：列表、租期、Image、Device membership 和单一目标设备数；Pool 并发由启用 Image 目标自动同步；
 - Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine；
 - Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
 - STF 原生远控：保持独立受控服务；当前 Console 不提供入口，除非未来具备与 Reservation 绑定的短时 Web 授权契约；
@@ -261,6 +264,7 @@ Reconciler：
 - 页面状态来自 Server，不直接读取基础设施；刷新后必须与数据库真相一致；
 - 非法状态下不展示可执行按钮，服务端仍必须再次校验；
 - restart、rebuild、quarantine、unquarantine、drain、release 等危险操作必须二次确认并填写原因；
+- 降低目标设备数必须二次确认并填写原因，页面说明实际删除可能等待占用结束；
 - 所有错误显示稳定错误码、request ID 和是否可重试，不能只显示“操作失败”；
 - 浏览器安全访问、CSRF、防缓存、内容安全策略和 Token 隔离由 DF-026 固化并验收；
 - 不能实现 STF 的画面、触控、日志、文件和 ADB 协议，只复用 STF 原生页面和 Adapter。
@@ -404,7 +408,7 @@ DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现�
 满足以下条件才算设备农场 MVP 完成：
 
 1. Mock 环境可完整演示镜像、Host、Pool、Device、Reservation 全链路；
-2. Linux KVM 环境能由 Agent 自动创建一台 Android 16 Docker Emulator；
+2. Linux KVM 环境能由 Agent 按控制台目标自动创建 Android 16 Docker Emulator，并在降低目标后安全删除超额实例；当前默认和基础验收仍为一台；
 3. 单台模拟器只能产生一个 active reservation，第二个并发预约不能双占或突破容量；
 4. 每台设备可建立独立 Appium Session；
 5. STF 可看屏、claim、release，且不作为数据库真相；

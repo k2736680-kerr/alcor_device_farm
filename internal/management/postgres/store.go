@@ -202,14 +202,56 @@ func (store *Store) ListPoolImages(ctx context.Context, poolID string, page pagi
 	return values, total, nil
 }
 
-func (store *Store) SetPoolImage(ctx context.Context, value management.PoolImage) (management.PoolImage, error) {
-	result, err := scanPoolImage(store.db.Pool().QueryRow(ctx, `INSERT INTO device_pool_images
-		(pool_id,image_id,min_ready,max_instances,enabled) VALUES($1,$2,$3,$4,$5)
-		ON CONFLICT(pool_id,image_id) DO UPDATE SET min_ready=EXCLUDED.min_ready,
-		max_instances=EXCLUDED.max_instances,enabled=EXCLUDED.enabled,updated_at=clock_timestamp()
-		RETURNING pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at`,
-		value.PoolID, value.ImageID, value.MinReady, value.MaxInstances, value.Enabled))
-	return result, rowError(err)
+func (store *Store) GetPoolImage(ctx context.Context, poolID, imageID string) (management.PoolImage, error) {
+	value, err := scanPoolImage(store.db.Pool().QueryRow(ctx,
+		poolImageSelect+` WHERE pool_id=$1 AND image_id=$2`, poolID, imageID))
+	return value, rowError(err)
+}
+
+func (store *Store) SetPoolImage(ctx context.Context, value management.PoolImage, audit management.DeviceAudit) (management.PoolImage, error) {
+	var result management.PoolImage
+	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var currentMax int
+		lookupErr := tx.QueryRow(ctx, `SELECT max_instances FROM device_pool_images
+			WHERE pool_id=$1 AND image_id=$2 FOR UPDATE`, value.PoolID, value.ImageID).Scan(&currentMax)
+		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return lookupErr
+		}
+		if lookupErr == nil && value.MaxInstances < currentMax && !audit.DestructiveApproved {
+			return management.ErrInvalidArgument
+		}
+		var err error
+		result, err = scanPoolImage(tx.QueryRow(ctx, `INSERT INTO device_pool_images
+			(pool_id,image_id,min_ready,max_instances,enabled) VALUES($1,$2,$3,$4,$5)
+			ON CONFLICT(pool_id,image_id) DO UPDATE SET min_ready=EXCLUDED.min_ready,
+			max_instances=EXCLUDED.max_instances,enabled=EXCLUDED.enabled,updated_at=clock_timestamp()
+			RETURNING pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at`,
+			value.PoolID, value.ImageID, value.MinReady, value.MaxInstances, value.Enabled))
+		if err != nil {
+			return err
+		}
+		var target int
+		if err := tx.QueryRow(ctx, `UPDATE device_pools SET max_concurrency=GREATEST(1,
+			COALESCE((SELECT sum(max_instances) FROM device_pool_images WHERE pool_id=$1 AND enabled),1)),
+			updated_at=clock_timestamp() WHERE id=$1 RETURNING max_concurrency`, value.PoolID).Scan(&target); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE device_hosts SET capacity=jsonb_set(capacity,'{device_slots}',
+			to_jsonb(GREATEST(CASE WHEN capacity->>'device_slots' ~ '^[0-9]+$'
+			THEN (capacity->>'device_slots')::int ELSE 0 END,$1::int)),true),updated_at=clock_timestamp()
+			WHERE host_type IN ('docker_emulator','hybrid')`, target); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,$2,$3,$4,'device_pool_image',$5,$6,$7,
+			jsonb_build_object('pool_id',$8::text,'min_ready',$9::int,'max_instances',$10::int,
+			'enabled',$11::boolean,'pool_max_concurrency',$12::int))`, audit.ID, audit.ActorType, audit.ActorID,
+			audit.Action, value.ImageID, audit.RequestID, sensitive.RedactText(audit.Reason), value.PoolID,
+			value.MinReady, value.MaxInstances, value.Enabled, target)
+		return err
+	})
+	return result, normalize(err)
 }
 
 func (store *Store) DisablePoolImage(ctx context.Context, poolID, imageID string) (management.PoolImage, error) {

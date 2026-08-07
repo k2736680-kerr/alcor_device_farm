@@ -40,7 +40,7 @@ sudoedit /etc/alcor-device-farm/host-agent.env
 - `DEVICE_FARM_AGENT_SERVER_URL`；
 - `DEVICE_FARM_AGENT_HOST_ID`；
 - `DEVICE_FARM_SECURITY_AGENT_TOKEN`；
-- `DEVICE_FARM_AGENT_CONCURRENCY=1`（当前单台验收；以后扩容只改此值）；
+- `DEVICE_FARM_AGENT_CONCURRENCY=1`（只限制 Agent 同时执行的 Provider Command 数量；设备目标扩缩容在 Console 修改，不需要改此值或重启 Agent）；
 - `DEVICE_FARM_DOCKER_IMAGE`；
 - `DEVICE_FARM_DOCKER_ADVERTISE_HOST`。
 
