@@ -166,7 +166,7 @@ export function DashboardPage() {
               )}
             </div>
             {(quarantinedDevices?.total ?? 0) > 0 && (
-              <Link className="task-warning" to="/devices">
+              <Link className="task-warning" to="/devices?view=quarantined">
                 <WarningOutlined /> 发现 {quarantinedDevices?.total ?? 0} 台隔离设备，点击查看处理
               </Link>
             )}

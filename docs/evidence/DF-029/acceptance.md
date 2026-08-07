@@ -206,6 +206,8 @@ Image ID: sha256:5d6c553ee1a1c05b2df3049edce2e16efaddf2109673cbcc96f6c4cbad25450
 当前真实设备：ready=2, creating=0, cleaning=0
 ```
 
+2026-08-07 修复首页隔离告警的分类跳转：链接改为 `/devices?view=quarantined`，设备页从地址参数恢复并选中“隔离设备”分类，直接展示隔离设备列表；无效或缺失参数仍安全回退到“可用设备”。Vitest 增加直接分类跳转覆盖后为 7 files / 13 tests 全部通过，部署镜像为 `alcor-device-farm:df029-dashboard-link-20260807`，`/readyz` 和 `/console/` 均返回 200。
+
 ### 当前容量范围与后续验证
 
 两台 Emulator 同时运行时单实例约占 4.2 GiB 和 3.4 GiB，可用内存一度约 5.7 GiB，并已出现 Swap 压力。为避免宿主机失稳，本次没有执行真实 `3 → 1`：

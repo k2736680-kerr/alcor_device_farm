@@ -30,4 +30,12 @@ describe('DevicesPage device categories', () => {
     expect(within(deletedRow as HTMLElement).getByText('已删除')).toBeInTheDocument()
     expect(within(deletedRow as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
   })
+
+  it('opens the isolated device list directly from the dashboard link', async () => {
+    renderWithProviders(<DevicesPage />, '/devices?view=quarantined')
+
+    expect(await screen.findByText('emulator-5558')).toBeInTheDocument()
+    expect(screen.queryByText('emulator-5554')).not.toBeInTheDocument()
+    expect(screen.getByText('隔离设备（1）').closest('.ant-segmented-item')).toHaveClass('ant-segmented-item-selected')
+  })
 })

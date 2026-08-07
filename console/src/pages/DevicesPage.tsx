@@ -2,6 +2,7 @@ import { Alert, App as AntApp, Button, Form, Input, Modal, Segmented, Space, Tag
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
   useListDevices,
@@ -46,6 +47,12 @@ const healthColor: Record<string, string> = {
 type DeviceAction = 'restart' | 'rebuild' | 'quarantine' | 'unquarantine'
 type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
 
+const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined', 'deleted', 'all']
+
+function deviceViewFromQuery(value: string | null): DeviceView {
+  return deviceViews.includes(value as DeviceView) ? value as DeviceView : 'available'
+}
+
 interface ActionState {
   device: Device
   action: DeviceAction
@@ -79,9 +86,10 @@ function actionable(device: Device, action: DeviceAction): boolean {
 export function DevicesPage() {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [form] = Form.useForm<ReasonValues>()
   const [actionState, setActionState] = useState<ActionState | null>(null)
-  const [view, setView] = useState<DeviceView>('available')
+  const view = deviceViewFromQuery(searchParams.get('view'))
 
   const restart = useRestartDevice()
   const rebuild = useRebuildDevice()
@@ -199,7 +207,13 @@ export function DevicesPage() {
             { label: `全部记录（${allCount}）`, value: 'all' },
           ]}
           onChange={(nextView) => {
-            setView(nextView)
+            const nextSearchParams = new URLSearchParams(searchParams)
+            if (nextView === 'available') {
+              nextSearchParams.delete('view')
+            } else {
+              nextSearchParams.set('view', nextView)
+            }
+            setSearchParams(nextSearchParams, { replace: true })
             onPageChange(1, pageSize)
           }}
         />
