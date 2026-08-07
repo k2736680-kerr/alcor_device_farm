@@ -28,8 +28,8 @@ dist/
 build/
 
 # IDE and operating system
+.workbuddy/
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
-
