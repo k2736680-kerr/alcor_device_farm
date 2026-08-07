@@ -208,6 +208,8 @@ Image ID: sha256:5d6c553ee1a1c05b2df3049edce2e16efaddf2109673cbcc96f6c4cbad25450
 
 2026-08-07 修复首页隔离告警的分类跳转：链接改为 `/devices?view=quarantined`，设备页从地址参数恢复并选中“隔离设备”分类，直接展示隔离设备列表；无效或缺失参数仍安全回退到“可用设备”。Vitest 增加直接分类跳转覆盖后为 7 files / 13 tests 全部通过，部署镜像为 `alcor-device-farm:df029-dashboard-link-20260807`，`/readyz` 和 `/console/` 均返回 200。
 
+2026-08-07 经用户确认清理 3 条无运行资源的隔离设备记录。操作前逐项验证对应设备没有 pending/active Reservation，Docker 容器、网络和数据卷均不存在；随后在单个 PostgreSQL 事务中禁用设备池关联、将生命周期从 `quarantined` 转为 `deleted`、清空 STF/ADB/Appium Endpoint，并为每台设备写入 `delete_quarantined_device` 系统审计。操作后 `quarantined=0 / ready=2 / deleted=5`，3 条审计均已保存，当前两台 Emulator 和 `/readyz=200` 不受影响。
+
 ### 当前容量范围与后续验证
 
 两台 Emulator 同时运行时单实例约占 4.2 GiB 和 3.4 GiB，可用内存一度约 5.7 GiB，并已出现 Swap 压力。为避免宿主机失稳，本次没有执行真实 `3 → 1`：
