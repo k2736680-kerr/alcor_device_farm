@@ -134,6 +134,53 @@ swap total=4.0 GiB, used=1.9 GiB
 
 Host `device_slots=2` 是 Server 管理的容量高水位，不代表同时运行两台；当前实际运行 Emulator 和 `used device_slots` 均为 1。控制台显示的 91 条 Reservation 是历史记录，活动 Reservation 为 0，不计入当前运行容量。
 
+### 控制台显示口径与中文化复验
+
+2026-08-07 复查控制台时发现，前端虽然请求了设备状态过滤条件，但 Server 的设备列表接口没有实际应用 `pool_id`、`lifecycle_status` 和 `health_status`，导致已隔离、已删除的历史记录也被计入仪表盘主数字，页面显示 6 台并容易被误解为 6 台可用设备。
+
+修复后：
+
+- Server 设备列表接口真实支持设备池、生命周期和健康状态过滤，非法状态返回 HTTP 400，PostgreSQL 的数据查询与总数查询使用相同过滤条件；
+- 仪表盘主数字改为“当前可用设备”，同时独立显示使用中、隔离设备和已删除历史；
+- 设备页默认只显示可用设备，并提供“可用设备 / 使用中 / 隔离设备 / 已删除历史 / 全部记录”分类；
+- 设备、镜像、宿主机、设备池、预约、审计和健康事件中的常见状态、类型、角色和操作均使用中文显示，未知后端值仍保留原值以便排障；
+- 分页、登录页、管理员角色和控制台品牌文案完成中文化。
+
+真实 PostgreSQL 临时隔离数据库验证：
+
+```text
+PASS TestManagementAPICompleteMockFlow
+临时测试数据库已在测试后删除，未对生产数据库执行 TRUNCATE 或测试写入。
+```
+
+本地门禁：
+
+```text
+PASS go test -count=1 ./...
+PASS go vet ./...
+PASS go build ./...
+PASS Vitest: 7 files / 11 tests
+PASS Orval + TypeScript + Vite production build
+WARN Vite 单入口 bundle > 500 kB（既有非阻塞项）
+```
+
+真实环境部署结果：
+
+```text
+Server image: alcor-device-farm:df029-display-fix-20260807
+Image ID: sha256:4f0c509a243eafc75c7a4df6a9a599ea6d1633937755171fbe5aa7774ee0b04f
+Rollback container: alcor-device-farm-server-df029-capacity-rollback-20260807（stopped）
+/readyz=200
+/console/=200
+可用设备=1
+使用中=0
+隔离设备=3
+已删除历史=2
+全部记录=6
+```
+
+因此页面中的“6”只会出现在“全部记录”分类中，表示设备数据记录总数；仪表盘主数字和默认设备列表均为当前真正可用的 1 台。
+
 ### 当前容量范围与后续验证
 
 两台 Emulator 同时运行时单实例约占 4.2 GiB 和 3.4 GiB，可用内存一度约 5.7 GiB，并已出现 Swap 压力。为避免宿主机失稳，本次没有执行真实 `3 → 1`：

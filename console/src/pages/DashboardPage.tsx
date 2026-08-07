@@ -1,4 +1,4 @@
-import { Button, Card, Col, Progress, Row, Space, Statistic, Tag, Typography } from 'antd'
+import { Button, Card, Col, Row, Space, Statistic, Tag, Typography } from 'antd'
 import { Link } from 'react-router-dom'
 import {
   ArrowRightOutlined,
@@ -24,30 +24,46 @@ export function DashboardPage() {
   const imagesQuery = useListDeviceImages({ page: 1, page_size: 1 })
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 1 })
   const poolsQuery = useListDevicePools({ page: 1, page_size: 1 })
-  const devicesQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready' })
+  const readyDevicesQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' })
+  const busyDevicesQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' })
+  const quarantinedDevicesQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' })
+  const deletedDevicesQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'deleted' })
   const reservationsQuery = useListDeviceReservations({ page: 1, page_size: 1 })
   const auditQuery = useListDeviceAuditEvents({ page: 1, page_size: 1 })
 
   const images = unwrapPage(imagesQuery.data)
   const hosts = unwrapPage(hostsQuery.data)
   const pools = unwrapPage(poolsQuery.data)
-  const readyDevices = unwrapPage(devicesQuery.data)
+  const readyDevices = unwrapPage(readyDevicesQuery.data)
+  const busyDevices = unwrapPage(busyDevicesQuery.data)
+  const quarantinedDevices = unwrapPage(quarantinedDevicesQuery.data)
+  const deletedDevices = unwrapPage(deletedDevicesQuery.data)
   const reservations = unwrapPage(reservationsQuery.data)
   const audit = unwrapPage(auditQuery.data)
-  const connected = ![imagesQuery, hostsQuery, poolsQuery, devicesQuery, reservationsQuery, auditQuery].some((query) => query.isError)
+  const connected = ![
+    imagesQuery,
+    hostsQuery,
+    poolsQuery,
+    readyDevicesQuery,
+    busyDevicesQuery,
+    quarantinedDevicesQuery,
+    deletedDevicesQuery,
+    reservationsQuery,
+    auditQuery,
+  ].some((query) => query.isError)
 
   const items = [
-    { title: '就绪设备', value: readyDevices?.total ?? 0, note: '当前可进入调度', to: '/devices', icon: <CloudServerOutlined />, tone: 'blue' },
-    { title: '宿主机', value: hosts?.total ?? 0, note: 'KVM 执行节点', to: '/hosts', icon: <DesktopOutlined />, tone: 'cyan' },
-    { title: '设备池', value: pools?.total ?? 0, note: '调度资源池', to: '/pools', icon: <DatabaseOutlined />, tone: 'violet' },
-    { title: '预约历史', value: reservations?.total ?? 0, note: '含已释放和失败记录', to: '/reservations', icon: <CalendarOutlined />, tone: 'orange' },
+    { title: '当前可用设备', value: readyDevices?.total ?? 0, note: '现在可以直接预约使用', to: '/devices', icon: <CloudServerOutlined />, tone: 'blue' },
+    { title: '使用中设备', value: busyDevices?.total ?? 0, note: '正在被预约占用', to: '/reservations', icon: <CalendarOutlined />, tone: 'orange' },
+    { title: '宿主机', value: hosts?.total ?? 0, note: '运行模拟器的服务器', to: '/hosts', icon: <DesktopOutlined />, tone: 'cyan' },
+    { title: '设备池', value: pools?.total ?? 0, note: '设备调度分组', to: '/pools', icon: <DatabaseOutlined />, tone: 'violet' },
   ]
 
   return (
     <div className="dashboard-page">
       <section className="dashboard-hero">
         <div>
-          <div className="dashboard-kicker"><span /> DEVICE OPERATIONS</div>
+          <div className="dashboard-kicker"><span /> 设备运行状态</div>
           <Typography.Title level={2}>设备运行概览</Typography.Title>
           <Typography.Paragraph>集中查看设备容量、调度状态和基础设施健康，所有危险操作均写入审计。</Typography.Paragraph>
         </div>
@@ -80,14 +96,14 @@ export function DashboardPage() {
             <div className="health-row">
               <div className="health-copy">
                 <span className="health-icon"><CheckCircleFilled /></span>
-                <div><strong>控制面连接</strong><small>Device Farm API 与控制台会话</small></div>
+                <div><strong>控制面连接</strong><small>设备农场服务与控制台会话</small></div>
               </div>
               <Tag color={connected ? 'success' : 'error'}>{connected ? '正常' : '异常'}</Tag>
             </div>
             <div className="health-row">
               <div className="health-copy">
                 <span className="health-icon"><DesktopOutlined /></span>
-                <div><strong>执行宿主机</strong><small>当前已登记的 KVM / Emulator 节点</small></div>
+                <div><strong>执行宿主机</strong><small>当前已登记的 KVM 模拟器节点</small></div>
               </div>
               <Typography.Text strong>{hosts?.total ?? 0} 台</Typography.Text>
             </div>
@@ -101,15 +117,23 @@ export function DashboardPage() {
           </Card>
         </Col>
         <Col xs={24} xl={9}>
-          <Card className="dashboard-panel capacity-panel" title="资源摘要">
+          <Card className="dashboard-panel capacity-panel" title="设备状态摘要">
             <div className="capacity-number">{readyDevices?.total ?? 0}</div>
-            <Typography.Text type="secondary">当前就绪设备</Typography.Text>
-            <Progress percent={readyDevices?.total ? 100 : 0} showInfo={false} strokeColor="#2563eb" trailColor="#e8eef8" />
+            <Typography.Text type="secondary">台设备当前可以预约</Typography.Text>
+            <div className="capacity-status-grid">
+              <div><strong>{readyDevices?.total ?? 0}</strong><span>可用设备</span></div>
+              <div><strong>{busyDevices?.total ?? 0}</strong><span>使用中</span></div>
+              <div><strong>{quarantinedDevices?.total ?? 0}</strong><span>隔离设备</span></div>
+              <div><strong>{deletedDevices?.total ?? 0}</strong><span>已删除历史</span></div>
+            </div>
+            <Typography.Paragraph className="capacity-explanation" type="secondary">
+              隔离和已删除设备只用于故障追踪与历史审计，不计入可用数量。累计预约历史 {reservations?.total ?? 0} 条。
+            </Typography.Paragraph>
             <div className="capacity-meta">
               <span><i className="dot dot-blue" /> 镜像 {images?.total ?? 0}</span>
-              <span><i className="dot dot-green" /> 审计 {audit?.total ?? 0}</span>
+              <span><i className="dot dot-green" /> 操作记录 {audit?.total ?? 0}</span>
             </div>
-            <Link className="capacity-link" to="/audit"><FileSearchOutlined /> 查看设备域审计 <ArrowRightOutlined /></Link>
+            <Link className="capacity-link" to="/devices"><FileSearchOutlined /> 查看设备分类 <ArrowRightOutlined /></Link>
           </Card>
         </Col>
       </Row>

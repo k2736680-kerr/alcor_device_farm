@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
@@ -293,13 +294,34 @@ func (store *Store) CreateDevice(ctx context.Context, device management.Device) 
 	return value, rowError(err)
 }
 
-func (store *Store) ListDevices(ctx context.Context, page paging.Page) ([]management.Device, int, error) {
-	total, err := store.count(ctx, `SELECT count(*) FROM devices`)
-	if err != nil {
-		return nil, 0, err
+func (store *Store) ListDevices(ctx context.Context, page paging.Page, filter management.DeviceFilter) ([]management.Device, int, error) {
+	conditions := make([]string, 0, 3)
+	arguments := make([]any, 0, 5)
+	if filter.PoolID != "" {
+		arguments = append(arguments, filter.PoolID)
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (SELECT 1 FROM device_pool_devices membership
+			WHERE membership.device_id=devices.id AND membership.pool_id=$%d AND membership.enabled)`, len(arguments)))
 	}
-	rows, err := store.db.Pool().Query(ctx,
-		deviceSelect+` ORDER BY created_at,id LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	if filter.LifecycleStatus != "" {
+		arguments = append(arguments, filter.LifecycleStatus)
+		conditions = append(conditions, fmt.Sprintf("devices.lifecycle_status=$%d", len(arguments)))
+	}
+	if filter.HealthStatus != "" {
+		arguments = append(arguments, filter.HealthStatus)
+		conditions = append(conditions, fmt.Sprintf("devices.health_status=$%d", len(arguments)))
+	}
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+	var total int
+	err := store.db.Pool().QueryRow(ctx, `SELECT count(*) FROM devices`+where, arguments...).Scan(&total)
+	if err != nil {
+		return nil, 0, normalize(err)
+	}
+	arguments = append(arguments, page.Limit(), page.Offset())
+	rows, err := store.db.Pool().Query(ctx, deviceSelect+where+fmt.Sprintf(
+		` ORDER BY devices.created_at,devices.id LIMIT $%d OFFSET $%d`, len(arguments)-1, len(arguments)), arguments...)
 	if err != nil {
 		return nil, 0, normalize(err)
 	}

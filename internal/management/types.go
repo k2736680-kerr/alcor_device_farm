@@ -164,6 +164,12 @@ type ProvisionMockDeviceInput struct {
 	Capabilities map[string]any
 }
 
+type DeviceFilter struct {
+	PoolID          string
+	LifecycleStatus domain.DeviceLifecycleStatus
+	HealthStatus    domain.HealthStatus
+}
+
 type Store interface {
 	CreateImage(context.Context, Idempotency, Image) (Image, error)
 	ListImages(context.Context, paging.Page) ([]Image, int, error)
@@ -187,7 +193,7 @@ type Store interface {
 	RemoveDeviceFromPool(context.Context, string, string) error
 
 	CreateDevice(context.Context, Device) (Device, error)
-	ListDevices(context.Context, paging.Page) ([]Device, int, error)
+	ListDevices(context.Context, paging.Page, DeviceFilter) ([]Device, int, error)
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)

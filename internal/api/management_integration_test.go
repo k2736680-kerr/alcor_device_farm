@@ -172,8 +172,18 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/devices", nil, serviceToken, ""), http.StatusOK)
+	assertPageTotal(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?lifecycle_status=ready&health_status=healthy", nil, serviceToken, ""), 1)
+	assertPageTotal(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?lifecycle_status=deleted", nil, serviceToken, ""), 0)
+	assertPageTotal(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?pool_id="+pool.ID, nil, serviceToken, ""), 0)
+	assertStatus(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?lifecycle_status=not-a-status", nil, serviceToken, ""), http.StatusBadRequest)
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/devices/"+device.ID, nil, serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusOK)
+	assertPageTotal(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?pool_id="+pool.ID+"&lifecycle_status=ready&health_status=healthy", nil, serviceToken, ""), 1)
 	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines",
 		reasonBody(), serviceToken, "", "token=must-not-be-audit-actor"), http.StatusBadRequest)
 	restartResponse := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-01")
@@ -192,6 +202,10 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatalf("schedulable before quarantine = %d, error=%v", len(schedulable), err)
 	}
 	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, "", "alcor-user-01"), http.StatusOK)
+	assertPageTotal(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?lifecycle_status=quarantined", nil, serviceToken, ""), 1)
+	assertPageTotal(t, environment.request(t, http.MethodGet,
+		"/api/v1/devices?lifecycle_status=ready&health_status=healthy", nil, serviceToken, ""), 0)
 	schedulable, err = environment.store.ListSchedulableDevices(context.Background(), pool.ID)
 	if err != nil || len(schedulable) != 0 {
 		t.Fatalf("schedulable after quarantine = %d, error=%v", len(schedulable), err)
@@ -482,6 +496,18 @@ func decodeData(t *testing.T, response responseEnvelope, target any) {
 	t.Helper()
 	if err := json.Unmarshal(response.Data, target); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertPageTotal(t *testing.T, response responseEnvelope, expected int) {
+	t.Helper()
+	assertStatus(t, response, http.StatusOK)
+	var page struct {
+		Total int `json:"total"`
+	}
+	decodeData(t, response, &page)
+	if page.Total != expected {
+		t.Fatalf("page total=%d want=%d", page.Total, expected)
 	}
 }
 func validImageInput() map[string]any {

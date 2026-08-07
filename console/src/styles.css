@@ -56,7 +56,11 @@ a { color: inherit; }
 .health-icon { width: 36px; height: 36px; display: grid; place-items: center; color: #2563eb; border-radius: 10px; background: #edf4ff; }
 .capacity-panel .ant-card-body { padding-top: 28px; }
 .capacity-number { color: #101b2d; font-size: 46px; line-height: 1; font-weight: 750; }
-.capacity-panel .ant-progress { margin: 22px 0 10px; }
+.capacity-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 20px 0 12px; }
+.capacity-status-grid div { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; border: 1px solid #e7edf6; border-radius: 10px; background: #f8faff; }
+.capacity-status-grid strong { color: #101b2d; font-size: 20px; }
+.capacity-status-grid span { color: #6f7d91; font-size: 12px; }
+.capacity-explanation { margin-bottom: 0 !important; line-height: 1.7; }
 .capacity-meta { display: flex; gap: 22px; padding: 14px 0 20px; color: #64748b; border-bottom: 1px solid #eef2f7; }
 .capacity-meta span { display: flex; align-items: center; gap: 7px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; }

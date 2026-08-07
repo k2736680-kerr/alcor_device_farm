@@ -32,6 +32,7 @@ import type { DevicePool, DevicePoolImage, Device } from '../api/generated/model
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
 import { PageTable } from '../components/PageTable'
 
 interface PoolFormValues {
@@ -222,11 +223,11 @@ export function PoolsPage() {
   ]
 
   const columns: TableColumnsType<DevicePool> = [
-    { title: 'ID', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
+    { title: '设备池编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 180 },
-    { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{value}</Tag> },
-    { title: '默认租期(s)', dataIndex: 'default_lease_seconds', width: 120 },
-    { title: '最长租期(s)', dataIndex: 'max_lease_seconds', width: 120 },
+    { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
+    { title: '默认租期（秒）', dataIndex: 'default_lease_seconds', width: 130 },
+    { title: '最长租期（秒）', dataIndex: 'max_lease_seconds', width: 130 },
     { title: '最大并发', dataIndex: 'max_concurrency', width: 100 },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
@@ -281,10 +282,10 @@ export function PoolsPage() {
             <Input maxLength={128} />
           </Form.Item>
           <Space size={16} wrap>
-            <Form.Item name="default_lease_seconds" label="默认租期(s)" rules={[{ required: true }]}>
+            <Form.Item name="default_lease_seconds" label="默认租期（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400} />
             </Form.Item>
-            <Form.Item name="max_lease_seconds" label="最长租期(s)" rules={[{ required: true }]}>
+            <Form.Item name="max_lease_seconds" label="最长租期（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
             <Form.Item name="max_concurrency" label="最大并发" rules={[{ required: true }]}>
@@ -384,7 +385,7 @@ function DeviceSelect({ devices, loading, onChange }: { devices: Device[]; loadi
       onChange={onChange}
       options={devices.map((device) => ({
         value: device.id,
-        label: `${shortID(device.id)} · ${device.serial} · ${device.lifecycle_status}`,
+        label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
       }))}
     />
   )

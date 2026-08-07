@@ -6,6 +6,7 @@ import type { Device, HealthEventRecord } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { healthEventTypeLabel, healthReasonLabel, healthSourceLabel, lifecycleStatusLabel, severityLabel } from '../api/labels'
 import { PageTable } from '../components/PageTable'
 
 const severityColor: Record<string, string> = {
@@ -17,11 +18,11 @@ const severityColor: Record<string, string> = {
 
 const columns: TableColumnsType<HealthEventRecord> = [
   { title: '时间', dataIndex: 'observed_at', width: 160, render: (value: string) => formatTime(value) },
-  { title: '来源', dataIndex: 'source', width: 110, render: (value: string) => <Tag>{value}</Tag> },
-  { title: '类型', dataIndex: 'event_type', width: 130 },
-  { title: '级别', dataIndex: 'severity', width: 90, render: (value: string) => <Tag color={severityColor[value] ?? 'default'}>{value}</Tag> },
-  { title: '原因', dataIndex: 'reason', ellipsis: true, render: (value?: string) => value ?? '-' },
-  { title: '负载', dataIndex: 'payload', ellipsis: true, render: (value: Record<string, unknown>) => (value && Object.keys(value).length > 0 ? JSON.stringify(value) : '-') },
+  { title: '来源', dataIndex: 'source', width: 120, render: (value: string) => <Tag>{healthSourceLabel(value)}</Tag> },
+  { title: '事件', dataIndex: 'event_type', width: 160, render: (value: string) => healthEventTypeLabel(value) },
+  { title: '级别', dataIndex: 'severity', width: 90, render: (value: string) => <Tag color={severityColor[value] ?? 'default'}>{severityLabel(value)}</Tag> },
+  { title: '原因', dataIndex: 'reason', ellipsis: true, render: (value?: string) => healthReasonLabel(value) },
+  { title: '技术详情', dataIndex: 'payload', ellipsis: true, render: (value: Record<string, unknown>) => (value && Object.keys(value).length > 0 ? JSON.stringify(value) : '-') },
   { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
 ]
 
@@ -49,7 +50,7 @@ export function HealthEventsPage() {
             onChange={setDeviceId}
             options={devices.map((device) => ({
               value: device.id,
-              label: `${shortID(device.id)} · ${device.serial} · ${device.lifecycle_status}`,
+              label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
             }))}
             notFoundContent={devicesQuery.isFetching ? '加载中…' : '无设备'}
           />

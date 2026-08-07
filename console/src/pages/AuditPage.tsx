@@ -5,6 +5,7 @@ import type { AuditEvent } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { actorTypeLabel, auditActionLabel, resourceTypeLabel } from '../api/labels'
 import { PageTable } from '../components/PageTable'
 
 const actorColor: Record<string, string> = {
@@ -16,10 +17,10 @@ const actorColor: Record<string, string> = {
 
 const columns: TableColumnsType<AuditEvent> = [
   { title: '时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
-  { title: 'actor', dataIndex: 'actor_type', width: 90, render: (value: string) => <Tag color={actorColor[value] ?? 'default'}>{value}</Tag> },
-  { title: 'actor_id', dataIndex: 'actor_id', width: 150, render: (value: string) => shortID(value) },
-  { title: '动作', dataIndex: 'action', width: 180, render: (value: string) => <Typography.Text code>{value}</Typography.Text> },
-  { title: '资源类型', dataIndex: 'resource_type', width: 130 },
+  { title: '操作来源', dataIndex: 'actor_type', width: 110, render: (value: string) => <Tag color={actorColor[value] ?? 'default'}>{actorTypeLabel(value)}</Tag> },
+  { title: '操作者', dataIndex: 'actor_id', width: 150, render: (value: string) => shortID(value) },
+  { title: '操作内容', dataIndex: 'action', width: 180, render: (value: string) => <Typography.Text>{auditActionLabel(value)}</Typography.Text> },
+  { title: '资源类型', dataIndex: 'resource_type', width: 140, render: (value: string) => resourceTypeLabel(value) },
   { title: '资源 ID', dataIndex: 'resource_id', width: 170, render: (value: string) => shortID(value) },
   { title: '请求 ID', dataIndex: 'request_id', width: 170, render: (value: string) => shortID(value) },
   { title: '原因', dataIndex: 'reason', ellipsis: true, render: (value?: string) => value ?? '-' },

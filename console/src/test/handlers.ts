@@ -59,6 +59,24 @@ export const sampleDevices: Device[] = [
     lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
+  {
+    id: 'device_00000000000002', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    provider_ref: 'emulator-5556', lifecycle_mode: 'rebuild', serial: 'emulator-5556', capabilities: {},
+    lifecycle_status: 'busy', health_status: 'healthy', consecutive_failures: 0,
+    created_at: '2026-08-06T00:01:00Z', updated_at: '2026-08-06T00:01:00Z',
+  },
+  {
+    id: 'device_00000000000003', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    provider_ref: 'emulator-5558', lifecycle_mode: 'rebuild', serial: 'emulator-5558', capabilities: {},
+    lifecycle_status: 'quarantined', health_status: 'unhealthy', health_reason: 'health check failed', consecutive_failures: 3,
+    created_at: '2026-08-06T00:02:00Z', updated_at: '2026-08-06T00:02:00Z',
+  },
+  {
+    id: 'device_00000000000004', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    provider_ref: 'emulator-5560', lifecycle_mode: 'rebuild', serial: 'emulator-5560', capabilities: {},
+    lifecycle_status: 'deleted', health_status: 'unhealthy', consecutive_failures: 0,
+    created_at: '2026-08-06T00:03:00Z', updated_at: '2026-08-06T00:03:00Z',
+  },
 ]
 
 export const sampleReservations: Reservation[] = [
@@ -114,9 +132,16 @@ export const handlers = [
     return HttpResponse.json(pageEnvelope(samplePoolImages, samplePoolImages.length, page, size))
   }),
   http.get('/api/v1/devices', ({ request }) => {
-    const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
-    const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
-    return HttpResponse.json(pageEnvelope(sampleDevices, sampleDevices.length, page, size))
+    const search = new URL(request.url).searchParams
+    const page = Number(search.get('page') ?? 1)
+    const size = Number(search.get('page_size') ?? 20)
+    const lifecycle = search.get('lifecycle_status')
+    const health = search.get('health_status')
+    const filtered = sampleDevices.filter((device) =>
+      (!lifecycle || device.lifecycle_status === lifecycle) && (!health || device.health_status === health),
+    )
+    const start = (page - 1) * size
+    return HttpResponse.json(pageEnvelope(filtered.slice(start, start + size), filtered.length, page, size))
   }),
   http.get('/api/v1/device-reservations', ({ request }) => {
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)

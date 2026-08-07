@@ -269,8 +269,36 @@ func (handler *managementHandler) listDevices(writer http.ResponseWriter, reques
 		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
 		return
 	}
-	value, err := handler.service.ListDevices(request.Context(), page)
+	filter, ok := deviceFilter(request)
+	if !ok {
+		writeInvalid(writer, request, "lifecycle_status or health_status is invalid")
+		return
+	}
+	value, err := handler.service.ListDevices(request.Context(), page, filter)
 	handler.write(writer, request, http.StatusOK, value, err)
+}
+
+func deviceFilter(request *http.Request) (management.DeviceFilter, bool) {
+	query := request.URL.Query()
+	filter := management.DeviceFilter{PoolID: query.Get("pool_id")}
+	if value := query.Get("lifecycle_status"); value != "" {
+		filter.LifecycleStatus = domain.DeviceLifecycleStatus(value)
+		switch filter.LifecycleStatus {
+		case domain.DeviceProvisioning, domain.DeviceBooting, domain.DeviceReady, domain.DeviceReserved,
+			domain.DeviceBusy, domain.DeviceRecycling, domain.DeviceStopped, domain.DeviceQuarantined, domain.DeviceDeleted:
+		default:
+			return management.DeviceFilter{}, false
+		}
+	}
+	if value := query.Get("health_status"); value != "" {
+		filter.HealthStatus = domain.HealthStatus(value)
+		switch filter.HealthStatus {
+		case domain.HealthUnknown, domain.HealthHealthy, domain.HealthDegraded, domain.HealthUnhealthy:
+		default:
+			return management.DeviceFilter{}, false
+		}
+	}
+	return filter, true
 }
 func (handler *managementHandler) getDevice(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {

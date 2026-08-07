@@ -50,7 +50,7 @@ export function ReasonActionModal({
       confirmLoading={confirmLoading}
       onCancel={onCancel}
       onOk={() => form.submit()}
-      destroyOnClose
+      destroyOnHidden
     >
       {description ? <Typography.Paragraph type="secondary">{description}</Typography.Paragraph> : null}
       <Form<ReasonFormValues> form={form} layout="vertical" onFinish={submit}>

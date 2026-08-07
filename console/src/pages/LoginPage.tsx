@@ -29,7 +29,7 @@ export function LoginPage() {
   return (
     <div className="login-shell">
       <section className="login-hero">
-        <div className="login-brand"><CloudServerOutlined /> ALCOR DEVICE FARM</div>
+        <div className="login-brand"><CloudServerOutlined /> ALCOR 设备农场</div>
         <div className="login-hero-copy">
           <Typography.Title>统一管理每一台<br />测试设备</Typography.Title>
           <Typography.Paragraph>
@@ -45,7 +45,7 @@ export function LoginPage() {
       </section>
       <section className="login-panel">
         <Card className="login-card" variant="borderless">
-          <div className="login-card-kicker">WELCOME BACK</div>
+          <div className="login-card-kicker">欢迎回来</div>
           <Typography.Title level={2}>设备农场控制台登录</Typography.Title>
           <Typography.Paragraph type="secondary">使用管理员账户进入设备资源控制台</Typography.Paragraph>
         <Form<LoginValues> layout="vertical" onFinish={onSubmit}>

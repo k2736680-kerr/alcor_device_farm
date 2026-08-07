@@ -342,8 +342,8 @@ func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID st
 func (service *Service) RemoveDeviceFromPool(ctx context.Context, poolID, deviceID string) error {
 	return service.store.RemoveDeviceFromPool(ctx, poolID, deviceID)
 }
-func (service *Service) ListDevices(ctx context.Context, page paging.Page) (paging.Result[Device], error) {
-	items, total, err := service.store.ListDevices(ctx, page)
+func (service *Service) ListDevices(ctx context.Context, page paging.Page, filter DeviceFilter) (paging.Result[Device], error) {
+	items, total, err := service.store.ListDevices(ctx, page, filter)
 	if err != nil {
 		return paging.Result[Device]{}, err
 	}

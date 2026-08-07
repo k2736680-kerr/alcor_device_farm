@@ -10,8 +10,8 @@ describe('ImagesPage', () => {
     expect(await screen.findByText('android-14')).toBeInTheDocument()
     expect(screen.getByText('android-15')).toBeInTheDocument()
     expect(screen.getByText('共 2 条')).toBeInTheDocument()
-    // status tags reflect the image status
-    expect(screen.getByText('ready')).toBeInTheDocument()
-    expect(screen.getByText('failed')).toBeInTheDocument()
+    // 状态标签使用面向用户的中文，不直接暴露内部枚举值。
+    expect(screen.getByText('可用')).toBeInTheDocument()
+    expect(screen.getByText('验证失败')).toBeInTheDocument()
   })
 })

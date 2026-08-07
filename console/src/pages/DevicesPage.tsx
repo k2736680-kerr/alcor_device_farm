@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Form, Input, Modal, Space, Tag, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Form, Input, Modal, Segmented, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -14,6 +14,14 @@ import type { Device } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import {
+  deviceKindLabel,
+  healthReasonLabel,
+  healthStatusLabel,
+  lifecycleModeLabel,
+  lifecycleStatusLabel,
+  providerTypeLabel,
+} from '../api/labels'
 import { PageTable } from '../components/PageTable'
 
 const lifecycleColor: Record<string, string> = {
@@ -36,6 +44,7 @@ const healthColor: Record<string, string> = {
 }
 
 type DeviceAction = 'restart' | 'rebuild' | 'quarantine' | 'unquarantine'
+type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
 
 interface ActionState {
   device: Device
@@ -72,6 +81,7 @@ export function DevicesPage() {
   const queryClient = useQueryClient()
   const [form] = Form.useForm<ReasonValues>()
   const [actionState, setActionState] = useState<ActionState | null>(null)
+  const [view, setView] = useState<DeviceView>('available')
 
   const restart = useRestartDevice()
   const rebuild = useRebuildDevice()
@@ -136,34 +146,74 @@ export function DevicesPage() {
   }
 
   const columns: TableColumnsType<Device> = [
-    { title: 'ID', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '序列号', dataIndex: 'serial', ellipsis: true, render: (value: string) => shortID(value) },
-    { title: '类型', dataIndex: 'device_kind', width: 90 },
-    { title: '提供方', dataIndex: 'provider_type', width: 130 },
-    { title: '生命周期', dataIndex: 'lifecycle_status', width: 110, render: (value: string) => <Tag color={lifecycleColor[value] ?? 'default'}>{value}</Tag> },
-    { title: '健康', dataIndex: 'health_status', width: 90, render: (value: string) => <Tag color={healthColor[value] ?? 'default'}>{value}</Tag> },
-    { title: '模式', dataIndex: 'lifecycle_mode', width: 110 },
-    { title: '宿主机', dataIndex: 'host_id', width: 150, render: (value: string) => shortID(value) },
-    { title: 'ADB', dataIndex: 'adb_endpoint', ellipsis: true, render: (value?: string) => value ?? '-' },
+    { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
+    { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
+    { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
+    { title: '运行方式', dataIndex: 'provider_type', width: 130, render: (value: string) => providerTypeLabel(value) },
+    { title: '设备状态', dataIndex: 'lifecycle_status', width: 110, render: (value: string) => <Tag color={lifecycleColor[value] ?? 'default'}>{lifecycleStatusLabel(value)}</Tag> },
+    { title: '健康状态', dataIndex: 'health_status', width: 110, render: (value: string) => <Tag color={healthColor[value] ?? 'default'}>{healthStatusLabel(value)}</Tag> },
+    { title: '清理方式', dataIndex: 'lifecycle_mode', width: 110, render: (value: string) => lifecycleModeLabel(value) },
+    { title: '所属宿主机', dataIndex: 'host_id', width: 150, render: (value: string) => shortID(value) },
+    { title: 'ADB 地址', dataIndex: 'adb_endpoint', width: 170, ellipsis: true, render: (value?: string) => value ?? '-' },
+    { title: '状态说明', dataIndex: 'health_reason', width: 220, ellipsis: true, render: (value?: string) => healthReasonLabel(value) },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     actionColumn,
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isFetching } = useListDevices({ page, page_size: pageSize })
+  const availableCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' })
+  const busyCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' })
+  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' })
+  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'deleted' })
+  const allCountQuery = useListDevices({ page: 1, page_size: 1 })
+  const availableCount = unwrapPage<Device>(availableCountQuery.data)?.total ?? 0
+  const busyCount = unwrapPage<Device>(busyCountQuery.data)?.total ?? 0
+  const quarantinedCount = unwrapPage<Device>(quarantinedCountQuery.data)?.total ?? 0
+  const deletedCount = unwrapPage<Device>(deletedCountQuery.data)?.total ?? 0
+  const allCount = unwrapPage<Device>(allCountQuery.data)?.total ?? 0
+  const viewFilter =
+    view === 'available' ? { lifecycle_status: 'ready' as const, health_status: 'healthy' as const }
+    : view === 'busy' ? { lifecycle_status: 'busy' as const }
+    : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
+    : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
+    : {}
+  const { data, isFetching } = useListDevices({ page, page_size: pageSize, ...viewFilter })
   const result = unwrapPage<Device>(data)
 
   return (
     <>
-      <PageTable<Device>
-        columns={columns}
-        dataSource={result?.items}
-        loading={isFetching}
-        total={result?.total ?? 0}
-        page={result?.page ?? page}
-        pageSize={result?.page_size ?? pageSize}
-        onPageChange={onPageChange}
-      />
+      <Space direction="vertical" size={14} style={{ display: 'flex' }}>
+        <Alert
+          type="info"
+          showIcon
+          message="默认只显示当前可以预约的设备"
+          description="隔离设备用于排查故障，已删除设备只保留历史记录；它们都不会计入可用设备数量。"
+        />
+        <Segmented<DeviceView>
+          value={view}
+          options={[
+            { label: `可用设备（${availableCount}）`, value: 'available' },
+            { label: `使用中（${busyCount}）`, value: 'busy' },
+            { label: `隔离设备（${quarantinedCount}）`, value: 'quarantined' },
+            { label: `已删除历史（${deletedCount}）`, value: 'deleted' },
+            { label: `全部记录（${allCount}）`, value: 'all' },
+          ]}
+          onChange={(nextView) => {
+            setView(nextView)
+            onPageChange(1, pageSize)
+          }}
+        />
+        <PageTable<Device>
+          columns={columns}
+          dataSource={result?.items}
+          loading={isFetching}
+          total={result?.total ?? 0}
+          page={result?.page ?? page}
+          pageSize={result?.page_size ?? pageSize}
+          onPageChange={onPageChange}
+          locale={{ emptyText: '当前分类下没有设备' }}
+        />
+      </Space>
       <Modal
         open={actionState !== null}
         title={actionState ? `${actionTitles[actionState.action]} · ${shortID(actionState.device.id)}` : ''}
@@ -172,7 +222,7 @@ export function DevicesPage() {
         confirmLoading={pending}
         onCancel={() => setActionState(null)}
         onOk={() => form.submit()}
-        destroyOnClose
+        destroyOnHidden
       >
         <Typography.Paragraph type="secondary">
           {actionState?.action === 'quarantine' && '隔离后设备将不再接受新预约，已激活会话不受影响。'}

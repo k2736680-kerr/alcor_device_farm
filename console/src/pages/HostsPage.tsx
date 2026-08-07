@@ -12,6 +12,7 @@ import type { DeviceHost } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { hostStatusLabel, hostTypeLabel } from '../api/labels'
 import { PageTable } from '../components/PageTable'
 import { ReasonActionModal } from '../components/ReasonActionModal'
 
@@ -58,10 +59,10 @@ export function HostsPage() {
   }
 
   const columns: TableColumnsType<DeviceHost> = [
-    { title: 'ID', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
+    { title: '宿主机编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 140 },
-    { title: '类型', dataIndex: 'host_type', width: 130 },
-    { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{value}</Tag> },
+    { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
+    { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
     { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
     { title: '地址', dataIndex: 'address', ellipsis: true, render: (value?: string) => value ?? '-' },
     { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 160, render: (value?: string) => formatTime(value) },

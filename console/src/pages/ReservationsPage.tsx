@@ -25,6 +25,7 @@ import type { DevicePool, Reservation } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { ownerTypeLabel, poolStatusLabel, reservationStatusLabel } from '../api/labels'
 import { PageTable } from '../components/PageTable'
 import { ReasonActionModal } from '../components/ReasonActionModal'
 
@@ -124,13 +125,13 @@ export function ReservationsPage() {
   }
 
   const columns: TableColumnsType<Reservation> = [
-    { title: 'ID', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor[value] ?? 'default'}>{value}</Tag> },
-    { title: 'owner_type', dataIndex: 'owner_type', width: 110 },
-    { title: 'owner_id', dataIndex: 'owner_id', width: 170, render: (value: string) => shortID(value) },
+    { title: '预约编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
+    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor[value] ?? 'default'}>{reservationStatusLabel(value)}</Tag> },
+    { title: '预约类型', dataIndex: 'owner_type', width: 110, render: (value: string) => ownerTypeLabel(value) },
+    { title: '预约归属', dataIndex: 'owner_id', width: 170, render: (value: string) => shortID(value) },
     { title: '设备池', dataIndex: 'pool_id', width: 150, render: (value: string) => shortID(value) },
     { title: '设备', dataIndex: 'device_id', width: 150, render: (value?: string) => (value ? shortID(value) : '-') },
-    { title: '租期(s)', dataIndex: 'lease_seconds', width: 90 },
+    { title: '租期（秒）', dataIndex: 'lease_seconds', width: 100 },
     { title: '开始', dataIndex: 'starts_at', width: 160, render: (value?: string) => formatTime(value) },
     { title: '到期', dataIndex: 'expires_at', width: 160, render: (value?: string) => formatTime(value) },
     {
@@ -161,7 +162,7 @@ export function ReservationsPage() {
     <>
       <Space style={{ marginBottom: 12 }}>
         <Button type="primary" onClick={() => setCreateOpen(true)}>创建人工预约</Button>
-        <Typography.Text type="secondary">列表每 5 秒自动刷新，等待分配的设备会变为 active。</Typography.Text>
+        <Typography.Text type="secondary">列表每 5 秒自动刷新，分配成功后状态会变为“使用中”。</Typography.Text>
       </Space>
       <PageTable<Reservation>
         columns={columns}
@@ -184,7 +185,7 @@ export function ReservationsPage() {
           setCreateOpen(false)
         }}
         onOk={() => createForm.submit()}
-        destroyOnClose
+        destroyOnHidden
       >
         <FormValues form={createForm} onSubmit={submitCreate} pools={pools} poolsLoading={poolsQuery.isFetching} />
       </Modal>
@@ -197,7 +198,7 @@ export function ReservationsPage() {
         confirmLoading={extend.isPending}
         onCancel={() => setExtendFor(null)}
         onOk={() => extendForm.submit()}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form<ExtendFormValues> form={extendForm} layout="vertical" onFinish={submitExtend}>
           <Form.Item name="additional_seconds" label="续租时长(s)" rules={[{ required: true, message: '请输入续租时长' }]}>
@@ -248,13 +249,13 @@ function FormValues({
         <Select
           loading={poolsLoading}
           placeholder="选择设备池"
-          options={pools.map((pool) => ({ value: pool.id, label: `${pool.name} · ${pool.status}` }))}
+          options={pools.map((pool) => ({ value: pool.id, label: `${pool.name} · ${poolStatusLabel(pool.status)}` }))}
         />
       </Form.Item>
       <Form.Item label="预约所有者">
         <Input aria-label="预约所有者" value="由当前登录会话确定，浏览器不可修改" disabled />
       </Form.Item>
-      <Form.Item name="lease_seconds" label="租期(s)" initialValue={1800} rules={[{ required: true, message: '请输入租期' }]}>
+      <Form.Item name="lease_seconds" label="租期（秒）" initialValue={1800} rules={[{ required: true, message: '请输入租期' }]}>
         <InputNumber min={60} max={86400} style={{ width: '100%' }} />
       </Form.Item>
     </Form>

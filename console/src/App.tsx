@@ -31,6 +31,7 @@ import { DevicesPage } from './pages/DevicesPage'
 import { ReservationsPage } from './pages/ReservationsPage'
 import { HealthEventsPage } from './pages/HealthEventsPage'
 import { AuditPage } from './pages/AuditPage'
+import { consoleDisplayName, roleLabel } from './api/labels'
 
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
@@ -82,6 +83,8 @@ export default function App() {
     return <LoginPage />
   }
 
+  const displayName = consoleDisplayName(session.user.display_name)
+
   return (
     <Layout className="console-shell">
       <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={72}>
@@ -89,7 +92,7 @@ export default function App() {
           <div className="console-brand-mark"><CloudServerOutlined /></div>
           <div className="console-brand-copy">
             <strong>Alcor Farm</strong>
-            <span>DEVICE CONTROL</span>
+            <span>设备控制</span>
           </div>
         </div>
         <div className="console-nav-label">资源与调度</div>
@@ -108,9 +111,9 @@ export default function App() {
             </Typography.Title>
           </div>
           <Space>
-            <Tag className="console-role-tag" color="blue">{session.user.role}</Tag>
-            <Avatar size={34}>{session.user.display_name.slice(0, 1)}</Avatar>
-            <Typography.Text strong>{session.user.display_name}</Typography.Text>
+            <Tag className="console-role-tag" color="blue">{roleLabel(session.user.role)}</Tag>
+            <Avatar size={34}>{displayName.slice(0, 1)}</Avatar>
+            <Typography.Text strong>{displayName}</Typography.Text>
             <Button type="text" icon={<LogoutOutlined />} loading={logout.isPending} onClick={() => logout.mutate()}>
               退出
             </Button>
