@@ -73,6 +73,9 @@ export function PoolsPage() {
   const invalidatePoolImages = () => {
     void queryClient.invalidateQueries({ queryKey: getListDevicePoolImagesQueryKey() })
   }
+  const invalidateDevices = () => {
+    void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
+  }
 
   const poolImagesQuery = useListDevicePoolImages(
     configPool?.id ?? '',
@@ -130,6 +133,7 @@ export function PoolsPage() {
           setEditTarget(null)
           invalidatePoolImages()
           invalidatePools()
+          invalidateDevices()
         },
         onError: (error) => message.error(`更新失败：${errorText(error)}`),
       },
@@ -169,6 +173,7 @@ export function PoolsPage() {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
           message.success(`镜像目标已停用（request_id: ${requestID}）`)
           invalidatePoolImages()
+          invalidateDevices()
         },
         onError: (error) => message.error(`停用失败：${errorText(error)}`),
       },

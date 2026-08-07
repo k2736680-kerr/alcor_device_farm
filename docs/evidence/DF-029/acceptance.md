@@ -181,6 +181,31 @@ Rollback container: alcor-device-farm-server-df029-capacity-rollback-20260807（
 
 因此页面中的“6”只会出现在“全部记录”分类中，表示设备数据记录总数；仪表盘主数字和默认设备列表均为当前真正可用的 1 台。
 
+### 首页单屏与任务自动刷新复验
+
+2026-08-07 根据实际使用反馈继续收敛首页信息：删除次数、累计预约等历史信息不再出现在运行首页，历史记录仍保留在设备分类和审计页面。首页只展示当前可用、使用中、宿主机、设备池、基础设施状态、进行中的设备任务和需要处理的隔离告警。
+
+任务刷新规则：
+
+- 目标设备数保存成功后立即失效设备查询缓存；
+- 存在 `provisioning/booting` 时合并显示为“创建中”；
+- 存在 `recycling/stopped` 时合并显示为“清理中”；
+- 创建或清理进行中时每 5 秒自动刷新，任务结束后自动恢复为每 30 秒刷新；
+- 首页提供“刷新状态”按钮和最近更新时间，不再要求用户按 F5；
+- 针对反馈截图的 1920×919 分辨率压缩首页留白、卡片和状态行，桌面布局高度控制在内容区域单屏范围内；窄屏仍保留响应式滚动。
+
+验证结果：
+
+```text
+PASS Vitest: 7 files / 12 tests
+PASS Orval + TypeScript + Vite production build
+Server image: alcor-device-farm:df029-dashboard-live-20260807
+Image ID: sha256:5d6c553ee1a1c05b2df3049edce2e16efaddf2109673cbcc96f6c4cbad25450e
+/readyz=200
+/console/=200
+当前真实设备：ready=2, creating=0, cleaning=0
+```
+
 ### 当前容量范围与后续验证
 
 两台 Emulator 同时运行时单实例约占 4.2 GiB 和 3.4 GiB，可用内存一度约 5.7 GiB，并已出现 Swap 压力。为避免宿主机失稳，本次没有执行真实 `3 → 1`：
