@@ -260,7 +260,10 @@ export function PoolsPage() {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isFetching } = useListDevicePools({ page, page_size: pageSize })
+  const { data, isLoading } = useListDevicePools(
+    { page, page_size: pageSize },
+    { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
+  )
   const result = unwrapPage<DevicePool>(data)
 
   return (
@@ -268,7 +271,7 @@ export function PoolsPage() {
       <PageTable<DevicePool>
         columns={columns}
         dataSource={result?.items}
-        loading={isFetching}
+        loading={isLoading}
         total={result?.total ?? 0}
         page={result?.page ?? page}
         pageSize={result?.page_size ?? pageSize}

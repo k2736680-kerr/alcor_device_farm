@@ -155,7 +155,10 @@ export function ReservationsPage() {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isFetching } = useListDeviceReservations({ page, page_size: pageSize }, { query: { refetchInterval: 5000 } })
+  const { data, isLoading } = useListDeviceReservations(
+    { page, page_size: pageSize },
+    { query: { refetchInterval: 5_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
+  )
   const result = unwrapPage<Reservation>(data)
 
   return (
@@ -167,7 +170,7 @@ export function ReservationsPage() {
       <PageTable<Reservation>
         columns={columns}
         dataSource={result?.items}
-        loading={isFetching}
+        loading={isLoading}
         total={result?.total ?? 0}
         page={result?.page ?? page}
         pageSize={result?.page_size ?? pageSize}

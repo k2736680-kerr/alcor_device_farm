@@ -71,13 +71,16 @@ export function ImagesPage() {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isFetching } = useListDeviceImages({ page, page_size: pageSize })
+  const { data, isLoading } = useListDeviceImages(
+    { page, page_size: pageSize },
+    { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
+  )
   const result = unwrapPage<DeviceImage>(data)
   return (
     <PageTable<DeviceImage>
       columns={columns}
       dataSource={result?.items}
-      loading={isFetching}
+      loading={isLoading}
       total={result?.total ?? 0}
       page={result?.page ?? page}
       pageSize={result?.page_size ?? pageSize}

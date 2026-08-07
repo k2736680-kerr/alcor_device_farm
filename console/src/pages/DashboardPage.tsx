@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Button, Card, Col, Row, Space, Statistic, Tag, Typography } from 'antd'
 import { Link } from 'react-router-dom'
 import {
@@ -20,14 +20,13 @@ import {
 } from '../api/generated/device-farm'
 import { unwrapPage } from '../api/unwrap'
 
-const FAST_REFRESH_MS = 5_000
-const IDLE_REFRESH_MS = 30_000
+const DEVICE_REFRESH_MS = 5_000
+const INFRASTRUCTURE_REFRESH_MS = 30_000
 
 export function DashboardPage() {
-  const [fastPolling, setFastPolling] = useState(false)
-  const deviceRefreshInterval = fastPolling ? FAST_REFRESH_MS : IDLE_REFRESH_MS
-  const deviceQueryOptions = { query: { refetchInterval: deviceRefreshInterval } }
-  const infrastructureQueryOptions = { query: { refetchInterval: IDLE_REFRESH_MS } }
+  const [manualRefreshing, setManualRefreshing] = useState(false)
+  const deviceQueryOptions = { query: { refetchInterval: DEVICE_REFRESH_MS, refetchOnWindowFocus: true, refetchOnReconnect: true } }
+  const infrastructureQueryOptions = { query: { refetchInterval: INFRASTRUCTURE_REFRESH_MS, refetchOnWindowFocus: true, refetchOnReconnect: true } }
 
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 1 }, infrastructureQueryOptions)
   const poolsQuery = useListDevicePools({ page: 1, page_size: 1 }, infrastructureQueryOptions)
@@ -66,15 +65,15 @@ export function DashboardPage() {
     quarantinedDevicesQuery,
   ]
   const connected = !queries.some((query) => query.isError)
-  const isRefreshing = queries.some((query) => query.isFetching)
   const lastUpdatedAt = Math.max(...queries.map((query) => query.dataUpdatedAt), 0)
 
-  useEffect(() => {
-    setFastPolling(hasRunningTask)
-  }, [hasRunningTask])
-
-  const refreshAll = () => {
-    void Promise.all(queries.map((query) => query.refetch()))
+  const refreshAll = async () => {
+    setManualRefreshing(true)
+    try {
+      await Promise.all(queries.map((query) => query.refetch()))
+    } finally {
+      setManualRefreshing(false)
+    }
   }
 
   const items = [
@@ -93,7 +92,7 @@ export function DashboardPage() {
           <Typography.Paragraph>只展示当前容量、进行中的任务和需要处理的异常。</Typography.Paragraph>
         </div>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={isRefreshing} onClick={refreshAll}>刷新状态</Button>
+          <Button icon={<ReloadOutlined />} loading={manualRefreshing} onClick={() => void refreshAll()}>刷新状态</Button>
           <Link to="/devices"><Button>查看设备</Button></Link>
           <Link to="/reservations"><Button type="primary" icon={<PlusOutlined />}>创建预约</Button></Link>
         </Space>
@@ -146,7 +145,7 @@ export function DashboardPage() {
           <Card
             className="dashboard-panel task-panel"
             title="当前任务"
-            extra={<span className="refresh-status">{hasRunningTask ? '每 5 秒自动刷新' : '每 30 秒自动刷新'}</span>}
+            extra={<span className="refresh-status">每 5 秒自动更新</span>}
           >
             <div className="task-status-grid">
               <div className={creatingCount > 0 ? 'task-status active' : 'task-status'}>

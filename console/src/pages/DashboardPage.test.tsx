@@ -32,7 +32,7 @@ describe('DashboardPage current operation view', () => {
 
     expect(screen.getByText('当前任务')).toBeInTheDocument()
     expect(await screen.findByText('当前没有创建或清理任务。')).toBeInTheDocument()
-    expect(screen.getByText('每 30 秒自动刷新')).toBeInTheDocument()
+    expect(screen.getByText('每 5 秒自动更新')).toBeInTheDocument()
     const quarantineWarning = screen.getByText('发现 1 台隔离设备，点击查看处理')
     expect(quarantineWarning).toBeInTheDocument()
     expect(quarantineWarning.closest('a')).toHaveAttribute('href', '/devices?view=quarantined')
@@ -69,7 +69,35 @@ describe('DashboardPage current operation view', () => {
     const cleaningStatus = cleaningLabel.closest('.task-status')
     expect(cleaningStatus).not.toBeNull()
     expect(within(cleaningStatus as HTMLElement).getByText('1')).toBeInTheDocument()
-    expect(await screen.findByText('每 5 秒自动刷新')).toBeInTheDocument()
+    expect(await screen.findByText('每 5 秒自动更新')).toBeInTheDocument()
     expect(screen.getByText(/完成后数量会自动更新/)).toBeInTheDocument()
   })
+
+  it('updates completed device tasks without a full page refresh', async () => {
+    const transitionalDevices: Device[] = [
+      ...sampleDevices,
+      {
+        ...sampleDevices[0],
+        id: 'device_00000000000007',
+        provider_ref: 'emulator-5566',
+        lifecycle_status: 'provisioning',
+      },
+    ]
+    let deviceRequests = 0
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const items = deviceRequests < 7 ? transitionalDevices : sampleDevices
+      deviceRequests += 1
+      return devicePage(items, request)
+    }))
+
+    renderWithProviders(<DashboardPage />)
+
+    const creatingLabel = await screen.findByText('创建中')
+    const creatingStatus = creatingLabel.closest('.task-status')
+    expect(creatingStatus).not.toBeNull()
+    await waitFor(() => expect(within(creatingStatus as HTMLElement).getByText('1')).toBeInTheDocument())
+
+    expect(await screen.findByText('当前没有创建或清理任务。', {}, { timeout: 7_000 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /刷\s*新状态/ })).not.toHaveClass('ant-btn-loading')
+  }, 10_000)
 })

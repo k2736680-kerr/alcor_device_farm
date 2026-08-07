@@ -86,7 +86,10 @@ export function HostsPage() {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isFetching } = useListDeviceHosts({ page, page_size: pageSize })
+  const { data, isLoading } = useListDeviceHosts(
+    { page, page_size: pageSize },
+    { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
+  )
   const result = unwrapPage<DeviceHost>(data)
 
   return (
@@ -94,7 +97,7 @@ export function HostsPage() {
       <PageTable<DeviceHost>
         columns={columns}
         dataSource={result?.items}
-        loading={isFetching}
+        loading={isLoading}
         total={result?.total ?? 0}
         page={result?.page ?? page}
         pageSize={result?.page_size ?? pageSize}

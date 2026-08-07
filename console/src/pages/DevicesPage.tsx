@@ -197,7 +197,7 @@ export function DevicesPage() {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const deviceQueryOptions = { query: { refetchInterval: 5_000 } }
+  const deviceQueryOptions = { query: { refetchInterval: 5_000, refetchOnWindowFocus: true, refetchOnReconnect: true } }
   const availableCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
   const busyCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' }, deviceQueryOptions)
   const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' }, deviceQueryOptions)
@@ -214,7 +214,7 @@ export function DevicesPage() {
     : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
     : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
     : {}
-  const { data, isFetching } = useListDevices({ page, page_size: pageSize, ...viewFilter }, deviceQueryOptions)
+  const { data, isLoading } = useListDevices({ page, page_size: pageSize, ...viewFilter }, deviceQueryOptions)
   const result = unwrapPage<Device>(data)
 
   return (
@@ -249,7 +249,7 @@ export function DevicesPage() {
         <PageTable<Device>
           columns={columns}
           dataSource={result?.items}
-          loading={isFetching}
+          loading={isLoading}
           total={result?.total ?? 0}
           page={result?.page ?? page}
           pageSize={result?.page_size ?? pageSize}

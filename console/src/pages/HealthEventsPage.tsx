@@ -31,8 +31,8 @@ export function HealthEventsPage() {
   const { page, pageSize, onPageChange } = useServerPage(20)
   const devicesQuery = useListDevices({ page: 1, page_size: 200 })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
-  const { data, isFetching } = useListDeviceHealthEvents(deviceId ?? '', { page, page_size: pageSize }, {
-    query: { enabled: Boolean(deviceId) },
+  const { data, isLoading } = useListDeviceHealthEvents(deviceId ?? '', { page, page_size: pageSize }, {
+    query: { enabled: Boolean(deviceId), refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true },
   })
   const result = unwrapPage<HealthEventRecord>(data)
 
@@ -59,7 +59,7 @@ export function HealthEventsPage() {
       <PageTable<HealthEventRecord>
         columns={columns}
         dataSource={deviceId ? result?.items : undefined}
-        loading={isFetching}
+        loading={isLoading}
         total={deviceId ? result?.total ?? 0 : 0}
         page={deviceId ? result?.page ?? page : 1}
         pageSize={deviceId ? result?.page_size ?? pageSize : pageSize}

@@ -29,13 +29,16 @@ const columns: TableColumnsType<AuditEvent> = [
 
 export function AuditPage() {
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isFetching } = useListDeviceAuditEvents({ page, page_size: pageSize })
+  const { data, isLoading } = useListDeviceAuditEvents(
+    { page, page_size: pageSize },
+    { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
+  )
   const result = unwrapPage<AuditEvent>(data)
   return (
     <PageTable<AuditEvent>
       columns={columns}
       dataSource={result?.items}
-      loading={isFetching}
+      loading={isLoading}
       total={result?.total ?? 0}
       page={result?.page ?? page}
       pageSize={result?.page_size ?? pageSize}

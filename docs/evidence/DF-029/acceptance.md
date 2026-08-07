@@ -217,3 +217,30 @@ Image ID: sha256:5d6c553ee1a1c05b2df3049edce2e16efaddf2109673cbcc96f6c4cbad25450
 - `3 → 1` 删除两个最旧空闲设备、保留最新设备的算法已由 PostgreSQL 17.10 集成测试覆盖；
 - 真实 Docker/KVM 环境已用 `2 → 1` 覆盖实际 delete Command、容器、网络、卷和 Endpoint 清理；
 - 用户确认当前服务器暂按最多两台运行并接受本次验收结果，DF-029 据此完成；更换高内存正式服务器后，再根据真实内存设置目标上限并补充 `3 → 1` 容量压力验证，该验证不阻塞当前自动扩缩容能力交付。
+
+### 自动刷新体验修复
+
+2026-08-07 复查用户反馈后确认两个前端问题：后台轮询共用 `isFetching` 驱动刷新按钮和表格 loading，导致每轮自动请求时界面反复显示“刷新中”；首页空闲时每 30 秒才检查一次设备任务，并且全局关闭了窗口重新聚焦刷新，浏览器标签页挂起后容易保留旧状态。
+
+修复后：
+
+- 首页设备数量、创建中、清理中和隔离数量固定每 5 秒自动更新，不再先等待 30 秒发现任务；
+- 切回浏览器标签页或网络恢复时自动重新获取最新状态；
+- 后台自动轮询不再触发“刷新状态”按钮和表格的 loading，只有用户手动点击刷新或首次加载时显示；
+- 设备与预约列表每 5 秒更新；宿主机、镜像、设备池、健康事件和审计列表每 10 秒更新；
+- 新增自动化用例真实等待一个 5 秒周期，确认“创建中 1 台”无需点击或整页刷新即可自动变为“当前没有创建或清理任务”。
+
+验证与部署结果：
+
+```text
+PASS Vitest: 7 files / 15 tests
+PASS TypeScript + Vite production build
+PASS scripts/dev.ps1 -Task check
+Server image: alcor-device-farm:console-auto-refresh-20260807
+Image ID: sha256:2cce7cf396a688063fbde5f3469464c37bcfc137353579f93f6b4cc4298b349a
+Rollback container: alcor-device-farm-server-df030-v2-rollback-20260807（stopped）
+/readyz=200
+/console/=200
+当前目标：min_ready/max_instances=1/1
+当前设备：ready=1, creating=0, cleaning=0
+```
