@@ -30,6 +30,8 @@
 | DF-026 | completed | `4b1d7d1 DF-026 本地E0验收完成` | `docs/evidence/DF-026/acceptance.md` |
 | DF-027 | completed | `190bbc6 完成DF-027设备操作、人工预约与STF远控页面验收` | `docs/evidence/DF-027/acceptance.md` |
 | DF-028 | completed | `92fa8a8 实现DF-028控制台部署和真实Web验收链路` | `docs/evidence/DF-028/acceptance.md` |
+| DF-029 | completed | `ccf2940 完成后台设备容量自动扩缩容` | `docs/evidence/DF-029/acceptance.md` |
+| DF-030 | completed | `1629edb 完成隔离设备安全删除` | `docs/evidence/DF-030/acceptance.md` |
 
 ## 当前剩余条件
 
