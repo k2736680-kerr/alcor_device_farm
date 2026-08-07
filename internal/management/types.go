@@ -39,15 +39,18 @@ type DeviceAudit struct {
 }
 
 type DeviceOperation struct {
-	CommandID         string
-	CommandType       string
-	IdempotencyKey    string
-	Payload           map[string]any
-	MaxAttempts       int
-	Device            Device
-	ExpectedLifecycle domain.DeviceLifecycleStatus
-	ExpectedHealth    domain.HealthStatus
-	Audit             DeviceAudit
+	CommandID                  string
+	CommandType                string
+	IdempotencyKey             string
+	Payload                    map[string]any
+	MaxAttempts                int
+	Device                     Device
+	ExpectedLifecycle          domain.DeviceLifecycleStatus
+	ExpectedHealth             domain.HealthStatus
+	Audit                      DeviceAudit
+	RequireNoActiveReservation bool
+	RequireNoActiveCommand     bool
+	DisableMemberships         bool
 }
 
 type Image struct {

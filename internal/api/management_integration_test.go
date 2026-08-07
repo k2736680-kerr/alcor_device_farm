@@ -231,6 +231,82 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 	completeNextManagementCommand(t, environment, host.ID, "rebuild", true)
 
+	deleteCandidate, err := environment.service.ProvisionMockDevice(context.Background(), management.ProvisionMockDeviceInput{
+		ID: "device_delete_00000001", HostID: host.ID, ImageID: image.ID, ProviderRef: "mock-api-device-delete",
+		Capabilities: map[string]any{"apiLevel": 34, "platformName": "Android"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices",
+		map[string]any{"device_id": deleteCandidate.ID}, serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
+		reasonBody(), serviceToken, "device-delete-ready"), http.StatusConflict)
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deleteCandidate.ID+"/quarantines",
+		reasonBody(), serviceToken, ""), http.StatusOK)
+	if _, err := environment.db.Pool().Exec(context.Background(), `INSERT INTO device_reservations
+		(id,client_id,pool_id,device_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,
+		 idempotency_key,starts_at,expires_at)
+		VALUES('reservation_delete_0001','console-test',$1,$2,'manual','owner_delete_00001','{}',1800,'active',
+		'delete-active-reservation',clock_timestamp(),clock_timestamp()+interval '30 minutes')`, pool.ID, deleteCandidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
+		reasonBody(), serviceToken, "device-delete-active"), http.StatusConflict)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_reservations SET
+		status='force_released',released_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE id='reservation_delete_0001'`); err != nil {
+		t.Fatal(err)
+	}
+	deleteResponse := environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
+		reasonBody(), serviceToken, "device-delete-accepted")
+	assertStatus(t, deleteResponse, http.StatusAccepted)
+	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
+		reasonBody(), serviceToken, "device-delete-accepted"), http.StatusAccepted)
+	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
+		reasonBody(), serviceToken, "device-delete-second-command"), http.StatusConflict)
+	assertCommandCount(t, environment.db, deleteCandidate.ID, "delete", 1)
+	var enabledMemberships int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_pool_devices
+		WHERE device_id=$1 AND enabled`, deleteCandidate.ID).Scan(&enabledMemberships); err != nil {
+		t.Fatal(err)
+	}
+	if enabledMemberships != 0 {
+		t.Fatalf("delete candidate enabled memberships=%d", enabledMemberships)
+	}
+	completeNextManagementCommand(t, environment, host.ID, "delete", true)
+	deletedDevice, err := environment.store.GetDevice(context.Background(), deleteCandidate.ID)
+	if err != nil || deletedDevice.LifecycleStatus != "deleted" || deletedDevice.ADBEndpoint != nil || deletedDevice.AppiumEndpoint != nil || deletedDevice.STFSerial != nil {
+		t.Fatalf("deleted management device=%#v error=%v", deletedDevice, err)
+	}
+	var deleteAudits int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_type='device' AND resource_id=$1 AND action='delete_device'`, deleteCandidate.ID).Scan(&deleteAudits); err != nil {
+		t.Fatal(err)
+	}
+	if deleteAudits != 1 {
+		t.Fatalf("delete device audits=%d", deleteAudits)
+	}
+
+	failedDeleteCandidate, err := environment.service.ProvisionMockDevice(context.Background(), management.ProvisionMockDeviceInput{
+		ID: "device_delete_00000002", HostID: host.ID, ImageID: image.ID, ProviderRef: "mock-api-device-delete-failure",
+		Capabilities: map[string]any{"apiLevel": 34, "platformName": "Android"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+failedDeleteCandidate.ID+"/quarantines",
+		reasonBody(), serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+failedDeleteCandidate.ID,
+		reasonBody(), serviceToken, "device-delete-failure"), http.StatusAccepted)
+	completeNextManagementCommand(t, environment, host.ID, "delete", false)
+	completeNextManagementCommand(t, environment, host.ID, "delete", false)
+	completeNextManagementCommand(t, environment, host.ID, "delete", false)
+	failedDeleteDevice, err := environment.store.GetDevice(context.Background(), failedDeleteCandidate.ID)
+	if err != nil || failedDeleteDevice.LifecycleStatus != "quarantined" || failedDeleteDevice.HealthStatus != "unhealthy" {
+		t.Fatalf("failed delete device=%#v error=%v", failedDeleteDevice, err)
+	}
+
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-failure"), http.StatusAccepted)
 	completeNextManagementCommand(t, environment, host.ID, "restart", false)
 	failedDevice, err := environment.store.GetDevice(context.Background(), device.ID)
@@ -292,7 +368,7 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodGet, "/api/v1/device-pools/id/images"}, {http.MethodPut, "/api/v1/device-pools/id/images/image-id"}, {http.MethodDelete, "/api/v1/device-pools/id/images/image-id"},
 		{http.MethodGet, "/api/v1/devices"}, {http.MethodGet, "/api/v1/devices/id"},
 		{http.MethodPost, "/api/v1/devices/id/restarts"}, {http.MethodPost, "/api/v1/devices/id/rebuilds"},
-		{http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
+		{http.MethodDelete, "/api/v1/devices/id"}, {http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
 		{http.MethodGet, "/api/v1/device-reservations"}, {http.MethodPost, "/api/v1/device-reservations"},
 		{http.MethodGet, "/api/v1/device-reservations/id"},
 		{http.MethodPost, "/api/v1/device-reservations/id/extensions"},
@@ -325,6 +401,8 @@ func TestManagementAPIRejectsInvalidParameters(t *testing.T) {
 		{http.MethodPut, "/api/v1/device-pools/id/images/image-id", map[string]any{"min_ready": 2, "max_instances": 1, "enabled": true}, ""},
 		{http.MethodPost, "/api/v1/devices/id/restarts", map[string]any{}, "valid-key-04"},
 		{http.MethodPost, "/api/v1/devices/id/rebuilds", map[string]any{}, "valid-key-05"},
+		{http.MethodDelete, "/api/v1/devices/id", map[string]any{}, "valid-key-delete"},
+		{http.MethodDelete, "/api/v1/devices/id", reasonBody(), ""},
 		{http.MethodPost, "/api/v1/devices/id/quarantines", map[string]any{}, ""},
 		{http.MethodPost, "/api/v1/devices/id/quarantines", map[string]any{"reason": "token=must-not-be-stored"}, ""},
 	}
@@ -482,10 +560,13 @@ func completeNextManagementCommand(t *testing.T, environment *managementEnvironm
 			"health": map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true},
 		},
 	}
+	if commandType == "delete" {
+		completion.Result = map[string]any{"deleted": true}
+	}
 	if !success {
 		completion.Status = "failed"
 		completion.Result = nil
-		completion.Error = &hostcommand.CompletionError{Code: "KVM_UNAVAILABLE", Message: "injected provider failure", Retryable: false}
+		completion.Error = &hostcommand.CompletionError{Code: "KVM_UNAVAILABLE", Message: "injected provider failure", Retryable: commandType == "delete"}
 	}
 	if _, err := environment.hostCommands.Complete(context.Background(), commands[0].ID, completion); err != nil {
 		t.Fatal(err)

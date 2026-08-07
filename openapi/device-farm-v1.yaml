@@ -332,6 +332,22 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "500": {$ref: "#/components/responses/ServerError"}
         "503": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [Devices]
+      operationId: deleteDevice
+      description: Only quarantined or stopped devices without pending or active reservations can be deleted. A device with an existing pending or leased delete command rejects another delete request. Provider resources are removed asynchronously through the Host Agent. The Device record is retained with lifecycle_status=deleted. If the configured pool target is unchanged, the warm pool may create a replacement device.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/devices/{id}/restarts:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:

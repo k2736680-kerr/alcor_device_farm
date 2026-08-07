@@ -159,6 +159,7 @@ MVP 只配置一个默认 Android 设备池，当前测试环境使用单机配�
 - 控制台以一个“目标设备数”写入 `min_ready=max_instances`，Server 自动同步 Pool `max_concurrency` 和可用 Host `device_slots` 高水位，不要求管理员登录 Host 修改 Agent 配置；
 - Controller 在目标降低时删除超出的最旧空闲 Emulator，保留最新实例；占用中、回收中或仍有其他 Pool membership 的设备不得被自动删除；
 - 自动删除走持久化 delete Host Command 和 Agent/Docker Provider，成功后 Device 标记为 `deleted` 并保留历史，失败则隔离和告警；
+- 管理员可对没有活动预约的 `quarantined/stopped` Device 发起人工删除；必须填写原因、携带幂等键并二次确认，复用同一 delete Host Command。成功后退出 Pool、清空 Endpoint 并标记 `deleted`，失败保持 `quarantined/unhealthy`；
 - 缩容是最终一致的：占用中的最旧设备先等待释放，不能为立即达到数字而强制中断 Reservation。
 
 后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。

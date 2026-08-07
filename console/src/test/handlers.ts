@@ -143,6 +143,10 @@ export const handlers = [
     const start = (page - 1) * size
     return HttpResponse.json(pageEnvelope(filtered.slice(start, start + size), filtered.length, page, size))
   }),
+  http.delete('/api/v1/devices/:id', ({ params }) => {
+    const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
+    return HttpResponse.json({ request_id: 'req_delete_device', data: device, error: null }, { status: 202 })
+  }),
   http.get('/api/v1/device-reservations', ({ request }) => {
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)

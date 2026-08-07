@@ -93,7 +93,7 @@ export type getHealthResponse200 = {
   data: SuccessResponse
   status: 200
 }
-    
+
 export type getHealthResponseSuccess = (getHealthResponse200) & {
   headers: Headers;
 };
@@ -104,15 +104,15 @@ export type getHealthResponse = (getHealthResponseSuccess)
 export const getGetHealthUrl = () => {
 
 
-  
+
 
   return `/healthz`
 }
 
 export const getHealth = async ( options?: RequestInit): Promise<getHealthResponse> => {
-  
+
   return deviceFarmFetch<getHealthResponse>(getGetHealthUrl(),
-  {      
+  {
     ...options,
     method: 'GET'
     
@@ -142,7 +142,7 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getHealth>>> = ({ signal }) => getHealth({ signal, ...requestOptions });
 
-      
+
 
       
 
@@ -645,7 +645,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  createDeviceImage(data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -667,7 +667,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type getDeviceImageResponse200 = {
   data: ImageSuccessResponse
   status: 200
@@ -3085,6 +3085,120 @@ export function useGetDevice<TData = Awaited<ReturnType<typeof getDevice>>, TErr
 
 
 
+
+/**
+ * Only quarantined or stopped devices without pending or active reservations can be deleted. A device with an existing pending or leased delete command rejects another delete request. Provider resources are removed asynchronously through the Host Agent. The Device record is retained with lifecycle_status=deleted. If the configured pool target is unchanged, the warm pool may create a replacement device.
+ */
+export type deleteDeviceResponse202 = {
+  data: DeviceAcceptedResponse
+  status: 202
+}
+
+export type deleteDeviceResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type deleteDeviceResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type deleteDeviceResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type deleteDeviceResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type deleteDeviceResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type deleteDeviceResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type deleteDeviceResponseSuccess = (deleteDeviceResponse202) & {
+  headers: Headers;
+};
+export type deleteDeviceResponseError = (deleteDeviceResponse400 | deleteDeviceResponse401 | deleteDeviceResponse403 | deleteDeviceResponse404 | deleteDeviceResponse409 | deleteDeviceResponse500) & {
+  headers: Headers;
+};
+
+export type deleteDeviceResponse = (deleteDeviceResponseSuccess | deleteDeviceResponseError)
+
+export const getDeleteDeviceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}`
+}
+
+export const deleteDevice = async (id: string,
+    operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<deleteDeviceResponse> => {
+
+  return deviceFarmFetch<deleteDeviceResponse>(getDeleteDeviceUrl(id),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      operationReasonBody,)
+  }
+);}
+
+
+
+
+export const getDeleteDeviceMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDevice>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteDevice>>, TError,{id: string;data: OperationReasonBody}, TContext> => {
+
+const mutationKey = ['deleteDevice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  deleteDevice(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDevice>>>
+    export type DeleteDeviceMutationBody = OperationReasonBody
+    export type DeleteDeviceMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useDeleteDevice = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDevice>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteDevice>>,
+        TError,
+        {id: string;data: OperationReasonBody},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteDeviceMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
 
 export type restartDeviceResponse202 = {
   data: DeviceAcceptedResponse

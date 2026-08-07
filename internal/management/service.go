@@ -486,6 +486,51 @@ func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason str
 	return service.rebuildDevice(ctx, id, reason, idempotencyKey, event)
 }
 
+func (service *Service) DeleteDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "delete_device", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	event.DestructiveApproved = true
+	return service.deleteDevice(ctx, id, reason, idempotencyKey, event)
+}
+
+func (service *Service) deleteDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
+	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	commandKey := operationCommandKey("delete", audit.ActorID, idempotencyKey)
+	requestHash := operationRequestHash("delete", current.ID, reason)
+	if replayed, found, err := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "delete", requestHash); err != nil {
+		return Device{}, err
+	} else if found {
+		return replayed, nil
+	}
+	if current.LifecycleStatus != domain.DeviceQuarantined && current.LifecycleStatus != domain.DeviceStopped {
+		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceDeleted)}
+	}
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	trimmedReason := strings.TrimSpace(reason)
+	current.HealthReason = &trimmedReason
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: "delete",
+		IdempotencyKey: commandKey, MaxAttempts: 3,
+		Payload: map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
+			"request_hash": requestHash,
+			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
+		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true, DisableMemberships: true,
+	})
+}
+
 func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
 	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
 		return Device{}, ErrInvalidArgument

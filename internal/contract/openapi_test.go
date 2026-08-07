@@ -28,7 +28,7 @@ var expectedOperations = map[string][]string{
 	"/api/v1/device-pools/{id}/images":                   {"get"},
 	"/api/v1/device-pools/{id}/images/{image_id}":        {"put", "delete"},
 	"/api/v1/devices":                                    {"get"},
-	"/api/v1/devices/{id}":                               {"get"},
+	"/api/v1/devices/{id}":                               {"get", "delete"},
 	"/api/v1/devices/{id}/restarts":                      {"post"},
 	"/api/v1/devices/{id}/rebuilds":                      {"post"},
 	"/api/v1/devices/{id}/quarantines":                   {"post", "delete"},

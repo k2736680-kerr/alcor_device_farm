@@ -63,6 +63,7 @@
 | G6 可交付 | DF-022~DF-025 | 安全、运维、回滚、全量验收和 Adapter 契约齐全 |
 | G7 Web 可用 | DF-026~DF-028 | E3 可通过浏览器完成设备管理、预约、远控和释放，且无内部 Token 泄露 |
 | G8 容量闭环 | DF-029 | 后台单点设置目标即可自动扩缩容；缩容不强删占用设备且真实清理资源 |
+| G9 隔离设备清理 | DF-030 | 管理员可安全删除无预约的隔离/停止设备；Agent 清理资源，失败保持隔离 |
 
 未通过前一 Gate，不进入下一阶段的真实环境部署。DF-026/DF-027 的 E0 本地实现可与 G4～G6 的真实验收并行；G7 只有 DF-028 真实 Web 验收通过后才完成。
 
@@ -126,6 +127,7 @@
 | AT-EMU-011 | P0 | 最旧设备存在 active Reservation 时缩容 | 不强删、不影响预约；释放后自动继续缩容 |
 | AT-EMU-012 | P0 | 两个 Controller 并发缩容 | 每台超额设备只有一个有效 delete Command，无重复删除或扩缩容振荡 |
 | AT-EMU-013 | P0 | delete 连续失败 | Host Command 按上限重试；设备最终 quarantined/unhealthy、不可调度且有健康事件和审计 |
+| AT-EMU-014 | P0 | 管理员删除隔离设备 | 仅 quarantined/stopped 且无活动预约可提交；相同幂等键单命令；成功后资源清理、membership 禁用、Device=deleted、Endpoint 为空 |
 
 ### 4.5 STF 和 Appium
 

@@ -62,6 +62,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -Device Image、每 Image 运行镜像选择与不可变摘要验证；
 -Device Pool与容量；
 -固定目标容量的控制台单点配置、自动扩容和安全缩容；
+-隔离或已停止设备的受控人工删除；删除继续复用既有 Host Command、Host Agent 和 Provider `Delete`，不新增 Server 直连 Docker 的通道；
 -Reservation、Lease、续租和释放；
 -Scheduler和数据库并发锁；
 -Reconciler和Reaper；
@@ -97,5 +98,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 7. 若属于控制台功能，是否只操作设备域资源，且浏览器没有接触 Service/STF Token 或内部基础设施端口？
 
 自动缩容继续复用现有 Host Command、Host Agent 和 Provider `Delete`，不得另建直接访问 Docker Socket 的 Server 删除通道。Device 数据只标记 `deleted` 并保留审计，不通过物理删库伪装缩容完成。
+
+DF-030 的人工删除同样复用上述删除链路，只允许 `quarantined/stopped` 且没有活动预约的设备进入删除命令；可用和使用中的设备必须通过目标容量或预约释放流程处理。
 
 无法回答或没有更新本矩阵时，不进入编码。

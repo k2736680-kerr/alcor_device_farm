@@ -42,6 +42,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 
 	mux.HandleFunc("GET /api/v1/devices", handler.listDevices)
 	mux.HandleFunc("GET /api/v1/devices/{id}", handler.getDevice)
+	mux.HandleFunc("DELETE /api/v1/devices/{id}", handler.deleteDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/restarts", handler.restartDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/rebuilds", handler.rebuildDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/quarantines", handler.quarantineDevice)
@@ -313,6 +314,9 @@ func (handler *managementHandler) restartDevice(writer http.ResponseWriter, requ
 func (handler *managementHandler) rebuildDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "rebuild")
 }
+func (handler *managementHandler) deleteDevice(writer http.ResponseWriter, request *http.Request) {
+	handler.deviceAction(writer, request, "delete")
+}
 func (handler *managementHandler) quarantineDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "quarantine")
 }
@@ -327,7 +331,7 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	if !decode(writer, request, &input) {
 		return
 	}
-	if (action == "restart" || action == "rebuild") && !requireIdempotencyKey(writer, request) {
+	if (action == "restart" || action == "rebuild" || action == "delete") && !requireIdempotencyKey(writer, request) {
 		return
 	}
 	var value management.Device
@@ -339,13 +343,15 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "rebuild":
 		value, err = handler.service.RebuildDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
+	case "delete":
+		value, err = handler.service.DeleteDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "quarantine":
 		value, err = handler.service.QuarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID)
 	case "unquarantine":
 		value, err = handler.service.UnquarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID)
 	}
 	status := http.StatusOK
-	if action == "restart" || action == "rebuild" {
+	if action == "restart" || action == "rebuild" || action == "delete" {
 		status = http.StatusAccepted
 	}
 	handler.write(writer, request, status, value, err)

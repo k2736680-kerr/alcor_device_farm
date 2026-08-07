@@ -432,6 +432,36 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		var lockedDeviceID string
+		if err := tx.QueryRow(ctx, `SELECT id FROM devices
+			WHERE id=$1 AND host_id=$2 AND provider_ref=$3 AND lifecycle_status=$4 AND health_status=$5
+			FOR UPDATE`, operation.Device.ID, operation.Device.HostID, operation.Device.ProviderRef,
+			operation.ExpectedLifecycle, operation.ExpectedHealth).Scan(&lockedDeviceID); errors.Is(err, pgx.ErrNoRows) {
+			return management.ErrConflict
+		} else if err != nil {
+			return err
+		}
+		if operation.RequireNoActiveCommand {
+			var active bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_host_commands
+				WHERE command_type=$2 AND payload->>'device_id'=$1 AND status IN ('pending','leased'))`,
+				operation.Device.ID, operation.CommandType).Scan(&active); err != nil {
+				return err
+			}
+			if active {
+				return management.ErrConflict
+			}
+		}
+		if operation.RequireNoActiveReservation {
+			var active bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_reservations
+				WHERE device_id=$1 AND status IN ('pending','active'))`, operation.Device.ID).Scan(&active); err != nil {
+				return err
+			}
+			if active {
+				return management.ErrConflict
+			}
+		}
 		record, err := (repository.CommandRepository{}).Create(ctx, tx, repository.CreateCommandParams{
 			ID: operation.CommandID, HostID: operation.Device.HostID, CommandType: operation.CommandType,
 			Payload: sensitive.RedactMap(operation.Payload), MaxAttempts: operation.MaxAttempts,
@@ -461,6 +491,12 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 		}
 		if err != nil {
 			return err
+		}
+		if operation.DisableMemberships {
+			if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=clock_timestamp()
+				WHERE device_id=$1 AND enabled`, operation.Device.ID); err != nil {
+				return err
+			}
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
 			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)

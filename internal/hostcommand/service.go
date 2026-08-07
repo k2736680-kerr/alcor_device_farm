@@ -477,6 +477,9 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if err != nil {
 		return err
 	}
+	if record.CommandType == "delete" {
+		return service.reconcileManagementDelete(ctx, tx, record, deviceID, lifecycle, health, now)
+	}
 	code, reason := "", "management "+record.CommandType+" command completed"
 	var result managementOperationResult
 	succeeded := record.Status == domain.CommandSucceeded && json.Unmarshal(record.Result, &result) == nil &&
@@ -535,6 +538,70 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		}
 		if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
 			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,
+			deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+	}
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	severity, eventType := "info", "device_management_operation_succeeded"
+	if !succeeded {
+		severity, eventType = "error", "device_management_operation_failed"
+	}
+	eventPayload, err := json.Marshal(map[string]any{"command_id": record.ID, "command_type": record.CommandType, "error_code": code})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
+	return err
+}
+
+func (service *Service) reconcileManagementDelete(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
+	deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
+	var result struct {
+		Deleted bool `json:"deleted"`
+	}
+	succeeded := record.Status == domain.CommandSucceeded && json.Unmarshal(record.Result, &result) == nil && result.Deleted
+	code, reason := "", "management delete command removed provider resources"
+	if !succeeded {
+		code = "AGENT_COMMAND_FAILED"
+		if record.ErrorCode != nil && *record.ErrorCode != "" {
+			code = *record.ErrorCode
+		} else if record.Status == domain.CommandSucceeded {
+			code = "COMMAND_RESULT_INVALID"
+		}
+		reason = code + ": management delete command did not remove provider resources"
+	}
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if succeeded {
+		if err := aggregate.Transition(domain.DeviceDeleted, reason, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_reason=$3,
+			stf_serial=NULL,adb_endpoint=NULL,appium_endpoint=NULL,updated_at=$4
+			WHERE id=$1 AND lifecycle_status=$5`, deviceID, aggregate.Lifecycle(), reason, now, lifecycle); err != nil {
+			return err
+		}
+	} else {
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
 			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,

@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
+  useDeleteDevice,
   useListDevices,
   useQuarantineDevice,
   useRebuildDevice,
@@ -44,7 +45,7 @@ const healthColor: Record<string, string> = {
   unknown: 'default',
 }
 
-type DeviceAction = 'restart' | 'rebuild' | 'quarantine' | 'unquarantine'
+type DeviceAction = 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
 type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
 
 const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined', 'deleted', 'all']
@@ -67,6 +68,7 @@ const actionTitles: Record<DeviceAction, string> = {
   rebuild: '重建设备',
   quarantine: '隔离设备',
   unquarantine: '解除隔离',
+  delete: '删除设备',
 }
 
 function actionable(device: Device, action: DeviceAction): boolean {
@@ -78,13 +80,15 @@ function actionable(device: Device, action: DeviceAction): boolean {
       return device.lifecycle_status !== 'quarantined'
     case 'unquarantine':
       return device.lifecycle_status === 'quarantined'
+    case 'delete':
+      return device.lifecycle_status === 'quarantined' || device.lifecycle_status === 'stopped'
     default:
       return true
   }
 }
 
 export function DevicesPage() {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [form] = Form.useForm<ReasonValues>()
@@ -95,12 +99,13 @@ export function DevicesPage() {
   const rebuild = useRebuildDevice()
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
+  const deleteDevice = useDeleteDevice()
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }
 
-  const submitAction = (values: ReasonValues) => {
+  const executeAction = (reason: string) => {
     if (!actionState) {
       return
     }
@@ -109,14 +114,15 @@ export function DevicesPage() {
       action === 'restart' ? restart
       : action === 'rebuild' ? rebuild
       : action === 'quarantine' ? quarantine
-      : unquarantine
+      : action === 'unquarantine' ? unquarantine
+      : deleteDevice
 
     mutation.mutate(
-      { id: device.id, data: { reason: values.reason } },
+      { id: device.id, data: { reason } },
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`操作已受理（request_id: ${requestID}）`)
+          message.success(`${action === 'delete' ? '删除任务' : '操作'}已受理（request_id: ${requestID}）`)
           setActionState(null)
           invalidate()
         },
@@ -128,7 +134,26 @@ export function DevicesPage() {
     )
   }
 
-  const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending
+  const submitAction = (values: ReasonValues) => {
+    if (!actionState) {
+      return
+    }
+    const reason = values.reason.trim()
+    if (actionState.action !== 'delete') {
+      executeAction(reason)
+      return
+    }
+    modal.confirm({
+      title: '确认删除这台设备？',
+      content: '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史。设备池目标数量不变时，系统可能自动补建一台。',
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => executeAction(reason),
+    })
+  }
+
+  const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
   const actionColumn: TableColumnsType<Device>[number] = {
     title: '操作',
@@ -148,6 +173,9 @@ export function DevicesPage() {
         )}
         {actionable(device, 'unquarantine') && (
           <Button size="small" onClick={() => setActionState({ device, action: 'unquarantine' })}>解除隔离</Button>
+        )}
+        {actionable(device, 'delete') && (
+          <Button size="small" danger onClick={() => setActionState({ device, action: 'delete' })}>删除</Button>
         )}
       </Space>
     ),
@@ -169,11 +197,12 @@ export function DevicesPage() {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const availableCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' })
-  const busyCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' })
-  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' })
-  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'deleted' })
-  const allCountQuery = useListDevices({ page: 1, page_size: 1 })
+  const deviceQueryOptions = { query: { refetchInterval: 5_000 } }
+  const availableCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
+  const busyCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' }, deviceQueryOptions)
+  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' }, deviceQueryOptions)
+  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'deleted' }, deviceQueryOptions)
+  const allCountQuery = useListDevices({ page: 1, page_size: 1 }, deviceQueryOptions)
   const availableCount = unwrapPage<Device>(availableCountQuery.data)?.total ?? 0
   const busyCount = unwrapPage<Device>(busyCountQuery.data)?.total ?? 0
   const quarantinedCount = unwrapPage<Device>(quarantinedCountQuery.data)?.total ?? 0
@@ -185,7 +214,7 @@ export function DevicesPage() {
     : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
     : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
     : {}
-  const { data, isFetching } = useListDevices({ page, page_size: pageSize, ...viewFilter })
+  const { data, isFetching } = useListDevices({ page, page_size: pageSize, ...viewFilter }, deviceQueryOptions)
   const result = unwrapPage<Device>(data)
 
   return (
@@ -231,7 +260,7 @@ export function DevicesPage() {
       <Modal
         open={actionState !== null}
         title={actionState ? `${actionTitles[actionState.action]} · ${shortID(actionState.device.id)}` : ''}
-        okText="确认执行"
+        okText={actionState?.action === 'delete' ? '下一步' : '确认执行'}
         cancelText="取消"
         confirmLoading={pending}
         onCancel={() => setActionState(null)}
@@ -243,10 +272,14 @@ export function DevicesPage() {
           {actionState?.action === 'unquarantine' && '解除隔离后设备可重新进入调度池。'}
           {actionState?.action === 'rebuild' && '重建会销毁并重新拉起设备运行实例，属于危险操作。'}
           {actionState?.action === 'restart' && '重启会中断当前设备上的会话。'}
+          {actionState?.action === 'delete' && '删除只允许隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史；目标数量不变时系统可能自动补建。'}
         </Typography.Paragraph>
         <Form<ReasonValues> form={form} layout="vertical" onFinish={submitAction}>
-          <Form.Item name="reason" label="操作原因（必填，将写入审计）" rules={[{ required: true, whitespace: true, message: '请填写操作原因' }]}>
-            <Input.TextArea rows={3} maxLength={200} placeholder="例如：镜像异常，需要重建验证" />
+          <Form.Item name="reason" label="操作原因（必填，将写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写操作原因' },
+            { min: 3, message: '操作原因至少填写 3 个字' },
+          ]}>
+            <Input.TextArea rows={3} maxLength={200} placeholder={actionState?.action === 'delete' ? '例如：设备无法恢复，确认清理运行资源' : '例如：镜像异常，需要重建验证'} />
           </Form.Item>
         </Form>
       </Modal>

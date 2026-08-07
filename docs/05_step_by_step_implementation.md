@@ -50,6 +50,7 @@
 | DF-027 | 设备操作和人工预约页面 | completed | DF-009、DF-010、DF-011、DF-026 |
 | DF-028 | 控制台部署、安全和真实 Web 验收 | completed | DF-017～DF-024、DF-027 |
 | DF-029 | 控制台统一容量和自动安全缩容 | completed | DF-016、DF-023、DF-028 |
+| DF-030 | 隔离设备受控人工删除 | completed | DF-012、DF-022、DF-029 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -311,6 +312,14 @@
 产出：ADR-0011、容量配置 API 语义、自动缩容 Controller、Console 单一目标表单、并发/故障测试和 `docs/evidence/DF-029/`。
 
 验收：当前 ADR-0008 验收主机以两台为安全上限，后台把目标从 1 改为 2 后无需修改或重启 Host Agent 即自动补齐两台，真实 `2 → 1` 删除最旧 Emulator 并保留最新；`3 → 1` 多设备删除语义由真实 PostgreSQL 集成测试覆盖，后续更换高内存服务器时补充容量压力验证。最旧设备 active 时不强删，释放后继续缩容；两个 Controller 并发只为每台超额设备生成一条 delete Command；删除失败三次后设备 quarantined 且不被替代实例掩盖；容器、网络和卷真实清理；Pool 并发与目标一致；历史记录不计入当前运行容量；全部操作有 actor、reason 和 request ID。
+
+### DF-030 隔离设备受控人工删除
+
+实施：按 ADR-0012 为 `DELETE /api/v1/devices/{id}` 增加管理员人工删除编排。仅允许 `quarantined/stopped` 且没有 pending/active Reservation 的 Device；请求必须包含 reason 和 Idempotency-Key。Server 在 PostgreSQL 事务中退出 Pool、登记审计和持久化 delete Host Command，由 Agent/Provider 清理容器、网络、端口和卷。成功后标记 `deleted` 并清空 Endpoint，失败保持或回到 `quarantined/unhealthy`。Console 只在允许状态展示危险删除按钮并进行二次确认。
+
+产出：OpenAPI、Management Service/Store、Host Command 完成收敛、Console 删除入口、PostgreSQL 集成测试和真实 Linux 验收证据。
+
+验收：ready/reserved/busy/recycling Device 删除返回 409；存在活动预约时拒绝；同一幂等键只产生一个 delete Command，同设备已有 pending/leased delete Command 时更换幂等键也拒绝重复创建；成功结果必须包含 `deleted=true`，随后设备转为 deleted、Pool membership 禁用、Endpoint 清空且审计/健康事件完整；失败三次后设备 quarantined/unhealthy；目标数量不变时 Warm Pool 可补建；浏览器、Server 均不访问 Docker Socket。
 
 ## 10. 阶段 H：新版 Alcor 接入
 
