@@ -204,6 +204,24 @@
 | AT-WEB-015 | P0 | Device 行点击远程连接 | 浏览器预开新标签避免弹窗拦截；连接中、已连接、挂断和错误状态清晰，目标 serial 正确 |
 | AT-WEB-016 | P0 | 点击挂断或关闭远控标签页 | 调用同一结束语义，Reservation/STF claim 释放，设备重建后恢复可用；重复结束幂等 |
 | AT-WEB-017 | P0 | viewer/operator 或非 ready/healthy Device 发起远控 | 页面不提供入口，直接请求也返回 403/409，不创建预约 |
+| AT-WEB-018 | P0 | 查看 Host 动态容量并切换 4 GB/8 GB 设备规格 | 页面按实际 CPU、内存、磁盘显示可新增台数；结果不同且阻断项给出具体缺口，不显示固定“一台上限” |
+| AT-WEB-019 | P0 | Pool 目标提高到实际资源无法全部满足 | 保存真实目标，Controller 只创建可容纳数量并显示待扩容原因；不抬高或伪造 Host `device_slots` |
+| AT-WEB-020 | P0 | 编辑空闲 Emulator 的 Image 和运行规格 | 二次确认清空数据；异步状态可刷新恢复；成功后 Device ID 不变且 Image/规格/Endpoint 更新 |
+| AT-WEB-021 | P0 | 编辑有活动预约或资源不足的 Emulator | 服务端返回 409 和可解释原因，不删除旧 Provider 资源，不提前改写当前 Image/规格 |
+
+### 4.10 动态容量、镜像和重装
+
+| 编号 | 优先级 | 场景 | 预期结果 |
+|---|---|---|---|
+| AT-CAP-001 | P0 | Host 心跳 | 上报实际 CPU、总/可用内存、Docker 数据盘总/可用空间、KVM/GPU 能力和采集时间 |
+| AT-CAP-002 | P0 | 同一 Host 估算 4 GB 与 8 GB 规格 | 分别按完整规格计算可新增数量，结果受 CPU、内存、磁盘中最小值约束 |
+| AT-CAP-003 | P0 | 两个 Controller 同时扩容 | PostgreSQL 锁和在途命令预留保证资源不超分、不重复创建 |
+| AT-CAP-004 | P0 | 心跳后磁盘或内存突然下降 | Agent 创建前实时预检拒绝，命令返回稳定资源不足码和具体缺口，不启动半配置 Emulator |
+| AT-CAP-005 | P1 | 相同 digest 创建第二台 | 共享镜像层不重复计费；数据卷和可写层预留按设备重复计费 |
+| AT-IMG-001 | P0 | 拉取 Android 13～16 | 固定 tag/digest 均可验证并完成 ADB、STF、Appium 冒烟，Android 16 为默认 |
+| AT-IMG-002 | P0 | 未选择其他版本时提高 Pool 目标 | 新设备全部使用默认 Android 16，不因目录中有四个 Image 而每版常驻一台 |
+| AT-RIM-001 | P0 | 空闲 Device 从 Android 16 重装为其他版本 | 同一 Device ID/Pool membership，旧数据清空，成功后原子更新 Image、规格和 Endpoint |
+| AT-RIM-002 | P0 | 重装目标启动或健康失败 | 尝试恢复旧配置一次；恢复成功保持旧 Image，恢复失败隔离，所有结果可审计 |
 
 ## 5. 非功能指标
 

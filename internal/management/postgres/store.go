@@ -237,17 +237,11 @@ func (store *Store) SetPoolImage(ctx context.Context, value management.PoolImage
 			updated_at=clock_timestamp() WHERE id=$1 RETURNING max_concurrency`, value.PoolID).Scan(&target); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE device_hosts SET capacity=jsonb_set(capacity,'{device_slots}',
-			to_jsonb(GREATEST(CASE WHEN capacity->>'device_slots' ~ '^[0-9]+$'
-			THEN (capacity->>'device_slots')::int ELSE 0 END,$1::int)),true),updated_at=clock_timestamp()
-			WHERE host_type IN ('docker_emulator','hybrid')`, target); err != nil {
-			return err
-		}
 		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
 			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
 			VALUES($1,$2,$3,$4,'device_pool_image',$5,$6,$7,
 			jsonb_build_object('pool_id',$8::text,'min_ready',$9::int,'max_instances',$10::int,
-			'enabled',$11::boolean,'pool_max_concurrency',$12::int))`, audit.ID, audit.ActorType, audit.ActorID,
+			'enabled',$11::boolean,'pool_max_concurrency',$12::int,'host_capacity_policy','dynamic'))`, audit.ID, audit.ActorType, audit.ActorID,
 			audit.Action, value.ImageID, audit.RequestID, sensitive.RedactText(audit.Reason), value.PoolID,
 			value.MinReady, value.MaxInstances, value.Enabled, target)
 		return err

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 type Operation string
@@ -31,13 +33,14 @@ const (
 )
 
 type CreateRequest struct {
-	DeviceID     string
-	HostID       string
-	ImageID      string
-	RuntimeImage string
-	ProviderRef  string
-	Serial       string
-	Capabilities map[string]any
+	DeviceID       string
+	HostID         string
+	ImageID        string
+	RuntimeImage   string
+	ProviderRef    string
+	Serial         string
+	Capabilities   map[string]any
+	RuntimeProfile runtimeprofile.Profile
 }
 
 type Health struct {
@@ -59,15 +62,16 @@ type ConnectionInfo struct {
 }
 
 type Snapshot struct {
-	DeviceID     string
-	HostID       string
-	ImageID      string
-	ProviderRef  string
-	State        State
-	Generation   int
-	Capabilities map[string]any
-	Health       Health
-	Connection   ConnectionInfo
+	DeviceID       string
+	HostID         string
+	ImageID        string
+	ProviderRef    string
+	State          State
+	Generation     int
+	Capabilities   map[string]any
+	RuntimeProfile runtimeprofile.Profile
+	Health         Health
+	Connection     ConnectionInfo
 }
 
 func (snapshot Snapshot) Ready() bool {

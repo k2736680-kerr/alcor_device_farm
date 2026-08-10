@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
@@ -256,6 +257,44 @@ func TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown(t *testing.T)
 		t.Fatal(err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 1)
+}
+
+func TestControllerUsesRequestedRuntimeProfileAndActualHostResources(t *testing.T) {
+	tests := []struct {
+		name          string
+		memoryMB      int
+		guestMemoryMB int
+		wantCreated   int
+		wantMisses    int
+	}{
+		{name: "4GB profile fits three", memoryMB: 4096, guestMemoryMB: 3072, wantCreated: 3},
+		{name: "8GB profile fits one", memoryMB: 8192, guestMemoryMB: 6144, wantCreated: 1, wantMisses: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := openTestDatabase(t)
+			seedWarmPool(t, db, "ready", 3, 3, 99)
+			profile := map[string]any{"container_cpu_cores": 2, "container_memory_mb": test.memoryMB,
+				"guest_cpu_cores": 2, "guest_memory_mb": test.guestMemoryMB, "data_disk_mb": 4096,
+				"image_disk_mb": 8000, "width": 1080, "height": 2400, "density_dpi": 420, "vm_heap_mb": 512, "graphics": "software"}
+			capacity := map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 8, "memory_total_mb": 16000,
+				"memory_available_mb": 14000, "disk_total_mb": 100000, "disk_available_mb": 50000,
+				"collected_at": time.Now().UTC().Format(time.RFC3339Nano)}
+			if _, err := db.Pool().Exec(context.Background(), `UPDATE device_images SET resource_config=$1::jsonb`, profile); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET capacity=$1::jsonb,
+				last_heartbeat_at=clock_timestamp(),updated_at=clock_timestamp()`, capacity); err != nil {
+				t.Fatal(err)
+			}
+			result, err := warmpool.New(db, sequentialGenerator(), nil).RunOnce(context.Background())
+			if err != nil || result.DevicesCreated != test.wantCreated || result.CapacityMisses != test.wantMisses {
+				t.Fatalf("result=%+v error=%v", result, err)
+			}
+			assertCount(t, db, fmt.Sprintf(`SELECT count(*) FROM device_host_commands WHERE command_type='create'
+				AND (payload->'runtime_profile'->>'container_memory_mb')::int=%d`, test.memoryMB), test.wantCreated)
+		})
+	}
 }
 
 func TestSuccessfulCreateResultRestoresReadyStateAfterServerRestart(t *testing.T) {

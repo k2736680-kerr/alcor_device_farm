@@ -143,24 +143,26 @@ stopped → deleted
 
 另设健康状态 `unknown/healthy/degraded/unhealthy`，避免把生命周期和健康原因混成一个字段。所有状态转换必须由领域方法校验并写事件。
 
-### 4.5 设备池与固定目标自动扩缩容
+### 4.5 设备池与按资源动态扩缩容
 
 设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认/最大租期、最大并发、启停状态和设备成员关系。
 
-MVP 只配置一个默认 Android 设备池，当前测试环境使用单机配置：
+MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行一台，但代码和接口不得把一台作为固定上限：
 
-- `max_concurrency=1`；
-- `device_pool_images.min_ready=1/max_instances=1`；
+- Pool 保存总目标、最小预热、最大并发和默认 Image；当前测试值可以为 1，迁移后不改代码即可提高；
+- Android 16 是默认 Image，Android 13～15 是可选 Image，不按 Image 分别常驻一台；
 - Controller 自动创建缺少的 Emulator，并在同一编排中登记 Device、Host Command 和 Pool membership；
 - 自动创建必须经 Host Agent 执行 Docker Provider，不能由 Server 直连 Docker 或创建 Mock 设备；
 - 多 Server 使用 PostgreSQL 行锁重新计算缺口，避免超额创建；
 - 创建失败按有上限退避重试，设备只有通过 ADB、boot 和 Appium 健康检查后才计入 ready；
-- 单台设备占用时第二个 Reservation 保持 pending/capacity unavailable，不因请求压力突破 `max_instances`；
-- 控制台以一个“目标设备数”写入 `min_ready=max_instances`，Server 自动同步 Pool `max_concurrency` 和可用 Host `device_slots` 高水位，不要求管理员登录 Host 修改 Agent 配置；
+- 第二个 Reservation 在 Pool 并发、目标或 Host 实际资源不足时保持 pending/capacity unavailable，不因请求压力超建；
+- Host Agent 上报实际 CPU、内存和 Docker 数据盘，Server 按每台有效规格、已有设备和在途命令计算剩余容量；可选 `device_slots` 只能作为安全上限，不能由目标数反向抬高；
+- 控制台显示当前规格最多可新增台数以及 CPU、内存、磁盘中最先达到的限制，不要求管理员登录 Host 修改 Agent 配置；
 - Controller 在目标降低时删除超出的最旧空闲 Emulator，保留最新实例；占用中、回收中或仍有其他 Pool membership 的设备不得被自动删除；
 - 自动删除走持久化 delete Host Command 和 Agent/Docker Provider，成功后 Device 标记为 `deleted` 并保留历史，失败则隔离和告警；
 - 管理员可对没有活动预约的 `quarantined/stopped` Device 发起人工删除；必须填写原因、携带幂等键并二次确认，复用同一 delete Host Command。成功后退出 Pool、清空 Endpoint 并标记 `deleted`，失败保持 `quarantined/unhealthy`；
 - 缩容是最终一致的：占用中的最旧设备先等待释放，不能为立即达到数字而强制中断 Reservation。
+- 管理员可对空闲 Emulator 选择 Android 13～16 Image 并修改 CPU、内存、数据盘、分辨率和 GPU 模式；该操作会清空设备数据并通过 Host Command 重装，成功前不改变当前 Image/规格，失败时恢复或隔离。
 
 后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。
 

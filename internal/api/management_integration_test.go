@@ -95,8 +95,8 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (capacity->>'device_slots')::int FROM device_hosts WHERE id=$1`, host.ID).Scan(&hostSlots); err != nil {
 		t.Fatal(err)
 	}
-	if poolConcurrency != 2 || hostSlots != 2 {
-		t.Fatalf("target 2 synchronization pool=%d host_slots=%d", poolConcurrency, hostSlots)
+	if poolConcurrency != 2 || hostSlots != 1 {
+		t.Fatalf("pool target must not rewrite host capacity: pool=%d host_slots=%d", poolConcurrency, hostSlots)
 	}
 	heartbeat := map[string]any{
 		"agent_time": time.Now().UTC(), "capacity": map[string]any{"cpu": 8, "memory_mb": 16384, "device_slots": 1},
@@ -106,8 +106,8 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (capacity->>'device_slots')::int FROM device_hosts WHERE id=$1`, host.ID).Scan(&hostSlots); err != nil {
 		t.Fatal(err)
 	}
-	if hostSlots != 2 {
-		t.Fatalf("heartbeat overwrote backend-managed device_slots: %d", hostSlots)
+	if hostSlots != 1 {
+		t.Fatalf("legacy heartbeat overwrote explicit host safety limit: %d", hostSlots)
 	}
 	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 3, "max_instances": 3, "enabled": true}, serviceToken, ""), http.StatusOK)
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT max_concurrency FROM device_pools WHERE id=$1`, pool.ID).Scan(&poolConcurrency); err != nil {
@@ -116,8 +116,8 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (capacity->>'device_slots')::int FROM device_hosts WHERE id=$1`, host.ID).Scan(&hostSlots); err != nil {
 		t.Fatal(err)
 	}
-	if poolConcurrency != 3 || hostSlots != 3 {
-		t.Fatalf("target 3 synchronization pool=%d host_slots=%d", poolConcurrency, hostSlots)
+	if poolConcurrency != 3 || hostSlots != 1 {
+		t.Fatalf("pool target must stay independent from host capacity: pool=%d host_slots=%d", poolConcurrency, hostSlots)
 	}
 	if _, err := environment.store.SetPoolImage(context.Background(), management.PoolImage{
 		PoolID: pool.ID, ImageID: image.ID, MinReady: 2, MaxInstances: 2, Enabled: true,

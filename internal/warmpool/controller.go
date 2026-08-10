@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -349,17 +351,18 @@ func (controller *Controller) queueScaleDown(
 }
 
 type recyclingDevice struct {
-	ID            string
-	HostID        string
-	ImageID       string
-	DockerImage   string
-	DockerDigest  string
-	ProviderRef   string
-	ReservationID string
-	Capabilities  map[string]any
-	Lifecycle     domain.DeviceLifecycleStatus
-	Health        domain.HealthStatus
-	HostOnline    bool
+	ID             string
+	HostID         string
+	ImageID        string
+	DockerImage    string
+	DockerDigest   string
+	ProviderRef    string
+	ReservationID  string
+	Capabilities   map[string]any
+	RuntimeProfile runtimeprofile.Profile
+	Lifecycle      domain.DeviceLifecycleStatus
+	Health         domain.HealthStatus
+	HostOnline     bool
 }
 
 type rebuildResult struct {
@@ -466,17 +469,23 @@ func (controller *Controller) reconcileRecyclingDevices(ctx context.Context) (Re
 
 func lockRecyclingDevice(ctx context.Context, tx pgx.Tx, id string) (recyclingDevice, error) {
 	var value recyclingDevice
-	var capabilities []byte
-	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.image_id,i.docker_image,i.docker_digest,d.provider_ref,r.id,d.capabilities,d.lifecycle_status,d.health_status,
+	var capabilities, resourceConfig []byte
+	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.image_id,i.docker_image,i.docker_digest,d.provider_ref,r.id,d.capabilities,i.resource_config,d.lifecycle_status,d.health_status,
 		(h.status='online' AND NOT h.draining)
 		FROM devices d JOIN device_hosts h ON h.id=d.host_id JOIN device_images i ON i.id=d.image_id
 		JOIN LATERAL (SELECT id FROM device_reservations WHERE device_id=d.id
 			AND status IN ('released','expired','force_released') ORDER BY COALESCE(released_at,updated_at) DESC,id DESC LIMIT 1) r ON true
 		WHERE d.id=$1 AND d.device_kind='emulator' AND d.lifecycle_mode='rebuild' AND d.lifecycle_status='recycling'
 		FOR UPDATE OF d`, id).Scan(&value.ID, &value.HostID, &value.ImageID, &value.DockerImage, &value.DockerDigest, &value.ProviderRef, &value.ReservationID,
-		&capabilities, &value.Lifecycle, &value.Health, &value.HostOnline)
+		&capabilities, &resourceConfig, &value.Lifecycle, &value.Health, &value.HostOnline)
 	if err == nil {
 		err = json.Unmarshal(capabilities, &value.Capabilities)
+	}
+	if err == nil {
+		var resources map[string]any
+		if err = json.Unmarshal(resourceConfig, &resources); err == nil {
+			value.RuntimeProfile, err = runtimeprofile.Parse(resources)
+		}
 	}
 	return value, err
 }
@@ -488,7 +497,8 @@ func (controller *Controller) queueRecycleRebuild(ctx context.Context, tx pgx.Tx
 	}
 	payload, err := json.Marshal(map[string]any{"device_id": device.ID, "host_id": device.HostID, "image_id": device.ImageID,
 		"docker_image": device.DockerImage, "docker_digest": device.DockerDigest,
-		"provider_ref": device.ProviderRef, "reservation_id": device.ReservationID, "capabilities": device.Capabilities})
+		"provider_ref": device.ProviderRef, "reservation_id": device.ReservationID, "capabilities": device.Capabilities,
+		"runtime_profile": device.RuntimeProfile.Map()})
 	if err != nil {
 		return err
 	}
@@ -668,7 +678,15 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		hostID, err := lockHostCapacity(ctx, tx)
+		var resources map[string]any
+		if err := json.Unmarshal(resourceConfig, &resources); err != nil {
+			return err
+		}
+		profile, err := runtimeprofile.Parse(resources)
+		if err != nil {
+			return fmt.Errorf("invalid image runtime profile: %w", err)
+		}
+		hostID, err := lockHostCapacity(ctx, tx, imageID, profile)
 		if errors.Is(err, ErrNoCapacity) {
 			return nil
 		}
@@ -680,14 +698,12 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 			return err
 		}
 		capabilities := map[string]any{"platformName": "Android", "apiLevel": apiLevel, "abi": abi, "resolution": resolution}
-		var resources map[string]any
-		if json.Unmarshal(resourceConfig, &resources) == nil {
-			for key, value := range resources {
-				capabilities[key] = value
-			}
+		for key, value := range resources {
+			capabilities[key] = value
 		}
 		payload, err := json.Marshal(map[string]any{"image_id": imageID, "device_id": "validation-" + commandID,
-			"provider_ref": "validation-" + commandID, "docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities})
+			"provider_ref": "validation-" + commandID, "docker_image": runtimeImage, "docker_digest": digest,
+			"capabilities": capabilities, "runtime_profile": profile.Map()})
 		if err != nil {
 			return err
 		}
@@ -790,8 +806,12 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 				capabilities[key] = value
 			}
 		}
+		profile, err := runtimeprofile.Parse(resources)
+		if err != nil {
+			return fmt.Errorf("invalid image runtime profile: %w", err)
+		}
 		for range missing {
-			hostID, err := lockHostCapacity(ctx, tx)
+			hostID, err := lockHostCapacity(ctx, tx, imageID, profile)
 			if errors.Is(err, ErrNoCapacity) {
 				result.CapacityMisses++
 				break
@@ -799,7 +819,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			if err != nil {
 				return err
 			}
-			if err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities); err != nil {
+			if err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities, profile); err != nil {
 				return err
 			}
 			result.DevicesCreated++
@@ -917,7 +937,7 @@ func (controller *Controller) quarantineCreateResult(
 	return err
 }
 
-func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any) error {
+func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any, profile runtimeprofile.Profile) error {
 	deviceID, err := controller.newID()
 	if err != nil {
 		return err
@@ -942,7 +962,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 		return err
 	}
 	payload, err := json.Marshal(map[string]any{"device_id": deviceID, "image_id": imageID, "provider_ref": providerRef,
-		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities})
+		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities, "runtime_profile": profile.Map()})
 	if err != nil {
 		return err
 	}
@@ -954,25 +974,101 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	return err
 }
 
-func lockHostCapacity(ctx context.Context, tx pgx.Tx) (string, error) {
-	var hostID string
-	err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT h.id FROM device_hosts h
-		WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')
-		AND CASE WHEN h.capacity->>'device_slots' ~ '^[0-9]+$' THEN (h.capacity->>'device_slots')::int ELSE 0 END >
-			(GREATEST(
-				(SELECT count(*) FROM devices d WHERE d.host_id=h.id AND %s),
-				CASE WHEN h.used_capacity->>'device_slots' ~ '^[0-9]+$' THEN (h.used_capacity->>'device_slots')::int ELSE 0 END
-			) +
-			 (SELECT count(*) FROM device_host_commands c WHERE c.host_id=h.id AND c.command_type='validate_image' AND c.status IN ('pending','leased')))
-		ORDER BY GREATEST(
-			(SELECT count(*) FROM devices d WHERE d.host_id=h.id AND %s),
-			CASE WHEN h.used_capacity->>'device_slots' ~ '^[0-9]+$' THEN (h.used_capacity->>'device_slots')::int ELSE 0 END
-		),h.id
-		FOR UPDATE OF h SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate, slotOccupyingDevicePredicate)).Scan(&hostID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNoCapacity
+func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile) (string, error) {
+	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT h.id,h.capacity,h.used_capacity,h.last_heartbeat_at,
+		COALESCE((SELECT jsonb_agg(jsonb_build_object('profile',d.capabilities,'image_id',d.image_id))
+			FROM devices d WHERE d.host_id=h.id AND %s),'[]'::jsonb),
+		COALESCE((SELECT jsonb_agg(c.payload) FROM device_host_commands c WHERE c.host_id=h.id
+			AND c.command_type='validate_image' AND c.status IN ('pending','leased')),'[]'::jsonb),
+		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.host_id=h.id AND c.command_type='validate_image'
+			AND c.status='succeeded' AND c.payload->>'image_id'=$1)
+		FROM device_hosts h WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')
+		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate), imageID)
+	if err != nil {
+		return "", err
 	}
-	return hostID, err
+	defer rows.Close()
+	for rows.Next() {
+		var hostID string
+		var capacityJSON, usedJSON, deviceJSON, pendingJSON []byte
+		var lastHeartbeat *time.Time
+		var imageCached bool
+		if err := rows.Scan(&hostID, &capacityJSON, &usedJSON, &lastHeartbeat, &deviceJSON, &pendingJSON, &imageCached); err != nil {
+			return "", err
+		}
+		var capacityMap, usedMap map[string]any
+		var devices []struct {
+			Profile map[string]any `json:"profile"`
+			ImageID string         `json:"image_id"`
+		}
+		var pending []map[string]any
+		if json.Unmarshal(capacityJSON, &capacityMap) != nil || json.Unmarshal(usedJSON, &usedMap) != nil ||
+			json.Unmarshal(deviceJSON, &devices) != nil || json.Unmarshal(pendingJSON, &pending) != nil {
+			continue
+		}
+		host, dynamic := capacity.HostFromMap(capacityMap)
+		if !dynamic {
+			limit := jsonInt(capacityMap, "device_slots")
+			used := max(len(devices), jsonInt(usedMap, "device_slots")) + len(pending)
+			if limit > used {
+				return hostID, nil
+			}
+			continue
+		}
+		if lastHeartbeat == nil || time.Since(*lastHeartbeat) > 30*time.Second || host.CollectedAt.IsZero() || time.Since(host.CollectedAt) > 30*time.Second {
+			continue
+		}
+		existing := capacity.Allocation{Slots: len(devices)}
+		valid := true
+		for _, device := range devices {
+			profile, parseErr := runtimeprofile.Parse(device.Profile)
+			if parseErr != nil {
+				valid = false
+				break
+			}
+			existing.CPUCores += profile.ContainerCPUCores
+			existing.MemoryMB += profile.ContainerMemoryMB
+			if device.ImageID == imageID {
+				imageCached = true
+			}
+		}
+		if !valid {
+			continue
+		}
+		pendingAllocation := capacity.Allocation{}
+		for _, payload := range pending {
+			profile, parseErr := runtimeprofile.Parse(mapValue(payload, "runtime_profile"))
+			if parseErr != nil {
+				valid = false
+				break
+			}
+			pendingAllocation.CPUCores += profile.ContainerCPUCores
+			pendingAllocation.MemoryMB += profile.ContainerMemoryMB
+			pendingAllocation.DiskMB += profile.DataDiskMB + profile.ImageDiskMB
+			pendingAllocation.Slots++
+		}
+		if valid && capacity.Evaluate(host, existing, pendingAllocation, requested, imageCached).Fits {
+			return hostID, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return "", ErrNoCapacity
+}
+
+func jsonInt(values map[string]any, key string) int {
+	if value, ok := values[key].(float64); ok {
+		return int(value)
+	}
+	return 0
+}
+
+func mapValue(values map[string]any, key string) map[string]any {
+	if result, ok := values[key].(map[string]any); ok {
+		return result
+	}
+	return nil
 }
 
 func (controller *Controller) quarantineFailedCreates(ctx context.Context, tx pgx.Tx, poolID, imageID string) (int, error) {

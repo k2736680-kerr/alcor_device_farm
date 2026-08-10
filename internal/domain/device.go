@@ -27,6 +27,8 @@ const (
 	HealthUnhealthy HealthStatus = "unhealthy"
 )
 
+const HostUnavailableReason = "device host is offline or unavailable"
+
 var deviceTransitions = map[DeviceLifecycleStatus]map[DeviceLifecycleStatus]struct{}{
 	DeviceProvisioning: allowed(DeviceBooting, DeviceQuarantined, DeviceDeleted),
 	DeviceBooting:      allowed(DeviceReady, DeviceStopped, DeviceQuarantined),

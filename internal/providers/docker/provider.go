@@ -18,17 +18,19 @@ import (
 	"unicode"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 const (
-	labelManaged      = "io.alcor.device-farm.managed"
-	labelProviderRef  = "io.alcor.device-farm.provider-ref"
-	labelHostID       = "io.alcor.device-farm.host-id"
-	labelDeviceID     = "io.alcor.device-farm.device-id"
-	labelImageID      = "io.alcor.device-farm.image-id"
-	labelRuntimeImage = "io.alcor.device-farm.runtime-image"
-	labelGeneration   = "io.alcor.device-farm.generation"
-	labelCapabilities = "io.alcor.device-farm.capabilities"
+	labelManaged        = "io.alcor.device-farm.managed"
+	labelProviderRef    = "io.alcor.device-farm.provider-ref"
+	labelHostID         = "io.alcor.device-farm.host-id"
+	labelDeviceID       = "io.alcor.device-farm.device-id"
+	labelImageID        = "io.alcor.device-farm.image-id"
+	labelRuntimeImage   = "io.alcor.device-farm.runtime-image"
+	labelGeneration     = "io.alcor.device-farm.generation"
+	labelCapabilities   = "io.alcor.device-farm.capabilities"
+	labelRuntimeProfile = "io.alcor.device-farm.runtime-profile"
 )
 
 type AppiumProbe interface {
@@ -136,6 +138,9 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 }
 
 func (provider *Provider) create(ctx context.Context, request providers.CreateRequest, generation int) (providers.Snapshot, error) {
+	if request.RuntimeProfile == (runtimeprofile.Profile{}) {
+		request.RuntimeProfile = runtimeprofile.Default()
+	}
 	runtimeImage := strings.TrimSpace(request.RuntimeImage)
 	if runtimeImage == "" {
 		runtimeImage = strings.TrimSpace(provider.config.Image)
@@ -165,10 +170,14 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 	if err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "capabilities cannot be encoded", false, err)
 	}
+	encodedProfile, err := json.Marshal(request.RuntimeProfile)
+	if err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "runtime profile cannot be encoded", false, err)
+	}
 	labels := map[string]string{
 		labelManaged: "true", labelProviderRef: request.ProviderRef, labelHostID: request.HostID,
 		labelDeviceID: request.DeviceID, labelImageID: request.ImageID, labelRuntimeImage: runtimeImage,
-		labelGeneration: strconv.Itoa(generation), labelCapabilities: string(capabilities),
+		labelGeneration: strconv.Itoa(generation), labelCapabilities: string(capabilities), labelRuntimeProfile: string(encodedProfile),
 	}
 	resourceLabels := map[string]string{labelManaged: "true", labelProviderRef: request.ProviderRef, labelHostID: request.HostID}
 	if err := provider.backend.CreateNetwork(ctx, networkName, resourceLabels); err != nil {
@@ -178,13 +187,15 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		provider.cleanup(request.ProviderRef)
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
 	}
+	environment := cloneStringMap(provider.config.Environment)
+	applyRuntimeEnvironment(environment, request.RuntimeProfile)
 	err = provider.backend.CreateContainer(ctx, containerSpec{
 		Name: name, Hostname: name, Image: runtimeImage, Network: networkName, Volume: volumeName,
 		DataMountPath: provider.config.DataMountPath, KVMDevice: provider.config.KVMDevice,
 		BindAddress: provider.config.BindAddress, ContainerADBPort: provider.config.ContainerADBPort,
 		ContainerAppiumPort: provider.config.ContainerAppiumPort,
-		CPUs:                provider.config.CPUs, Memory: provider.config.Memory, PidsLimit: provider.config.PidsLimit,
-		Labels: labels, Environment: cloneStringMap(provider.config.Environment),
+		CPUs:                request.RuntimeProfile.ContainerCPUCores, Memory: fmt.Sprintf("%dm", request.RuntimeProfile.ContainerMemoryMB), PidsLimit: provider.config.PidsLimit,
+		Labels: labels, Environment: environment,
 	})
 	if err != nil {
 		provider.cleanup(request.ProviderRef)
@@ -366,6 +377,16 @@ func (provider *Provider) snapshot(value container) (providers.Snapshot, error) 
 			return providers.Snapshot{}, err
 		}
 	}
+	profileValues := map[string]any{}
+	if raw := value.Labels[labelRuntimeProfile]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &profileValues); err != nil {
+			return providers.Snapshot{}, err
+		}
+	}
+	runtimeProfile, err := runtimeprofile.Parse(profileValues)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
 	connection, _ := provider.connection(value)
 	state := providers.StateStopped
 	switch value.State {
@@ -377,7 +398,8 @@ func (provider *Provider) snapshot(value container) (providers.Snapshot, error) 
 	return providers.Snapshot{
 		DeviceID: value.Labels[labelDeviceID], HostID: value.Labels[labelHostID], ImageID: value.Labels[labelImageID],
 		ProviderRef: value.Labels[labelProviderRef], State: state, Generation: generation,
-		Capabilities: capabilities, Health: providers.Health{Online: state == providers.StateRunning}, Connection: connection,
+		Capabilities: capabilities, RuntimeProfile: runtimeProfile,
+		Health: providers.Health{Online: state == providers.StateRunning}, Connection: connection,
 	}, nil
 }
 
@@ -415,9 +437,20 @@ func requestFromContainer(value container) (providers.CreateRequest, int, error)
 			return providers.CreateRequest{}, 0, err
 		}
 	}
+	profileValues := map[string]any{}
+	if raw := value.Labels[labelRuntimeProfile]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &profileValues); err != nil {
+			return providers.CreateRequest{}, 0, err
+		}
+	}
+	runtimeProfile, err := runtimeprofile.Parse(profileValues)
+	if err != nil {
+		return providers.CreateRequest{}, 0, err
+	}
 	request := providers.CreateRequest{
 		DeviceID: value.Labels[labelDeviceID], HostID: value.Labels[labelHostID], ImageID: value.Labels[labelImageID],
 		RuntimeImage: value.Labels[labelRuntimeImage], ProviderRef: value.Labels[labelProviderRef], Capabilities: capabilities,
+		RuntimeProfile: runtimeProfile,
 	}
 	if err := validateCreateRequest(request); err != nil {
 		return providers.CreateRequest{}, 0, err
@@ -522,7 +555,25 @@ func validateCreateRequest(request providers.CreateRequest) error {
 	if len(request.ProviderRef) > 128 {
 		return errors.New("provider ref is too long")
 	}
+	if err := request.RuntimeProfile.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func applyRuntimeEnvironment(environment map[string]string, profile runtimeprofile.Profile) {
+	graphics := "auto"
+	switch profile.Graphics {
+	case runtimeprofile.GraphicsHost:
+		graphics = "host"
+	case runtimeprofile.GraphicsSoftware:
+		graphics = "swiftshader_indirect"
+	}
+	environment["EMULATOR_DATA_PARTITION"] = fmt.Sprintf("%dM", profile.DataDiskMB)
+	environment["EMULATOR_ADDITIONAL_ARGS"] = fmt.Sprintf(
+		"-no-window -no-audio -no-boot-anim -cores %d -memory %d -gpu %s -skin %dx%d -dpi-device %d -prop dalvik.vm.heapsize=%dm",
+		profile.GuestCPUCores, profile.GuestMemoryMB, graphics, profile.Width, profile.Height, profile.DensityDPI, profile.VMHeapMB,
+	)
 }
 
 func cloneStringMap(source map[string]string) map[string]string {

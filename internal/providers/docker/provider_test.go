@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) {
@@ -126,6 +127,32 @@ func TestDockerProviderUsesSelectedRuntimeImageAndPreservesItOnRebuild(t *testin
 	}
 	if engine.specs[firstName].Image != firstRequest.RuntimeImage {
 		t.Fatalf("rebuild changed runtime image to %q", engine.specs[firstName].Image)
+	}
+}
+
+func TestDockerProviderAppliesPerDeviceRuntimeProfile(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "profile-device")
+	request.RuntimeProfile = runtimeprofile.Profile{
+		ContainerCPUCores: 2, ContainerMemoryMB: 4096, GuestCPUCores: 2, GuestMemoryMB: 3072,
+		DataDiskMB: 8192, Width: 720, Height: 1600, DensityDPI: 320, VMHeapMB: 384, Graphics: runtimeprofile.GraphicsSoftware,
+	}
+	if _, err := provider.Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	name, _, _ := resourceNames(request.ProviderRef)
+	spec := engine.specs[name]
+	if spec.CPUs != 2 || spec.Memory != "4096m" || spec.Environment["EMULATOR_DATA_PARTITION"] != "8192M" ||
+		!strings.Contains(spec.Environment["EMULATOR_ADDITIONAL_ARGS"], "-cores 2 -memory 3072 -gpu swiftshader_indirect -skin 720x1600 -dpi-device 320 -prop dalvik.vm.heapsize=384m") {
+		t.Fatalf("container spec=%+v environment=%v", spec, spec.Environment)
+	}
+	discovered, err := provider.Discover(context.Background(), request.HostID)
+	if err != nil || len(discovered) != 1 || discovered[0].RuntimeProfile != request.RuntimeProfile {
+		t.Fatalf("discovered=%+v error=%v", discovered, err)
 	}
 }
 

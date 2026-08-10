@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 type Client interface {
@@ -23,6 +25,10 @@ type EndpointRegistrar interface {
 	Register(context.Context, string) error
 }
 
+type CapacityProbe interface {
+	Snapshot(context.Context) (map[string]any, map[string]any, error)
+}
+
 type Config struct {
 	HostID            string
 	ProviderType      string
@@ -33,15 +39,17 @@ type Config struct {
 	CommandTimeout    time.Duration
 	ShutdownTimeout   time.Duration
 	Capacity          map[string]any
+	CapacityProbe     CapacityProbe
 	STFADBRegistrar   EndpointRegistrar
 }
 
 type Agent struct {
-	config    Config
-	client    Client
-	provider  providers.Provider
-	registrar EndpointRegistrar
-	logger    *slog.Logger
+	config     Config
+	client     Client
+	provider   providers.Provider
+	registrar  EndpointRegistrar
+	logger     *slog.Logger
+	resourceMu sync.Mutex
 }
 
 func New(config Config, client Client, provider providers.Provider, logger *slog.Logger) (*Agent, error) {
@@ -150,11 +158,23 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 			LifecycleStatus: providerLifecycle(snapshot), HealthStatus: providerHealth(snapshot),
 			Connection: map[string]any{"adb_endpoint": snapshot.Connection.ADBEndpoint, "appium_endpoint": snapshot.Connection.AppiumEndpoint,
 				"appium_udid": snapshot.Connection.AppiumUDID},
+			RuntimeProfile: snapshot.RuntimeProfile.Map(),
 		})
 	}
+	capacity, environment := agent.config.Capacity, map[string]any{"provider": agent.config.ProviderType}
+	if agent.config.CapacityProbe != nil {
+		measured, capabilities, probeErr := agent.config.CapacityProbe.Snapshot(ctx)
+		if probeErr != nil {
+			return probeErr
+		}
+		capacity = measured
+		for key, value := range capabilities {
+			environment[key] = value
+		}
+	}
 	return agent.client.Heartbeat(ctx, agent.config.HostID, hostcommand.HeartbeatInput{
-		AgentTime: time.Now().UTC(), Capacity: agent.config.Capacity,
-		Environment: map[string]any{"provider": agent.config.ProviderType}, Devices: devices,
+		AgentTime: time.Now().UTC(), Capacity: capacity,
+		Environment: environment, Devices: devices,
 	})
 }
 
@@ -169,13 +189,22 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		var snapshot providers.Snapshot
 		created := false
 		ready := false
-		err = agent.verifyRuntimeImage(ctx, command.Payload)
+		profile, profileErr := profileFromPayload(command.Payload)
+		err = profileErr
 		if err == nil {
-			snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
-				DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
-				ImageID: stringValue(command.Payload, "image_id"), RuntimeImage: stringValue(command.Payload, "docker_image"), ProviderRef: providerRef,
-				Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"),
-			})
+			err = agent.verifyRuntimeImage(ctx, command.Payload)
+		}
+		if err == nil {
+			agent.resourceMu.Lock()
+			err = agent.preflightCreate(ctx, profile, stringValue(command.Payload, "image_id"))
+			if err == nil {
+				snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
+					DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
+					ImageID: stringValue(command.Payload, "image_id"), RuntimeImage: stringValue(command.Payload, "docker_image"), ProviderRef: providerRef,
+					Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"), RuntimeProfile: profile,
+				})
+			}
+			agent.resourceMu.Unlock()
 			created = err == nil
 		}
 		if err == nil {
@@ -283,6 +312,10 @@ func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snaps
 	if err := agent.verifyRuntimeImage(ctx, payload); err != nil {
 		return providers.Snapshot{}, err
 	}
+	profile, err := profileFromPayload(payload)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
 	if err := agent.provider.Delete(ctx, providerRef); err != nil && providers.ErrorCode(err) != "PROVIDER_DEVICE_NOT_FOUND" {
 		return providers.Snapshot{}, err
 	}
@@ -297,7 +330,7 @@ func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snaps
 	snapshot, returnErr = agent.provider.Create(ctx, providers.CreateRequest{
 		DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
 		ImageID: stringValue(payload, "image_id"), RuntimeImage: stringValue(payload, "docker_image"), ProviderRef: providerRef,
-		Capabilities: mapValue(payload, "capabilities"),
+		Capabilities: mapValue(payload, "capabilities"), RuntimeProfile: profile,
 	})
 	if returnErr != nil {
 		return providers.Snapshot{}, returnErr
@@ -348,6 +381,10 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 	if err := agent.verifyRuntimeImage(ctx, payload); err != nil {
 		return nil, err
 	}
+	profile, err := profileFromPayload(payload)
+	if err != nil {
+		return nil, err
+	}
 	providerRef := stringValue(payload, "provider_ref")
 	created := false
 	cleanup := func() error {
@@ -358,11 +395,16 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 		defer cancel()
 		return agent.provider.Delete(cleanupContext, providerRef)
 	}
-	_, err := agent.provider.Create(ctx, providers.CreateRequest{
-		DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
-		ImageID: stringValue(payload, "image_id"), RuntimeImage: stringValue(payload, "docker_image"), ProviderRef: providerRef,
-		Capabilities: mapValue(payload, "capabilities"),
-	})
+	agent.resourceMu.Lock()
+	err = agent.preflightCreate(ctx, profile, stringValue(payload, "image_id"))
+	if err == nil {
+		_, err = agent.provider.Create(ctx, providers.CreateRequest{
+			DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
+			ImageID: stringValue(payload, "image_id"), RuntimeImage: stringValue(payload, "docker_image"), ProviderRef: providerRef,
+			Capabilities: mapValue(payload, "capabilities"), RuntimeProfile: profile,
+		})
+	}
+	agent.resourceMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -390,6 +432,42 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+func profileFromPayload(payload map[string]any) (runtimeprofile.Profile, error) {
+	return runtimeprofile.Parse(mapValue(payload, "runtime_profile"))
+}
+
+func (agent *Agent) preflightCreate(ctx context.Context, profile runtimeprofile.Profile, imageID string) error {
+	if agent.config.CapacityProbe == nil {
+		return nil
+	}
+	values, _, err := agent.config.CapacityProbe.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	host, dynamic := capacity.HostFromMap(values)
+	if !dynamic {
+		return nil
+	}
+	snapshots, err := agent.provider.Discover(ctx, agent.config.HostID)
+	if err != nil {
+		return err
+	}
+	existing := capacity.Allocation{Slots: len(snapshots)}
+	for _, snapshot := range snapshots {
+		existing.CPUCores += snapshot.RuntimeProfile.ContainerCPUCores
+		existing.MemoryMB += snapshot.RuntimeProfile.ContainerMemoryMB
+	}
+	// verifyRuntimeImage runs immediately before this preflight. A successful
+	// verification proves the immutable image is already present on this Host,
+	// so its shared layers must not be charged again per Device.
+	result := capacity.Evaluate(host, existing, capacity.Allocation{}, profile, imageID != "")
+	if result.Fits {
+		return nil
+	}
+	return &providers.Error{Operation: providers.OperationCreate, Code: "INSUFFICIENT_HOST_RESOURCES",
+		Message: result.Error().Error(), Retryable: true}
 }
 
 func (agent *Agent) verifyRuntimeImage(ctx context.Context, payload map[string]any) error {

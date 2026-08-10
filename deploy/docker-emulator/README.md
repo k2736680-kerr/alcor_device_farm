@@ -41,6 +41,8 @@ sudoedit /etc/alcor-device-farm/host-agent.env
 - `DEVICE_FARM_AGENT_HOST_ID`；
 - `DEVICE_FARM_SECURITY_AGENT_TOKEN`；
 - `DEVICE_FARM_AGENT_CONCURRENCY=1`（只限制 Agent 同时执行的 Provider Command 数量；设备目标扩缩容在 Console 修改，不需要改此值或重启 Agent）；
+- `DEVICE_FARM_AGENT_DEVICE_SLOT_LIMIT=0`（默认不写死设备台数；非零值只作为额外安全上限）；
+- `DEVICE_FARM_DOCKER_DATA_ROOT=/var/lib/docker`（Agent 从该文件系统读取实际剩余磁盘）；
 - `DEVICE_FARM_DOCKER_IMAGE`；
 - `DEVICE_FARM_DOCKER_ADVERTISE_HOST`。
 
@@ -58,7 +60,7 @@ export DEVICE_FARM_DOCKER_INTEGRATION_COUNT=1
 ./scripts/verify-docker-emulator.sh
 ```
 
-资源允许时可以把数量改为 `2` 执行多设备端口隔离扩展验收；生产容量仍由 Pool 和 Image 参数控制，不由该测试变量控制。
+资源允许时可以把数量改为 `2` 执行多设备端口隔离扩展验收；生产是否还能创建由 Image 的运行规格以及 Host 实时 CPU、可用内存、Docker 数据盘剩余空间共同计算，不由该测试变量或 Agent 命令并发决定。资源不足时 Controller 保持缺口并返回明确的限制项和欠缺量，不会超卖后再让 Emulator 卡死。
 
 验收通过后启动：
 

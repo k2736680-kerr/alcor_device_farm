@@ -188,7 +188,7 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		result.DevicesChecked++
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
 		if device.HostStatus != domain.HostOnline {
-			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", "device host is offline or unavailable"
+			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", domain.HostUnavailableReason
 		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
 			service.withinVisibilityGrace(device, input.ObservedAt) {
 			input.EventType, input.Severity, input.Reason = "stf_stabilizing", "error", domain.STFReadinessStabilizationReason

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 )
 
@@ -76,6 +77,73 @@ func TestHeartbeatDoesNotMaskSTFUnhealthyState(t *testing.T) {
 	}
 	if health != "unhealthy" || reason != "device is not visible through STF" || failures != 2 {
 		t.Fatalf("health=%s reason=%q failures=%d", health, reason, failures)
+	}
+}
+
+func TestHeartbeatRestoresActiveAssignmentOnlyAfterTransientHostOutage(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "emulator-5554",
+		nil, nil, "quarantined", "degraded")
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET health_reason=$1 WHERE id='device_0000000000001'`, domain.HostUnavailableReason); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pools(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status)
+		VALUES('pool_000000000000001','recovery-pool',600,3600,1,'active');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_0000000000001',true);
+		INSERT INTO device_reservations(id,client_id,pool_id,device_id,owner_type,owner_id,lease_seconds,status,idempotency_key,starts_at,expires_at)
+		VALUES('reservation_00000001','console','pool_000000000000001','device_0000000000001','manual','remote-owner',600,'active','host-recovery-reservation',clock_timestamp(),clock_timestamp()+interval '10 minutes');
+		INSERT INTO device_sessions(id,reservation_id,device_id,status,started_at,connection_metadata)
+		VALUES('session_000000000001','reservation_00000001','device_0000000000001','active',clock_timestamp(),'{}')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "emulator-5554",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+				"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health string
+	var reason *string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,health_reason
+		FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "busy" || health != "healthy" || reason != nil {
+		t.Fatalf("lifecycle=%s health=%s reason=%v", lifecycle, health, reason)
+	}
+}
+
+func TestHeartbeatDoesNotRecoverManualOrDependencyQuarantine(t *testing.T) {
+	db := openTestDatabase(t)
+	for _, reason := range []string{"manual maintenance", "device is not visible through STF", "Appium health check failed"} {
+		seedHost(t, db)
+		seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "emulator-5554",
+			nil, nil, "quarantined", "degraded")
+		if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET health_reason=$1 WHERE id='device_0000000000001'`, reason); err != nil {
+			t.Fatal(err)
+		}
+		_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+			AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+			Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "emulator-5554",
+				LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+					"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lifecycle, health, storedReason string
+		if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,health_reason
+			FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &storedReason); err != nil {
+			t.Fatal(err)
+		}
+		if lifecycle != "quarantined" || health != "degraded" || storedReason != reason {
+			t.Fatalf("reason=%q lifecycle=%s health=%s stored=%q", reason, lifecycle, health, storedReason)
+		}
 	}
 }
 

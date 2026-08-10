@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.2.0
+  version: 1.3.0
   x-contract-status: frozen
-  x-contract-frozen-at: 2026-08-03
+  x-contract-frozen-at: 2026-08-10
   x-platform-semantics: Case/Run/RunAttempt
   description: >-
     Android 设备农场独立控制面契约。北向接口只接受平台服务身份，
@@ -983,7 +983,7 @@ components:
         code:
           type: string
           pattern: "^[A-Z][A-Z0-9_]{2,63}$"
-          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
+          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, INSUFFICIENT_HOST_RESOURCES, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
         message: {type: string}
         details: {type: object, additionalProperties: true}
         retryable: {type: boolean}
@@ -999,7 +999,7 @@ components:
         api_level: {type: integer}
         abi: {type: string}
         resolution: {type: string}
-        resource_config: {type: object, additionalProperties: true}
+        resource_config: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         status: {type: string, enum: [draft, validating, ready, failed, disabled]}
         validation_error: {type: string}
         created_at: {type: string, format: date-time}
@@ -1014,7 +1014,7 @@ components:
         host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
         address: {type: string}
         capabilities: {type: object, additionalProperties: true}
-        capacity: {type: object, additionalProperties: true}
+        capacity: {$ref: "#/components/schemas/HostCapacity"}
         used_capacity: {type: object, additionalProperties: true}
         status: {type: string, enum: [online, offline, draining, maintenance]}
         draining: {type: boolean}
@@ -1281,7 +1281,7 @@ components:
         api_level: {type: integer, minimum: 21}
         abi: {type: string, enum: [x86_64, arm64-v8a]}
         resolution: {type: string, pattern: "^[0-9]+x[0-9]+$"}
-        resource_config: {type: object, additionalProperties: true}
+        resource_config: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         enabled: {type: boolean, default: true}
     DeviceHostInput:
       type: object
@@ -1295,11 +1295,36 @@ components:
         capacity: {$ref: "#/components/schemas/HostCapacity"}
     HostCapacity:
       type: object
-      required: [cpu, memory_mb, device_slots]
+      additionalProperties: false
       properties:
-        cpu: {type: integer, minimum: 1}
-        memory_mb: {type: integer, minimum: 1024}
+        resource_model: {type: string, enum: [dynamic_v1]}
+        cpu_cores: {type: number, minimum: 1}
+        memory_total_mb: {type: integer, minimum: 1024}
+        memory_available_mb: {type: integer, minimum: 0}
+        disk_total_mb: {type: integer, minimum: 1024}
+        disk_available_mb: {type: integer, minimum: 0}
+        collected_at: {type: string, format: date-time}
+        cpu: {type: integer, minimum: 1, deprecated: true}
+        memory_mb: {type: integer, minimum: 1024, deprecated: true}
         device_slots: {type: integer, minimum: 1}
+    EmulatorRuntimeProfile:
+      type: object
+      additionalProperties: false
+      properties:
+        container_cpu_cores: {type: number, minimum: 1, maximum: 64, default: 4}
+        container_memory_mb: {type: integer, minimum: 2048, maximum: 262144, default: 5120}
+        guest_cpu_cores: {type: integer, minimum: 1, maximum: 32, default: 4}
+        guest_memory_mb: {type: integer, minimum: 1536, maximum: 261632, default: 4096}
+        data_disk_mb: {type: integer, minimum: 2048, maximum: 1048576, default: 4096}
+        image_disk_mb: {type: integer, minimum: 0, default: 0, description: Shared image-layer estimate; charged once per Host and digest.}
+        width: {type: integer, minimum: 320, maximum: 4320, default: 1080}
+        height: {type: integer, minimum: 480, maximum: 7680, default: 2400}
+        density_dpi: {type: integer, minimum: 120, maximum: 960, default: 420}
+        vm_heap_mb: {type: integer, minimum: 128, default: 512}
+        graphics: {type: string, enum: [auto, host, software], default: auto}
+        appium: {type: boolean, default: true, description: Compatibility capability; Appium remains managed by the adapter.}
+        cpu: {type: number, minimum: 1, deprecated: true, description: Legacy alias for container_cpu_cores.}
+        memory_mb: {type: integer, minimum: 2048, deprecated: true, description: Legacy alias for container_memory_mb.}
     DevicePoolInput:
       type: object
       additionalProperties: false
@@ -1464,6 +1489,7 @@ components:
         serial: {type: string}
         lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
         health_status: {$ref: "#/components/schemas/HealthStatus"}
+        runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         connection:
           type: object
           additionalProperties: false

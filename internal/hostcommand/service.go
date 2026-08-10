@@ -13,6 +13,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,6 +35,7 @@ type DiscoveredDevice struct {
 	LifecycleStatus string         `json:"lifecycle_status"`
 	HealthStatus    string         `json:"health_status"`
 	Connection      map[string]any `json:"connection,omitempty"`
+	RuntimeProfile  map[string]any `json:"runtime_profile,omitempty"`
 }
 
 type HeartbeatInput struct {
@@ -137,6 +139,9 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		if _, _, _, err := discoveredConnection(device.Connection); err != nil {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
+		if _, err := runtimeprofile.Parse(device.RuntimeProfile); err != nil {
+			return HeartbeatResult{}, ErrInvalidArgument
+		}
 		seenRefs[device.ProviderRef] = true
 		if device.Serial != "" {
 			seenSerials[device.Serial] = true
@@ -146,7 +151,18 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	if err != nil {
 		return HeartbeatResult{}, ErrInvalidArgument
 	}
-	usedCapacity, _ := json.Marshal(map[string]any{"device_slots": len(input.Devices)})
+	environment, err := json.Marshal(sensitive.RedactMap(input.Environment))
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	used := map[string]any{"device_slots": len(input.Devices), "cpu_cores": float64(0), "memory_mb": int64(0), "data_disk_mb": int64(0)}
+	for _, device := range input.Devices {
+		profile, _ := runtimeprofile.Parse(device.RuntimeProfile)
+		used["cpu_cores"] = used["cpu_cores"].(float64) + profile.ContainerCPUCores
+		used["memory_mb"] = used["memory_mb"].(int64) + profile.ContainerMemoryMB
+		used["data_disk_mb"] = used["data_disk_mb"].(int64) + profile.DataDiskMB
+	}
+	usedCapacity, _ := json.Marshal(used)
 	var result HeartbeatResult
 	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var status domain.HostStatus
@@ -169,8 +185,9 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 			target = host.Status()
 		}
 		if _, err := tx.Exec(ctx, `UPDATE device_hosts SET status=$2::varchar,draining=($2::varchar='draining'),
-			capacity=capacity || ($3::jsonb-'device_slots'),used_capacity=$4,last_heartbeat_at=$5,updated_at=$5 WHERE id=$1`,
-			hostID, target, capacity, usedCapacity, now); err != nil {
+			capacity=CASE WHEN $3::jsonb->>'resource_model'='dynamic_v1' THEN $3::jsonb ELSE capacity || ($3::jsonb-'device_slots') END,
+			capabilities=capabilities || ($4::jsonb-'provider'),used_capacity=$5,last_heartbeat_at=$6,updated_at=$6 WHERE id=$1`,
+			hostID, target, capacity, environment, usedCapacity, now); err != nil {
 			return err
 		}
 		for _, discovered := range input.Devices {
@@ -197,15 +214,19 @@ type discoveredDeviceState struct {
 	health            domain.HealthStatus
 	healthReason      *string
 	operationInFlight bool
+	assignmentTarget  string
 }
 
 func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, discovered DiscoveredDevice, now time.Time) error {
 	var current discoveredDeviceState
 	err := tx.QueryRow(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,d.health_reason,
 		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
-			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased'))
+			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased')),
+		COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
+			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
+			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),'')
 		FROM devices d WHERE d.host_id=$1 AND d.provider_ref=$2 FOR UPDATE OF d`, hostID, discovered.ProviderRef).
-		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason, &current.operationInFlight)
+		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason, &current.operationInFlight, &current.assignmentTarget)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -221,7 +242,14 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		return err
 	}
 	preserveSTFHealth := false
-	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
+	recoveredHostOutage := current.lifecycle == domain.DeviceQuarantined && current.healthReason != nil &&
+		*current.healthReason == domain.HostUnavailableReason && discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
+	if recoveredHostOutage {
+		if err := recoverFromHostOutage(aggregate, current.assignmentTarget, now); err != nil {
+			return err
+		}
+	}
+	if (current.lifecycle != domain.DeviceQuarantined || recoveredHostOutage) && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
 		incomingHealth := domain.HealthStatus(discovered.HealthStatus)
 		preserveSTFHealth = incomingHealth == domain.HealthHealthy && current.healthReason != nil &&
 			domain.IsSTFFailureReason(*current.healthReason)
@@ -237,7 +265,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 	}
 	healthReason := current.healthReason
-	if current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted &&
+	if (current.lifecycle != domain.DeviceQuarantined || recoveredHostOutage) && current.lifecycle != domain.DeviceDeleted &&
 		!current.operationInFlight && !preserveSTFHealth {
 		healthReason = nil
 		if aggregate.Health() != domain.HealthHealthy {
@@ -252,6 +280,30 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID,
 		aggregate.Lifecycle(), aggregate.Health(), healthReason, now)
 	return err
+}
+
+func recoverFromHostOutage(device *domain.Device, assignmentTarget string, now time.Time) error {
+	if device.Health() != domain.HealthHealthy {
+		if err := device.UpdateHealth(domain.HealthHealthy, "host and provider heartbeat recovered", now); err != nil {
+			return err
+		}
+	}
+	for _, target := range []domain.DeviceLifecycleStatus{domain.DeviceProvisioning, domain.DeviceBooting, domain.DeviceReady} {
+		if err := device.Transition(target, "host and provider heartbeat recovered", now); err != nil {
+			return err
+		}
+	}
+	if assignmentTarget == string(domain.DeviceReserved) || assignmentTarget == string(domain.DeviceBusy) {
+		if err := device.Transition(domain.DeviceReserved, "existing reservation restored after host recovery", now); err != nil {
+			return err
+		}
+	}
+	if assignmentTarget == string(domain.DeviceBusy) {
+		if err := device.Transition(domain.DeviceBusy, "active session restored after host recovery", now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyDiscoveredLifecycle(device *domain.Device, incoming domain.DeviceLifecycleStatus, now time.Time) error {

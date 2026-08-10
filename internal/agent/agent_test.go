@@ -16,17 +16,27 @@ import (
 )
 
 type fakeClient struct {
-	mu          sync.Mutex
-	commands    []hostcommand.Command
-	completions []hostcommand.CompletionInput
-	heartbeats  int
+	mu            sync.Mutex
+	commands      []hostcommand.Command
+	completions   []hostcommand.CompletionInput
+	heartbeats    int
+	lastHeartbeat hostcommand.HeartbeatInput
 }
 
-func (client *fakeClient) Heartbeat(context.Context, string, hostcommand.HeartbeatInput) error {
+func (client *fakeClient) Heartbeat(_ context.Context, _ string, input hostcommand.HeartbeatInput) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	client.heartbeats++
+	client.lastHeartbeat = input
 	return nil
+}
+
+type fakeCapacityProbe struct{}
+
+func (fakeCapacityProbe) Snapshot(context.Context) (map[string]any, map[string]any, error) {
+	return map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 8, "memory_total_mb": 16000,
+			"memory_available_mb": 9000, "disk_total_mb": 100000, "disk_available_mb": 30000},
+		map[string]any{"kvm": true, "gpu_render": true}, nil
 }
 func (client *fakeClient) Claim(ctx context.Context, _ string, input hostcommand.ClaimInput) ([]hostcommand.Command, error) {
 	client.mu.Lock()
@@ -78,6 +88,32 @@ func TestAgentRejectsCommandTimeoutThatCanOutliveLease(t *testing.T) {
 	}, &fakeClient{}, providermock.New(providermock.Config{}), nil)
 	if err == nil {
 		t.Fatal("agent accepted a command timeout that can outlive its lease")
+	}
+}
+
+func TestAgentHeartbeatUsesMeasuredCapacityInsteadOfCommandConcurrency(t *testing.T) {
+	client := &fakeClient{}
+	runtime, err := agent.New(agent.Config{
+		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: 10 * time.Millisecond,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second, ShutdownTimeout: time.Second,
+		Capacity: map[string]any{"device_slots": 1}, CapacityProbe: fakeCapacityProbe{},
+	}, client, providermock.New(providermock.Config{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(25 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.lastHeartbeat.Capacity["resource_model"] != "dynamic_v1" || client.lastHeartbeat.Capacity["device_slots"] != nil ||
+		client.lastHeartbeat.Environment["gpu_render"] != true {
+		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
 	}
 }
 

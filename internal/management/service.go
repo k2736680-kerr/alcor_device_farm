@@ -17,6 +17,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 )
 
@@ -374,6 +375,7 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 	snapshot, err := service.provider.Create(ctx, providers.CreateRequest{
 		DeviceID: input.ID, HostID: input.HostID, ImageID: input.ImageID,
 		RuntimeImage: image.DockerImage, ProviderRef: input.ProviderRef, Capabilities: cloneMap(input.Capabilities),
+		RuntimeProfile: mustRuntimeProfile(image.ResourceConfig),
 	})
 	if err != nil {
 		return Device{}, err
@@ -582,6 +584,11 @@ func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempoten
 		payload["image_id"] = *current.ImageID
 		payload["docker_image"] = image.DockerImage
 		payload["docker_digest"] = image.DockerDigest
+		profile, profileErr := runtimeprofile.Parse(image.ResourceConfig)
+		if profileErr != nil {
+			return Device{}, ErrInvalidArgument
+		}
+		payload["runtime_profile"] = profile.Map()
 	}
 	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
 		CommandID: commandID, CommandType: "rebuild",
@@ -662,7 +669,18 @@ func validateImageInput(input ImageInput) error {
 		(strings.TrimSpace(input.DockerImage) != "" && !providers.ValidRuntimeImageReference(input.DockerImage)) {
 		return ErrInvalidArgument
 	}
+	if _, err := runtimeprofile.Parse(input.ResourceConfig); err != nil {
+		return ErrInvalidArgument
+	}
 	return nil
+}
+
+func mustRuntimeProfile(values map[string]any) runtimeprofile.Profile {
+	profile, err := runtimeprofile.Parse(values)
+	if err != nil {
+		return runtimeprofile.Default()
+	}
+	return profile
 }
 
 func validatePoolInput(input PoolInput) error {

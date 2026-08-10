@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 type Sleeper interface {
@@ -115,6 +116,12 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 	}
 	if request.DeviceID == "" || request.HostID == "" || request.ImageID == "" || request.ProviderRef == "" {
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "device, host, image and provider ref are required", false, nil)
+	}
+	if request.RuntimeProfile == (runtimeprofile.Profile{}) {
+		request.RuntimeProfile = runtimeprofile.Default()
+	}
+	if err := request.RuntimeProfile.Validate(); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", err.Error(), false, err)
 	}
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
@@ -295,7 +302,8 @@ func (provider *Provider) snapshotLocked(value device) providers.Snapshot {
 	return providers.Snapshot{
 		DeviceID: value.request.DeviceID, HostID: value.request.HostID, ImageID: value.request.ImageID,
 		ProviderRef: value.request.ProviderRef, State: value.state, Generation: value.generation,
-		Capabilities: cloneMap(value.request.Capabilities), Health: health, Connection: value.connection,
+		Capabilities: cloneMap(value.request.Capabilities), RuntimeProfile: value.request.RuntimeProfile,
+		Health: health, Connection: value.connection,
 	}
 }
 

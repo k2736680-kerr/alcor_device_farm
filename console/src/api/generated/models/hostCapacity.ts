@@ -3,14 +3,33 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.2.0
+ * OpenAPI spec version: 1.3.0
  */
+import type { HostCapacityResourceModel } from './hostCapacityResourceModel';
 
 export interface HostCapacity {
+  resource_model?: HostCapacityResourceModel;
   /** @minimum 1 */
-  cpu: number;
+  cpu_cores?: number;
   /** @minimum 1024 */
-  memory_mb: number;
+  memory_total_mb?: number;
+  /** @minimum 0 */
+  memory_available_mb?: number;
+  /** @minimum 1024 */
+  disk_total_mb?: number;
+  /** @minimum 0 */
+  disk_available_mb?: number;
+  collected_at?: string;
+  /**
+   * @deprecated
+   * @minimum 1
+   */
+  cpu?: number;
+  /**
+   * @deprecated
+   * @minimum 1024
+   */
+  memory_mb?: number;
   /** @minimum 1 */
-  device_slots: number;
+  device_slots?: number;
 }

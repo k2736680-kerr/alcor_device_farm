@@ -52,6 +52,10 @@
 | DF-029 | 控制台统一容量和自动安全缩容 | completed | DF-016、DF-023、DF-028 |
 | DF-030 | 隔离设备受控人工删除 | completed | DF-012、DF-022、DF-029 |
 | DF-031 | 管理员设备远程控制 | completed | DF-010、DF-017、DF-018、DF-028 |
+| DF-032 | 动态 Host 容量和设备运行规格 | completed | DF-014、DF-016、DF-029、DF-031 |
+| DF-033 | Pool 总目标和默认镜像 | pending | DF-032 |
+| DF-034 | 设备规格编辑和受控重装 | pending | DF-033 |
+| DF-035 | Android 13～16 镜像目录和真实多规格验收 | pending | DF-034 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -329,6 +333,38 @@
 产出：ADR-0013、远控 Console API/OpenAPI、精确 Device 调度约束、STF Web JWT 签发器、Device 页面连接/打开/挂断交互、部署配置、安全测试、浏览器测试和 `docs/evidence/DF-031/` 真实证据。
 
 验收：只有 admin 和 `ready/healthy` Device 可以开始；点击后无需 STF 账号密码并直接进入指定设备；真实看屏、点击、滑动、输入、Home 和返回有效；第二条远控不双占；JWT 在 STF 重定向后从地址移除且响应/日志/存储无 STF API Token 或签名 Secret；点击挂断和关闭远控标签页均释放 Reservation/STF claim 并触发重建，最终 `ready/healthy`；Console 崩溃或断网后短租约由 Reaper 在限定时间内回收；STF 页面主动释放后后台状态收敛；Server/STF 重启无永久 active 远控。
+
+### DF-032 动态 Host 容量和设备运行规格
+
+实施：按 ADR-0014 定义强类型 Emulator 运行规格；Host Agent 自动上报实际逻辑 CPU、总/可用内存、Docker 数据盘总/可用空间和 GPU 能力；Warm Pool 在 PostgreSQL 行锁内按已有 Device、pending/leased 创建类命令和待创建规格预留资源。Agent 执行创建前再次按实时资源预检。Docker Provider 必须把完整规格用于容器和 Guest，不再把全局 CPU/内存当成每台最终配置。
+
+产出：ADR-0014、OpenAPI 规格与容量模型、资源探测器、Server/Agent 双重预检、Docker 参数映射、单元/集成测试和 `docs/evidence/DF-032/`。
+
+验收：代码没有固定一台/两台上限；同一 Host 对 8 GB 和 4 GB 规格返回不同可新增数量；CPU、内存或磁盘任一不足均不创建 Device/Command 并返回具体缺口；两个 Controller 并发不超分；共享镜像层不按设备数重复扣减，单设备数据盘会重复扣减；心跳陈旧、规格非法或实时资源下降时安全拒绝；现有一台真实 Android 16 仍可创建、进入 STF/Appium 并受 Docker/Guest 规格约束。
+
+### DF-033 Pool 总目标和默认镜像
+
+实施：覆盖 ADR-0011 的按 Image 固定目标语义，为 Pool 增加总目标、最小预热和默认 Image；最大并发独立配置且不得超过总目标。Warm Pool 自动补建只使用默认 Android 16，不把 Android 13～16 的 Image 目标相加。迁移现有单 Image Pool 时保持当前设备和目标，不触发意外删除。
+
+产出：migration、OpenAPI、Management/Controller、Console Pool 表单、迁移/并发/缩容测试和 `docs/evidence/DF-033/`。
+
+验收：测试环境目标 1 正常；资源足够时目标可改为 2、3 或更高且无需修改 Host Agent；资源不足时保留目标并显示待扩容和明确原因，不伪造 Host 容量；默认 Image 切换不立即重装现有设备，后续自动补建使用新默认；缩容继续只删除最旧空闲设备。
+
+### DF-034 设备规格编辑和受控重装
+
+实施：Device 保存运行规格覆盖和待应用配置。Console 为无活动预约、无在途命令的 `ready/stopped/quarantined` Emulator 提供“编辑配置/更换镜像”；Server 校验动态容量并创建可恢复的 reimage Host Command。Agent 清理旧容器/卷后按目标创建并验证 ADB、STF、Appium；成功后切换当前 Image/规格，失败尝试恢复旧配置一次，最终失败隔离。
+
+产出：migration、OpenAPI、重装编排、Agent/Provider 支持、Console 表单与二次确认、故障恢复测试和 `docs/evidence/DF-034/`。
+
+验收：使用中的设备不能编辑；4 GB 改 8 GB 时按实际剩余容量判断；重装明确提示会清空 APK 和设备数据；成功后 Device ID/Pool membership 不变，Image、有效规格和动态 Endpoint 正确更新；失败不把数据库伪装成目标 Image，恢复失败时隔离且审计可追踪；刷新页面不会丢失处理中状态。
+
+### DF-035 Android 13～16 镜像目录和真实多规格验收
+
+实施：在同一受控仓库发布 Android 13/API 33、14/API 34、15/API 35、16/API 36 的可用 x86_64 镜像，登记不可变 digest、下载地址和默认规格；Android 16 为 Pool 默认。按 Host 能力验证 GPU host/auto/software 回退以及两种内存规格的容量结果。
+
+产出：镜像构建清单/脚本、四个 Image 登记、摘要和兼容性证据、容量与重装真实验收、回滚说明及 `docs/evidence/DF-035/`。
+
+验收：新 Host 可从统一地址拉取四个版本且摘要匹配；默认创建 Android 16；管理员可把同一空闲 Device 重装到任一版本并通过 ADB、STF、Appium 冒烟；镜像层缓存与设备卷占用在 Console 中可区分；测试 Host 最终只保留用户设定的设备数量和默认版本，不因镜像数量自动创建四台。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

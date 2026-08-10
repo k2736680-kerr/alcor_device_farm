@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.2.0
+ * OpenAPI spec version: 1.3.0
  */
 
 export * from './aPIError';
@@ -49,7 +49,6 @@ export * from './deviceEnvelope';
 export * from './deviceEnvelopeError';
 export * from './deviceHost';
 export * from './deviceHostCapabilities';
-export * from './deviceHostCapacity';
 export * from './deviceHostHostType';
 export * from './deviceHostInput';
 export * from './deviceHostInputBody';
@@ -65,10 +64,8 @@ export * from './deviceImageEnvelopeError';
 export * from './deviceImageInput';
 export * from './deviceImageInputAbi';
 export * from './deviceImageInputBody';
-export * from './deviceImageInputResourceConfig';
 export * from './deviceImagePage';
 export * from './deviceImagePageAllOf';
-export * from './deviceImageResourceConfig';
 export * from './deviceImageStatus';
 export * from './deviceLifecycleMode';
 export * from './deviceLifecycleStatus';
@@ -92,6 +89,8 @@ export * from './deviceProviderType';
 export * from './deviceSuccessResponse';
 export * from './discoveredDevice';
 export * from './discoveredDeviceConnection';
+export * from './emulatorRuntimeProfile';
+export * from './emulatorRuntimeProfileGraphics';
 export * from './errorEnvelope';
 export * from './errorEnvelopeData';
 export * from './errorResponse';
@@ -114,6 +113,7 @@ export * from './healthEventSeverity';
 export * from './healthEventSource';
 export * from './healthStatus';
 export * from './hostCapacity';
+export * from './hostCapacityResourceModel';
 export * from './hostCreatedResponse';
 export * from './hostEnvelope';
 export * from './hostEnvelopeError';

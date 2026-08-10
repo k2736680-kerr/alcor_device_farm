@@ -37,7 +37,8 @@
 - STF 只做远控和可见性，不能作为设备占用真相；
 - Appium 2/UiAutomator2 复用，设备农场只管理 Endpoint 和健康；
 - 超时、重试、隔离、重建、人工释放和审计事件；
-- 控制台设置固定设备目标后，由设备域自动扩容或安全缩容；
+- 控制台设置 Pool 总目标后，由设备域按 Host 实际 CPU、内存、磁盘和设备规格自动扩容或安全缩容；
+- Android 13～16 镜像目录、Image 默认运行规格、Device 规格覆盖和空闲 Emulator 受控重装；
 - 隔离或已停止设备可由 Device Farm 管理员通过设备域 Host Command 受控删除；该动作不创建 Alcor Run/Result，也不绕过目标容量；
 - `/api/v1/device-*` 和 `/internal/v1` 的资源化接口方向；
 - 后续接真机只增加 Provider，不重做调度、预约和执行链路。

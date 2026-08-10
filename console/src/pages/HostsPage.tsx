@@ -23,6 +23,35 @@ interface ActionState {
   action: HostAction
 }
 
+function numeric(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function resourceText(host: DeviceHost, kind: 'cpu' | 'memory' | 'disk') {
+  const capacity = host.capacity as Record<string, unknown>
+  const used = host.used_capacity as Record<string, unknown>
+  if (capacity.resource_model !== 'dynamic_v1') {
+    return '等待 Agent 上报'
+  }
+  if (kind === 'cpu') {
+    return `${numeric(used.cpu_cores) ?? 0} / ${numeric(capacity.cpu_cores) ?? '-'} 核`
+  }
+  if (kind === 'memory') {
+    return `配额 ${numeric(used.memory_mb) ?? 0} / ${numeric(capacity.memory_total_mb) ?? '-'} MB；实时可用 ${numeric(capacity.memory_available_mb) ?? '-'} MB`
+  }
+  return `可用 ${numeric(capacity.disk_available_mb) ?? '-'} / ${numeric(capacity.disk_total_mb) ?? '-'} MB`
+}
+
+function capacityPolicy(host: DeviceHost) {
+  const capacity = host.capacity as Record<string, unknown>
+  if (capacity.resource_model !== 'dynamic_v1') {
+    const slots = numeric(capacity.device_slots)
+    return slots ? `旧槽位上限 ${slots} 台` : '等待动态资源心跳'
+  }
+  const slots = numeric(capacity.device_slots)
+  return slots ? `按规格动态计算，另设 ${slots} 台安全上限` : '按所选规格和实际剩余资源动态计算'
+}
+
 export function HostsPage() {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
@@ -64,6 +93,10 @@ export function HostsPage() {
     { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
     { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
+    { title: 'CPU', key: 'cpu', width: 130, render: (_, host) => resourceText(host, 'cpu') },
+    { title: '内存', key: 'memory', width: 260, render: (_, host) => resourceText(host, 'memory') },
+    { title: 'Docker 数据盘', key: 'disk', width: 190, render: (_, host) => resourceText(host, 'disk') },
+    { title: '创建规则', key: 'capacity_policy', width: 260, render: (_, host) => capacityPolicy(host) },
     { title: '地址', dataIndex: 'address', ellipsis: true, render: (value?: string) => value ?? '-' },
     { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 160, render: (value?: string) => formatTime(value) },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },

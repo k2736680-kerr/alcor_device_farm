@@ -44,7 +44,10 @@ alcor-df-<可读短名>-<provider_ref 哈希>-data
 - Docker 为每台 Emulator 随机分配空闲 Host ADB 端口，避免多设备硬编码端口冲突；
 - `serial` 和 `adb_endpoint` 都使用 `<advertise_host>:<随机端口>`，不会自动选择第一台设备；
 - 默认只绑定 `127.0.0.1`。STF/Appium 位于其他主机时，必须把 bind address 配置为设备内网地址或 `0.0.0.0`，并用防火墙限制来源；
-- 每台容器默认限制为 2 CPU、4 GiB 内存和 512 PID；
+- 每台容器的 CPU、内存、数据盘、分辨率、DPI、VM heap 和 GPU 模式由 Image 的 `runtime_profile` 决定；旧 Image 没有该字段时才使用 Agent 的兼容默认值；
+- Agent 从 Linux 实时采集 CPU、`MemAvailable` 和 Docker 数据盘剩余空间，Server 扣除系统保留量、已有设备占用和正在创建的占用后决定能否再建，不按测试环境写死一台；
+- `DEVICE_FARM_AGENT_DEVICE_SLOT_LIMIT` 只是在确有运维需要时设置的额外硬上限，默认 `0` 表示不限制台数；
+- 每台容器固定限制 512 PID；
 - 每台设备使用独立 bridge network 和独立 data volume；
 - 容器内 Appium 端口 `4723` 也由 Docker 随机映射到独立 Host 端口，Endpoint 使用 `http://<advertise_host>:<随机端口>`；
 - Appium Adapter 只请求每台设备自己的 `/status`，`value.ready=true` 后才把 `AppiumHealthy` 标记为真；
@@ -87,6 +90,9 @@ DEVICE_FARM_DOCKER_DATA_MOUNT_PATH=/home/androidusr
 DEVICE_FARM_DOCKER_EMULATOR_DEVICE=Pixel 9
 DEVICE_FARM_DOCKER_CPUS=4
 DEVICE_FARM_DOCKER_MEMORY=5g
+DEVICE_FARM_AGENT_DEVICE_SLOT_LIMIT=0
+DEVICE_FARM_DOCKER_DATA_ROOT=/var/lib/docker
+DEVICE_FARM_DOCKER_RENDER_DEVICE=/dev/dri/renderD128
 DEVICE_FARM_AGENT_CONCURRENCY=1
 DEVICE_FARM_AGENT_LEASE_SECONDS=300
 DEVICE_FARM_AGENT_COMMAND_TIMEOUT=270s
@@ -101,7 +107,9 @@ DEVICE_FARM_DOCKER_PIDS_LIMIT=512
 
 Host Command 租约必须严格长于单次 Provider 命令超时；生产默认使用 `300s/270s`。只有受控故障验收才临时缩短这两个值，验收后必须恢复默认配置并确认命令租约、设备状态和资源数量全部收敛。
 
-`DEVICE_FARM_AGENT_CONCURRENCY` 是命令执行并发，不是设备数量。保持为 `1` 时 Agent 会顺序创建或删除多台 Emulator；管理员只在 Device Farm Console 修改目标设备数，Server 自动同步 Pool 并发和 Host slot 高水位，不需要编辑 Host 环境文件或重启 Agent。
+`DEVICE_FARM_AGENT_CONCURRENCY` 是命令执行并发，不是设备数量。保持为 `1` 时 Agent 会顺序创建或删除多台 Emulator。设备数量由 Pool 目标、所选 Image 规格和 Host 实时剩余资源共同决定；增加 Pool 目标不会反向篡改 Host 容量，也不需要编辑 Host 环境文件或重启 Agent。
+
+`DEVICE_FARM_DOCKER_CPUS` 和 `DEVICE_FARM_DOCKER_MEMORY` 只保留为旧 Image 的兼容默认值。正常创建、重建和回收都使用该 Device 对应 Image 的 `runtime_profile`，因此同一 Host 可以同时运行 4 GiB 和 8 GiB 等不同规格。镜像层磁盘只在 Host 尚未缓存该 digest 时计入一次，设备数据盘则逐台计入。
 
 Provider 当前按 `budtmo/docker-android` 的公开契约配置：Host ADB 连接容器端口 `5555`，Appium 连接容器端口 `4723`，容器内 serial 为 `emulator-5554`，持久化目录为 `/home/androidusr`，设备型号通过 `EMULATOR_DEVICE` 设置。镜像通过 `APPIUM=true` 启用其已有 Appium 2.x，不在本项目重写 Appium Server 或 WebDriver。参考上游基线提交为 `e5e31745bfca26d7e71eaf3cbd84767ce5d57fd2`。DF-016 已要求 validation 和每次正式 create 都核对本机镜像 ID/RepoDigest 与已登记 digest。
 
