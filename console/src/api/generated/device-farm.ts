@@ -5005,10 +5005,15 @@ export type startDeviceRemoteControlResponse503 = {
   status: 503
 }
 
+export type startDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
 export type startDeviceRemoteControlResponseSuccess = (startDeviceRemoteControlResponse202) & {
   headers: Headers;
 };
-export type startDeviceRemoteControlResponseError = (startDeviceRemoteControlResponse400 | startDeviceRemoteControlResponse401 | startDeviceRemoteControlResponse403 | startDeviceRemoteControlResponse409 | startDeviceRemoteControlResponse503) & {
+export type startDeviceRemoteControlResponseError = (startDeviceRemoteControlResponse400 | startDeviceRemoteControlResponse401 | startDeviceRemoteControlResponse403 | startDeviceRemoteControlResponse409 | startDeviceRemoteControlResponse503 | startDeviceRemoteControlResponse504) & {
   headers: Headers;
 };
 
@@ -5107,10 +5112,15 @@ export type getDeviceRemoteControlResponse503 = {
   status: 503
 }
 
+export type getDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
 export type getDeviceRemoteControlResponseSuccess = (getDeviceRemoteControlResponse200) & {
   headers: Headers;
 };
-export type getDeviceRemoteControlResponseError = (getDeviceRemoteControlResponse401 | getDeviceRemoteControlResponse403 | getDeviceRemoteControlResponse404 | getDeviceRemoteControlResponse503) & {
+export type getDeviceRemoteControlResponseError = (getDeviceRemoteControlResponse401 | getDeviceRemoteControlResponse403 | getDeviceRemoteControlResponse404 | getDeviceRemoteControlResponse503 | getDeviceRemoteControlResponse504) & {
   headers: Headers;
 };
 
@@ -5244,10 +5254,15 @@ export type endDeviceRemoteControlResponse503 = {
   status: 503
 }
 
+export type endDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
 export type endDeviceRemoteControlResponseSuccess = (endDeviceRemoteControlResponse200) & {
   headers: Headers;
 };
-export type endDeviceRemoteControlResponseError = (endDeviceRemoteControlResponse400 | endDeviceRemoteControlResponse401 | endDeviceRemoteControlResponse403 | endDeviceRemoteControlResponse409 | endDeviceRemoteControlResponse503) & {
+export type endDeviceRemoteControlResponseError = (endDeviceRemoteControlResponse400 | endDeviceRemoteControlResponse401 | endDeviceRemoteControlResponse403 | endDeviceRemoteControlResponse409 | endDeviceRemoteControlResponse503 | endDeviceRemoteControlResponse504) & {
   headers: Headers;
 };
 
@@ -5356,10 +5371,15 @@ export type heartbeatDeviceRemoteControlResponse503 = {
   status: 503
 }
 
+export type heartbeatDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
 export type heartbeatDeviceRemoteControlResponseSuccess = (heartbeatDeviceRemoteControlResponse200) & {
   headers: Headers;
 };
-export type heartbeatDeviceRemoteControlResponseError = (heartbeatDeviceRemoteControlResponse400 | heartbeatDeviceRemoteControlResponse401 | heartbeatDeviceRemoteControlResponse403 | heartbeatDeviceRemoteControlResponse404 | heartbeatDeviceRemoteControlResponse409 | heartbeatDeviceRemoteControlResponse503) & {
+export type heartbeatDeviceRemoteControlResponseError = (heartbeatDeviceRemoteControlResponse400 | heartbeatDeviceRemoteControlResponse401 | heartbeatDeviceRemoteControlResponse403 | heartbeatDeviceRemoteControlResponse404 | heartbeatDeviceRemoteControlResponse409 | heartbeatDeviceRemoteControlResponse503 | heartbeatDeviceRemoteControlResponse504) & {
   headers: Headers;
 };
 

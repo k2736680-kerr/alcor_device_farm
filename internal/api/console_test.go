@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -71,5 +74,28 @@ func TestClientAddressHandlesIPv6AndMalformedPeers(t *testing.T) {
 	malformed := requestFrom("")
 	if got := clientAddress(malformed); got != "127.0.0.1" {
 		t.Fatalf("clientAddress = %q, want the 127.0.0.1 fallback for a malformed peer", got)
+	}
+}
+
+func TestRemoteControlTimeoutReturnsStableRetryableError(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://console.test/console/api/v1/devices/device_00000000000001/remote-control", nil)
+	recorder := httptest.NewRecorder()
+
+	(&consoleHandler{}).writeRemote(recorder, request, http.StatusAccepted, nil, context.DeadlineExceeded)
+
+	if recorder.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status=%d want=%d", recorder.Code, http.StatusGatewayTimeout)
+	}
+	var envelope struct {
+		Error struct {
+			Code      string `json:"code"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != "REMOTE_CONTROL_TIMEOUT" || !envelope.Error.Retryable {
+		t.Fatalf("error=%#v", envelope.Error)
 	}
 }

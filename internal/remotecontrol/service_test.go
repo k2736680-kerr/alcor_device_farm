@@ -23,6 +23,7 @@ type fakeReservations struct {
 	createdDeviceID string
 	keepAliveCalls  int
 	releaseCalls    int
+	findErr         error
 }
 
 func (fake *fakeReservations) CreateForDevice(_ context.Context, _ audit.Actor, _ string, deviceID string, _ int) (reservation.View, error) {
@@ -30,7 +31,21 @@ func (fake *fakeReservations) CreateForDevice(_ context.Context, _ audit.Actor, 
 	return fake.current, nil
 }
 func (fake *fakeReservations) FindOpenForDevice(context.Context, string, string) (reservation.View, error) {
-	return fake.current, nil
+	return fake.current, fake.findErr
+}
+
+func TestEndIsIdempotentWhenTheTargetDeviceHasAlreadyDisappeared(t *testing.T) {
+	deviceID := "device_00000000000001"
+	reservations := &fakeReservations{findErr: reservation.ErrNotFound}
+	service := newTestService(t, reservations, true, time.Now().UTC())
+
+	view, err := service.End(context.Background(), audit.Console("admin"), "remote-end-key", "request-1", deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != "ended" || view.DeviceID != deviceID || reservations.releaseCalls != 0 {
+		t.Fatalf("view=%#v release=%d", view, reservations.releaseCalls)
+	}
 }
 func (fake *fakeReservations) KeepAliveForDevice(context.Context, string, string, string, time.Duration) (reservation.View, error) {
 	fake.keepAliveCalls++

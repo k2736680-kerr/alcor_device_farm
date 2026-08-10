@@ -81,3 +81,31 @@ DF-031 于 2026-08-10 在真实 Linux KVM、Android 16 Docker Emulator、STF 3.7
 ## 8. 完成判定
 
 AT-STF-007～AT-STF-010、AT-WEB-016、DF-031 定义的真实功能、清理、异常恢复和安全条件均通过。DF-031 可以标记为 `completed` 并单独提交 Git。
+
+## 9. 2026-08-10 远控断连回归修复
+
+用户现场出现两类连续故障：进入 STF 后设备立即从 Console 可用列表消失，以及使用一段时间后 STF 提示 `Device was disconnected / You (or someone else) kicked the device`。
+
+生产记录确认：
+
+- Reservation `7e5f382b-2229-4805-967f-b1926fb6d663` 在远控入口返回后约 2 秒收到 Console 的 `DELETE /remote-control`，属于 STF 跨域跳转后浏览器窗口句柄被误判为已关闭；
+- Reservation `4a9d28e5-9218-4f73-b24e-2bfb29303094` 在离开设备页后停止 heartbeat，60 秒短租约到期并由 Reaper 回收，因此 STF 显示被释放提示；
+- 根因是远控状态、popup 检测和 heartbeat 全部归属于 `DevicesPage`，SPA 路由切换会卸载该页，浏览器刷新也无法恢复会话。
+
+修复内容：
+
+- 将远控会话提升到已认证 Console 的全局 Provider，切换仪表盘、镜像、宿主机等页面时继续 heartbeat；
+- 仅在 `sessionStorage` 保存 Device ID 与 serial，刷新 Console 后通过服务端状态恢复并立即续租，不保存 STF Token、签名或远控 URL；
+- STF 跳转后必须先持续观察到稳定的可用窗口句柄，才允许把后续 `closed=true` 当成真实关闭，避免跨域跳转阶段误发 DELETE；
+- Console 全局显示当前远控，并提供“重新打开远控”和“挂断”；浏览器异常退出仍由短租约和 Reaper 兜底。
+
+回归门禁与部署结果：
+
+- 当前共享工作区：Console `pnpm test` 7 个测试文件、25 个测试通过，`pnpm build` 通过，`go test ./...` 与 `go vet ./...` 通过；
+- 从 Git `c9f09dc` 建立隔离构建目录，只带入本次 6 个 Console 文件：Console 7 个测试文件、21 个测试通过，生产构建通过；
+- 隔离镜像 `alcor-device-farm:df031-20260810-remotefix-isolated`，镜像 ID `sha256:760511d34c966e593151d8e9eef0f1f2acf9f0a350adb75c09cea4e1932bf0a5`；
+- 正式容器 `alcor-device-farm-server-df017` 已切换到隔离镜像，正式 HTTPS `/healthz` 与 `/readyz` 均返回 200，Console 返回资源 `assets/index-D3WELUTx.js`；
+- 原镜像 `alcor-device-farm:df031-20260807` 保留在停止容器 `alcor-device-farm-server-df017-rollback-remotefix-20260810`，可直接回滚；
+- 同工作区另一项未提交的 fetch 超时、后端 deadline、OpenAPI 504 和生成代码改动没有进入该隔离部署。
+
+新增自动用例覆盖跨页面保活、刷新恢复、STF 跨域跳转句柄误判、真实关闭标签页释放和管理员主动挂断。线上真实浏览器复测结果待用户本轮重新连接确认后补录。

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { deviceFarmFetch } from './fetcher'
+import { DEFAULT_REQUEST_TIMEOUT_MS, DeviceFarmAPIError, deviceFarmFetch } from './fetcher'
 
 describe('deviceFarmFetch', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -23,5 +24,21 @@ describe('deviceFarmFetch', () => {
     const request = fetchMock.mock.calls[0]
     const headers = new Headers(request[1]?.headers)
     expect(headers.get('Idempotency-Key')).toMatch(/^console-.{8,}$/)
+  })
+
+  it('aborts a request that exceeds the explicit client timeout', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    }))
+
+    const request = deviceFarmFetch('/console/api/v1/devices/device-1/remote-control', { method: 'POST' })
+    const rejection = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_TIMEOUT',
+      retryable: true,
+      status: 0,
+    } satisfies Partial<DeviceFarmAPIError>)
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS)
+    await rejection
   })
 })

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/consoleauth"
@@ -15,6 +17,8 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/remotecontrol"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 )
+
+const remoteControlRequestTimeout = 10 * time.Second
 
 type consoleHandler struct {
 	auth    *consoleauth.Service
@@ -43,7 +47,9 @@ func (handler *consoleHandler) startRemoteControl(writer http.ResponseWriter, re
 	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
 		return
 	}
-	value, err := handler.remote.Start(request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"), request.PathValue("id"))
+	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
+	defer cancel()
+	value, err := handler.remote.Start(ctx, requestActor(request), request.Header.Get("Idempotency-Key"), request.PathValue("id"))
 	handler.writeRemote(writer, request, http.StatusAccepted, value, err)
 }
 
@@ -52,7 +58,9 @@ func (handler *consoleHandler) getRemoteControl(writer http.ResponseWriter, requ
 		return
 	}
 	principal, _ := auth.FromContext(request.Context())
-	value, err := handler.remote.Get(request.Context(), principal.SubjectID, request.PathValue("id"))
+	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
+	defer cancel()
+	value, err := handler.remote.Get(ctx, principal.SubjectID, request.PathValue("id"))
 	handler.writeRemote(writer, request, http.StatusOK, value, err)
 }
 
@@ -60,8 +68,10 @@ func (handler *consoleHandler) heartbeatRemoteControl(writer http.ResponseWriter
 	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
 		return
 	}
+	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
+	defer cancel()
 	value, err := handler.remote.Heartbeat(
-		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"),
+		ctx, requestActor(request), request.Header.Get("Idempotency-Key"),
 		correlation.FromContext(request.Context()).RequestID, request.PathValue("id"),
 	)
 	handler.writeRemote(writer, request, http.StatusOK, value, err)
@@ -71,8 +81,10 @@ func (handler *consoleHandler) endRemoteControl(writer http.ResponseWriter, requ
 	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
 		return
 	}
+	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
+	defer cancel()
 	value, err := handler.remote.End(
-		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"),
+		ctx, requestActor(request), request.Header.Get("Idempotency-Key"),
 		correlation.FromContext(request.Context()).RequestID, request.PathValue("id"),
 	)
 	handler.writeRemote(writer, request, http.StatusOK, value, err)
@@ -101,6 +113,8 @@ func (handler *consoleHandler) writeRemote(writer http.ResponseWriter, request *
 	responseStatus := http.StatusInternalServerError
 	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "unable to manage remote control"}
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		responseStatus, apiError = http.StatusGatewayTimeout, httpx.APIError{Code: "REMOTE_CONTROL_TIMEOUT", Message: "remote control operation timed out", Retryable: true}
 	case errors.Is(err, remotecontrol.ErrUnavailable):
 		responseStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "REMOTE_CONTROL_UNAVAILABLE", Message: "remote control is unavailable", Retryable: true}
 	case errors.Is(err, remotecontrol.ErrNotFound):

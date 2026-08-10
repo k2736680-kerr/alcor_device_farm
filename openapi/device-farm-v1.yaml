@@ -587,6 +587,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "409": {$ref: "#/components/responses/Conflict"}
         "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
     get:
       tags: [Console]
       operationId: getDeviceRemoteControl
@@ -598,6 +599,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
     delete:
       tags: [Console]
       operationId: endDeviceRemoteControl
@@ -613,6 +615,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "409": {$ref: "#/components/responses/Conflict"}
         "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
   /console/api/v1/devices/{id}/remote-control/heartbeat:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -631,6 +634,7 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
   /internal/v1/device-hosts/{id}/heartbeats:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:

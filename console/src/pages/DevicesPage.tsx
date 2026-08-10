@@ -1,24 +1,19 @@
 import { Alert, App as AntApp, Button, Form, Input, Modal, Segmented, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
-  endDeviceRemoteControl,
-  heartbeatDeviceRemoteControl,
-  useEndDeviceRemoteControl,
-  useGetDeviceRemoteControl,
   useDeleteDevice,
   useListDevices,
   useQuarantineDevice,
   useRebuildDevice,
   useRestartDevice,
-  useStartDeviceRemoteControl,
   useUnquarantineDevice,
 } from '../api/generated/device-farm'
-import type { ConsoleRole, Device, RemoteControl } from '../api/generated/models'
-import { unwrapData, unwrapPage } from '../api/unwrap'
+import type { ConsoleRole, Device } from '../api/generated/models'
+import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import {
@@ -30,6 +25,7 @@ import {
   providerTypeLabel,
 } from '../api/labels'
 import { PageTable } from '../components/PageTable'
+import { useRemoteControl } from '../remote/RemoteControlProvider'
 
 const lifecycleColor: Record<string, string> = {
   ready: 'green',
@@ -72,13 +68,6 @@ interface DevicesPageProps {
   role?: ConsoleRole
 }
 
-interface RemoteState {
-  device: Device
-  popup: Window | null
-  started: boolean
-  opened: boolean
-}
-
 const actionTitles: Record<DeviceAction, string> = {
   restart: '重启设备',
   rebuild: '重建设备',
@@ -109,9 +98,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [form] = Form.useForm<ReasonValues>()
   const [actionState, setActionState] = useState<ActionState | null>(null)
-  const [remoteState, setRemoteState] = useState<RemoteState | null>(null)
-  const remotePopup = useRef<Window | null>(null)
-  const endingRemote = useRef(false)
+  const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
 
   const restart = useRestartDevice()
@@ -119,142 +106,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
-  const startRemote = useStartDeviceRemoteControl()
-  const endRemote = useEndDeviceRemoteControl()
-
-  const remoteQuery = useGetDeviceRemoteControl(
-    remoteState?.device.id ?? '',
-    { query: { enabled: remoteState?.started === true, retry: false, refetchInterval: remoteState?.started ? 1_000 : false } },
-  )
-  const remoteView = unwrapData<RemoteControl>(remoteQuery.data)
-
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }, [queryClient])
-
-  const clearRemote = useCallback((closePopup: boolean) => {
-    const popup = remotePopup.current
-    if (closePopup && popup && !popup.closed) popup.close()
-    remotePopup.current = null
-    setRemoteState(null)
-    endingRemote.current = false
-    invalidate()
-  }, [invalidate])
-
-  const finishRemote = useCallback((closePopup: boolean, silent = false) => {
-    if (!remoteState || endingRemote.current) {
-      return
-    }
-    endingRemote.current = true
-    endRemote.mutate(
-      { id: remoteState.device.id },
-      {
-        onSuccess: () => {
-          if (!silent) message.success('远控已挂断，设备正在清理并重建')
-          clearRemote(closePopup)
-        },
-        onError: (error) => {
-          endingRemote.current = false
-          const err = error as { code?: string; requestId?: string; message?: string }
-          message.error(`挂断失败（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
-        },
-      },
-    )
-  }, [clearRemote, endRemote, message, remoteState])
-
-  const beginRemote = (device: Device) => {
-    const popup = window.open('about:blank', '_blank')
-    if (!popup) {
-      message.error('浏览器阻止了远控标签页，请允许本站弹出窗口后重试')
-      return
-    }
-    popup.document.title = '正在连接设备…'
-    popup.document.body.textContent = '正在预约设备并连接 STF，请稍候…'
-    // Keep the script-opened relationship so Chromium lets the Console close
-    // the trusted, server-configured STF tab when the administrator hangs up.
-    remotePopup.current = popup
-    endingRemote.current = false
-    setRemoteState({ device, popup, started: false, opened: false })
-    startRemote.mutate(
-      { id: device.id },
-      {
-        onSuccess: (data) => {
-          const view = unwrapData<RemoteControl>(data)
-          setRemoteState((current) => current?.device.id === device.id ? { ...current, started: true } : current)
-          if (view?.url) {
-            popup.location.replace(view.url)
-            setRemoteState((current) => current?.device.id === device.id ? { ...current, opened: true } : current)
-          }
-          message.info('设备已预约，正在建立远控连接…')
-          invalidate()
-        },
-        onError: (error) => {
-          popup.close()
-          remotePopup.current = null
-          setRemoteState(null)
-          const err = error as { code?: string; requestId?: string; message?: string }
-          message.error(`远控连接失败（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
-        },
-      },
-    )
-  }
-
-  useEffect(() => {
-    if (!remoteView?.url || remoteState?.opened || !remoteState?.popup || remoteState.popup.closed) {
-      return
-    }
-    remoteState.popup.location.replace(remoteView.url)
-    setRemoteState((current) => current ? { ...current, opened: true } : current)
-    message.success('远控已连接；关闭远控标签页或点击挂断都会释放并清理设备')
-  }, [message, remoteState, remoteView?.url])
-
-  useEffect(() => {
-    if (!remoteState?.started) {
-      return
-    }
-    const timer = window.setInterval(() => {
-      if (remoteState.popup?.closed) {
-        finishRemote(false, true)
-      }
-    }, 1_000)
-    return () => window.clearInterval(timer)
-  }, [finishRemote, remoteState])
-
-  useEffect(() => {
-    if (!remoteState?.started) {
-      return
-    }
-    const releaseOnPageClose = () => {
-      void endDeviceRemoteControl(remoteState.device.id, { keepalive: true }).catch(() => undefined)
-    }
-    window.addEventListener('pagehide', releaseOnPageClose)
-    return () => window.removeEventListener('pagehide', releaseOnPageClose)
-  }, [remoteState?.device.id, remoteState?.started])
-
-  useEffect(() => {
-    if (!remoteState?.started || remoteView?.status !== 'connected') {
-      return
-    }
-    const interval = Math.max(5, remoteView.heartbeat_interval_seconds) * 1_000
-    let inFlight = false
-    const timer = window.setInterval(async () => {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const data = await heartbeatDeviceRemoteControl(remoteState.device.id)
-        const next = unwrapData<RemoteControl>(data)
-        if (next?.status === 'ended') {
-          message.info('STF 已结束远控，设备正在清理并重建')
-          clearRemote(true)
-        }
-      } catch {
-        // A sustained failure stops renewal and the Reservation Reaper safely recovers the device.
-      } finally {
-        inFlight = false
-      }
-    }, interval)
-    return () => window.clearInterval(timer)
-  }, [clearRemote, message, remoteState, remoteView?.heartbeat_interval_seconds, remoteView?.status])
 
   const executeAction = (reason: string) => {
     if (!actionState) {
@@ -317,13 +171,15 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           <Button
             type="primary"
             size="small"
-            loading={startRemote.isPending && remoteState?.device.id === device.id}
-            disabled={remoteState !== null && remoteState.device.id !== device.id}
-            onClick={() => beginRemote(device)}
+            loading={remote.isStarting && remote.device?.id === device.id}
+            disabled={remote.device !== null && remote.device.id !== device.id}
+            onClick={() => remote.start(device)}
           >远程连接</Button>
         )}
-        {role === 'admin' && remoteState?.device.id === device.id && remoteState.started && (
-          <Button size="small" danger loading={endRemote.isPending} onClick={() => finishRemote(true)}>挂断</Button>
+        {role === 'admin' && remote.device?.id === device.id && (
+          <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
+            {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
+          </Button>
         )}
         {actionable(device, 'restart') && (
           <Button size="small" onClick={() => setActionState({ device, action: 'restart' })}>重启</Button>
@@ -389,15 +245,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           message="默认只显示当前可以预约的设备"
           description="隔离设备用于排查故障，已删除设备只保留历史记录；它们都不会计入可用设备数量。"
         />
-        {remoteState && (
-          <Alert
-            type={remoteView?.status === 'connected' ? 'success' : 'info'}
-            showIcon
-            message={remoteView?.status === 'connected' ? `正在远控 ${remoteState.device.serial}` : `正在连接 ${remoteState.device.serial}`}
-            description="关闭 STF 远控标签页或点击挂断都会结束占用；浏览器异常退出时由短租约自动回收。"
-            action={<Button danger loading={endRemote.isPending} onClick={() => finishRemote(true)}>挂断</Button>}
-          />
-        )}
         <Segmented<DeviceView>
           value={view}
           options={[

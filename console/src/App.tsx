@@ -1,6 +1,6 @@
 import { Spin } from 'antd'
 import type { MenuProps } from 'antd'
-import { Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'antd'
+import { Alert, Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   CalendarOutlined,
@@ -32,6 +32,7 @@ import { ReservationsPage } from './pages/ReservationsPage'
 import { HealthEventsPage } from './pages/HealthEventsPage'
 import { AuditPage } from './pages/AuditPage'
 import { consoleDisplayName, roleLabel } from './api/labels'
+import { RemoteControlProvider, useRemoteControl } from './remote/RemoteControlProvider'
 
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
@@ -86,6 +87,34 @@ export default function App() {
   const displayName = consoleDisplayName(session.user.display_name)
 
   return (
+    <RemoteControlProvider>
+      <AuthenticatedConsole
+        currentTitle={currentTitle}
+        displayName={displayName}
+        logoutPending={logout.isPending}
+        onLogout={() => logout.mutate()}
+        session={session}
+      />
+    </RemoteControlProvider>
+  )
+}
+
+function AuthenticatedConsole({
+  currentTitle,
+  displayName,
+  logoutPending,
+  onLogout,
+  session,
+}: {
+  currentTitle: string
+  displayName: string
+  logoutPending: boolean
+  onLogout(): void
+  session: ConsoleSession
+}) {
+  const remote = useRemoteControl()
+
+  return (
     <Layout className="console-shell">
       <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={72}>
         <div className="console-brand">
@@ -114,12 +143,29 @@ export default function App() {
             <Tag className="console-role-tag" color="blue">{roleLabel(session.user.role)}</Tag>
             <Avatar size={34}>{displayName.slice(0, 1)}</Avatar>
             <Typography.Text strong>{displayName}</Typography.Text>
-            <Button type="text" icon={<LogoutOutlined />} loading={logout.isPending} onClick={() => logout.mutate()}>
+            <Button type="text" icon={<LogoutOutlined />} loading={logoutPending} onClick={onLogout}>
               退出
             </Button>
           </Space>
         </Layout.Header>
         <Layout.Content className="console-content">
+          {remote.device && (
+            <Alert
+              style={{ marginBottom: 14 }}
+              type={remote.view?.status === 'connected' ? 'success' : 'info'}
+              showIcon
+              message={remote.view?.status === 'connected' ? `正在远控 ${remote.device.serial}` : `正在连接 ${remote.device.serial}`}
+              description="远控会话会在控制台各页面间持续保活；取消连接或挂断会幂等释放设备，浏览器异常退出时由短租约兜底回收。"
+              action={(
+                <Space>
+                  {remote.view?.url && <Button onClick={remote.reopen}>重新打开远控</Button>}
+                  <Button danger loading={remote.isEnding} onClick={() => remote.end(true)}>
+                    {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
+                  </Button>
+                </Space>
+              )}
+            />
+          )}
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/images" element={<ImagesPage />} />
