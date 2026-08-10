@@ -24,20 +24,22 @@ import (
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reconcile"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/remotecontrol"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/warmpool"
 )
 
 type Services struct {
-	Management   *management.Service
-	Reservations *reservation.Service
-	Scheduler    *scheduler.Scheduler
-	Reconcile    *reconcile.Service
-	HostCommands *hostcommand.Service
-	Metrics      *farmmetrics.Registry
-	ConsoleAuth  *consoleauth.Service
-	ConsoleQuery *consolequery.Service
+	Management    *management.Service
+	Reservations  *reservation.Service
+	Scheduler     *scheduler.Scheduler
+	Reconcile     *reconcile.Service
+	HostCommands  *hostcommand.Service
+	Metrics       *farmmetrics.Registry
+	ConsoleAuth   *consoleauth.Service
+	ConsoleQuery  *consolequery.Service
+	RemoteControl *remotecontrol.Service
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -66,7 +68,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
-	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery)
+	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery, services.RemoteControl)
 	mux.Handle("/console/", consoleui.Handler())
 	mux.Handle("/console", consoleui.Handler())
 	mux.HandleFunc("/", notFoundHandler)
@@ -131,6 +133,14 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				return err
 			}
 			go services.ConsoleAuth.RunCleanup(ctx)
+			if stfClient != nil && cfg.STF.WebConfigured() {
+				services.RemoteControl, err = remotecontrol.New(
+					services.Reservations, services.Management, stfClient, remotecontrol.ConfigFrom(cfg),
+				)
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if services.Metrics == nil {

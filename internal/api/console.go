@@ -6,24 +6,113 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/consoleauth"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/consolequery"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/remotecontrol"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 )
 
 type consoleHandler struct {
 	auth    *consoleauth.Service
 	queries *consolequery.Service
+	remote  *remotecontrol.Service
 }
 
-func RegisterConsole(mux *http.ServeMux, authentication *consoleauth.Service, queries *consolequery.Service) {
-	handler := &consoleHandler{auth: authentication, queries: queries}
+func RegisterConsole(mux *http.ServeMux, authentication *consoleauth.Service, queries *consolequery.Service, remotes ...*remotecontrol.Service) {
+	var remote *remotecontrol.Service
+	if len(remotes) > 0 {
+		remote = remotes[0]
+	}
+	handler := &consoleHandler{auth: authentication, queries: queries, remote: remote}
 	mux.HandleFunc("POST /console/api/v1/sessions", handler.login)
 	mux.HandleFunc("GET /console/api/v1/me", handler.me)
 	mux.HandleFunc("DELETE /console/api/v1/sessions/current", handler.logout)
 	mux.HandleFunc("GET /api/v1/device-audit-events", handler.listAuditEvents)
 	mux.HandleFunc("GET /api/v1/devices/{id}/health-events", handler.listHealthEvents)
+	mux.HandleFunc("POST /console/api/v1/devices/{id}/remote-control", handler.startRemoteControl)
+	mux.HandleFunc("GET /console/api/v1/devices/{id}/remote-control", handler.getRemoteControl)
+	mux.HandleFunc("POST /console/api/v1/devices/{id}/remote-control/heartbeat", handler.heartbeatRemoteControl)
+	mux.HandleFunc("DELETE /console/api/v1/devices/{id}/remote-control", handler.endRemoteControl)
+}
+
+func (handler *consoleHandler) startRemoteControl(writer http.ResponseWriter, request *http.Request) {
+	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	value, err := handler.remote.Start(request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"), request.PathValue("id"))
+	handler.writeRemote(writer, request, http.StatusAccepted, value, err)
+}
+
+func (handler *consoleHandler) getRemoteControl(writer http.ResponseWriter, request *http.Request) {
+	if !handler.remoteAdmin(writer, request) {
+		return
+	}
+	principal, _ := auth.FromContext(request.Context())
+	value, err := handler.remote.Get(request.Context(), principal.SubjectID, request.PathValue("id"))
+	handler.writeRemote(writer, request, http.StatusOK, value, err)
+}
+
+func (handler *consoleHandler) heartbeatRemoteControl(writer http.ResponseWriter, request *http.Request) {
+	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	value, err := handler.remote.Heartbeat(
+		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"),
+		correlation.FromContext(request.Context()).RequestID, request.PathValue("id"),
+	)
+	handler.writeRemote(writer, request, http.StatusOK, value, err)
+}
+
+func (handler *consoleHandler) endRemoteControl(writer http.ResponseWriter, request *http.Request) {
+	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	value, err := handler.remote.End(
+		request.Context(), requestActor(request), request.Header.Get("Idempotency-Key"),
+		correlation.FromContext(request.Context()).RequestID, request.PathValue("id"),
+	)
+	handler.writeRemote(writer, request, http.StatusOK, value, err)
+}
+
+func (handler *consoleHandler) remoteAdmin(writer http.ResponseWriter, request *http.Request) bool {
+	principal, ok := auth.FromContext(request.Context())
+	if !ok || principal.Role != auth.RoleConsole || principal.ConsoleRole != auth.ConsoleAdmin {
+		writeForbidden(writer, request, "only console admins can control devices remotely")
+		return false
+	}
+	if handler.remote == nil {
+		handler.writeRemote(writer, request, http.StatusOK, nil, remotecontrol.ErrUnavailable)
+		return false
+	}
+	return true
+}
+
+func (handler *consoleHandler) writeRemote(writer http.ResponseWriter, request *http.Request, status int, data any, err error) {
+	noStore(writer)
+	writer.Header().Set("Referrer-Policy", "no-referrer")
+	if err == nil {
+		httpx.WriteData(writer, request, status, data)
+		return
+	}
+	responseStatus := http.StatusInternalServerError
+	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "unable to manage remote control"}
+	switch {
+	case errors.Is(err, remotecontrol.ErrUnavailable):
+		responseStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "REMOTE_CONTROL_UNAVAILABLE", Message: "remote control is unavailable", Retryable: true}
+	case errors.Is(err, remotecontrol.ErrNotFound):
+		responseStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "REMOTE_CONTROL_NOT_FOUND", Message: "remote control is not active"}
+	case errors.Is(err, remotecontrol.ErrConflict):
+		responseStatus, apiError = http.StatusConflict, httpx.APIError{Code: "REMOTE_CONTROL_CONFLICT", Message: "device cannot start remote control in its current state", Retryable: true}
+	case errors.Is(err, reservation.ErrInvalidArgument):
+		responseStatus, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "invalid remote control request"}
+	case errors.Is(err, reservation.ErrForbidden):
+		responseStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "remote control owner does not match"}
+	}
+	httpx.WriteError(writer, request, responseStatus, apiError)
 }
 
 func (handler *consoleHandler) login(writer http.ResponseWriter, request *http.Request) {

@@ -1,13 +1,73 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { sampleDevices } from '../test/handlers'
 import { server } from '../test/server'
 import { DevicesPage } from './DevicesPage'
 
 describe('DevicesPage device categories', () => {
+  it('opens the selected STF control page and ends the session when the tab closes', async () => {
+    const user = userEvent.setup()
+    let endRequests = 0
+    const replace = vi.fn()
+    const popup = {
+      closed: false,
+      close: vi.fn(() => { popup.closed = true }),
+      document: { title: '', body: { textContent: '' } },
+      location: { replace },
+      opener: window,
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    server.use(http.delete('/console/api/v1/devices/:id/remote-control', () => {
+      endRequests += 1
+      return HttpResponse.json({ request_id: 'req_remote_end', data: {
+        device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'ended', heartbeat_interval_seconds: 15,
+      }, error: null })
+    }))
+    renderWithProviders(<DevicesPage />)
+
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringContaining('#!/control/emulator-5554')))
+    expect(screen.getByText('正在远控 emulator-5554')).toBeInTheDocument()
+
+    popup.closed = true
+    await waitFor(() => expect(endRequests).toBe(1), { timeout: 3_000 })
+  }, 8_000)
+
+  it('closes the STF tab after the administrator hangs up', async () => {
+    const user = userEvent.setup()
+    const replace = vi.fn()
+    const popup = {
+      closed: false,
+      close: vi.fn(() => { popup.closed = true }),
+      document: { title: '', body: { textContent: '' } },
+      location: { replace },
+      opener: window,
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    renderWithProviders(<DevicesPage />)
+
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringContaining('#!/control/emulator-5554')))
+    await user.click(screen.getAllByRole('button', { name: /挂\s*断/ })[0])
+
+    await waitFor(() => expect(popup.close).toHaveBeenCalledTimes(1))
+    expect(popup.opener).toBe(window)
+    expect(screen.queryByText('正在远控 emulator-5554')).not.toBeInTheDocument()
+  }, 8_000)
+
+  it('does not show remote control to non-admin console roles', async () => {
+    renderWithProviders(<DevicesPage role="operator" />)
+    expect(await screen.findByText('emulator-5554')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '远程连接' })).not.toBeInTheDocument()
+  })
+
   it('defaults to usable devices and separates isolated and deleted records', async () => {
     const user = userEvent.setup()
     renderWithProviders(<DevicesPage />)

@@ -70,6 +70,8 @@ import type {
   PoolListSuccessResponse,
   PoolMembershipSuccessResponse,
   PoolSuccessResponse,
+  RemoteControlAcceptedResponse,
+  RemoteControlSuccessResponse,
   RemoteSessionCreateBody,
   RemoteSessionCreatedResponse,
   ReservationCreateBody,
@@ -115,8 +117,8 @@ export const getHealth = async ( options?: RequestInit): Promise<getHealthRespon
   {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -130,7 +132,7 @@ export const getGetHealthQueryKey = () => {
     ] as const;
     }
 
-    
+
 export const getGetHealthQueryOptions = <TData = Awaited<ReturnType<typeof getHealth>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHealth>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -138,13 +140,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetHealthQueryKey();
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getHealth>>> = ({ signal }) => getHealth({ signal, ...requestOptions });
 
 
 
-      
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHealth>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -180,7 +182,7 @@ export function useGetHealth<TData = Awaited<ReturnType<typeof getHealth>>, TErr
 
 export function useGetHealth<TData = Awaited<ReturnType<typeof getHealth>>, TError = unknown>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHealth>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetHealthQueryOptions(options)
@@ -205,7 +207,7 @@ export type getReadinessResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type getReadinessResponseSuccess = (getReadinessResponse200) & {
   headers: Headers;
 };
@@ -218,19 +220,19 @@ export type getReadinessResponse = (getReadinessResponseSuccess | getReadinessRe
 export const getGetReadinessUrl = () => {
 
 
-  
+
 
   return `/readyz`
 }
 
 export const getReadiness = async ( options?: RequestInit): Promise<getReadinessResponse> => {
-  
+
   return deviceFarmFetch<getReadinessResponse>(getGetReadinessUrl(),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -244,7 +246,7 @@ export const getGetReadinessQueryKey = () => {
     ] as const;
     }
 
-    
+
 export const getGetReadinessQueryOptions = <TData = Awaited<ReturnType<typeof getReadiness>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getReadiness>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -252,13 +254,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetReadinessQueryKey();
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getReadiness>>> = ({ signal }) => getReadiness({ signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getReadiness>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -294,7 +296,7 @@ export function useGetReadiness<TData = Awaited<ReturnType<typeof getReadiness>>
 
 export function useGetReadiness<TData = Awaited<ReturnType<typeof getReadiness>>, TError = ErrorResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getReadiness>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetReadinessQueryOptions(options)
@@ -314,7 +316,7 @@ export type getMetricsResponse200 = {
   data: string
   status: 200
 }
-    
+
 export type getMetricsResponseSuccess = (getMetricsResponse200) & {
   headers: Headers;
 };
@@ -325,19 +327,19 @@ export type getMetricsResponse = (getMetricsResponseSuccess)
 export const getGetMetricsUrl = () => {
 
 
-  
+
 
   return `/metrics`
 }
 
 export const getMetrics = async ( options?: RequestInit): Promise<getMetricsResponse> => {
-  
+
   return deviceFarmFetch<getMetricsResponse>(getGetMetricsUrl(),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -351,7 +353,7 @@ export const getGetMetricsQueryKey = () => {
     ] as const;
     }
 
-    
+
 export const getGetMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getMetrics>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -359,13 +361,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetMetricsQueryKey();
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getMetrics>>> = ({ signal }) => getMetrics({ signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -401,7 +403,7 @@ export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TE
 
 export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TError = unknown>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetMetricsQueryOptions(options)
@@ -451,7 +453,7 @@ export type listDeviceImagesResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDeviceImagesResponseSuccess = (listDeviceImagesResponse200) & {
   headers: Headers;
 };
@@ -465,7 +467,7 @@ export const getListDeviceImagesUrl = (params?: ListDeviceImagesParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -477,13 +479,13 @@ export const getListDeviceImagesUrl = (params?: ListDeviceImagesParams,) => {
 }
 
 export const listDeviceImages = async (params?: ListDeviceImagesParams, options?: RequestInit): Promise<listDeviceImagesResponse> => {
-  
+
   return deviceFarmFetch<listDeviceImagesResponse>(getListDeviceImagesUrl(params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -497,7 +499,7 @@ export const getListDeviceImagesQueryKey = (params?: ListDeviceImagesParams,) =>
     ] as const;
     }
 
-    
+
 export const getListDeviceImagesQueryOptions = <TData = Awaited<ReturnType<typeof listDeviceImages>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDeviceImagesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -505,13 +507,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDeviceImagesQueryKey(params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeviceImages>>> = ({ signal }) => listDeviceImages(params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDeviceImages>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -547,7 +549,7 @@ export function useListDeviceImages<TData = Awaited<ReturnType<typeof listDevice
 
 export function useListDeviceImages<TData = Awaited<ReturnType<typeof listDeviceImages>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  params?: ListDeviceImagesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDeviceImagesQueryOptions(params,options)
@@ -592,7 +594,7 @@ export type createDeviceImageResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type createDeviceImageResponseSuccess = (createDeviceImageResponse201) & {
   headers: Headers;
 };
@@ -605,15 +607,15 @@ export type createDeviceImageResponse = (createDeviceImageResponseSuccess | crea
 export const getCreateDeviceImageUrl = () => {
 
 
-  
+
 
   return `/api/v1/device-images`
 }
 
 export const createDeviceImage = async (deviceImageInputBody: DeviceImageInputBody, options?: RequestInit): Promise<createDeviceImageResponse> => {
-  
+
   return deviceFarmFetch<createDeviceImageResponse>(getCreateDeviceImageUrl(),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -636,7 +638,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDeviceImage>>, {data: DeviceImageInputBody}> = (props) => {
@@ -697,7 +699,7 @@ export type getDeviceImageResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type getDeviceImageResponseSuccess = (getDeviceImageResponse200) & {
   headers: Headers;
 };
@@ -710,19 +712,19 @@ export type getDeviceImageResponse = (getDeviceImageResponseSuccess | getDeviceI
 export const getGetDeviceImageUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-images/${id}`
 }
 
 export const getDeviceImage = async (id: string, options?: RequestInit): Promise<getDeviceImageResponse> => {
-  
+
   return deviceFarmFetch<getDeviceImageResponse>(getGetDeviceImageUrl(id),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -736,7 +738,7 @@ export const getGetDeviceImageQueryKey = (id?: string,) => {
     ] as const;
     }
 
-    
+
 export const getGetDeviceImageQueryOptions = <TData = Awaited<ReturnType<typeof getDeviceImage>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceImage>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -744,13 +746,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetDeviceImageQueryKey(id);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getDeviceImage>>> = ({ signal }) => getDeviceImage(id, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDeviceImage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -786,7 +788,7 @@ export function useGetDeviceImage<TData = Awaited<ReturnType<typeof getDeviceIma
 
 export function useGetDeviceImage<TData = Awaited<ReturnType<typeof getDeviceImage>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceImage>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetDeviceImageQueryOptions(id,options)
@@ -836,7 +838,7 @@ export type updateDeviceImageResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type updateDeviceImageResponseSuccess = (updateDeviceImageResponse200) & {
   headers: Headers;
 };
@@ -849,16 +851,16 @@ export type updateDeviceImageResponse = (updateDeviceImageResponseSuccess | upda
 export const getUpdateDeviceImageUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-images/${id}`
 }
 
 export const updateDeviceImage = async (id: string,
     deviceImageInputBody: DeviceImageInputBody, options?: RequestInit): Promise<updateDeviceImageResponse> => {
-  
+
   return deviceFarmFetch<updateDeviceImageResponse>(getUpdateDeviceImageUrl(id),
-  {      
+  {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -881,7 +883,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateDeviceImage>>, {id: string;data: DeviceImageInputBody}> = (props) => {
@@ -890,7 +892,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  updateDeviceImage(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -912,7 +914,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type validateDeviceImageResponse202 = {
   data: ImageAcceptedResponse
   status: 202
@@ -947,7 +949,7 @@ export type validateDeviceImageResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type validateDeviceImageResponseSuccess = (validateDeviceImageResponse202) & {
   headers: Headers;
 };
@@ -960,19 +962,19 @@ export type validateDeviceImageResponse = (validateDeviceImageResponseSuccess | 
 export const getValidateDeviceImageUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-images/${id}/validations`
 }
 
 export const validateDeviceImage = async (id: string, options?: RequestInit): Promise<validateDeviceImageResponse> => {
-  
+
   return deviceFarmFetch<validateDeviceImageResponse>(getValidateDeviceImageUrl(id),
-  {      
+  {
     ...options,
     method: 'POST'
-    
-    
+
+
   }
 );}
 
@@ -990,7 +992,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof validateDeviceImage>>, {id: string}> = (props) => {
@@ -999,13 +1001,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  validateDeviceImage(id,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
 
     export type ValidateDeviceImageMutationResult = NonNullable<Awaited<ReturnType<typeof validateDeviceImage>>>
-    
+
     export type ValidateDeviceImageMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
 
     export const useValidateDeviceImage = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
@@ -1021,7 +1023,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type listDeviceHostsResponse200 = {
   data: HostListSuccessResponse
   status: 200
@@ -1046,7 +1048,7 @@ export type listDeviceHostsResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDeviceHostsResponseSuccess = (listDeviceHostsResponse200) & {
   headers: Headers;
 };
@@ -1060,7 +1062,7 @@ export const getListDeviceHostsUrl = (params?: ListDeviceHostsParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -1072,13 +1074,13 @@ export const getListDeviceHostsUrl = (params?: ListDeviceHostsParams,) => {
 }
 
 export const listDeviceHosts = async (params?: ListDeviceHostsParams, options?: RequestInit): Promise<listDeviceHostsResponse> => {
-  
+
   return deviceFarmFetch<listDeviceHostsResponse>(getListDeviceHostsUrl(params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -1092,7 +1094,7 @@ export const getListDeviceHostsQueryKey = (params?: ListDeviceHostsParams,) => {
     ] as const;
     }
 
-    
+
 export const getListDeviceHostsQueryOptions = <TData = Awaited<ReturnType<typeof listDeviceHosts>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDeviceHostsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceHosts>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -1100,13 +1102,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDeviceHostsQueryKey(params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeviceHosts>>> = ({ signal }) => listDeviceHosts(params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDeviceHosts>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -1142,7 +1144,7 @@ export function useListDeviceHosts<TData = Awaited<ReturnType<typeof listDeviceH
 
 export function useListDeviceHosts<TData = Awaited<ReturnType<typeof listDeviceHosts>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  params?: ListDeviceHostsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceHosts>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDeviceHostsQueryOptions(params,options)
@@ -1187,7 +1189,7 @@ export type createDeviceHostResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type createDeviceHostResponseSuccess = (createDeviceHostResponse201) & {
   headers: Headers;
 };
@@ -1200,15 +1202,15 @@ export type createDeviceHostResponse = (createDeviceHostResponseSuccess | create
 export const getCreateDeviceHostUrl = () => {
 
 
-  
+
 
   return `/api/v1/device-hosts`
 }
 
 export const createDeviceHost = async (deviceHostInputBody: DeviceHostInputBody, options?: RequestInit): Promise<createDeviceHostResponse> => {
-  
+
   return deviceFarmFetch<createDeviceHostResponse>(getCreateDeviceHostUrl(),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -1231,7 +1233,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDeviceHost>>, {data: DeviceHostInputBody}> = (props) => {
@@ -1240,7 +1242,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  createDeviceHost(data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -1262,7 +1264,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type getDeviceHostResponse200 = {
   data: HostSuccessResponse
   status: 200
@@ -1292,7 +1294,7 @@ export type getDeviceHostResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type getDeviceHostResponseSuccess = (getDeviceHostResponse200) & {
   headers: Headers;
 };
@@ -1305,19 +1307,19 @@ export type getDeviceHostResponse = (getDeviceHostResponseSuccess | getDeviceHos
 export const getGetDeviceHostUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-hosts/${id}`
 }
 
 export const getDeviceHost = async (id: string, options?: RequestInit): Promise<getDeviceHostResponse> => {
-  
+
   return deviceFarmFetch<getDeviceHostResponse>(getGetDeviceHostUrl(id),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -1331,7 +1333,7 @@ export const getGetDeviceHostQueryKey = (id?: string,) => {
     ] as const;
     }
 
-    
+
 export const getGetDeviceHostQueryOptions = <TData = Awaited<ReturnType<typeof getDeviceHost>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceHost>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -1339,13 +1341,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetDeviceHostQueryKey(id);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getDeviceHost>>> = ({ signal }) => getDeviceHost(id, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDeviceHost>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -1381,7 +1383,7 @@ export function useGetDeviceHost<TData = Awaited<ReturnType<typeof getDeviceHost
 
 export function useGetDeviceHost<TData = Awaited<ReturnType<typeof getDeviceHost>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceHost>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetDeviceHostQueryOptions(id,options)
@@ -1431,7 +1433,7 @@ export type updateDeviceHostResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type updateDeviceHostResponseSuccess = (updateDeviceHostResponse200) & {
   headers: Headers;
 };
@@ -1444,16 +1446,16 @@ export type updateDeviceHostResponse = (updateDeviceHostResponseSuccess | update
 export const getUpdateDeviceHostUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-hosts/${id}`
 }
 
 export const updateDeviceHost = async (id: string,
     deviceHostInputBody: DeviceHostInputBody, options?: RequestInit): Promise<updateDeviceHostResponse> => {
-  
+
   return deviceFarmFetch<updateDeviceHostResponse>(getUpdateDeviceHostUrl(id),
-  {      
+  {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -1476,7 +1478,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateDeviceHost>>, {id: string;data: DeviceHostInputBody}> = (props) => {
@@ -1485,7 +1487,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  updateDeviceHost(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -1507,7 +1509,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type drainDeviceHostResponse200 = {
   data: HostSuccessResponse
   status: 200
@@ -1542,7 +1544,7 @@ export type drainDeviceHostResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type drainDeviceHostResponseSuccess = (drainDeviceHostResponse200) & {
   headers: Headers;
 };
@@ -1555,16 +1557,16 @@ export type drainDeviceHostResponse = (drainDeviceHostResponseSuccess | drainDev
 export const getDrainDeviceHostUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-hosts/${id}/drains`
 }
 
 export const drainDeviceHost = async (id: string,
     operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<drainDeviceHostResponse> => {
-  
+
   return deviceFarmFetch<drainDeviceHostResponse>(getDrainDeviceHostUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -1587,7 +1589,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof drainDeviceHost>>, {id: string;data: OperationReasonBody}> = (props) => {
@@ -1596,7 +1598,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  drainDeviceHost(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -1618,7 +1620,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type undrainDeviceHostResponse200 = {
   data: HostSuccessResponse
   status: 200
@@ -1653,7 +1655,7 @@ export type undrainDeviceHostResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type undrainDeviceHostResponseSuccess = (undrainDeviceHostResponse200) & {
   headers: Headers;
 };
@@ -1666,16 +1668,16 @@ export type undrainDeviceHostResponse = (undrainDeviceHostResponseSuccess | undr
 export const getUndrainDeviceHostUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-hosts/${id}/drains`
 }
 
 export const undrainDeviceHost = async (id: string,
     operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<undrainDeviceHostResponse> => {
-  
+
   return deviceFarmFetch<undrainDeviceHostResponse>(getUndrainDeviceHostUrl(id),
-  {      
+  {
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -1698,7 +1700,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof undrainDeviceHost>>, {id: string;data: OperationReasonBody}> = (props) => {
@@ -1707,7 +1709,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  undrainDeviceHost(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -1729,7 +1731,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type listDevicePoolsResponse200 = {
   data: PoolListSuccessResponse
   status: 200
@@ -1754,7 +1756,7 @@ export type listDevicePoolsResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDevicePoolsResponseSuccess = (listDevicePoolsResponse200) & {
   headers: Headers;
 };
@@ -1768,7 +1770,7 @@ export const getListDevicePoolsUrl = (params?: ListDevicePoolsParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -1780,13 +1782,13 @@ export const getListDevicePoolsUrl = (params?: ListDevicePoolsParams,) => {
 }
 
 export const listDevicePools = async (params?: ListDevicePoolsParams, options?: RequestInit): Promise<listDevicePoolsResponse> => {
-  
+
   return deviceFarmFetch<listDevicePoolsResponse>(getListDevicePoolsUrl(params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -1800,7 +1802,7 @@ export const getListDevicePoolsQueryKey = (params?: ListDevicePoolsParams,) => {
     ] as const;
     }
 
-    
+
 export const getListDevicePoolsQueryOptions = <TData = Awaited<ReturnType<typeof listDevicePools>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDevicePoolsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDevicePools>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -1808,13 +1810,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDevicePoolsQueryKey(params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDevicePools>>> = ({ signal }) => listDevicePools(params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDevicePools>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -1850,7 +1852,7 @@ export function useListDevicePools<TData = Awaited<ReturnType<typeof listDeviceP
 
 export function useListDevicePools<TData = Awaited<ReturnType<typeof listDevicePools>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  params?: ListDevicePoolsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDevicePools>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDevicePoolsQueryOptions(params,options)
@@ -1895,7 +1897,7 @@ export type createDevicePoolResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type createDevicePoolResponseSuccess = (createDevicePoolResponse201) & {
   headers: Headers;
 };
@@ -1908,15 +1910,15 @@ export type createDevicePoolResponse = (createDevicePoolResponseSuccess | create
 export const getCreateDevicePoolUrl = () => {
 
 
-  
+
 
   return `/api/v1/device-pools`
 }
 
 export const createDevicePool = async (devicePoolInputBody: DevicePoolInputBody, options?: RequestInit): Promise<createDevicePoolResponse> => {
-  
+
   return deviceFarmFetch<createDevicePoolResponse>(getCreateDevicePoolUrl(),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -1939,7 +1941,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDevicePool>>, {data: DevicePoolInputBody}> = (props) => {
@@ -1948,7 +1950,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  createDevicePool(data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -1970,7 +1972,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type getDevicePoolResponse200 = {
   data: PoolSuccessResponse
   status: 200
@@ -2000,7 +2002,7 @@ export type getDevicePoolResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type getDevicePoolResponseSuccess = (getDevicePoolResponse200) & {
   headers: Headers;
 };
@@ -2013,19 +2015,19 @@ export type getDevicePoolResponse = (getDevicePoolResponseSuccess | getDevicePoo
 export const getGetDevicePoolUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-pools/${id}`
 }
 
 export const getDevicePool = async (id: string, options?: RequestInit): Promise<getDevicePoolResponse> => {
-  
+
   return deviceFarmFetch<getDevicePoolResponse>(getGetDevicePoolUrl(id),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -2039,7 +2041,7 @@ export const getGetDevicePoolQueryKey = (id?: string,) => {
     ] as const;
     }
 
-    
+
 export const getGetDevicePoolQueryOptions = <TData = Awaited<ReturnType<typeof getDevicePool>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDevicePool>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -2047,13 +2049,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetDevicePoolQueryKey(id);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getDevicePool>>> = ({ signal }) => getDevicePool(id, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDevicePool>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -2089,7 +2091,7 @@ export function useGetDevicePool<TData = Awaited<ReturnType<typeof getDevicePool
 
 export function useGetDevicePool<TData = Awaited<ReturnType<typeof getDevicePool>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDevicePool>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetDevicePoolQueryOptions(id,options)
@@ -2139,7 +2141,7 @@ export type updateDevicePoolResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type updateDevicePoolResponseSuccess = (updateDevicePoolResponse200) & {
   headers: Headers;
 };
@@ -2152,16 +2154,16 @@ export type updateDevicePoolResponse = (updateDevicePoolResponseSuccess | update
 export const getUpdateDevicePoolUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-pools/${id}`
 }
 
 export const updateDevicePool = async (id: string,
     devicePoolInputBody: DevicePoolInputBody, options?: RequestInit): Promise<updateDevicePoolResponse> => {
-  
+
   return deviceFarmFetch<updateDevicePoolResponse>(getUpdateDevicePoolUrl(id),
-  {      
+  {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -2184,7 +2186,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateDevicePool>>, {id: string;data: DevicePoolInputBody}> = (props) => {
@@ -2193,7 +2195,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  updateDevicePool(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -2215,7 +2217,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type addDeviceToPoolResponse200 = {
   data: PoolMembershipSuccessResponse
   status: 200
@@ -2250,7 +2252,7 @@ export type addDeviceToPoolResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type addDeviceToPoolResponseSuccess = (addDeviceToPoolResponse200) & {
   headers: Headers;
 };
@@ -2263,16 +2265,16 @@ export type addDeviceToPoolResponse = (addDeviceToPoolResponseSuccess | addDevic
 export const getAddDeviceToPoolUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-pools/${id}/devices`
 }
 
 export const addDeviceToPool = async (id: string,
     poolDeviceInputBody: PoolDeviceInputBody, options?: RequestInit): Promise<addDeviceToPoolResponse> => {
-  
+
   return deviceFarmFetch<addDeviceToPoolResponse>(getAddDeviceToPoolUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -2295,7 +2297,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof addDeviceToPool>>, {id: string;data: PoolDeviceInputBody}> = (props) => {
@@ -2304,7 +2306,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  addDeviceToPool(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -2326,7 +2328,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type removeDeviceFromPoolResponse200 = {
   data: PoolMembershipSuccessResponse
   status: 200
@@ -2361,7 +2363,7 @@ export type removeDeviceFromPoolResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type removeDeviceFromPoolResponseSuccess = (removeDeviceFromPoolResponse200) & {
   headers: Headers;
 };
@@ -2374,16 +2376,16 @@ export type removeDeviceFromPoolResponse = (removeDeviceFromPoolResponseSuccess 
 export const getRemoveDeviceFromPoolUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-pools/${id}/devices`
 }
 
 export const removeDeviceFromPool = async (id: string,
     poolDeviceInputBody: PoolDeviceInputBody, options?: RequestInit): Promise<removeDeviceFromPoolResponse> => {
-  
+
   return deviceFarmFetch<removeDeviceFromPoolResponse>(getRemoveDeviceFromPoolUrl(id),
-  {      
+  {
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -2406,7 +2408,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeDeviceFromPool>>, {id: string;data: PoolDeviceInputBody}> = (props) => {
@@ -2415,7 +2417,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  removeDeviceFromPool(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -2437,7 +2439,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type listDevicePoolImagesResponse200 = {
   data: PoolImageListSuccessResponse
   status: 200
@@ -2467,7 +2469,7 @@ export type listDevicePoolImagesResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDevicePoolImagesResponseSuccess = (listDevicePoolImagesResponse200) & {
   headers: Headers;
 };
@@ -2482,7 +2484,7 @@ export const getListDevicePoolImagesUrl = (id: string,
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -2495,13 +2497,13 @@ export const getListDevicePoolImagesUrl = (id: string,
 
 export const listDevicePoolImages = async (id: string,
     params?: ListDevicePoolImagesParams, options?: RequestInit): Promise<listDevicePoolImagesResponse> => {
-  
+
   return deviceFarmFetch<listDevicePoolImagesResponse>(getListDevicePoolImagesUrl(id,params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -2516,7 +2518,7 @@ export const getListDevicePoolImagesQueryKey = (id?: string,
     ] as const;
     }
 
-    
+
 export const getListDevicePoolImagesQueryOptions = <TData = Awaited<ReturnType<typeof listDevicePoolImages>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string,
     params?: ListDevicePoolImagesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDevicePoolImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
@@ -2525,13 +2527,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDevicePoolImagesQueryKey(id,params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDevicePoolImages>>> = ({ signal }) => listDevicePoolImages(id,params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDevicePoolImages>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -2571,7 +2573,7 @@ export function useListDevicePoolImages<TData = Awaited<ReturnType<typeof listDe
 export function useListDevicePoolImages<TData = Awaited<ReturnType<typeof listDevicePoolImages>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string,
     params?: ListDevicePoolImagesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDevicePoolImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDevicePoolImagesQueryOptions(id,params,options)
@@ -2621,7 +2623,7 @@ export type setDevicePoolImageTargetResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type setDevicePoolImageTargetResponseSuccess = (setDevicePoolImageTargetResponse200) & {
   headers: Headers;
 };
@@ -2635,7 +2637,7 @@ export const getSetDevicePoolImageTargetUrl = (id: string,
     imageId: Identifier,) => {
 
 
-  
+
 
   return `/api/v1/device-pools/${id}/images/${imageId}`
 }
@@ -2643,9 +2645,9 @@ export const getSetDevicePoolImageTargetUrl = (id: string,
 export const setDevicePoolImageTarget = async (id: string,
     imageId: Identifier,
     devicePoolImageInputBody: DevicePoolImageInputBody, options?: RequestInit): Promise<setDevicePoolImageTargetResponse> => {
-  
+
   return deviceFarmFetch<setDevicePoolImageTargetResponse>(getSetDevicePoolImageTargetUrl(id,imageId),
-  {      
+  {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -2668,7 +2670,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof setDevicePoolImageTarget>>, {id: string;imageId: Identifier;data: DevicePoolImageInputBody}> = (props) => {
@@ -2677,7 +2679,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  setDevicePoolImageTarget(id,imageId,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -2699,7 +2701,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type disableDevicePoolImageTargetResponse200 = {
   data: PoolImageSuccessResponse
   status: 200
@@ -2734,7 +2736,7 @@ export type disableDevicePoolImageTargetResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type disableDevicePoolImageTargetResponseSuccess = (disableDevicePoolImageTargetResponse200) & {
   headers: Headers;
 };
@@ -2748,20 +2750,20 @@ export const getDisableDevicePoolImageTargetUrl = (id: string,
     imageId: Identifier,) => {
 
 
-  
+
 
   return `/api/v1/device-pools/${id}/images/${imageId}`
 }
 
 export const disableDevicePoolImageTarget = async (id: string,
     imageId: Identifier, options?: RequestInit): Promise<disableDevicePoolImageTargetResponse> => {
-  
+
   return deviceFarmFetch<disableDevicePoolImageTargetResponse>(getDisableDevicePoolImageTargetUrl(id,imageId),
-  {      
+  {
     ...options,
     method: 'DELETE'
-    
-    
+
+
   }
 );}
 
@@ -2779,7 +2781,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof disableDevicePoolImageTarget>>, {id: string;imageId: Identifier}> = (props) => {
@@ -2788,13 +2790,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  disableDevicePoolImageTarget(id,imageId,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
 
     export type DisableDevicePoolImageTargetMutationResult = NonNullable<Awaited<ReturnType<typeof disableDevicePoolImageTarget>>>
-    
+
     export type DisableDevicePoolImageTargetMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
 
     export const useDisableDevicePoolImageTarget = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
@@ -2810,7 +2812,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type listDevicesResponse200 = {
   data: DeviceListSuccessResponse
   status: 200
@@ -2835,7 +2837,7 @@ export type listDevicesResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDevicesResponseSuccess = (listDevicesResponse200) & {
   headers: Headers;
 };
@@ -2849,7 +2851,7 @@ export const getListDevicesUrl = (params?: ListDevicesParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -2861,13 +2863,13 @@ export const getListDevicesUrl = (params?: ListDevicesParams,) => {
 }
 
 export const listDevices = async (params?: ListDevicesParams, options?: RequestInit): Promise<listDevicesResponse> => {
-  
+
   return deviceFarmFetch<listDevicesResponse>(getListDevicesUrl(params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -2881,7 +2883,7 @@ export const getListDevicesQueryKey = (params?: ListDevicesParams,) => {
     ] as const;
     }
 
-    
+
 export const getListDevicesQueryOptions = <TData = Awaited<ReturnType<typeof listDevices>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDevicesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDevices>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -2889,13 +2891,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDevicesQueryKey(params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDevices>>> = ({ signal }) => listDevices(params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDevices>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -2931,7 +2933,7 @@ export function useListDevices<TData = Awaited<ReturnType<typeof listDevices>>, 
 
 export function useListDevices<TData = Awaited<ReturnType<typeof listDevices>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  params?: ListDevicesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDevices>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDevicesQueryOptions(params,options)
@@ -2981,7 +2983,7 @@ export type getDeviceResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type getDeviceResponseSuccess = (getDeviceResponse200) & {
   headers: Headers;
 };
@@ -2994,19 +2996,19 @@ export type getDeviceResponse = (getDeviceResponseSuccess | getDeviceResponseErr
 export const getGetDeviceUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/devices/${id}`
 }
 
 export const getDevice = async (id: string, options?: RequestInit): Promise<getDeviceResponse> => {
-  
+
   return deviceFarmFetch<getDeviceResponse>(getGetDeviceUrl(id),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -3020,7 +3022,7 @@ export const getGetDeviceQueryKey = (id?: string,) => {
     ] as const;
     }
 
-    
+
 export const getGetDeviceQueryOptions = <TData = Awaited<ReturnType<typeof getDevice>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDevice>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -3028,13 +3030,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetDeviceQueryKey(id);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getDevice>>> = ({ signal }) => getDevice(id, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDevice>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -3070,7 +3072,7 @@ export function useGetDevice<TData = Awaited<ReturnType<typeof getDevice>>, TErr
 
 export function useGetDevice<TData = Awaited<ReturnType<typeof getDevice>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDevice>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetDeviceQueryOptions(id,options)
@@ -3234,7 +3236,7 @@ export type restartDeviceResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type restartDeviceResponseSuccess = (restartDeviceResponse202) & {
   headers: Headers;
 };
@@ -3247,16 +3249,16 @@ export type restartDeviceResponse = (restartDeviceResponseSuccess | restartDevic
 export const getRestartDeviceUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/devices/${id}/restarts`
 }
 
 export const restartDevice = async (id: string,
     operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<restartDeviceResponse> => {
-  
+
   return deviceFarmFetch<restartDeviceResponse>(getRestartDeviceUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -3279,7 +3281,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof restartDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
@@ -3288,7 +3290,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  restartDevice(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -3310,7 +3312,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type rebuildDeviceResponse202 = {
   data: DeviceAcceptedResponse
   status: 202
@@ -3345,7 +3347,7 @@ export type rebuildDeviceResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type rebuildDeviceResponseSuccess = (rebuildDeviceResponse202) & {
   headers: Headers;
 };
@@ -3358,16 +3360,16 @@ export type rebuildDeviceResponse = (rebuildDeviceResponseSuccess | rebuildDevic
 export const getRebuildDeviceUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/devices/${id}/rebuilds`
 }
 
 export const rebuildDevice = async (id: string,
     operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<rebuildDeviceResponse> => {
-  
+
   return deviceFarmFetch<rebuildDeviceResponse>(getRebuildDeviceUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -3390,7 +3392,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof rebuildDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
@@ -3399,7 +3401,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  rebuildDevice(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -3421,7 +3423,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type quarantineDeviceResponse200 = {
   data: DeviceSuccessResponse
   status: 200
@@ -3456,7 +3458,7 @@ export type quarantineDeviceResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type quarantineDeviceResponseSuccess = (quarantineDeviceResponse200) & {
   headers: Headers;
 };
@@ -3469,16 +3471,16 @@ export type quarantineDeviceResponse = (quarantineDeviceResponseSuccess | quaran
 export const getQuarantineDeviceUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/devices/${id}/quarantines`
 }
 
 export const quarantineDevice = async (id: string,
     operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<quarantineDeviceResponse> => {
-  
+
   return deviceFarmFetch<quarantineDeviceResponse>(getQuarantineDeviceUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -3501,7 +3503,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof quarantineDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
@@ -3510,7 +3512,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  quarantineDevice(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -3532,7 +3534,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type unquarantineDeviceResponse200 = {
   data: DeviceSuccessResponse
   status: 200
@@ -3567,7 +3569,7 @@ export type unquarantineDeviceResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type unquarantineDeviceResponseSuccess = (unquarantineDeviceResponse200) & {
   headers: Headers;
 };
@@ -3580,16 +3582,16 @@ export type unquarantineDeviceResponse = (unquarantineDeviceResponseSuccess | un
 export const getUnquarantineDeviceUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/devices/${id}/quarantines`
 }
 
 export const unquarantineDevice = async (id: string,
     operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<unquarantineDeviceResponse> => {
-  
+
   return deviceFarmFetch<unquarantineDeviceResponse>(getUnquarantineDeviceUrl(id),
-  {      
+  {
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -3612,7 +3614,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof unquarantineDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
@@ -3621,7 +3623,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  unquarantineDevice(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -3643,7 +3645,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type listDeviceHealthEventsResponse200 = {
   data: HealthEventListSuccessResponse
   status: 200
@@ -3673,7 +3675,7 @@ export type listDeviceHealthEventsResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDeviceHealthEventsResponseSuccess = (listDeviceHealthEventsResponse200) & {
   headers: Headers;
 };
@@ -3688,7 +3690,7 @@ export const getListDeviceHealthEventsUrl = (id: string,
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -3701,13 +3703,13 @@ export const getListDeviceHealthEventsUrl = (id: string,
 
 export const listDeviceHealthEvents = async (id: string,
     params?: ListDeviceHealthEventsParams, options?: RequestInit): Promise<listDeviceHealthEventsResponse> => {
-  
+
   return deviceFarmFetch<listDeviceHealthEventsResponse>(getListDeviceHealthEventsUrl(id,params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -3722,7 +3724,7 @@ export const getListDeviceHealthEventsQueryKey = (id?: string,
     ] as const;
     }
 
-    
+
 export const getListDeviceHealthEventsQueryOptions = <TData = Awaited<ReturnType<typeof listDeviceHealthEvents>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string,
     params?: ListDeviceHealthEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceHealthEvents>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
@@ -3731,13 +3733,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDeviceHealthEventsQueryKey(id,params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeviceHealthEvents>>> = ({ signal }) => listDeviceHealthEvents(id,params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDeviceHealthEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -3777,7 +3779,7 @@ export function useListDeviceHealthEvents<TData = Awaited<ReturnType<typeof list
 export function useListDeviceHealthEvents<TData = Awaited<ReturnType<typeof listDeviceHealthEvents>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string,
     params?: ListDeviceHealthEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceHealthEvents>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDeviceHealthEventsQueryOptions(id,params,options)
@@ -3817,7 +3819,7 @@ export type listDeviceReservationsResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDeviceReservationsResponseSuccess = (listDeviceReservationsResponse200) & {
   headers: Headers;
 };
@@ -3831,7 +3833,7 @@ export const getListDeviceReservationsUrl = (params?: ListDeviceReservationsPara
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -3843,13 +3845,13 @@ export const getListDeviceReservationsUrl = (params?: ListDeviceReservationsPara
 }
 
 export const listDeviceReservations = async (params?: ListDeviceReservationsParams, options?: RequestInit): Promise<listDeviceReservationsResponse> => {
-  
+
   return deviceFarmFetch<listDeviceReservationsResponse>(getListDeviceReservationsUrl(params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -3863,7 +3865,7 @@ export const getListDeviceReservationsQueryKey = (params?: ListDeviceReservation
     ] as const;
     }
 
-    
+
 export const getListDeviceReservationsQueryOptions = <TData = Awaited<ReturnType<typeof listDeviceReservations>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDeviceReservationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceReservations>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -3871,13 +3873,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDeviceReservationsQueryKey(params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeviceReservations>>> = ({ signal }) => listDeviceReservations(params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDeviceReservations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -3913,7 +3915,7 @@ export function useListDeviceReservations<TData = Awaited<ReturnType<typeof list
 
 export function useListDeviceReservations<TData = Awaited<ReturnType<typeof listDeviceReservations>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  params?: ListDeviceReservationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceReservations>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDeviceReservationsQueryOptions(params,options)
@@ -3963,7 +3965,7 @@ export type createDeviceReservationResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type createDeviceReservationResponseSuccess = (createDeviceReservationResponse201) & {
   headers: Headers;
 };
@@ -3976,15 +3978,15 @@ export type createDeviceReservationResponse = (createDeviceReservationResponseSu
 export const getCreateDeviceReservationUrl = () => {
 
 
-  
+
 
   return `/api/v1/device-reservations`
 }
 
 export const createDeviceReservation = async (reservationCreateBody: ReservationCreateBody, options?: RequestInit): Promise<createDeviceReservationResponse> => {
-  
+
   return deviceFarmFetch<createDeviceReservationResponse>(getCreateDeviceReservationUrl(),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -4007,7 +4009,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDeviceReservation>>, {data: ReservationCreateBody}> = (props) => {
@@ -4016,7 +4018,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  createDeviceReservation(data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -4038,7 +4040,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type getDeviceReservationResponse200 = {
   data: ReservationSuccessResponse
   status: 200
@@ -4073,7 +4075,7 @@ export type getDeviceReservationResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type getDeviceReservationResponseSuccess = (getDeviceReservationResponse200) & {
   headers: Headers;
 };
@@ -4086,19 +4088,19 @@ export type getDeviceReservationResponse = (getDeviceReservationResponseSuccess 
 export const getGetDeviceReservationUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-reservations/${id}`
 }
 
 export const getDeviceReservation = async (id: string, options?: RequestInit): Promise<getDeviceReservationResponse> => {
-  
+
   return deviceFarmFetch<getDeviceReservationResponse>(getGetDeviceReservationUrl(id),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -4112,7 +4114,7 @@ export const getGetDeviceReservationQueryKey = (id?: string,) => {
     ] as const;
     }
 
-    
+
 export const getGetDeviceReservationQueryOptions = <TData = Awaited<ReturnType<typeof getDeviceReservation>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceReservation>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -4120,13 +4122,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetDeviceReservationQueryKey(id);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getDeviceReservation>>> = ({ signal }) => getDeviceReservation(id, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDeviceReservation>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -4162,7 +4164,7 @@ export function useGetDeviceReservation<TData = Awaited<ReturnType<typeof getDev
 
 export function useGetDeviceReservation<TData = Awaited<ReturnType<typeof getDeviceReservation>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceReservation>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetDeviceReservationQueryOptions(id,options)
@@ -4217,7 +4219,7 @@ export type extendDeviceReservationResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type extendDeviceReservationResponseSuccess = (extendDeviceReservationResponse200) & {
   headers: Headers;
 };
@@ -4230,16 +4232,16 @@ export type extendDeviceReservationResponse = (extendDeviceReservationResponseSu
 export const getExtendDeviceReservationUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-reservations/${id}/extensions`
 }
 
 export const extendDeviceReservation = async (id: string,
     leaseExtensionBody: LeaseExtensionBody, options?: RequestInit): Promise<extendDeviceReservationResponse> => {
-  
+
   return deviceFarmFetch<extendDeviceReservationResponse>(getExtendDeviceReservationUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -4262,7 +4264,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof extendDeviceReservation>>, {id: string;data: LeaseExtensionBody}> = (props) => {
@@ -4271,7 +4273,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  extendDeviceReservation(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -4293,7 +4295,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type releaseDeviceReservationResponse200 = {
   data: ReservationSuccessResponse
   status: 200
@@ -4338,7 +4340,7 @@ export type releaseDeviceReservationResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type releaseDeviceReservationResponseSuccess = (releaseDeviceReservationResponse200) & {
   headers: Headers;
 };
@@ -4351,16 +4353,16 @@ export type releaseDeviceReservationResponse = (releaseDeviceReservationResponse
 export const getReleaseDeviceReservationUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-reservations/${id}/releases`
 }
 
 export const releaseDeviceReservation = async (id: string,
     reservationReleaseBody: ReservationReleaseBody, options?: RequestInit): Promise<releaseDeviceReservationResponse> => {
-  
+
   return deviceFarmFetch<releaseDeviceReservationResponse>(getReleaseDeviceReservationUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -4383,7 +4385,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof releaseDeviceReservation>>, {id: string;data: ReservationReleaseBody}> = (props) => {
@@ -4392,7 +4394,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  releaseDeviceReservation(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -4414,7 +4416,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type createRemoteSessionResponse201 = {
   data: RemoteSessionCreatedResponse
   status: 201
@@ -4454,7 +4456,7 @@ export type createRemoteSessionResponse503 = {
   data: ErrorResponse
   status: 503
 }
-    
+
 export type createRemoteSessionResponseSuccess = (createRemoteSessionResponse201) & {
   headers: Headers;
 };
@@ -4467,16 +4469,16 @@ export type createRemoteSessionResponse = (createRemoteSessionResponseSuccess | 
 export const getCreateRemoteSessionUrl = (id: string,) => {
 
 
-  
+
 
   return `/api/v1/device-reservations/${id}/remote-sessions`
 }
 
 export const createRemoteSession = async (id: string,
     remoteSessionCreateBody: RemoteSessionCreateBody, options?: RequestInit): Promise<createRemoteSessionResponse> => {
-  
+
   return deviceFarmFetch<createRemoteSessionResponse>(getCreateRemoteSessionUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -4499,7 +4501,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createRemoteSession>>, {id: string;data: RemoteSessionCreateBody}> = (props) => {
@@ -4508,7 +4510,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  createRemoteSession(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -4530,7 +4532,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type listDeviceAuditEventsResponse200 = {
   data: AuditEventListSuccessResponse
   status: 200
@@ -4555,7 +4557,7 @@ export type listDeviceAuditEventsResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type listDeviceAuditEventsResponseSuccess = (listDeviceAuditEventsResponse200) & {
   headers: Headers;
 };
@@ -4569,7 +4571,7 @@ export const getListDeviceAuditEventsUrl = (params?: ListDeviceAuditEventsParams
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    
+
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : value.toString())
     }
@@ -4581,13 +4583,13 @@ export const getListDeviceAuditEventsUrl = (params?: ListDeviceAuditEventsParams
 }
 
 export const listDeviceAuditEvents = async (params?: ListDeviceAuditEventsParams, options?: RequestInit): Promise<listDeviceAuditEventsResponse> => {
-  
+
   return deviceFarmFetch<listDeviceAuditEventsResponse>(getListDeviceAuditEventsUrl(params),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -4601,7 +4603,7 @@ export const getListDeviceAuditEventsQueryKey = (params?: ListDeviceAuditEventsP
     ] as const;
     }
 
-    
+
 export const getListDeviceAuditEventsQueryOptions = <TData = Awaited<ReturnType<typeof listDeviceAuditEvents>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDeviceAuditEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceAuditEvents>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -4609,13 +4611,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getListDeviceAuditEventsQueryKey(params);
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeviceAuditEvents>>> = ({ signal }) => listDeviceAuditEvents(params, { signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDeviceAuditEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -4651,7 +4653,7 @@ export function useListDeviceAuditEvents<TData = Awaited<ReturnType<typeof listD
 
 export function useListDeviceAuditEvents<TData = Awaited<ReturnType<typeof listDeviceAuditEvents>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
  params?: ListDeviceAuditEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceAuditEvents>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListDeviceAuditEventsQueryOptions(params,options)
@@ -4691,7 +4693,7 @@ export type createConsoleSessionResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type createConsoleSessionResponseSuccess = (createConsoleSessionResponse201) & {
   headers: Headers;
 };
@@ -4704,15 +4706,15 @@ export type createConsoleSessionResponse = (createConsoleSessionResponseSuccess 
 export const getCreateConsoleSessionUrl = () => {
 
 
-  
+
 
   return `/console/api/v1/sessions`
 }
 
 export const createConsoleSession = async (consoleLoginBody: ConsoleLoginBody, options?: RequestInit): Promise<createConsoleSessionResponse> => {
-  
+
   return deviceFarmFetch<createConsoleSessionResponse>(getCreateConsoleSessionUrl(),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -4735,7 +4737,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createConsoleSession>>, {data: ConsoleLoginBody}> = (props) => {
@@ -4744,7 +4746,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  createConsoleSession(data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -4766,7 +4768,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type getConsoleSessionResponse200 = {
   data: ConsoleSessionSuccessResponse
   status: 200
@@ -4776,7 +4778,7 @@ export type getConsoleSessionResponse401 = {
   data: UnauthorizedResponse
   status: 401
 }
-    
+
 export type getConsoleSessionResponseSuccess = (getConsoleSessionResponse200) & {
   headers: Headers;
 };
@@ -4789,19 +4791,19 @@ export type getConsoleSessionResponse = (getConsoleSessionResponseSuccess | getC
 export const getGetConsoleSessionUrl = () => {
 
 
-  
+
 
   return `/console/api/v1/me`
 }
 
 export const getConsoleSession = async ( options?: RequestInit): Promise<getConsoleSessionResponse> => {
-  
+
   return deviceFarmFetch<getConsoleSessionResponse>(getGetConsoleSessionUrl(),
-  {      
+  {
     ...options,
     method: 'GET'
-    
-    
+
+
   }
 );}
 
@@ -4815,7 +4817,7 @@ export const getGetConsoleSessionQueryKey = () => {
     ] as const;
     }
 
-    
+
 export const getGetConsoleSessionQueryOptions = <TData = Awaited<ReturnType<typeof getConsoleSession>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConsoleSession>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
 ) => {
 
@@ -4823,13 +4825,13 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
   const queryKey =  queryOptions?.queryKey ?? getGetConsoleSessionQueryKey();
 
-  
+
 
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getConsoleSession>>> = ({ signal }) => getConsoleSession({ signal, ...requestOptions });
 
-      
 
-      
+
+
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getConsoleSession>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
@@ -4865,7 +4867,7 @@ export function useGetConsoleSession<TData = Awaited<ReturnType<typeof getConsol
 
 export function useGetConsoleSession<TData = Awaited<ReturnType<typeof getConsoleSession>>, TError = UnauthorizedResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConsoleSession>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
- , queryClient?: QueryClient 
+ , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetConsoleSessionQueryOptions(options)
@@ -4895,7 +4897,7 @@ export type deleteConsoleSessionResponse403 = {
   data: ForbiddenResponse
   status: 403
 }
-    
+
 export type deleteConsoleSessionResponseSuccess = (deleteConsoleSessionResponse200) & {
   headers: Headers;
 };
@@ -4908,19 +4910,19 @@ export type deleteConsoleSessionResponse = (deleteConsoleSessionResponseSuccess 
 export const getDeleteConsoleSessionUrl = () => {
 
 
-  
+
 
   return `/console/api/v1/sessions/current`
 }
 
 export const deleteConsoleSession = async ( options?: RequestInit): Promise<deleteConsoleSessionResponse> => {
-  
+
   return deviceFarmFetch<deleteConsoleSessionResponse>(getDeleteConsoleSessionUrl(),
-  {      
+  {
     ...options,
     method: 'DELETE'
-    
-    
+
+
   }
 );}
 
@@ -4938,22 +4940,22 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteConsoleSession>>, void> = () => {
-          
+
 
           return  deleteConsoleSession(requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
 
     export type DeleteConsoleSessionMutationResult = NonNullable<Awaited<ReturnType<typeof deleteConsoleSession>>>
-    
+
     export type DeleteConsoleSessionMutationError = UnauthorizedResponse | ForbiddenResponse
 
     export const useDeleteConsoleSession = <TError = UnauthorizedResponse | ForbiddenResponse,
@@ -4969,7 +4971,465 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
+/**
+ * Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device and waits for the existing Scheduler/STF claim flow.
+ */
+export type startDeviceRemoteControlResponse202 = {
+  data: RemoteControlAcceptedResponse
+  status: 202
+}
+
+export type startDeviceRemoteControlResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type startDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type startDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type startDeviceRemoteControlResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type startDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type startDeviceRemoteControlResponseSuccess = (startDeviceRemoteControlResponse202) & {
+  headers: Headers;
+};
+export type startDeviceRemoteControlResponseError = (startDeviceRemoteControlResponse400 | startDeviceRemoteControlResponse401 | startDeviceRemoteControlResponse403 | startDeviceRemoteControlResponse409 | startDeviceRemoteControlResponse503) & {
+  headers: Headers;
+};
+
+export type startDeviceRemoteControlResponse = (startDeviceRemoteControlResponseSuccess | startDeviceRemoteControlResponseError)
+
+export const getStartDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/console/api/v1/devices/${id}/remote-control`
+}
+
+export const startDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<startDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<startDeviceRemoteControlResponse>(getStartDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getStartDeviceRemoteControlMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startDeviceRemoteControl>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['startDeviceRemoteControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startDeviceRemoteControl>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  startDeviceRemoteControl(id,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartDeviceRemoteControlMutationResult = NonNullable<Awaited<ReturnType<typeof startDeviceRemoteControl>>>
+
+    export type StartDeviceRemoteControlMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse
+
+    export const useStartDeviceRemoteControl = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startDeviceRemoteControl>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getStartDeviceRemoteControlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Admin only. Returns the current administrator-owned remote control for this Device. The URL is a no-store, short-lived STF Web login entry and is present only after the Reservation is active.
+ */
+export type getDeviceRemoteControlResponse200 = {
+  data: RemoteControlSuccessResponse
+  status: 200
+}
+
+export type getDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type getDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type getDeviceRemoteControlResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type getDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type getDeviceRemoteControlResponseSuccess = (getDeviceRemoteControlResponse200) & {
+  headers: Headers;
+};
+export type getDeviceRemoteControlResponseError = (getDeviceRemoteControlResponse401 | getDeviceRemoteControlResponse403 | getDeviceRemoteControlResponse404 | getDeviceRemoteControlResponse503) & {
+  headers: Headers;
+};
+
+export type getDeviceRemoteControlResponse = (getDeviceRemoteControlResponseSuccess | getDeviceRemoteControlResponseError)
+
+export const getGetDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/console/api/v1/devices/${id}/remote-control`
+}
+
+export const getDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<getDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<getDeviceRemoteControlResponse>(getGetDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDeviceRemoteControlQueryKey = (id?: string,) => {
+    return [
+    `/console/api/v1/devices/${id}/remote-control`
+    ] as const;
+    }
+
+
+export const getGetDeviceRemoteControlQueryOptions = <TData = Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDeviceRemoteControlQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDeviceRemoteControl>>> = ({ signal }) => getDeviceRemoteControl(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDeviceRemoteControlQueryResult = NonNullable<Awaited<ReturnType<typeof getDeviceRemoteControl>>>
+export type GetDeviceRemoteControlQueryError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse
+
+
+export function useGetDeviceRemoteControl<TData = Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDeviceRemoteControl>>,
+          TError,
+          Awaited<ReturnType<typeof getDeviceRemoteControl>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDeviceRemoteControl<TData = Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDeviceRemoteControl>>,
+          TError,
+          Awaited<ReturnType<typeof getDeviceRemoteControl>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDeviceRemoteControl<TData = Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetDeviceRemoteControl<TData = Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceRemoteControl>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDeviceRemoteControlQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Admin only. Idempotently ends remote control, releases the Reservation and STF claim, and starts the normal device recycle/rebuild path.
+ */
+export type endDeviceRemoteControlResponse200 = {
+  data: RemoteControlSuccessResponse
+  status: 200
+}
+
+export type endDeviceRemoteControlResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type endDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type endDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type endDeviceRemoteControlResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type endDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type endDeviceRemoteControlResponseSuccess = (endDeviceRemoteControlResponse200) & {
+  headers: Headers;
+};
+export type endDeviceRemoteControlResponseError = (endDeviceRemoteControlResponse400 | endDeviceRemoteControlResponse401 | endDeviceRemoteControlResponse403 | endDeviceRemoteControlResponse409 | endDeviceRemoteControlResponse503) & {
+  headers: Headers;
+};
+
+export type endDeviceRemoteControlResponse = (endDeviceRemoteControlResponseSuccess | endDeviceRemoteControlResponseError)
+
+export const getEndDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/console/api/v1/devices/${id}/remote-control`
+}
+
+export const endDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<endDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<endDeviceRemoteControlResponse>(getEndDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getEndDeviceRemoteControlMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof endDeviceRemoteControl>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['endDeviceRemoteControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endDeviceRemoteControl>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  endDeviceRemoteControl(id,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EndDeviceRemoteControlMutationResult = NonNullable<Awaited<ReturnType<typeof endDeviceRemoteControl>>>
+
+    export type EndDeviceRemoteControlMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse
+
+    export const useEndDeviceRemoteControl = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof endDeviceRemoteControl>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getEndDeviceRemoteControlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Admin only. Renews the short Reservation while STF still reports the device as claimed; if STF has released it, the Reservation is ended instead.
+ */
+export type heartbeatDeviceRemoteControlResponse200 = {
+  data: RemoteControlSuccessResponse
+  status: 200
+}
+
+export type heartbeatDeviceRemoteControlResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type heartbeatDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type heartbeatDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type heartbeatDeviceRemoteControlResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type heartbeatDeviceRemoteControlResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type heartbeatDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type heartbeatDeviceRemoteControlResponseSuccess = (heartbeatDeviceRemoteControlResponse200) & {
+  headers: Headers;
+};
+export type heartbeatDeviceRemoteControlResponseError = (heartbeatDeviceRemoteControlResponse400 | heartbeatDeviceRemoteControlResponse401 | heartbeatDeviceRemoteControlResponse403 | heartbeatDeviceRemoteControlResponse404 | heartbeatDeviceRemoteControlResponse409 | heartbeatDeviceRemoteControlResponse503) & {
+  headers: Headers;
+};
+
+export type heartbeatDeviceRemoteControlResponse = (heartbeatDeviceRemoteControlResponseSuccess | heartbeatDeviceRemoteControlResponseError)
+
+export const getHeartbeatDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/console/api/v1/devices/${id}/remote-control/heartbeat`
+}
+
+export const heartbeatDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<heartbeatDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<heartbeatDeviceRemoteControlResponse>(getHeartbeatDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getHeartbeatDeviceRemoteControlMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof heartbeatDeviceRemoteControl>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['heartbeatDeviceRemoteControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatDeviceRemoteControl>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  heartbeatDeviceRemoteControl(id,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type HeartbeatDeviceRemoteControlMutationResult = NonNullable<Awaited<ReturnType<typeof heartbeatDeviceRemoteControl>>>
+
+    export type HeartbeatDeviceRemoteControlMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse
+
+    export const useHeartbeatDeviceRemoteControl = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof heartbeatDeviceRemoteControl>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getHeartbeatDeviceRemoteControlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
 export type heartbeatDeviceHostResponse200 = {
   data: SuccessResponse
   status: 200
@@ -5004,7 +5464,7 @@ export type heartbeatDeviceHostResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type heartbeatDeviceHostResponseSuccess = (heartbeatDeviceHostResponse200) & {
   headers: Headers;
 };
@@ -5017,16 +5477,16 @@ export type heartbeatDeviceHostResponse = (heartbeatDeviceHostResponseSuccess | 
 export const getHeartbeatDeviceHostUrl = (id: string,) => {
 
 
-  
+
 
   return `/internal/v1/device-hosts/${id}/heartbeats`
 }
 
 export const heartbeatDeviceHost = async (id: string,
     hostHeartbeatBody: HostHeartbeatBody, options?: RequestInit): Promise<heartbeatDeviceHostResponse> => {
-  
+
   return deviceFarmFetch<heartbeatDeviceHostResponse>(getHeartbeatDeviceHostUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -5049,7 +5509,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatDeviceHost>>, {id: string;data: HostHeartbeatBody}> = (props) => {
@@ -5058,7 +5518,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  heartbeatDeviceHost(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -5080,7 +5540,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type claimHostCommandsResponse200 = {
   data: SuccessResponse
   status: 200
@@ -5115,7 +5575,7 @@ export type claimHostCommandsResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type claimHostCommandsResponseSuccess = (claimHostCommandsResponse200) & {
   headers: Headers;
 };
@@ -5128,16 +5588,16 @@ export type claimHostCommandsResponse = (claimHostCommandsResponseSuccess | clai
 export const getClaimHostCommandsUrl = (id: string,) => {
 
 
-  
+
 
   return `/internal/v1/device-hosts/${id}/commands/claims`
 }
 
 export const claimHostCommands = async (id: string,
     commandClaimBody: CommandClaimBody, options?: RequestInit): Promise<claimHostCommandsResponse> => {
-  
+
   return deviceFarmFetch<claimHostCommandsResponse>(getClaimHostCommandsUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -5160,7 +5620,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimHostCommands>>, {id: string;data: CommandClaimBody}> = (props) => {
@@ -5169,7 +5629,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  claimHostCommands(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -5191,7 +5651,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type completeHostCommandResponse200 = {
   data: SuccessResponse
   status: 200
@@ -5226,7 +5686,7 @@ export type completeHostCommandResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type completeHostCommandResponseSuccess = (completeHostCommandResponse200) & {
   headers: Headers;
 };
@@ -5239,16 +5699,16 @@ export type completeHostCommandResponse = (completeHostCommandResponseSuccess | 
 export const getCompleteHostCommandUrl = (id: string,) => {
 
 
-  
+
 
   return `/internal/v1/device-host-commands/${id}/completions`
 }
 
 export const completeHostCommand = async (id: string,
     commandCompletionBody: CommandCompletionBody, options?: RequestInit): Promise<completeHostCommandResponse> => {
-  
+
   return deviceFarmFetch<completeHostCommandResponse>(getCompleteHostCommandUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -5271,7 +5731,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeHostCommand>>, {id: string;data: CommandCompletionBody}> = (props) => {
@@ -5280,7 +5740,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  completeHostCommand(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -5302,7 +5762,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 export type reportDeviceHealthResponse201 = {
   data: CreatedResponse
   status: 201
@@ -5337,7 +5797,7 @@ export type reportDeviceHealthResponse500 = {
   data: ServerErrorResponse
   status: 500
 }
-    
+
 export type reportDeviceHealthResponseSuccess = (reportDeviceHealthResponse201) & {
   headers: Headers;
 };
@@ -5350,16 +5810,16 @@ export type reportDeviceHealthResponse = (reportDeviceHealthResponseSuccess | re
 export const getReportDeviceHealthUrl = (id: string,) => {
 
 
-  
+
 
   return `/internal/v1/devices/${id}/health-events`
 }
 
 export const reportDeviceHealth = async (id: string,
     healthEventBody: HealthEventBody, options?: RequestInit): Promise<reportDeviceHealthResponse> => {
-  
+
   return deviceFarmFetch<reportDeviceHealthResponse>(getReportDeviceHealthUrl(id),
-  {      
+  {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -5382,7 +5842,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, request: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof reportDeviceHealth>>, {id: string;data: HealthEventBody}> = (props) => {
@@ -5391,7 +5851,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
           return  reportDeviceHealth(id,data,requestOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -5413,4 +5873,4 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+

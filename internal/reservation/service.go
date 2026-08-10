@@ -127,6 +127,38 @@ func NewService(db *database.DB, generator IDGenerator, controllers ...STFContro
 }
 
 func (service *Service) Create(ctx context.Context, actor audit.Actor, key string, input CreateInput) (View, error) {
+	return service.create(ctx, actor, key, input, "")
+}
+
+func (service *Service) CreateForDevice(
+	ctx context.Context,
+	actor audit.Actor,
+	key, deviceID string,
+	leaseSeconds int,
+) (View, error) {
+	if service == nil || service.db == nil {
+		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+	}
+	if !actor.Valid() || len(key) < 8 || len(key) > 128 || !validOwnerID("manual", actor.ID) ||
+		!identifierPattern.MatchString(deviceID) || leaseSeconds < 60 {
+		return View{}, ErrInvalidArgument
+	}
+	if existing, err := service.repo.FindOpenTargeted(ctx, service.db.Pool(), actor.ID, deviceID); err == nil {
+		return toView(existing)
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		return View{}, translateRepositoryError(err)
+	}
+	poolID, err := service.repo.FindActivePoolForDevice(ctx, service.db.Pool(), deviceID)
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	return service.create(ctx, actor, key, CreateInput{
+		PoolID: poolID, OwnerType: "manual", OwnerID: actor.ID,
+		RequestedCapabilities: map[string]any{}, LeaseSeconds: leaseSeconds,
+	}, deviceID)
+}
+
+func (service *Service) create(ctx context.Context, actor audit.Actor, key string, input CreateInput, targetDeviceID string) (View, error) {
 	if service == nil || service.db == nil {
 		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
 	}
@@ -147,15 +179,71 @@ func (service *Service) Create(ctx context.Context, actor audit.Actor, key strin
 	if input.RequestedCapabilities == nil {
 		input.RequestedCapabilities = map[string]any{}
 	}
+	if targetDeviceID != "" {
+		input.RequestedCapabilities[repository.TargetDeviceCapability] = targetDeviceID
+	}
 	id, err := service.newID()
 	if err != nil {
 		return View{}, fmt.Errorf("generate reservation ID: %w", err)
 	}
-	record, err := service.repo.CreatePending(ctx, service.db.Pool(), repository.CreateReservationParams{
+	params := repository.CreateReservationParams{
 		ID: id, ClientID: clientID, PoolID: input.PoolID, OwnerType: input.OwnerType,
 		OwnerID: input.OwnerID, RequestedCapabilities: input.RequestedCapabilities,
 		LeaseSeconds: input.LeaseSeconds, IdempotencyKey: key,
-	})
+	}
+	var record repository.ReservationRecord
+	if targetDeviceID == "" {
+		record, err = service.repo.CreatePending(ctx, service.db.Pool(), params)
+	} else {
+		err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+			if lockErr := service.repo.LockTargetDevice(ctx, tx, targetDeviceID); lockErr != nil {
+				return lockErr
+			}
+			existing, findErr := service.repo.FindOpenTargeted(ctx, tx, "", targetDeviceID)
+			switch {
+			case findErr == nil && existing.OwnerID == actor.ID:
+				record = existing
+				return nil
+			case findErr == nil:
+				return ErrConflict
+			case !errors.Is(findErr, repository.ErrNotFound):
+				return findErr
+			}
+			created, createErr := service.repo.CreatePending(ctx, tx, params)
+			if createErr != nil {
+				return createErr
+			}
+			record = created
+			return nil
+		})
+	}
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	return toView(record)
+}
+
+func (service *Service) FindOpenForDevice(ctx context.Context, ownerID, deviceID string) (View, error) {
+	if service == nil || service.db == nil || !validOwnerID("manual", ownerID) || !identifierPattern.MatchString(deviceID) {
+		return View{}, ErrInvalidArgument
+	}
+	record, err := service.repo.FindOpenTargeted(ctx, service.db.Pool(), ownerID, deviceID)
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	return toView(record)
+}
+
+func (service *Service) KeepAliveForDevice(
+	ctx context.Context,
+	reservationID, ownerID, deviceID string,
+	lease time.Duration,
+) (View, error) {
+	if service == nil || service.db == nil || lease < time.Minute || !identifierPattern.MatchString(reservationID) ||
+		!validOwnerID("manual", ownerID) || !identifierPattern.MatchString(deviceID) {
+		return View{}, ErrInvalidArgument
+	}
+	record, err := service.repo.KeepAliveTargeted(ctx, service.db.Pool(), reservationID, ownerID, deviceID, lease)
 	if err != nil {
 		return View{}, translateRepositoryError(err)
 	}
@@ -691,6 +779,11 @@ func validateCreate(actor audit.Actor, key string, input CreateInput) error {
 	if sensitive.ContainsMap(input.RequestedCapabilities) {
 		return ErrInvalidArgument
 	}
+	for key := range input.RequestedCapabilities {
+		if strings.HasPrefix(key, "_device_farm_") {
+			return fmt.Errorf("%w: requested_capabilities contains a reserved key", ErrInvalidArgument)
+		}
+	}
 	if _, err := json.Marshal(input.RequestedCapabilities); err != nil {
 		return fmt.Errorf("%w: requested_capabilities is not valid JSON", ErrInvalidArgument)
 	}
@@ -748,6 +841,7 @@ func toView(record repository.ReservationRecord) (View, error) {
 			return View{}, fmt.Errorf("decode requested capabilities: %w", err)
 		}
 	}
+	delete(capabilities, repository.TargetDeviceCapability)
 	return View{
 		ID: record.ID, PoolID: record.PoolID, DeviceID: record.DeviceID,
 		OwnerType: record.OwnerType, OwnerID: record.OwnerID,

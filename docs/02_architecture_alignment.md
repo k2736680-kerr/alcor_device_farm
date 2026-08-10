@@ -10,7 +10,7 @@
 
 | 组件 | 当前工作区处理 | 新版 Alcor 接入方式 | 禁止跑偏 |
 |---|---|---|---|
-| Device Farm Console | 当前新增可独立使用的设备控制后台；按 ADR-0010 不展示 STF `remoteConnect` TCP 地址 | 新版 Alcor 可链接、嵌入或复用设备域模块，也可继续通过 Adapter 调用同一 API | 不实现 Alcor 评估业务页面，不复制 STF 远控，不让浏览器接触内部 Token |
+| Device Farm Console | 当前新增可独立使用的设备控制后台；按 ADR-0013 为管理员编排 Reservation 绑定的 STF 原生 Web 远控，仍不展示 STF `remoteConnect` TCP 地址 | 新版 Alcor 可链接、嵌入或复用设备域模块，也可继续通过 Adapter 调用同一 API | 不实现 Alcor 评估业务页面，不复制 STF 远控，不让浏览器接触 STF API Token 或签名 Secret |
 | Console Gateway 与会话 | 当前在 Device Farm Server 新增 `console` Principal、配置用户和 PostgreSQL 短时会话 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表 |
 | Eval Console 设备入口 | 当前不开发 Alcor 页面 | 新版 Alcor 后续按实际前端架构接入 Device Farm Console 或设备 API | 不把新版 Alcor 完成作为当前设备控制后台的前置条件 |
 | Case、Dataset、Target、Config | 当前不开发 | 由新版 `/api/v1` 和 PostgreSQL/ClickHouse 管理 | 不建临时替代业务表和 API |
@@ -24,7 +24,7 @@
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Docker Emulator Provider | 当前新增 | 由设备农场调度 | 不把 Docker Socket 暴露给 Alcor/浏览器 |
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
-| STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机、仅 loopback 暴露的 STF ADB server | 继续作为远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect |
+| STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
@@ -46,6 +46,7 @@
 - 设备 API 通用幂等记录，只保存请求哈希和设备资源 ID；
 - `X-Eval-Run-Id`、`X-Eval-Attempt-Id`、`traceparent` 透传；
 - Device Farm Console、浏览器安全访问、资源状态展示、人工预约和设备操作；
+- 管理员单设备 STF 原生 Web 远控编排、短租约心跳、标签页关闭检测和 Reaper 兜底；
 - `device_console_sessions` 技术会话表、`viewer/operator/admin` 设备域权限和 CSRF 防护；
 - DaFit 端到端 Harness。
 

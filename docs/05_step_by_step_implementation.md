@@ -51,6 +51,7 @@
 | DF-028 | 控制台部署、安全和真实 Web 验收 | completed | DF-017～DF-024、DF-027 |
 | DF-029 | 控制台统一容量和自动安全缩容 | completed | DF-016、DF-023、DF-028 |
 | DF-030 | 隔离设备受控人工删除 | completed | DF-012、DF-022、DF-029 |
+| DF-031 | 管理员设备远程控制 | completed | DF-010、DF-017、DF-018、DF-028 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -320,6 +321,14 @@
 产出：OpenAPI、Management Service/Store、Host Command 完成收敛、Console 删除入口、PostgreSQL 集成测试和真实 Linux 验收证据。
 
 验收：ready/reserved/busy/recycling Device 删除返回 409；存在活动预约时拒绝；同一幂等键只产生一个 delete Command，同设备已有 pending/leased delete Command 时更换幂等键也拒绝重复创建；成功结果必须包含 `deleted=true`，随后设备转为 deleted、Pool membership 禁用、Endpoint 清空且审计/健康事件完整；失败三次后设备 quarantined/unhealthy；目标数量不变时 Warm Pool 可补建；浏览器、Server 均不访问 Docker Socket。
+
+### DF-031 管理员设备远程控制
+
+实施：按 ADR-0013 在 Device 页面增加管理员“一键远程连接”。Server 为指定 `ready/healthy` Device 创建 `manual` 短租约 Reservation，Scheduler 精确选择该 Device 并完成 STF claim；active 后 Server 为固定 STF 管理员身份签发极短有效的 HS256 Web 登录 JWT，Console 在预先打开的新标签页中进入 STF `/#!/control/{serial}`。Console 发送心跳并检测标签页关闭；挂断、关闭、STF 自行释放或心跳超时都复用 Reservation release/Reaper、STF release 和设备 rebuild 链路。
+
+产出：ADR-0013、远控 Console API/OpenAPI、精确 Device 调度约束、STF Web JWT 签发器、Device 页面连接/打开/挂断交互、部署配置、安全测试、浏览器测试和 `docs/evidence/DF-031/` 真实证据。
+
+验收：只有 admin 和 `ready/healthy` Device 可以开始；点击后无需 STF 账号密码并直接进入指定设备；真实看屏、点击、滑动、输入、Home 和返回有效；第二条远控不双占；JWT 在 STF 重定向后从地址移除且响应/日志/存储无 STF API Token 或签名 Secret；点击挂断和关闭远控标签页均释放 Reservation/STF claim 并触发重建，最终 `ready/healthy`；Console 崩溃或断网后短租约由 Reaper 在限定时间内回收；STF 页面主动释放后后台状态收敛；Server/STF 重启无永久 active 远控。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

@@ -72,6 +72,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -面向未来Alcor的设备北向API；
 -Device Farm Console，只展示和操作设备域资源；
 -浏览器安全访问、页面权限和设备域操作审计衔接；
+-管理员 STF Web 远控编排：精确设备短租约、短时 JWT 入口、心跳和关闭回收；只链接 STF 原生页面，不实现画面或触控；
 -仅用于端到端证明的DaFit Harness。
 
 ## 5. 名称相近但职责不同的能力
@@ -83,7 +84,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 | PostgreSQL Reservation | STF claim | Reservation是跨进程业务占用真相和租约；STF claim是远控工具的技术占用。顺序固定为数据库预约成功后调用STF claim |
 | Device Session | 新版 Alcor RunAttempt | Device Session只描述一次设备占用与技术连接；RunAttempt负责整个业务执行和结果。两者通过外部 UUID/ULID 关联，不互相替代 |
 | Device Farm Console | 新版 Alcor Eval Console | 前者只控制设备资源并可独立运行；后者负责完整评估业务。未来可以通过链接、嵌入或模块复用统一入口，但当前不复制 Alcor 业务对象 |
-| STF 原生 Web 远控 | STF 原生 Web 页面 | 按 ADR-0010 保持独立受控访问；当前 Console 不展示 `remoteConnect` TCP 地址，也不实现画面流、触控、日志或文件协议 |
+| STF 原生 Web 远控 | STF 原生 Web 页面 | 按 ADR-0013 由 Console 编排短租约和短时 Web 登录后打开 STF 原生单设备页；不展示 `remoteConnect` TCP 地址，也不实现画面流、触控、日志或文件协议 |
 
 ## 6. 开发审查规则
 
@@ -100,5 +101,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 自动缩容继续复用现有 Host Command、Host Agent 和 Provider `Delete`，不得另建直接访问 Docker Socket 的 Server 删除通道。Device 数据只标记 `deleted` 并保留审计，不通过物理删库伪装缩容完成。
 
 DF-030 的人工删除同样复用上述删除链路，只允许 `quarantined/stopped` 且没有活动预约的设备进入删除命令；可用和使用中的设备必须通过目标容量或预约释放流程处理。
+
+DF-031 复用 STF 3.7.9 原生 Web UI、JWT 登录、claim/release、现有 Reservation/Reaper 和 rebuild 链路。新增代码只负责管理员精确选中 Device、签发短时 Web 入口、心跳和结束编排；不得把 STF `remoteConnect` TCP 地址或管理 Token 交给浏览器。
 
 无法回答或没有更新本矩阵时，不进入编码。

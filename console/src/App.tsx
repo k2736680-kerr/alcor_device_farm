@@ -125,7 +125,7 @@ export default function App() {
             <Route path="/images" element={<ImagesPage />} />
             <Route path="/hosts" element={<HostsPage />} />
             <Route path="/pools" element={<PoolsPage />} />
-            <Route path="/devices" element={<DevicesPage />} />
+            <Route path="/devices" element={<DevicesPage role={session.user.role} />} />
             <Route path="/reservations" element={<ReservationsPage />} />
             <Route path="/health-events" element={<HealthEventsPage />} />
             <Route path="/audit" element={<AuditPage />} />

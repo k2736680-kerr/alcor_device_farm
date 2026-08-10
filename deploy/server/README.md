@@ -16,7 +16,7 @@ sudoedit /etc/alcor-device-farm/server.env
 - `DEVICE_FARM_DATABASE_URL`；
 - `DEVICE_FARM_SECURITY_SERVICE_TOKEN`；
 - `DEVICE_FARM_SECURITY_AGENT_TOKEN`；
-- 启用 STF 时填写 `DEVICE_FARM_STF_BASE_URL` 和 `DEVICE_FARM_STF_API_TOKEN`。
+- 启用 STF 时填写 `DEVICE_FARM_STF_BASE_URL` 和 `DEVICE_FARM_STF_API_TOKEN`；启用管理员 Web 远控时再填写 `DEVICE_FARM_STF_WEB_URL`、`DEVICE_FARM_STF_WEB_AUTH_SECRET`、`DEVICE_FARM_STF_WEB_USER_NAME`、`DEVICE_FARM_STF_WEB_USER_EMAIL`。
 
 首次空库执行：
 
@@ -97,6 +97,16 @@ DEVICE_FARM_CONSOLE_USERS_FILE=/run/secrets/device-farm/console-users.yaml
 ```
 
 `console-users.yaml` 只包含 Console 登录用户（Argon2id 哈希密码与角色），例如 `tmp/console-users.yaml` 的本地形态；生产环境由部署机密机制生成。`DEVICE_FARM_CONSOLE_DEVELOPMENT_INSECURE` 仅限开发环境且 Server 必须绑定回环地址，生产环境必须保持 false。
+
+### STF 原生 Web 远控
+
+管理员远控不复用 Console 密码，也不把 STF API Token 发给浏览器。Server 使用与 STF `--auth-secret` 相同的受限 Secret 签发 30 秒短时 JWT，STF 建立自身 Session 后立即通过重定向从地址移除 JWT。配置要求：
+
+- `DEVICE_FARM_STF_WEB_URL` 是管理员浏览器可访问的 STF HTTPS 地址；7100、7110 和设备画面端口必须位于同一受控内网边界；
+- `DEVICE_FARM_STF_WEB_AUTH_SECRET` 必须与 `deploy/stf/.env` 的 `STF_AUTH_SECRET` 完全一致，不能复用 Service/Agent Token；
+- `DEVICE_FARM_STF_WEB_USER_NAME/EMAIL` 必须与生成 `DEVICE_FARM_STF_API_TOKEN` 的 STF 用户一致，否则页面无法控制 Server 已 claim 的设备；
+- `DEVICE_FARM_CONSOLE_REMOTE_LEASE` 默认 60 秒，心跳默认 15 秒。关闭页面的主动释放失败时，Reservation Reaper 在租约和 grace period 后兜底；
+- 远控响应使用 `no-store` 和 `Referrer-Policy: no-referrer`。反向代理不得记录包含 `jwt` 查询参数的完整 URL；STF App 会在首次成功请求后移除该参数。
 
 ### 访问与健康检查
 

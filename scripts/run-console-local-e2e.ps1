@@ -97,7 +97,7 @@ reconcile:
 [System.IO.File]::WriteAllText($ServerConfig, $Config, [System.Text.UTF8Encoding]::new($false))
 
 $SavedEnvironment = @{}
-foreach ($Name in @("NODE_OPTIONS", "DEVICE_FARM_STF_ENABLED", "DEVICE_FARM_STF_BASE_URL", "DEVICE_FARM_STF_API_TOKEN", "DEVICE_FARM_E2E_SERVER_BINARY", "DEVICE_FARM_E2E_SERVER_CONFIG", "DEVICE_FARM_E2E_REUSE_SERVER")) {
+foreach ($Name in @("NODE_OPTIONS", "DEVICE_FARM_STF_ENABLED", "DEVICE_FARM_STF_BASE_URL", "DEVICE_FARM_STF_API_TOKEN", "DEVICE_FARM_STF_WEB_URL", "DEVICE_FARM_STF_WEB_AUTH_SECRET", "DEVICE_FARM_STF_WEB_USER_NAME", "DEVICE_FARM_STF_WEB_USER_EMAIL", "DEVICE_FARM_E2E_SERVER_BINARY", "DEVICE_FARM_E2E_SERVER_CONFIG", "DEVICE_FARM_E2E_REUSE_SERVER")) {
     $SavedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
 }
 
@@ -126,6 +126,10 @@ try {
         $env:DEVICE_FARM_STF_ENABLED = "true"
         $env:DEVICE_FARM_STF_BASE_URL = "http://127.0.0.1:18083"
         $env:DEVICE_FARM_STF_API_TOKEN = "local-e2e-stf-token"
+        $env:DEVICE_FARM_STF_WEB_URL = "http://127.0.0.1:18083"
+        $env:DEVICE_FARM_STF_WEB_AUTH_SECRET = "local-e2e-stf-auth-secret-32-bytes"
+        $env:DEVICE_FARM_STF_WEB_USER_NAME = "Device Farm Admin"
+        $env:DEVICE_FARM_STF_WEB_USER_EMAIL = "device-farm-admin@example.test"
         $env:DEVICE_FARM_E2E_SERVER_BINARY = $ServerBinary
         $env:DEVICE_FARM_E2E_SERVER_CONFIG = $ServerConfig
         $env:DEVICE_FARM_E2E_REUSE_SERVER = "0"

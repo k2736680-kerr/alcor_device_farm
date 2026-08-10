@@ -570,6 +570,67 @@ paths:
         "200": {$ref: "#/components/responses/ConsoleLogoutSuccess"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /console/api/v1/devices/{id}/remote-control:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Console]
+      operationId: startDeviceRemoteControl
+      description: Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device and waits for the existing Scheduler/STF claim flow.
+      security: [{consoleCookie: []}]
+      parameters:
+        - {$ref: "#/components/parameters/CSRFToken"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/RemoteControlAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [Console]
+      operationId: getDeviceRemoteControl
+      description: Admin only. Returns the current administrator-owned remote control for this Device. The URL is a no-store, short-lived STF Web login entry and is present only after the Reservation is active.
+      security: [{consoleCookie: []}]
+      responses:
+        "200": {$ref: "#/components/responses/RemoteControlSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [Console]
+      operationId: endDeviceRemoteControl
+      description: Admin only. Idempotently ends remote control, releases the Reservation and STF claim, and starts the normal device recycle/rebuild path.
+      security: [{consoleCookie: []}]
+      parameters:
+        - {$ref: "#/components/parameters/CSRFToken"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200": {$ref: "#/components/responses/RemoteControlSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
+  /console/api/v1/devices/{id}/remote-control/heartbeat:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Console]
+      operationId: heartbeatDeviceRemoteControl
+      description: Admin only. Renews the short Reservation while STF still reports the device as claimed; if STF has released it, the Reservation is ended instead.
+      security: [{consoleCookie: []}]
+      parameters:
+        - {$ref: "#/components/parameters/CSRFToken"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200": {$ref: "#/components/responses/RemoteControlSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
   /internal/v1/device-hosts/{id}/heartbeats:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -829,6 +890,12 @@ components:
     ConsoleLogoutSuccess:
       description: 当前 Console 会话已撤销
       content: {application/json: {schema: {$ref: "#/components/schemas/ConsoleLogoutEnvelope"}}}
+    RemoteControlAccepted:
+      description: 远控预约已创建，等待 Scheduler/STF claim
+      content: {application/json: {schema: {$ref: "#/components/schemas/RemoteControlEnvelope"}}}
+    RemoteControlSuccess:
+      description: 管理员设备远控状态
+      content: {application/json: {schema: {$ref: "#/components/schemas/RemoteControlEnvelope"}}}
     ReservationCreated:
       description: 预约已创建，初始通常为 pending
       content:
@@ -1046,6 +1113,23 @@ components:
       properties:
         user_id: {type: string, minLength: 1, maxLength: 64}
         password: {type: string, minLength: 1, maxLength: 1024, format: password}
+    RemoteControlStatus:
+      type: string
+      enum: [connecting, connected, ended, failed]
+    RemoteControl:
+      type: object
+      additionalProperties: false
+      required: [device_id, status, heartbeat_interval_seconds]
+      properties:
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        reservation_id: {$ref: "#/components/schemas/Identifier"}
+        status: {$ref: "#/components/schemas/RemoteControlStatus"}
+        url:
+          type: string
+          format: uri
+          description: Extremely short-lived STF Web login URL. Never contains the STF API token or signing secret and must not be cached or persisted.
+        expires_at: {type: string, format: date-time}
+        heartbeat_interval_seconds: {type: integer, minimum: 1}
     PageMetadata:
       type: object
       required: [page, page_size, total]
@@ -1168,6 +1252,14 @@ components:
       properties:
         request_id: {type: string}
         data: {type: object, additionalProperties: false, required: [revoked], properties: {revoked: {type: boolean}}}
+        error: {nullable: true}
+    RemoteControlEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/RemoteControl"}
         error: {nullable: true}
     DeviceImageInput:
       type: object

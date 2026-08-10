@@ -72,12 +72,17 @@ type WarmPoolConfig struct {
 }
 
 type STFConfig struct {
-	Enabled    bool          `yaml:"enabled" json:"enabled"`
-	BaseURL    string        `yaml:"base_url" json:"base_url"`
-	APIToken   string        `yaml:"api_token" json:"-"`
-	Timeout    time.Duration `yaml:"timeout" json:"timeout"`
-	Attempts   int           `yaml:"attempts" json:"attempts"`
-	RetryDelay time.Duration `yaml:"retry_delay" json:"retry_delay"`
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	BaseURL       string        `yaml:"base_url" json:"base_url"`
+	APIToken      string        `yaml:"api_token" json:"-"`
+	Timeout       time.Duration `yaml:"timeout" json:"timeout"`
+	Attempts      int           `yaml:"attempts" json:"attempts"`
+	RetryDelay    time.Duration `yaml:"retry_delay" json:"retry_delay"`
+	WebURL        string        `yaml:"web_url" json:"web_url,omitempty"`
+	WebAuthSecret string        `yaml:"web_auth_secret" json:"-"`
+	WebUserName   string        `yaml:"web_user_name" json:"-"`
+	WebUserEmail  string        `yaml:"web_user_email" json:"-"`
+	WebTokenTTL   time.Duration `yaml:"web_token_ttl" json:"web_token_ttl"`
 }
 
 type ConsoleConfig struct {
@@ -89,6 +94,8 @@ type ConsoleConfig struct {
 	CleanupInterval     time.Duration `yaml:"cleanup_interval" json:"cleanup_interval"`
 	LoginWindow         time.Duration `yaml:"login_window" json:"login_window"`
 	LoginMaxFailures    int           `yaml:"login_max_failures" json:"login_max_failures"`
+	RemoteLease         time.Duration `yaml:"remote_lease" json:"remote_lease"`
+	RemoteHeartbeat     time.Duration `yaml:"remote_heartbeat" json:"remote_heartbeat"`
 }
 
 func Default() Config {
@@ -113,11 +120,12 @@ func Default() Config {
 			STFVisibilityGrace: 30 * time.Second, FailureThreshold: 3},
 		WarmPool: WarmPoolConfig{Interval: 30 * time.Second},
 		STF: STFConfig{
-			Timeout: 5 * time.Second, Attempts: 3, RetryDelay: 200 * time.Millisecond,
+			Timeout: 5 * time.Second, Attempts: 3, RetryDelay: 200 * time.Millisecond, WebTokenTTL: 30 * time.Second,
 		},
 		Console: ConsoleConfig{
 			SessionMaxAge: 8 * time.Hour, SessionIdleTimeout: 30 * time.Minute,
 			CleanupInterval: 10 * time.Minute, LoginWindow: 15 * time.Minute, LoginMaxFailures: 5,
+			RemoteLease: 60 * time.Second, RemoteHeartbeat: 15 * time.Second,
 		},
 	}
 }
@@ -184,6 +192,10 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"SECURITY_AGENT_PREVIOUS_TOKEN", &cfg.Security.AgentPreviousToken},
 		{"STF_BASE_URL", &cfg.STF.BaseURL},
 		{"STF_API_TOKEN", &cfg.STF.APIToken},
+		{"STF_WEB_URL", &cfg.STF.WebURL},
+		{"STF_WEB_AUTH_SECRET", &cfg.STF.WebAuthSecret},
+		{"STF_WEB_USER_NAME", &cfg.STF.WebUserName},
+		{"STF_WEB_USER_EMAIL", &cfg.STF.WebUserEmail},
 		{"CONSOLE_USERS_FILE", &cfg.Console.UsersFile},
 	}
 
@@ -210,10 +222,13 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"WARM_POOL_INTERVAL", &cfg.WarmPool.Interval},
 		{"STF_TIMEOUT", &cfg.STF.Timeout},
 		{"STF_RETRY_DELAY", &cfg.STF.RetryDelay},
+		{"STF_WEB_TOKEN_TTL", &cfg.STF.WebTokenTTL},
 		{"CONSOLE_SESSION_MAX_AGE", &cfg.Console.SessionMaxAge},
 		{"CONSOLE_SESSION_IDLE_TIMEOUT", &cfg.Console.SessionIdleTimeout},
 		{"CONSOLE_CLEANUP_INTERVAL", &cfg.Console.CleanupInterval},
 		{"CONSOLE_LOGIN_WINDOW", &cfg.Console.LoginWindow},
+		{"CONSOLE_REMOTE_LEASE", &cfg.Console.RemoteLease},
+		{"CONSOLE_REMOTE_HEARTBEAT", &cfg.Console.RemoteHeartbeat},
 	}
 	if value, ok := lookup(envPrefix + "STF_ENABLED"); ok {
 		parsed, err := strconv.ParseBool(value)
@@ -292,10 +307,13 @@ func (cfg Config) Validate() error {
 		"warm_pool.interval":             cfg.WarmPool.Interval,
 		"stf.timeout":                    cfg.STF.Timeout,
 		"stf.retry_delay":                cfg.STF.RetryDelay,
+		"stf.web_token_ttl":              cfg.STF.WebTokenTTL,
 		"console.session_max_age":        cfg.Console.SessionMaxAge,
 		"console.session_idle_timeout":   cfg.Console.SessionIdleTimeout,
 		"console.cleanup_interval":       cfg.Console.CleanupInterval,
 		"console.login_window":           cfg.Console.LoginWindow,
+		"console.remote_lease":           cfg.Console.RemoteLease,
+		"console.remote_heartbeat":       cfg.Console.RemoteHeartbeat,
 	} {
 		if value <= 0 {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be greater than zero", name))
@@ -319,6 +337,30 @@ func (cfg Config) Validate() error {
 		if strings.TrimSpace(cfg.STF.APIToken) == "" {
 			validationErrors = append(validationErrors, errors.New("stf.api_token is required when STF is enabled"))
 		}
+		webValues := []string{cfg.STF.WebURL, cfg.STF.WebAuthSecret, cfg.STF.WebUserName, cfg.STF.WebUserEmail}
+		configured := 0
+		for _, value := range webValues {
+			if strings.TrimSpace(value) != "" {
+				configured++
+			}
+		}
+		if configured != 0 && configured != len(webValues) {
+			validationErrors = append(validationErrors, errors.New("stf.web_url, web_auth_secret, web_user_name and web_user_email must be configured together"))
+		}
+		if strings.TrimSpace(cfg.STF.WebURL) != "" {
+			if err := validateHTTPURL("stf.web_url", cfg.STF.WebURL); err != nil {
+				validationErrors = append(validationErrors, err)
+			}
+			if !strings.Contains(cfg.STF.WebUserEmail, "@") {
+				validationErrors = append(validationErrors, errors.New("stf.web_user_email must be an email address"))
+			}
+			if len(cfg.STF.WebAuthSecret) < 32 {
+				validationErrors = append(validationErrors, errors.New("stf.web_auth_secret must contain at least 32 bytes"))
+			}
+			if cfg.STF.WebTokenTTL > time.Minute {
+				validationErrors = append(validationErrors, errors.New("stf.web_token_ttl must not exceed 1 minute"))
+			}
+		}
 	}
 	if cfg.Console.Enabled {
 		if strings.TrimSpace(cfg.Console.UsersFile) == "" {
@@ -329,6 +371,12 @@ func (cfg Config) Validate() error {
 		}
 		if cfg.Console.LoginMaxFailures < 1 {
 			validationErrors = append(validationErrors, errors.New("console.login_max_failures must be greater than zero"))
+		}
+		if cfg.Console.RemoteLease < time.Minute {
+			validationErrors = append(validationErrors, errors.New("console.remote_lease must be at least 1 minute"))
+		}
+		if cfg.Console.RemoteHeartbeat <= 0 || cfg.Console.RemoteHeartbeat >= cfg.Console.RemoteLease {
+			validationErrors = append(validationErrors, errors.New("console.remote_heartbeat must be greater than zero and shorter than remote_lease"))
 		}
 		if cfg.Console.DevelopmentInsecure && !isLoopbackAddress(cfg.Server.Address) {
 			validationErrors = append(validationErrors, errors.New("console.development_insecure requires a loopback server.address"))
@@ -376,10 +424,14 @@ func (cfg Config) Validate() error {
 }
 
 func validateSTFBaseURL(value string) error {
+	return validateHTTPURL("stf.base_url", value)
+}
+
+func validateHTTPURL(name, value string) error {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("stf.base_url must be an absolute HTTP(S) URL without user info, query or fragment")
+		return fmt.Errorf("%s must be an absolute HTTP(S) URL without user info, query or fragment", name)
 	}
 	return nil
 }
@@ -423,6 +475,8 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("stf_timeout", cfg.STF.Timeout),
 		slog.Int("stf_attempts", cfg.STF.Attempts),
 		slog.Duration("stf_retry_delay", cfg.STF.RetryDelay),
+		slog.String("stf_web_url", cfg.STF.WebURL),
+		slog.Duration("stf_web_token_ttl", cfg.STF.WebTokenTTL),
 		slog.Bool("console_enabled", cfg.Console.Enabled),
 		slog.Bool("console_development_insecure", cfg.Console.DevelopmentInsecure),
 		slog.Duration("console_session_max_age", cfg.Console.SessionMaxAge),
@@ -430,7 +484,14 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("console_cleanup_interval", cfg.Console.CleanupInterval),
 		slog.Duration("console_login_window", cfg.Console.LoginWindow),
 		slog.Int("console_login_max_failures", cfg.Console.LoginMaxFailures),
+		slog.Duration("console_remote_lease", cfg.Console.RemoteLease),
+		slog.Duration("console_remote_heartbeat", cfg.Console.RemoteHeartbeat),
 	)
+}
+
+func (cfg STFConfig) WebConfigured() bool {
+	return strings.TrimSpace(cfg.WebURL) != "" && strings.TrimSpace(cfg.WebAuthSecret) != "" &&
+		strings.TrimSpace(cfg.WebUserName) != "" && strings.TrimSpace(cfg.WebUserEmail) != ""
 }
 
 func isLoopbackAddress(address string) bool {

@@ -69,6 +69,12 @@ Docker Provider 为每台 Emulator 发布独立随机 ADB Host 端口。DF-017 �
 
 随后在 STF 页面创建专用 API Token。Token 只保存到 Device Farm Server 的秘密配置或验收进程环境，不写入 Compose `.env`，不发送给浏览器，不记录到日志。
 
+DF-031 管理员 Web 远控还要求 Device Farm Server 持有与本目录 `STF_AUTH_SECRET` 相同的受限副本，并配置同一个 `STF_ADMIN_NAME/STF_ADMIN_EMAIL` 身份。Server 只用它签发最长 60 秒的 STF 登录 JWT；浏览器收到的 JWT 不能换取 API Token，STF 建立 Session 后会从地址栏移除 JWT。生产反向代理必须关闭包含查询参数的访问日志或对 `jwt` 参数脱敏。
+
+STF 3.7.9 的 `local` 启动器会在 INFO 日志中打印子进程完整命令行，其中包含 `--auth-secret`。当前 Compose 因此对 `stf` 主容器使用 `logging.driver=none`，禁止 Docker 持久化该 stdout；`stf-adb`、RethinkDB 日志以及 STF 页面内的设备 Logcat/文件能力不受影响。生产环境如需采集 STF 进程日志，必须先接入经真实验收的 Secret 脱敏代理，不能直接恢复 `json-file`。
+
+当 Console 使用 HSTS、STF 仍为 HTTP 时，两者不能共用同一个浏览器主机名：HSTS 不区分端口，会把 STF 的 `http://host:7100` 升级为不可用的 HTTPS。第一阶段应给 STF 配置独立的受控 DNS 名，并让 `STF_PUBLIC_IP` 与 Server 的 `DEVICE_FARM_STF_WEB_URL` 使用该名称；当前验收环境使用 `10-0-30-171.nip.io` 映射内网地址。正式内网 DNS 可用后应替换该临时解析名；另一条演进路径是为 STF App、WebSocket 和屏幕端口统一提供受信 TLS。
+
 完整验收：
 
 ```sh

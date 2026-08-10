@@ -97,7 +97,7 @@ Content-Type: application/json
 - Reaper 到期后先调用 remoteDisconnect，成功后清除 metadata；失败保留 metadata 并继续重试；
 - STF API Token 只存在于 Server 配置，JSON、日志、审计和 remote session 响应均不包含 Token。
 
-正式浏览器看屏入口需由后续 Alcor 用户身份/SSO 与 STF 页面权限联通后提供，不能把 STF 管理 Token 拼进 URL。该集成不会改变 Device、Pool、Reservation、Scheduler 或 Appium 架构。
+`remoteConnect` 仍只用于可信 ADB 客户端，不能作为浏览器入口。管理员浏览器看屏按 ADR-0013 使用独立的 Console 远控编排：先创建精确 Device 的短 Reservation，STF claim 成功后签发最长 60 秒的 STF Web JWT，并打开 STF 原生 `/#!/control/{serial}`。该入口不改变 Device、Pool、Reservation、Scheduler 或 Appium 架构，也不把 STF API Token 或 JWT 签名 Secret 拼进 URL。
 
 ## 5. 配置
 
@@ -109,6 +109,14 @@ stf:
   timeout: 5s
   attempts: 3
   retry_delay: 200ms
+  web_url: "https://stf.example.internal"
+  web_auth_secret: ""
+  web_user_name: "Device Farm Admin"
+  web_user_email: "device-farm-admin@example.internal"
+  web_token_ttl: 30s
+console:
+  remote_lease: 60s
+  remote_heartbeat: 15s
 ```
 
 生产环境使用 Secret 注入：
@@ -120,9 +128,16 @@ DEVICE_FARM_STF_API_TOKEN=<secret>
 DEVICE_FARM_STF_TIMEOUT=5s
 DEVICE_FARM_STF_ATTEMPTS=3
 DEVICE_FARM_STF_RETRY_DELAY=200ms
+DEVICE_FARM_STF_WEB_URL=https://stf.example.internal
+DEVICE_FARM_STF_WEB_AUTH_SECRET=<same value as STF --auth-secret>
+DEVICE_FARM_STF_WEB_USER_NAME=Device Farm Admin
+DEVICE_FARM_STF_WEB_USER_EMAIL=device-farm-admin@example.internal
+DEVICE_FARM_STF_WEB_TOKEN_TTL=30s
+DEVICE_FARM_CONSOLE_REMOTE_LEASE=60s
+DEVICE_FARM_CONSOLE_REMOTE_HEARTBEAT=15s
 ```
 
-`enabled=true` 时 Base URL 和 API Token 必填；尝试次数限制为 1~5。Token 字段排除在 JSON 和结构化配置日志之外。
+`enabled=true` 时 Base URL 和 API Token 必填；尝试次数限制为 1~5。四个 Web 配置必须同时提供，Web Auth Secret 至少 32 字节且 JWT TTL 不超过 60 秒。API Token 和 Web Auth Secret 字段排除在 JSON 和结构化配置日志之外。
 
 ## 6. Inventory 对齐
 
@@ -147,13 +162,13 @@ STF ADB server 只允许绑定 Host loopback，例如 `127.0.0.1:5038`。禁止�
 - release 的 404 视为幂等成功；
 - response body 限制读取大小，错误消息不回显 STF body，避免 Token 或内部信息泄露；
 - Server 不访问 Docker Socket；STF Adapter 不创建模拟器；
-- 不根据 STF `using` 直接激活或关闭 Reservation；
+- 不根据 STF `using` 激活普通 Reservation；管理员远控已由同一 Reservation 完成 claim 后，心跳只可在 `using=false` 时调用标准 release 流程收敛，不能直接改数据库状态；
 - 不在数据库事务内调用 STF 网络接口；
 - 不把管理 Token、带凭证 URL 或 STF 内部错误正文写入 API 与日志；
 - 不复制 STF 的浏览器远控、设备日志、文件管理或 claim 协议。
 
 ## 8. 验收
 
-Windows/PostgreSQL 本地自动测试覆盖 claim 顺序、成功激活、可重试/不可重试失败补偿、并发上限、release 失败保留 active、审计、owner 越权、remoteConnect 幂等和过期 remoteDisconnect。
+Windows/PostgreSQL 本地自动测试覆盖 claim 顺序、成功激活、精确 Device 选择、可重试/不可重试失败补偿、并发上限、release 失败保留 active、审计、owner 越权、remoteConnect 幂等、Web JWT 签名、远控心跳和过期 remoteDisconnect。
 
 最终通过仍需 Linux 环境中的 STF 3.7.9、一台真实 Android 16 Docker Emulator 和真实网络故障验收；多设备隔离为扩展验收，详见 `docs/evidence/DF-018/acceptance.md`。

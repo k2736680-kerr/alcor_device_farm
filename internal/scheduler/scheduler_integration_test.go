@@ -173,6 +173,81 @@ func TestCapabilityMismatchRemainsPendingWithoutBlockingMatchedRequest(t *testin
 	assertCount(t, db, "SELECT count(*) FROM device_sessions", 1)
 }
 
+func TestTargetedConsoleReservationAllocatesOnlySelectedDevice(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 2)
+	service := reservation.NewService(db, nil)
+	targetDeviceID := fmt.Sprintf("device_%019d", 1)
+	created, err := service.CreateForDevice(context.Background(), audit.Console("admin"), "targeted-remote-key", targetDeviceID, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := created.RequestedCapabilities["_device_farm_target_device_id"]; exists {
+		t.Fatal("internal target selector leaked through reservation view")
+	}
+	assignment, err := scheduler.New(db, nil, nil).RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assignment.Reservation.DeviceID == nil || *assignment.Reservation.DeviceID != targetDeviceID {
+		t.Fatalf("assigned device=%v want=%s", assignment.Reservation.DeviceID, targetDeviceID)
+	}
+}
+
+func TestTargetedConsoleReservationRejectsSecondOpenControl(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 1)
+	service := reservation.NewService(db, nil)
+	targetDeviceID := fmt.Sprintf("device_%019d", 0)
+	if _, err := service.CreateForDevice(context.Background(), audit.Console("admin"), "first-target-key", targetDeviceID, 60); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateForDevice(context.Background(), audit.Console("second-admin"), "second-target-key", targetDeviceID, 60); !errors.Is(err, reservation.ErrConflict) {
+		t.Fatalf("second CreateForDevice() error=%v", err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM device_reservations", 1)
+}
+
+func TestConcurrentTargetedConsoleReservationsKeepSingleOwner(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 1)
+	service := reservation.NewService(db, nil)
+	targetDeviceID := fmt.Sprintf("device_%019d", 0)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for index := 0; index < 2; index++ {
+		index := index
+		go func() {
+			<-start
+			_, err := service.CreateForDevice(
+				context.Background(),
+				audit.Console(fmt.Sprintf("admin-%d", index)),
+				fmt.Sprintf("concurrent-target-key-%d", index),
+				targetDeviceID,
+				60,
+			)
+			results <- err
+		}()
+	}
+	close(start)
+	successes := 0
+	conflicts := 0
+	for index := 0; index < 2; index++ {
+		switch err := <-results; {
+		case err == nil:
+			successes++
+		case errors.Is(err, reservation.ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("CreateForDevice() error=%v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d", successes, conflicts)
+	}
+	assertCount(t, db, "SELECT count(*) FROM device_reservations", 1)
+}
+
 func TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 2)

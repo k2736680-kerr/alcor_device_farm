@@ -95,7 +95,11 @@ services:
       timeout: 5s
       retries: 20
       start_period: 45s
-    logging: *default-logging
+    # STF 3.7.9 logs the full child-process command line, including
+    # --auth-secret. Do not persist its stdout until an upstream-safe
+    # redaction mechanism is available. Device Logcat in STF is unaffected.
+    logging:
+      driver: none
 
 volumes:
   stf-rethinkdb-data:

@@ -97,6 +97,8 @@ type OperationParams struct {
 
 type ReservationRepository struct{}
 
+const TargetDeviceCapability = "_device_farm_target_device_id"
+
 func (ReservationRepository) CreatePending(ctx context.Context, querier database.Querier, params CreateReservationParams) (ReservationRecord, error) {
 	capabilities, err := json.Marshal(params.RequestedCapabilities)
 	if err != nil {
@@ -163,7 +165,9 @@ func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx 
               WHERE pd.pool_id = r.pool_id AND pd.enabled AND p.status = 'active'
                 AND h.status = 'online' AND NOT h.draining
                 AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
-                AND d.capabilities @> r.requested_capabilities
+                AND (NOT r.requested_capabilities ? '`+TargetDeviceCapability+`'
+                     OR d.id = r.requested_capabilities->>'`+TargetDeviceCapability+`')
+                AND d.capabilities @> (r.requested_capabilities - '`+TargetDeviceCapability+`')
           )
         ORDER BY r.created_at, r.id
         FOR UPDATE OF r SKIP LOCKED
@@ -698,7 +702,9 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
         WHERE pd.pool_id = $1 AND pd.enabled
           AND h.status = 'online' AND NOT h.draining
           AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
-          AND d.capabilities @> $2::jsonb
+          AND (NOT $2::jsonb ? '`+TargetDeviceCapability+`'
+               OR d.id = $2::jsonb->>'`+TargetDeviceCapability+`')
+          AND d.capabilities @> ($2::jsonb - '`+TargetDeviceCapability+`')
         ORDER BY d.created_at, d.id
         FOR UPDATE OF d SKIP LOCKED
         LIMIT 1`, poolID, capabilities).Scan(
@@ -712,6 +718,87 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 		return DeviceAssignment{}, fmt.Errorf("lock matching device: %w", err)
 	}
 	return device, nil
+}
+
+func (ReservationRepository) FindActivePoolForDevice(ctx context.Context, querier database.Querier, deviceID string) (string, error) {
+	var poolID string
+	err := querier.QueryRow(ctx, `
+		SELECT p.id
+		FROM devices d
+		JOIN device_hosts h ON h.id=d.host_id
+		JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
+		JOIN device_pools p ON p.id=pd.pool_id AND p.status='active'
+		WHERE d.id=$1 AND d.lifecycle_status='ready' AND d.health_status='healthy'
+		  AND h.status='online' AND NOT h.draining
+		ORDER BY p.created_at,p.id
+		LIMIT 1`, deviceID).Scan(&poolID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrCapacityUnavailable
+	}
+	if err != nil {
+		return "", fmt.Errorf("find active pool for device: %w", err)
+	}
+	return poolID, nil
+}
+
+func (ReservationRepository) LockTargetDevice(ctx context.Context, tx pgx.Tx, deviceID string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, deviceID); err != nil {
+		return fmt.Errorf("lock target device reservation: %w", err)
+	}
+	return nil
+}
+
+func (ReservationRepository) FindOpenTargeted(
+	ctx context.Context,
+	querier database.Querier,
+	ownerID, deviceID string,
+) (ReservationRecord, error) {
+	record, err := scanReservation(querier.QueryRow(ctx, `
+		SELECT id,client_id,pool_id,device_id,owner_type,owner_id,
+		       requested_capabilities,lease_seconds,status,idempotency_key,
+		       starts_at,expires_at,released_at,failure_code,created_at,updated_at
+		FROM device_reservations
+		WHERE owner_type='manual' AND ($1='' OR owner_id=$1) AND status IN ('pending','active')
+		  AND requested_capabilities->>'`+TargetDeviceCapability+`'=$2
+		ORDER BY created_at DESC,id DESC
+		LIMIT 1`, ownerID, deviceID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("find open targeted reservation: %w", err)
+	}
+	return record, nil
+}
+
+func (ReservationRepository) KeepAliveTargeted(
+	ctx context.Context,
+	querier database.Querier,
+	reservationID, ownerID, deviceID string,
+	lease time.Duration,
+) (ReservationRecord, error) {
+	seconds := int64(lease / time.Second)
+	record, err := scanReservation(querier.QueryRow(ctx, `
+		UPDATE device_reservations r
+		SET expires_at=LEAST(
+			clock_timestamp()+make_interval(secs=>$4),
+			r.starts_at+make_interval(secs=>p.max_lease_seconds)
+		), updated_at=clock_timestamp()
+		FROM device_pools p
+		WHERE r.id=$1 AND r.pool_id=p.id AND r.status='active'
+		  AND r.owner_type='manual' AND r.owner_id=$2
+		  AND r.requested_capabilities->>'`+TargetDeviceCapability+`'=$3
+		RETURNING r.id,r.client_id,r.pool_id,r.device_id,r.owner_type,r.owner_id,
+		          r.requested_capabilities,r.lease_seconds,r.status,r.idempotency_key,
+		          r.starts_at,r.expires_at,r.released_at,r.failure_code,r.created_at,r.updated_at`,
+		reservationID, ownerID, deviceID, seconds))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("keep targeted reservation alive: %w", err)
+	}
+	return record, nil
 }
 
 func (ReservationRepository) ActivateClaimed(

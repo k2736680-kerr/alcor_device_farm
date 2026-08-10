@@ -41,7 +41,7 @@
 - 隔离或已停止设备可由 Device Farm 管理员通过设备域 Host Command 受控删除；该动作不创建 Alcor Run/Result，也不绕过目标容量；
 - `/api/v1/device-*` 和 `/internal/v1` 的资源化接口方向；
 - 后续接真机只增加 Provider，不重做调度、预约和执行链路。
-- 设备总览、镜像、Host、Pool、Device、Reservation 属于设备域，可以由独立 Device Farm Console 管理；STF 原生 Web 页面按 ADR-0010 独立受控访问，Console 不展示 `remoteConnect` TCP 地址。
+- 设备总览、镜像、Host、Pool、Device、Reservation 属于设备域，可以由独立 Device Farm Console 管理；STF 原生 Web 页面按 ADR-0013 由设备域短租约和短时授权受控打开，Console 仍不展示 `remoteConnect` TCP 地址。
 
 ### 被新版 Alcor 覆盖
 
@@ -78,7 +78,7 @@
 
 ## 5. 当前可安全开发的范围
 
-在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。Console 可使用独立配置用户和设备域短时会话，但不得复制 Alcor 钉钉用户、平台 RBAC 或业务审计模型。
+在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。Console 可使用独立配置用户和设备域短时会话，并为管理员编排与 Reservation 绑定的 STF 原生 Web 入口，但不得复制 Alcor 钉钉用户、平台 RBAC、业务审计模型或 STF 远控实现。
 
 当前不能安全定稿：新版 Eval Console 如何链接、嵌入或复用 Device Farm Console、Android Case/Template 结构、App/APK Build 正式模型、Worker 内 Android Executor 代码位置、Device Farm Adapter 的具体 Go 接口。它们必须等待新版实际分支或专项接口文档，不能根据旧 master 猜测；这不阻塞 Device Farm Console 独立交付。
 

@@ -64,6 +64,11 @@ stf:
   timeout: 8s
   attempts: 2
   retry_delay: 300ms
+  web_url: http://stf-web-yaml.local
+  web_auth_secret: yaml-stf-web-secret-at-least-32-bytes
+  web_user_name: Device Farm Admin
+  web_user_email: admin@example.test
+  web_token_ttl: 25s
 `)
 	t.Setenv("DEVICE_FARM_SERVER_ADDRESS", "127.0.0.1:28080")
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
@@ -77,6 +82,10 @@ stf:
 	t.Setenv("DEVICE_FARM_WARM_POOL_INTERVAL", "12s")
 	t.Setenv("DEVICE_FARM_STF_BASE_URL", "http://stf-environment.local/base")
 	t.Setenv("DEVICE_FARM_STF_API_TOKEN", "environment-stf-secret")
+	t.Setenv("DEVICE_FARM_STF_WEB_URL", "http://stf-web-environment.local")
+	t.Setenv("DEVICE_FARM_STF_WEB_AUTH_SECRET", "environment-stf-web-secret-32-bytes")
+	t.Setenv("DEVICE_FARM_STF_WEB_USER_NAME", "Environment Admin")
+	t.Setenv("DEVICE_FARM_STF_WEB_USER_EMAIL", "environment-admin@example.test")
 	t.Setenv("DEVICE_FARM_STF_ATTEMPTS", "4")
 
 	cfg, err := Load(path)
@@ -109,7 +118,8 @@ stf:
 		t.Fatalf("WarmPool interval = %v", cfg.WarmPool.Interval)
 	}
 	if !cfg.STF.Enabled || cfg.STF.BaseURL != "http://stf-environment.local/base" ||
-		cfg.STF.APIToken != "environment-stf-secret" || cfg.STF.Attempts != 4 {
+		cfg.STF.APIToken != "environment-stf-secret" || cfg.STF.Attempts != 4 ||
+		cfg.STF.WebURL != "http://stf-web-environment.local" || cfg.STF.WebUserEmail != "environment-admin@example.test" {
 		t.Fatalf("STF config = %+v", cfg.STF)
 	}
 }
@@ -192,6 +202,7 @@ func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg.Security.AgentPreviousToken = "agent-previous-token-value"
 	cfg.Database.URL = "postgres://database-secret-value"
 	cfg.STF.APIToken = "stf-token-value"
+	cfg.STF.WebAuthSecret = "stf-web-secret-value"
 
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
@@ -234,7 +245,7 @@ func clearDeviceFarmEnvironment(t *testing.T) {
 
 func assertNoSecrets(t *testing.T, value string) {
 	t.Helper()
-	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value"} {
+	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value", "stf-web-secret-value"} {
 		if strings.Contains(value, secret) {
 			t.Fatalf("serialized value contains secret %q", secret)
 		}

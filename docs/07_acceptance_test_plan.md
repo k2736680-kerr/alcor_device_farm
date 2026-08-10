@@ -139,6 +139,10 @@
 | AT-STF-004 | P0 | release 暂时失败 | 后台重试并审计，不能静默关闭底层占用 |
 | AT-STF-005 | P0 | 请求远控入口 | 只返回短时入口，不返回管理 Token |
 | AT-STF-006 | P0 | A 用户访问 B 预约远控 | 403，不能越权 |
+| AT-STF-007 | P0 | 管理员从 Device 页面打开 STF Web 远控 | 无需再次登录，直接进入指定 serial 的 STF 原生控制页；真实看屏、点击、滑动、输入、Home、返回有效 |
+| AT-STF-008 | P0 | 检查 STF Web 短时授权 | JWT 极短有效并在 STF 重定向后从地址移除；浏览器、响应、日志和数据库无 STF API Token 或签名 Secret |
+| AT-STF-009 | P0 | 挂断、关闭远控标签页、Console 崩溃或网络中断 | 主动路径立即释放；异常路径由短租约和 Reaper 回收；STF claim、Reservation 和设备最终收敛到空闲/ready/healthy |
+| AT-STF-010 | P0 | STF 原生页面主动释放设备 | 下一次心跳检测 using=false，结束远控 Reservation 并进入统一清理链路 |
 | AT-APP-001 | P0 | 单台设备创建 Appium Session | `/status` healthy，UiAutomator2 Session 创建和删除成功 |
 | AT-APP-002 | P0 | Appium unhealthy | Device 不进入 ready 或被隔离 |
 | AT-APP-003 | P2 | 资源允许时并发两台 Appium Session | 两个 Session 同时成功且 UDID 不串设备 |
@@ -188,7 +192,7 @@
 | AT-WEB-003 | P0 | 打开总览、Image、Host、Pool、Device、Reservation 页面 | 数据与 Server API/PostgreSQL 真相一致，状态和 request ID 可追踪 |
 | AT-WEB-004 | P0 | 执行 restart/rebuild/quarantine/drain/release 等危险操作 | 必须二次确认并填写 reason；服务端非法状态拒绝被页面正确展示 |
 | AT-WEB-005 | P0 | 创建一条人工预约并轮询 | 单台 ready 设备进入 active，连接信息属于当前预约；第二条预约不突破容量 |
-| AT-WEB-006 | P0 | 检查 STF Web 边界 | Console 不展示 `remoteConnect` TCP 地址、不伪造 STF 浏览器入口、不暴露管理 Token；STF 原生页面保持独立受控访问 |
+| AT-WEB-006 | P0 | 检查 STF Web 边界 | Console 不展示 `remoteConnect` TCP 地址、不复制 STF 远控；只向管理员返回 Reservation 绑定的短时原生 Web 入口，不暴露管理 Token 或签名 Secret |
 | AT-WEB-007 | P0 | 续租并释放预约 | expires_at 正确更新；释放后设备进入清理并最终回 ready，页面状态随 Server 收敛 |
 | AT-WEB-008 | P0 | A 操作者访问或操作 B 的受控资源 | 按设备域权限返回 403，不能越权远控或释放 |
 | AT-WEB-009 | P0 | 构造 CSRF、过期会话和伪造 actor 请求 | 请求被拒绝，审计中不接受浏览器伪造身份 |
@@ -197,6 +201,9 @@
 | AT-WEB-012 | P1 | 新环境部署和版本回滚 | 控制台可访问、静态资源版本一致；回滚后 API 和设备状态不受损 |
 | AT-WEB-013 | P0 | 在 Pool 页面只修改目标设备数 | Server 同步并发和 Host 容量，页面显示扩容/缩容收敛状态，不要求用户登录服务器 |
 | AT-WEB-014 | P0 | 降低目标设备数 | 必须二次确认并填写 reason；历史 Device/Reservation 不被首页误计为当前运行容量 |
+| AT-WEB-015 | P0 | Device 行点击远程连接 | 浏览器预开新标签避免弹窗拦截；连接中、已连接、挂断和错误状态清晰，目标 serial 正确 |
+| AT-WEB-016 | P0 | 点击挂断或关闭远控标签页 | 调用同一结束语义，Reservation/STF claim 释放，设备重建后恢复可用；重复结束幂等 |
+| AT-WEB-017 | P0 | viewer/operator 或非 ready/healthy Device 发起远控 | 页面不提供入口，直接请求也返回 403/409，不创建预约 |
 
 ## 5. 非功能指标
 

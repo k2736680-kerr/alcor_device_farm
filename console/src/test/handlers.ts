@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord } from '../api/generated/models'
+import type { Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord, RemoteControl } from '../api/generated/models'
 
 /** Envelope matching the real backend: { request_id, data, error }. */
 function pageEnvelope<T>(items: T[], total: number, page = 1, pageSize = 20) {
@@ -104,6 +104,12 @@ export const sampleHealthEvents: HealthEventRecord[] = [
   },
 ]
 
+export const sampleRemoteControl: RemoteControl = {
+  device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'connected',
+  url: 'http://stf.example.test/?jwt=short-lived-token#!/control/emulator-5554',
+  expires_at: new Date(Date.now() + 60_000).toISOString(), heartbeat_interval_seconds: 15,
+}
+
 export const handlers = [
   // Session
   http.get('/console/api/v1/me', () => HttpResponse.json(sessionEnvelope)),
@@ -147,6 +153,18 @@ export const handlers = [
     const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
     return HttpResponse.json({ request_id: 'req_delete_device', data: device, error: null }, { status: 202 })
   }),
+  http.post('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+    request_id: 'req_remote_start', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'connecting', url: undefined }, error: null,
+  }, { status: 202 })),
+  http.get('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+    request_id: 'req_remote_get', data: { ...sampleRemoteControl, device_id: String(params.id) }, error: null,
+  })),
+  http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => HttpResponse.json({
+    request_id: 'req_remote_heartbeat', data: { ...sampleRemoteControl, device_id: String(params.id), url: undefined }, error: null,
+  })),
+  http.delete('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+    request_id: 'req_remote_end', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'ended', url: undefined }, error: null,
+  })),
   http.get('/api/v1/device-reservations', ({ request }) => {
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)

@@ -40,7 +40,7 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 - 设备池、预约、续租、释放与并发保护；
 - Reconciler、Reaper、隔离与重建；
 - 面向未来 Alcor 的北向 API；
-- Device Farm Console：设备总览、资源管理、人工预约、设备操作、审计和 STF 远控入口；
+- Device Farm Console：设备总览、资源管理、人工预约、设备操作、审计，以及管理员从 Device 行进入的 STF 原生 Web 远控；
 - 使用 `dafit_auto_platform` 验证真实执行链路的联调 Harness。
 
 ## 当前不建设
@@ -59,10 +59,10 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 ## 后续开发入口
 
 - [MVP 功能方案](docs/04_mvp_functional_spec.md)：明确要建设的功能、模块、接口、数据模型和安全边界；
-- [逐步实施清单](docs/05_step_by_step_implementation.md)：从 DF-000 到 DF-028，每项都有前置条件、产出和完成判定；
+- [逐步实施清单](docs/05_step_by_step_implementation.md)：从 DF-000 到 DF-031，每项都有前置条件、产出和完成判定；
 - [MVP 验收方案](docs/07_acceptance_test_plan.md)：阶段 Gate、验收用例、性能/稳定性标准和最终签收条件。
 
-后续按 `DF-000 → DF-001 → ... → DF-028` 执行。DF-026～DF-028 交付独立设备控制后台；`ALCOR-001` 等新版 Alcor 实际 OpenAPI 可用后再开始，不阻塞设备农场 MVP 独立完成。
+后续按 `DF-000 → DF-001 → ... → DF-031` 执行。DF-026～DF-031 交付独立设备控制后台及管理员原生远控；`ALCOR-001` 等新版 Alcor 实际 OpenAPI 可用后再开始，不阻塞设备农场独立完成。
 
 本地构建和测试入口见 [开发说明](docs/development.md)。
 
@@ -85,6 +85,8 @@ Host Agent 必须通过 `DEVICE_FARM_AGENT_PROVIDER=mock|docker` 或 `--provider
 STF 与 RethinkDB 的最小内网部署已固定为 DeviceFarmer/STF `3.7.9` 和 RethinkDB `2.4.2`。默认只绑定本机回环地址，RethinkDB、ADB server 和管理 Token 不暴露给浏览器；部署和真实验收见 [STF 单机内网部署](deploy/stf/README.md)。
 
 Server 启用 `DEVICE_FARM_STF_ENABLED=true` 后，Scheduler 会在 Reservation 进入 active 前调用 STF claim；claim 失败会补偿数据库和设备状态。主动释放与过期回收必须先完成 STF release，失败时预约保持 active 并记录审计。`POST /api/v1/device-reservations/{id}/remote-sessions` 只向匹配的预约 owner 返回短时 STF remoteConnect ADB 地址，过期后由 Reaper 调用 remoteDisconnect；STF API Token 永不进入响应。配置、流程和限制见 [STF Adapter 与预约编排](docs/stf_adapter.md)。
+
+DF-031 按 [ADR-0013](docs/adr/0013_console_admin_stf_web_remote_control.md) 在设备页增加管理员“一键远程连接”：Server 精确预约所选设备，使用 30 秒 STF Web JWT 无感进入 `/#!/control/{serial}`，并通过挂断、标签页关闭检测、短租约心跳和 Reaper 统一释放 STF claim、重建设备。该入口复用 STF 原生看屏与触控，不展示 ADB TCP `remoteConnect` 地址，也不向浏览器暴露 STF API Token 或签名 Secret。
 
 Server 已提供 `/healthz`、数据库感知的 `/readyz` 和 Prometheus `/metrics`。Linux systemd、Docker Compose、备份、升级、告警、运维和回滚入口见 [Server 部署](deploy/server/README.md)、[可观测性](docs/observability.md)、[运维手册](docs/operations_runbook.md) 和 [回滚方案](docs/rollback.md)。
 

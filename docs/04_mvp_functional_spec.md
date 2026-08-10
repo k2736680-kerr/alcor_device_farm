@@ -257,7 +257,7 @@ Reconciler：
 - Pool：列表、租期、Image、Device membership 和单一目标设备数；Pool 并发由启用 Image 目标自动同步；
 - Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine；
 - Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
-- STF 原生远控：保持独立受控服务；当前 Console 不提供入口，除非未来具备与 Reservation 绑定的短时 Web 授权契约；
+- STF 原生远控：管理员从 Device 行一键创建精确设备短租约，无需再次输入 STF 账号密码，并在新标签页打开 STF 原生单设备控制页；
 - 设备域审计：按资源查看操作人、原因、request ID、动作和时间。
 
 控制台必须遵守：
@@ -269,10 +269,14 @@ Reconciler：
 - 所有错误显示稳定错误码、request ID 和是否可重试，不能只显示“操作失败”；
 - 浏览器安全访问、CSRF、防缓存、内容安全策略和 Token 隔离由 DF-026 固化并验收；
 - 不能实现 STF 的画面、触控、日志、文件和 ADB 协议，只复用 STF 原生页面和 Adapter。
+- 远控点击挂断或检测到标签页关闭时必须结束 Reservation、释放 STF claim 并进入重建；浏览器崩溃、断网或整机关闭由心跳停止、短租约和 Reaper 兜底。
+- 第一阶段只允许管理员同时操控一台设备；STF Web JWT 极短有效，签名 Secret、STF API Token 和 ADB TCP `remoteConnect` 地址不得进入浏览器持久存储或普通日志。
 
 技术栈固定为 pnpm 11、Vite、React、TypeScript、Ant Design、React Router、TanStack Query 和 Orval；Orval 从设备 OpenAPI 生成 fetch client、类型和 Query hooks。测试使用 Vitest、React Testing Library、MSW 和 Playwright。生产构建嵌入现有 Go Server 并由 `/console/` 同源提供。
 
 DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现有 Service Bearer 和 `/api/v1/device-*` 路径保持兼容，只增加 Console 会话、安全方案、精确成功响应和分页元数据。
+
+DF-031 只向现有 `1.2.0` 契约增加管理员专用 `/console/api/v1/devices/{id}/remote-control*` 接口；既有 Alcor Adapter 的 Service Bearer、Reservation 和 Device 响应保持兼容，冻结哈希随有意变更更新。
 
 ### 4.12 其他资源状态
 

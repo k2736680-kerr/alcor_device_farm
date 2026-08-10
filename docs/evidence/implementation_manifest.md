@@ -1,4 +1,4 @@
-# DF-003～DF-028 实施与证据清单
+# DF-003～DF-031 实施与证据清单
 
 本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代；`pending` 表示已建立正式任务和验收模板，但尚未开始实现。
 
@@ -32,6 +32,7 @@
 | DF-028 | completed | `92fa8a8 实现DF-028控制台部署和真实Web验收链路` | `docs/evidence/DF-028/acceptance.md` |
 | DF-029 | completed | `ccf2940 完成后台设备容量自动扩缩容` | `docs/evidence/DF-029/acceptance.md` |
 | DF-030 | completed | `1629edb 完成隔离设备安全删除` | `docs/evidence/DF-030/acceptance.md` |
+| DF-031 | completed | `本次提交：加入管理员设备远程控制` | `docs/evidence/DF-031/acceptance.md` |
 
 ## 当前剩余条件
 
