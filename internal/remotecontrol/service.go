@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
@@ -35,10 +34,6 @@ type Reservations interface {
 
 type Devices interface {
 	GetDevice(context.Context, string) (management.Device, error)
-}
-
-type STFInventory interface {
-	Inventory(context.Context) ([]stf.Device, error)
 }
 
 type Config struct {
@@ -64,13 +59,12 @@ type View struct {
 type Service struct {
 	reservations Reservations
 	devices      Devices
-	stf          STFInventory
 	config       Config
 	webURL       *url.URL
 }
 
-func New(reservations Reservations, devices Devices, inventory STFInventory, cfg Config) (*Service, error) {
-	if reservations == nil || devices == nil || inventory == nil || len(cfg.WebAuthSecret) < 32 ||
+func New(reservations Reservations, devices Devices, cfg Config) (*Service, error) {
+	if reservations == nil || devices == nil || len(cfg.WebAuthSecret) < 32 ||
 		strings.TrimSpace(cfg.WebUserName) == "" || strings.TrimSpace(cfg.WebUserEmail) == "" || cfg.Lease < time.Minute ||
 		cfg.Heartbeat <= 0 || cfg.Heartbeat >= cfg.Lease || cfg.WebTokenTTL <= 0 || cfg.WebTokenTTL > time.Minute {
 		return nil, ErrUnavailable
@@ -84,7 +78,7 @@ func New(reservations Reservations, devices Devices, inventory STFInventory, cfg
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Service{reservations: reservations, devices: devices, stf: inventory, config: cfg, webURL: parsed}, nil
+	return &Service{reservations: reservations, devices: devices, config: cfg, webURL: parsed}, nil
 }
 
 func ConfigFrom(app config.Config) Config {
@@ -132,17 +126,6 @@ func (service *Service) Heartbeat(ctx context.Context, actor audit.Actor, key, r
 	if current.DeviceID == nil || *current.DeviceID != deviceID {
 		return View{}, ErrConflict
 	}
-	device, err := service.devices.GetDevice(ctx, deviceID)
-	if err != nil {
-		return View{}, fmt.Errorf("%w: load remote device: %v", ErrUnavailable, err)
-	}
-	using, err := service.stfUsing(ctx, device.Serial)
-	if err != nil {
-		return View{}, fmt.Errorf("%w: inspect STF claim: %v", ErrUnavailable, err)
-	}
-	if !using {
-		return service.endReservation(ctx, actor, key, requestID, deviceID, current, "STF 已结束远控")
-	}
 	kept, err := service.reservations.KeepAliveForDevice(ctx, current.ID, actor.ID, deviceID, service.config.Lease)
 	if err != nil {
 		return View{}, translateReservationError(err)
@@ -176,19 +159,6 @@ func (service *Service) endReservation(
 		return View{}, translateReservationError(err)
 	}
 	return service.endedView(deviceID, closed.ID), nil
-}
-
-func (service *Service) stfUsing(ctx context.Context, serial string) (bool, error) {
-	devices, err := service.stf.Inventory(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, device := range devices {
-		if device.Serial == serial {
-			return device.Present && device.Ready && device.Using, nil
-		}
-	}
-	return false, errors.New("device is not visible in STF")
 }
 
 func (service *Service) view(ctx context.Context, deviceID string, current reservation.View) (View, error) {

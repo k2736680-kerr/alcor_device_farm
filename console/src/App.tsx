@@ -155,7 +155,7 @@ function AuthenticatedConsole({
               type={remote.view?.status === 'connected' ? 'success' : 'info'}
               showIcon
               message={remote.view?.status === 'connected' ? `正在远控 ${remote.device.serial}` : `正在连接 ${remote.device.serial}`}
-              description="远控会话会在控制台各页面间持续保活；取消连接或挂断会幂等释放设备，浏览器异常退出时由短租约兜底回收。"
+              description="远控会话会在控制台各页面间持续保活；只有明确点击取消连接或挂断才会立即释放设备，关闭远控标签页后可重新打开，控制台异常退出时由短租约兜底回收。"
               action={(
                 <Space>
                   {remote.view?.url && <Button onClick={remote.reopen}>重新打开远控</Button>}

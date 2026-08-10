@@ -26,7 +26,7 @@ function DevicesPageWithRemoteControl({
 describe('DevicesPage device categories', () => {
   afterEach(() => focusManager.setFocused(undefined))
 
-  it('opens the selected STF control page and ends the session when the tab closes', async () => {
+  it('keeps the remote session until explicit hangup when the STF tab closes', async () => {
     const user = userEvent.setup()
     let endRequests = 0
     const replace = vi.fn()
@@ -52,11 +52,12 @@ describe('DevicesPage device categories', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringContaining('#!/control/emulator-5554')))
     expect(within(row as HTMLElement).getByRole('button', { name: /挂\s*断/ })).toBeInTheDocument()
 
-    await new Promise((resolve) => window.setTimeout(resolve, 6_200))
     popup.closed = true
     window.dispatchEvent(new Event('focus'))
-    await waitFor(() => expect(endRequests).toBe(1), { timeout: 3_000 })
-  }, 12_000)
+    await new Promise((resolve) => window.setTimeout(resolve, 100))
+    expect(endRequests).toBe(0)
+    expect(within(row as HTMLElement).getByRole('button', { name: /挂\s*断/ })).toBeInTheDocument()
+  })
 
   it('does not mistake a severed cross-origin popup handle for a closed STF tab', async () => {
     const user = userEvent.setup()

@@ -135,7 +135,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			go services.ConsoleAuth.RunCleanup(ctx)
 			if stfClient != nil && cfg.STF.WebConfigured() {
 				services.RemoteControl, err = remotecontrol.New(
-					services.Reservations, services.Management, stfClient, remotecontrol.ConfigFrom(cfg),
+					services.Reservations, services.Management, remotecontrol.ConfigFrom(cfg),
 				)
 				if err != nil {
 					return err

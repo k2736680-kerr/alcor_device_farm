@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
@@ -37,7 +36,7 @@ func (fake *fakeReservations) FindOpenForDevice(context.Context, string, string)
 func TestEndIsIdempotentWhenTheTargetDeviceHasAlreadyDisappeared(t *testing.T) {
 	deviceID := "device_00000000000001"
 	reservations := &fakeReservations{findErr: reservation.ErrNotFound}
-	service := newTestService(t, reservations, true, time.Now().UTC())
+	service := newTestService(t, reservations, time.Now().UTC())
 
 	view, err := service.End(context.Background(), audit.Console("admin"), "remote-end-key", "request-1", deviceID)
 	if err != nil {
@@ -64,15 +63,11 @@ func (fake fakeDevices) GetDevice(context.Context, string) (management.Device, e
 	return fake.device, nil
 }
 
-type fakeInventory struct{ devices []stf.Device }
-
-func (fake fakeInventory) Inventory(context.Context) ([]stf.Device, error) { return fake.devices, nil }
-
 func TestStartTargetsSelectedDeviceAndSignsShortSTFWebEntry(t *testing.T) {
 	now := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)
 	deviceID := "device_00000000000001"
 	reservations := &fakeReservations{current: activeReservation(deviceID)}
-	service := newTestService(t, reservations, true, now)
+	service := newTestService(t, reservations, now)
 
 	view, err := service.Start(context.Background(), audit.Console("admin"), "remote-start-key", deviceID)
 	if err != nil {
@@ -117,37 +112,24 @@ func TestStartTargetsSelectedDeviceAndSignsShortSTFWebEntry(t *testing.T) {
 	}
 }
 
-func TestHeartbeatEndsReservationWhenSTFReleasedDevice(t *testing.T) {
+func TestHeartbeatRenewsReservationWithoutInferringAnSTFDisconnectIsAHangup(t *testing.T) {
 	deviceID := "device_00000000000001"
 	reservations := &fakeReservations{current: activeReservation(deviceID)}
-	service := newTestService(t, reservations, false, time.Now().UTC())
+	service := newTestService(t, reservations, time.Now().UTC())
 	view, err := service.Heartbeat(context.Background(), audit.Console("admin"), "heartbeat-key", "request-1", deviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Status != "ended" || reservations.releaseCalls != 1 || reservations.keepAliveCalls != 0 {
+	if view.Status != "connected" || view.URL != "" || reservations.releaseCalls != 0 || reservations.keepAliveCalls != 1 {
 		t.Fatalf("view=%#v release=%d keepalive=%d", view, reservations.releaseCalls, reservations.keepAliveCalls)
 	}
 }
 
-func TestHeartbeatRenewsReservationWhileSTFClaimIsActive(t *testing.T) {
-	deviceID := "device_00000000000001"
-	reservations := &fakeReservations{current: activeReservation(deviceID)}
-	service := newTestService(t, reservations, true, time.Now().UTC())
-	view, err := service.Heartbeat(context.Background(), audit.Console("admin"), "heartbeat-key", "request-1", deviceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if view.Status != "connected" || view.URL != "" || reservations.keepAliveCalls != 1 || reservations.releaseCalls != 0 {
-		t.Fatalf("view=%#v release=%d keepalive=%d", view, reservations.releaseCalls, reservations.keepAliveCalls)
-	}
-}
-
-func newTestService(t *testing.T, reservations *fakeReservations, using bool, now time.Time) *Service {
+func newTestService(t *testing.T, reservations *fakeReservations, now time.Time) *Service {
 	t.Helper()
 	service, err := New(reservations, fakeDevices{device: management.Device{
 		ID: "device_00000000000001", Serial: "emulator-5554",
-	}}, fakeInventory{devices: []stf.Device{{Serial: "emulator-5554", Present: true, Ready: true, Using: using}}}, Config{
+	}}, Config{
 		WebURL: "http://stf.example.test", WebAuthSecret: "test-stf-auth-secret-at-least-32-bytes",
 		WebUserName: "Device Farm Admin", WebUserEmail: "admin@example.test",
 		WebTokenTTL: 30 * time.Second, Lease: time.Minute, Heartbeat: 15 * time.Second,

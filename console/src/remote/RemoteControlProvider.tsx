@@ -22,7 +22,6 @@ import type { Device, RemoteControl } from '../api/generated/models'
 import { unwrapData } from '../api/unwrap'
 
 const storedDeviceKey = 'device-farm.remote-control-device'
-const popupObservationWindowMs = 5_000
 const remoteConnectTimeoutMs = 30_000
 
 type RemoteDevice = Pick<Device, 'id' | 'serial'>
@@ -81,8 +80,6 @@ export function RemoteControlProvider({
     ? { device: restored, popup: null, started: true, opened: false, startedAt: Date.now() }
     : null)
   const remotePopup = useRef<Window | null>(null)
-  const popupCloseDetectionArmed = useRef(false)
-  const popupObservedOpenAt = useRef<number | null>(null)
   const endingRemote = useRef(false)
   const remoteAttempt = useRef(0)
   const startRemote = useStartDeviceRemoteControl()
@@ -125,8 +122,6 @@ export function RemoteControlProvider({
       }
     }
     remotePopup.current = null
-    popupCloseDetectionArmed.current = false
-    popupObservedOpenAt.current = null
     endingRemote.current = false
     remoteAttempt.current += 1
     window.sessionStorage.removeItem(storedDeviceKey)
@@ -164,8 +159,6 @@ export function RemoteControlProvider({
   }, [clearRemote, endRemote, message, remoteState])
 
   const navigatePopup = useCallback((popup: Window, url: string) => {
-    popupCloseDetectionArmed.current = false
-    popupObservedOpenAt.current = null
     popup.location.replace(url)
     setRemoteState((current) => current ? { ...current, opened: true } : current)
   }, [])
@@ -183,8 +176,6 @@ export function RemoteControlProvider({
     popup.document.title = '正在连接设备…'
     popup.document.body.textContent = '正在预约设备并连接 STF，请稍候…'
     remotePopup.current = popup
-    popupCloseDetectionArmed.current = false
-    popupObservedOpenAt.current = null
     endingRemote.current = false
     const attempt = ++remoteAttempt.current
     setRemoteState({ device, popup, started: false, opened: false, startedAt: Date.now() })
@@ -251,48 +242,13 @@ export function RemoteControlProvider({
     message.success('远控已连接；点击挂断会释放并清理设备')
   }, [message, navigatePopup, remoteState, remoteView?.url])
 
-  useEffect(() => {
-    if (!remoteState?.started || !remoteState.opened || !remoteState.popup) return
-    const inspectPopup = () => {
-      const popup = remotePopup.current
-      if (!popup) return
-      let closed = false
-      try {
-        closed = popup.closed
-      } catch {
-        return
-      }
-      if (!closed) {
-        // Some browsers sever a cross-origin opener and immediately expose the
-        // live STF tab as `closed`. Only trust a later close after observing a
-        // stable post-navigation handle beyond the STF redirect window.
-        popupObservedOpenAt.current ??= Date.now()
-        if (Date.now() - popupObservedOpenAt.current >= popupObservationWindowMs) {
-          popupCloseDetectionArmed.current = true
-        }
-        return
-      }
-      if (popupCloseDetectionArmed.current && document.visibilityState === 'visible') {
-        finishRemote(false, true)
-      }
-    }
-    const timer = window.setInterval(inspectPopup, 1_000)
-    window.addEventListener('focus', inspectPopup)
-    document.addEventListener('visibilitychange', inspectPopup)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener('focus', inspectPopup)
-      document.removeEventListener('visibilitychange', inspectPopup)
-    }
-  }, [finishRemote, remoteState])
-
   const sendHeartbeat = useCallback(async () => {
     if (!remoteState?.started || remoteView?.status !== 'connected') return
     try {
       const data = await heartbeatDeviceRemoteControl(remoteState.device.id)
       const next = unwrapData<RemoteControl>(data)
       if (next?.status === 'ended') {
-        message.info('STF 已结束远控，设备正在清理并重建')
+        message.info('远控租约已结束，设备状态已刷新')
         clearRemote(true)
       }
     } catch {

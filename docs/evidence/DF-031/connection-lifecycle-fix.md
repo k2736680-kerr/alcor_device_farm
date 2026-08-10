@@ -21,7 +21,8 @@ ID 映射保持一致：Reservation 的精确目标和最终 `device_id` 都使�
 - 启动请求失败或响应丢失时执行补偿结束，防止服务端已提交 Reservation 而浏览器未收到响应。
 - 取消/挂断遇到设备或远控 404 时按“已经结束”收敛，不显示异常错误。
 - 远控会话提升到 Console 全局 Provider，跨路由继续心跳，刷新后可从 `sessionStorage` 恢复服务端真相。
-- 跨域窗口只在稳定观察窗口后才启用关闭检测，避免 STF 跳转期间误释放。
+- 关闭或切换 STF 标签页不再触发释放；只有管理员明确点击“取消连接/挂断”才立即结束，Console 整体失联仍由短租约兜底。
+- 远控心跳只负责续租，不再把 STF inventory 单次 `using=false` 或短暂掉线当成管理员挂断。
 - 打开 `about:blank` 占位页后，即使 Console 成为后台标签页，也继续轮询远控状态；STF URL 就绪后自动替换占位页，不再依赖管理员切回 Console 触发窗口焦点查询。
 
 ## 验证
@@ -29,7 +30,16 @@ ID 映射保持一致：Reservation 的精确目标和最终 `device_id` 都使�
 - `go test ./...`：通过。
 - `pnpm test`：7 个测试文件、26 项测试通过。
 - `pnpm build`：OpenAPI 生成、TypeScript 编译和 Vite 生产构建通过。
-- 回归覆盖：请求超时、服务端 deadline、永久 connecting 自动取消、启动响应丢失补偿、404 幂等挂断、后台标签页持续查询、跨路由心跳、刷新恢复、跨域窗口误判与真实关闭释放。
+- 回归覆盖：请求超时、服务端 deadline、永久 connecting 自动取消、启动响应丢失补偿、404 幂等挂断、后台标签页持续查询、跨路由心跳、刷新恢复、关闭 STF 标签页保持会话、显式挂断释放。
+
+## 自动断开现场根因与规则收敛
+
+- Reservation `c522d79c-a797-477d-bf53-d3888e7e9e53` 在 `2026-08-10 05:54:05Z`、`3832e9f8-b9e9-4266-aa44-45d8ce658326` 在 `05:59:07Z` 都由心跳请求结束；同一时间没有 Console `DELETE /remote-control` 请求。
+- 两条设备域审计均记录 `release_device_reservation / STF 已结束远控`，证明旧后端把 STF inventory 的 `using=false` 直接等同于管理员挂断。`05:59:07Z` 的状态变化与本地诊断执行 ADB root/unroot 的连接抖动重合，该诊断操作不应在活动会话中执行。
+- 收敛后的占用真相以 Device Farm Reservation 和管理员显式挂断为准：心跳续租、标签页可关闭重开；只有显式挂断立即释放，Console 失联才由租约到期回收。
+- 本地 `go test ./...`、`go vet ./...`、Console 7 个测试文件/26 项测试及 `pnpm build` 全部通过；其中新增回归证明关闭 STF 标签页不会发送 DELETE，既有回归继续证明显式挂断会释放并关闭标签页。
+- 正式 Server 已切换为 `alcor-device-farm:df031-20260810-explicit-hangup`（镜像 ID `sha256:69cb379c3c01a442924faf62af785ce1c47e095014f014606cac1862c126ac04`），正式 HTTP/HTTPS 健康与就绪检查通过，Console 资源为 `assets/index-tIiz2RT-.js`。
+- 部署前版本保留在停止容器 `alcor-device-farm-server-df017-rollback-before-explicit-hangup-20260810`，本次部署未重启 STF、Emulator 或 ADB。
 
 ## 后台轮询现场回归
 

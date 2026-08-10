@@ -17,8 +17,8 @@ DeviceFarmer/STF 3.7.9 已提供完整的原生看屏、点击、滑动、输入
 - Scheduler 必须把该内部选择条件解释为 Device ID 约束，并继续执行 PostgreSQL 锁、Pool 并发检查和 STF claim；普通 Reservation 不能注入该内部条件。
 - 连接建立后，Server 使用与 STF `--auth-secret` 相同的受限 Secret，为固定 STF 管理员身份签发极短有效的 HS256 Web 登录 JWT。响应只返回短时入口，不返回 STF API Token 或签名 Secret。
 - 浏览器先同步打开空白标签页，待 Reservation active 后跳转到 `STF_WEB_URL/?jwt=...#!/control/{serial}`；STF 随即建立自己的 Session 并通过重定向移除 JWT。
-- Console 保留标签页句柄并轮询 `closed`。点击“挂断”或检测到标签页关闭时调用同一个结束 API；结束 API 释放 Reservation 和 STF claim，使 Device 进入既有 `recycling → rebuild → ready/healthy` 链路。
-- 连接期间 Console 定时发送心跳。浏览器崩溃、Console 被关闭或网络中断时，短租约停止续期，由现有 Reaper 兜底回收；STF 已自行释放设备时，心跳检查 STF inventory 并主动结束对应 Reservation。
+- Console 把“挂断”作为唯一的即时主动释放动作；关闭、切换或重新打开 STF 标签页不得推断管理员已经结束使用。标签页关闭后 Reservation 继续保活，管理员可从 Console 的“重新打开远控”恢复入口。
+- 连接期间 Console 定时发送心跳。心跳只续期设备域 Reservation，不把 STF inventory 的一次 `using=false`、短暂掉线或重连窗口解释成管理员挂断。浏览器崩溃、Console 被关闭或网络中断时，心跳停止，现有 Reaper 在短租约到期后兜底回收。
 - 第一阶段仅允许 `admin`，同一 Device 同时只允许一条 pending/active 远控 Reservation。多用户共享、排队、观察者模式和 Alcor 身份透传另行设计。
 - 远控响应设置 `Cache-Control: no-store`；JWT、Secret、STF API Token 不得写入日志、审计、数据库普通字段、截图或测试报告。生产必须使用 HTTPS/受控内网，并配置不向 STF 页面发送 Console 来源信息的 Referrer Policy。
 - STF 3.7.9 `local` 会在 INFO 日志打印包含 `--auth-secret` 的子进程命令行；当前部署必须对 STF 主容器禁用 Docker stdout 持久化。若未来恢复进程日志采集，必须先通过 Secret 脱敏验收；STF 页面内的设备 Logcat 不受此限制。
@@ -30,7 +30,7 @@ DeviceFarmer/STF 3.7.9 已提供完整的原生看屏、点击、滑动、输入
 
 ## 后果与限制
 
-- 第一阶段关闭标签页后的主动回收依赖 Device 页面仍在运行；Console 同时崩溃时由短租约和 Reaper 在限定时间内兜底，不承诺浏览器进程退出瞬间完成网络请求。
+- 关闭 STF 标签页不会释放设备，管理员需在 Console 明确点击“挂断”；Console 整体退出或失联时由短租约和 Reaper 在限定时间内兜底，不承诺浏览器进程退出瞬间完成网络请求。
 - Reservation 最大租期仍受 Pool `max_lease_seconds` 约束；达到上限后管理员需要重新连接。
 - STF Web 登录身份必须与 STF API Token 的设备所有者一致，否则原生控制页无法访问已 claim 的设备。
 - 新功能只编排 Device、Pool、Reservation、STF claim/release 和设备域审计，不创建 Alcor Run/Result，也不实现 Appium 或 DaFit 业务步骤。
