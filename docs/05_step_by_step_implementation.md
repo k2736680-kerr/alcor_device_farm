@@ -54,7 +54,7 @@
 | DF-031 | 管理员设备远程控制 | completed | DF-010、DF-017、DF-018、DF-028 |
 | DF-032 | 动态 Host 容量和设备运行规格 | completed | DF-014、DF-016、DF-029、DF-031 |
 | DF-033 | Pool 总目标和默认镜像 | completed | DF-032 |
-| DF-034 | 设备规格编辑和受控重装 | pending | DF-033 |
+| DF-034 | 设备规格编辑和受控重装 | completed | DF-033 |
 | DF-035 | Android 13～16 镜像目录和真实多规格验收 | pending | DF-034 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 

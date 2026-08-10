@@ -250,7 +250,9 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		}
 	case "rebuild":
 		var snapshot providers.Snapshot
-		if stringValue(command.Payload, "device_id") != "" && stringValue(command.Payload, "image_id") != "" {
+		if stringValue(command.Payload, "operation_kind") == "reimage" {
+			result, err = agent.reimage(ctx, command.Payload)
+		} else if stringValue(command.Payload, "device_id") != "" && stringValue(command.Payload, "image_id") != "" {
 			snapshot, err = agent.recreate(ctx, command.Payload)
 		} else {
 			snapshot, err = agent.provider.Rebuild(ctx, providerRef)
@@ -258,10 +260,10 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 				snapshot, err = agent.waitReady(ctx, snapshot)
 			}
 		}
-		if err == nil {
+		if err == nil && result == nil {
 			err = agent.registerSTF(ctx, snapshot)
 		}
-		if err == nil {
+		if err == nil && result == nil {
 			result = snapshotResult(snapshot)
 		}
 	case "delete":
@@ -294,6 +296,105 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 	if completeErr := agent.client.Complete(context.Background(), command.ID, completion); completeErr != nil {
 		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
 	}
+}
+
+func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	targetProfile, err := profileFromPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	agent.resourceMu.Lock()
+	if err := agent.preflightReplacement(ctx, stringValue(payload, "provider_ref"), targetProfile); err != nil {
+		agent.resourceMu.Unlock()
+		return nil, err
+	}
+	target, targetErr := agent.recreate(ctx, payload)
+	agent.resourceMu.Unlock()
+	if targetErr == nil {
+		if err := agent.registerSTF(ctx, target); err != nil {
+			targetErr = err
+		}
+	}
+	if targetErr == nil {
+		result := snapshotResult(target)
+		result["reimage_applied"] = true
+		return result, nil
+	}
+	rollback, ok := mapValue(payload, "rollback"), false
+	if rollback != nil {
+		rollback["device_id"] = stringValue(payload, "device_id")
+		rollback["host_id"] = stringValue(payload, "host_id")
+		rollback["provider_ref"] = stringValue(payload, "provider_ref")
+		rollback["capabilities"] = mapValue(payload, "capabilities")
+		var restored providers.Snapshot
+		restored, err = agent.recreate(ctx, rollback)
+		if err == nil {
+			err = agent.registerSTF(ctx, restored)
+		}
+		if err == nil {
+			result := snapshotResult(restored)
+			result["reimage_applied"] = false
+			result["rollback_restored"] = true
+			result["target_error_code"] = providerErrorCode(targetErr)
+			return result, &providers.Error{Operation: providers.OperationRebuild, Code: "REIMAGE_TARGET_FAILED",
+				Message: "target image failed; previous image was restored", Retryable: false, Cause: targetErr}
+		}
+		ok = true
+	}
+	result := map[string]any{"reimage_applied": false, "rollback_restored": false,
+		"target_error_code": providerErrorCode(targetErr)}
+	if ok && err != nil {
+		result["rollback_error_code"] = providerErrorCode(err)
+	}
+	return result, &providers.Error{Operation: providers.OperationRebuild, Code: "REIMAGE_ROLLBACK_FAILED",
+		Message: "target image and previous image restore both failed", Retryable: false, Cause: errors.Join(targetErr, err)}
+}
+
+func (agent *Agent) preflightReplacement(ctx context.Context, providerRef string, requested runtimeprofile.Profile) error {
+	if agent.config.CapacityProbe == nil {
+		return nil
+	}
+	values, _, err := agent.config.CapacityProbe.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	host, dynamic := capacity.HostFromMap(values)
+	if !dynamic {
+		return nil
+	}
+	snapshots, err := agent.provider.Discover(ctx, agent.config.HostID)
+	if err != nil {
+		return err
+	}
+	existing := capacity.Allocation{}
+	var current runtimeprofile.Profile
+	for _, snapshot := range snapshots {
+		if snapshot.ProviderRef == providerRef {
+			current = snapshot.RuntimeProfile
+			continue
+		}
+		existing.CPUCores += snapshot.RuntimeProfile.ContainerCPUCores
+		existing.MemoryMB += snapshot.RuntimeProfile.ContainerMemoryMB
+		existing.DiskMB += snapshot.RuntimeProfile.DataDiskMB
+		existing.Slots++
+	}
+	if current != (runtimeprofile.Profile{}) {
+		host.MemoryAvailableMB = minInt64(host.MemoryTotalMB, host.MemoryAvailableMB+current.ContainerMemoryMB)
+		host.DiskAvailableMB = minInt64(host.DiskTotalMB, host.DiskAvailableMB+current.DataDiskMB)
+	}
+	result := capacity.Evaluate(host, existing, capacity.Allocation{}, requested, false)
+	if result.Fits {
+		return nil
+	}
+	return &providers.Error{Operation: providers.OperationRebuild, Code: "INSUFFICIENT_HOST_RESOURCES",
+		Message: result.Error().Error(), Retryable: false}
+}
+
+func minInt64(left, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (agent *Agent) registerSTF(ctx context.Context, snapshot providers.Snapshot) error {

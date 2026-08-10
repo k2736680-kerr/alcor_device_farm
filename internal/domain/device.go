@@ -32,11 +32,11 @@ const HostUnavailableReason = "device host is offline or unavailable"
 var deviceTransitions = map[DeviceLifecycleStatus]map[DeviceLifecycleStatus]struct{}{
 	DeviceProvisioning: allowed(DeviceBooting, DeviceQuarantined, DeviceDeleted),
 	DeviceBooting:      allowed(DeviceReady, DeviceStopped, DeviceQuarantined),
-	DeviceReady:        allowed(DeviceReserved, DeviceStopped, DeviceQuarantined, DeviceDeleted),
+	DeviceReady:        allowed(DeviceProvisioning, DeviceReserved, DeviceStopped, DeviceQuarantined, DeviceDeleted),
 	DeviceReserved:     allowed(DeviceBusy, DeviceRecycling, DeviceQuarantined),
 	DeviceBusy:         allowed(DeviceRecycling, DeviceQuarantined),
 	DeviceRecycling:    allowed(DeviceReady, DeviceStopped, DeviceQuarantined),
-	DeviceStopped:      allowed(DeviceBooting, DeviceQuarantined, DeviceDeleted),
+	DeviceStopped:      allowed(DeviceProvisioning, DeviceBooting, DeviceQuarantined, DeviceDeleted),
 	DeviceQuarantined:  allowed(DeviceProvisioning, DeviceDeleted),
 	DeviceDeleted:      allowed[DeviceLifecycleStatus](),
 }

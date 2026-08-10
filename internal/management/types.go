@@ -5,18 +5,26 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 var (
-	ErrNotFound            = errors.New("management resource not found")
-	ErrConflict            = errors.New("management resource conflict")
-	ErrInvalidArgument     = errors.New("invalid management argument")
-	ErrHostUnavailable     = errors.New("device host is not accepting new devices")
-	ErrImageUnavailable    = errors.New("device image is not ready")
-	ErrProviderUnavailable = errors.New("device provider is not configured")
+	ErrNotFound                  = errors.New("management resource not found")
+	ErrConflict                  = errors.New("management resource conflict")
+	ErrInvalidArgument           = errors.New("invalid management argument")
+	ErrHostUnavailable           = errors.New("device host is not accepting new devices")
+	ErrImageUnavailable          = errors.New("device image is not ready")
+	ErrProviderUnavailable       = errors.New("device provider is not configured")
+	ErrInsufficientHostResources = errors.New("insufficient host resources")
 )
+
+type CapacityError struct{ Result capacity.Result }
+
+func (value *CapacityError) Error() string { return ErrInsufficientHostResources.Error() }
+func (value *CapacityError) Unwrap() error { return ErrInsufficientHostResources }
 
 type Idempotency struct {
 	ClientID       string
@@ -51,6 +59,9 @@ type DeviceOperation struct {
 	RequireNoActiveReservation bool
 	RequireNoActiveCommand     bool
 	DisableMemberships         bool
+	Reimage                    bool
+	PendingImageID             string
+	PendingRuntimeProfile      map[string]any
 }
 
 type Image struct {
@@ -108,24 +119,43 @@ type PoolImage struct {
 }
 
 type Device struct {
-	ID                  string                       `json:"id"`
-	HostID              string                       `json:"host_id"`
-	ImageID             *string                      `json:"image_id,omitempty"`
-	DeviceKind          string                       `json:"device_kind"`
-	ProviderType        string                       `json:"provider_type"`
-	ProviderRef         string                       `json:"provider_ref"`
-	LifecycleMode       string                       `json:"lifecycle_mode"`
-	Serial              string                       `json:"serial"`
-	STFSerial           *string                      `json:"stf_serial,omitempty"`
-	ADBEndpoint         *string                      `json:"adb_endpoint,omitempty"`
-	AppiumEndpoint      *string                      `json:"appium_endpoint,omitempty"`
-	Capabilities        map[string]any               `json:"capabilities"`
-	LifecycleStatus     domain.DeviceLifecycleStatus `json:"lifecycle_status"`
-	HealthStatus        domain.HealthStatus          `json:"health_status"`
-	HealthReason        *string                      `json:"health_reason,omitempty"`
-	ConsecutiveFailures int                          `json:"consecutive_failures"`
-	CreatedAt           time.Time                    `json:"created_at"`
-	UpdatedAt           time.Time                    `json:"updated_at"`
+	ID                      string                       `json:"id"`
+	HostID                  string                       `json:"host_id"`
+	ImageID                 *string                      `json:"image_id,omitempty"`
+	DeviceKind              string                       `json:"device_kind"`
+	ProviderType            string                       `json:"provider_type"`
+	ProviderRef             string                       `json:"provider_ref"`
+	LifecycleMode           string                       `json:"lifecycle_mode"`
+	Serial                  string                       `json:"serial"`
+	STFSerial               *string                      `json:"stf_serial,omitempty"`
+	ADBEndpoint             *string                      `json:"adb_endpoint,omitempty"`
+	AppiumEndpoint          *string                      `json:"appium_endpoint,omitempty"`
+	Capabilities            map[string]any               `json:"capabilities"`
+	RuntimeProfileOverride  map[string]any               `json:"runtime_profile_override,omitempty"`
+	EffectiveRuntimeProfile map[string]any               `json:"effective_runtime_profile"`
+	PendingImageID          *string                      `json:"pending_image_id,omitempty"`
+	PendingRuntimeProfile   map[string]any               `json:"pending_runtime_profile,omitempty"`
+	ReimageStatus           string                       `json:"reimage_status"`
+	ReimageError            *string                      `json:"reimage_error,omitempty"`
+	LifecycleStatus         domain.DeviceLifecycleStatus `json:"lifecycle_status"`
+	HealthStatus            domain.HealthStatus          `json:"health_status"`
+	HealthReason            *string                      `json:"health_reason,omitempty"`
+	ConsecutiveFailures     int                          `json:"consecutive_failures"`
+	CreatedAt               time.Time                    `json:"created_at"`
+	UpdatedAt               time.Time                    `json:"updated_at"`
+}
+
+type DeviceReimageInput struct {
+	ImageID        string         `json:"image_id"`
+	RuntimeProfile map[string]any `json:"runtime_profile"`
+	Reason         string         `json:"reason"`
+}
+
+type DeviceReimageCapacity struct {
+	HostID         string          `json:"host_id"`
+	CurrentProfile map[string]any  `json:"current_profile"`
+	TargetProfile  map[string]any  `json:"target_profile"`
+	Result         capacity.Result `json:"result"`
 }
 
 type ImageInput struct {
@@ -209,4 +239,5 @@ type Store interface {
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)
 	ReplayDeviceOperation(context.Context, string, string, string, string, string) (Device, bool, error)
 	QueueDeviceOperation(context.Context, DeviceOperation) (Device, error)
+	CheckDeviceReimageCapacity(context.Context, Device, runtimeprofile.Profile, runtimeprofile.Profile, string) (capacity.Result, error)
 }

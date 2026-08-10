@@ -45,6 +45,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", handler.deleteDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/restarts", handler.restartDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/rebuilds", handler.rebuildDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/reimages", handler.reimageDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/quarantines", handler.quarantineDevice)
 	mux.HandleFunc("DELETE /api/v1/devices/{id}/quarantines", handler.unquarantineDevice)
 }
@@ -317,6 +318,21 @@ func (handler *managementHandler) restartDevice(writer http.ResponseWriter, requ
 func (handler *managementHandler) rebuildDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "rebuild")
 }
+func (handler *managementHandler) reimageDevice(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	if !requireIdempotencyKey(writer, request) {
+		return
+	}
+	var input management.DeviceReimageInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.ReimageDeviceAudited(request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
+	handler.write(writer, request, http.StatusAccepted, value, err)
+}
 func (handler *managementHandler) deleteDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "delete")
 }
@@ -419,6 +435,12 @@ func writeManagementError(writer http.ResponseWriter, request *http.Request, err
 		status, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "resource not found"}
 	case errors.Is(err, management.ErrConflict):
 		status, apiError = http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()}
+	case errors.Is(err, management.ErrInsufficientHostResources):
+		status, apiError = http.StatusConflict, httpx.APIError{Code: "INSUFFICIENT_HOST_RESOURCES", Message: err.Error()}
+		var capacityError *management.CapacityError
+		if errors.As(err, &capacityError) {
+			apiError.Details = capacityError.Result
+		}
 	case errors.Is(err, domain.ErrInvalidTransition), errors.Is(err, management.ErrHostUnavailable), errors.Is(err, management.ErrImageUnavailable):
 		status, apiError = http.StatusConflict, httpx.APIError{Code: "INVALID_STATE_TRANSITION", Message: err.Error()}
 	default:

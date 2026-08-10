@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.4.0
+ * OpenAPI spec version: 1.5.0
  */
 import {
   useMutation,
@@ -39,6 +39,7 @@ import type {
   DeviceListSuccessResponse,
   DevicePoolImageInputBody,
   DevicePoolInputBody,
+  DeviceReimageInputBody,
   DeviceSuccessResponse,
   ErrorResponse,
   ForbiddenResponse,
@@ -3420,6 +3421,120 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getRebuildDeviceMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Recreates an idle Docker Emulator with a selected ready Image and runtime profile. Existing APKs and device data are erased. The current Image is changed only after full readiness succeeds; one rollback to the previous configuration is attempted on failure.
+ */
+export type reimageDeviceResponse202 = {
+  data: DeviceAcceptedResponse
+  status: 202
+}
+
+export type reimageDeviceResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type reimageDeviceResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type reimageDeviceResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type reimageDeviceResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type reimageDeviceResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type reimageDeviceResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type reimageDeviceResponseSuccess = (reimageDeviceResponse202) & {
+  headers: Headers;
+};
+export type reimageDeviceResponseError = (reimageDeviceResponse400 | reimageDeviceResponse401 | reimageDeviceResponse403 | reimageDeviceResponse404 | reimageDeviceResponse409 | reimageDeviceResponse500) & {
+  headers: Headers;
+};
+
+export type reimageDeviceResponse = (reimageDeviceResponseSuccess | reimageDeviceResponseError)
+
+export const getReimageDeviceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/reimages`
+}
+
+export const reimageDevice = async (id: string,
+    deviceReimageInputBody: DeviceReimageInputBody, options?: RequestInit): Promise<reimageDeviceResponse> => {
+
+  return deviceFarmFetch<reimageDeviceResponse>(getReimageDeviceUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deviceReimageInputBody,)
+  }
+);}
+
+
+
+
+export const getReimageDeviceMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reimageDevice>>, TError,{id: string;data: DeviceReimageInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reimageDevice>>, TError,{id: string;data: DeviceReimageInputBody}, TContext> => {
+
+const mutationKey = ['reimageDevice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reimageDevice>>, {id: string;data: DeviceReimageInputBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  reimageDevice(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReimageDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof reimageDevice>>>
+    export type ReimageDeviceMutationBody = DeviceReimageInputBody
+    export type ReimageDeviceMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useReimageDevice = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reimageDevice>>, TError,{id: string;data: DeviceReimageInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof reimageDevice>>,
+        TError,
+        {id: string;data: DeviceReimageInputBody},
+        TContext
+      > => {
+
+      const mutationOptions = getReimageDeviceMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

@@ -93,6 +93,39 @@ DECLARE
     rejected boolean := false;
 BEGIN
     BEGIN
+        UPDATE devices
+        SET reimage_status = 'pending', pending_image_id = 'img_0000000000000001', pending_runtime_profile = NULL
+        WHERE id = 'dev_0000000000000001';
+    EXCEPTION WHEN check_violation THEN
+        rejected := true;
+    END;
+    IF NOT rejected THEN
+        RAISE EXCEPTION 'pending reimage without a resolved profile was accepted';
+    END IF;
+END
+$test$;
+
+DO $test$
+DECLARE
+    rejected boolean := false;
+BEGIN
+    BEGIN
+        UPDATE devices SET runtime_profile_override = '[]'::jsonb
+        WHERE id = 'dev_0000000000000001';
+    EXCEPTION WHEN check_violation THEN
+        rejected := true;
+    END;
+    IF NOT rejected THEN
+        RAISE EXCEPTION 'non-object device runtime profile override was accepted';
+    END IF;
+END
+$test$;
+
+DO $test$
+DECLARE
+    rejected boolean := false;
+BEGIN
+    BEGIN
         INSERT INTO devices (
             id, host_id, image_id, device_kind, provider_type, provider_ref,
             lifecycle_mode, serial, lifecycle_status, health_status

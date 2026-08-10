@@ -479,8 +479,10 @@ func (service *Service) RecoverExpiredOnce(ctx context.Context) (Command, error)
 }
 
 type managementOperationResult struct {
-	Generation int `json:"generation"`
-	Connection struct {
+	Generation       int  `json:"generation"`
+	ReimageApplied   bool `json:"reimage_applied"`
+	RollbackRestored bool `json:"rollback_restored"`
+	Connection       struct {
 		Serial         string `json:"serial"`
 		ADBEndpoint    string `json:"adb_endpoint"`
 		AppiumEndpoint string `json:"appium_endpoint"`
@@ -531,6 +533,9 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	}
 	if record.CommandType == "delete" {
 		return service.reconcileManagementDelete(ctx, tx, record, deviceID, lifecycle, health, now)
+	}
+	if commandPayloadString(payload, "operation_kind") == "reimage" {
+		return service.reconcileManagementReimage(ctx, tx, record, payload, deviceID, lifecycle, health, now)
 	}
 	code, reason := "", "management "+record.CommandType+" command completed"
 	var result managementOperationResult
@@ -615,6 +620,109 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	return err
 }
 
+func (service *Service) reconcileManagementReimage(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
+	payload map[string]any, deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
+	var result managementOperationResult
+	resultValid := json.Unmarshal(record.Result, &result) == nil && validManagementOperationResult(result)
+	applied := record.Status == domain.CommandSucceeded && resultValid && result.ReimageApplied
+	restored := record.Status == domain.CommandFailed && resultValid && result.RollbackRestored
+	code := ""
+	if record.ErrorCode != nil {
+		code = *record.ErrorCode
+	}
+	if code == "" && !applied {
+		code = "REIMAGE_COMMAND_FAILED"
+	}
+	reason := "management reimage applied target image"
+	if restored {
+		reason = code + ": target failed; previous image was restored"
+	}
+	if !applied && !restored {
+		reason = code + ": target and previous image restore did not produce a healthy device"
+	}
+
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if applied || restored {
+		if aggregate.Health() != domain.HealthHealthy {
+			if err := aggregate.UpdateHealth(domain.HealthHealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceProvisioning {
+			if err := aggregate.Transition(domain.DeviceBooting, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceBooting {
+			return nil
+		}
+		if err := aggregate.Transition(domain.DeviceReady, reason, now); err != nil {
+			return err
+		}
+		if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
+			return err
+		}
+		if applied {
+			targetProfile, marshalErr := json.Marshal(mapValue(payload, "runtime_profile"))
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err := tx.Exec(ctx, `UPDATE devices SET image_id=$2,runtime_profile_override=$3,
+				pending_image_id=NULL,pending_runtime_profile=NULL,reimage_status='idle',reimage_error=NULL,
+				serial=$4,adb_endpoint=$5,appium_endpoint=$6,
+				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($7::text),true),
+				lifecycle_status=$8,health_status=$9,health_reason=$10,consecutive_failures=0,last_seen_at=$11,updated_at=$11
+				WHERE id=$1 AND lifecycle_status=$12`, deviceID, commandPayloadString(payload, "image_id"), targetProfile,
+				result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET pending_image_id=NULL,pending_runtime_profile=NULL,
+				reimage_status='failed',reimage_error=$2,serial=$3,adb_endpoint=$4,appium_endpoint=$5,
+				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+				lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,last_seen_at=$10,updated_at=$10
+				WHERE id=$1 AND lifecycle_status=$11`, deviceID, reason, result.Connection.Serial,
+				result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				return err
+			}
+		}
+	} else {
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET pending_image_id=NULL,pending_runtime_profile=NULL,
+			reimage_status='failed',reimage_error=$2,lifecycle_status=$3,health_status=$4,health_reason=$2,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,
+			deviceID, reason, aggregate.Lifecycle(), aggregate.Health(), now, lifecycle); err != nil {
+			return err
+		}
+	}
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	severity, eventType := "info", "device_reimage_succeeded"
+	if !applied {
+		severity, eventType = "error", "device_reimage_failed"
+	}
+	eventPayload, _ := json.Marshal(map[string]any{"command_id": record.ID, "command_type": record.CommandType,
+		"target_image_id": commandPayloadString(payload, "image_id"), "rollback_restored": restored, "error_code": code})
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
+	return err
+}
+
 func (service *Service) reconcileManagementDelete(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
 	deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
 	var result struct {
@@ -688,6 +796,11 @@ func validManagementOperationResult(value managementOperationResult) bool {
 func commandPayloadString(payload map[string]any, key string) string {
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func mapValue(values map[string]any, key string) map[string]any {
+	value, _ := values[key].(map[string]any)
+	return value
 }
 
 func validCommandType(value string) bool {

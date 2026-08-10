@@ -130,6 +130,8 @@
 | AT-EMU-014 | P0 | 管理员删除隔离设备 | 仅 quarantined/stopped 且无活动预约可提交；相同幂等键单命令；成功后资源清理、membership 禁用、Device=deleted、Endpoint 为空 |
 | AT-EMU-015 | P0 | Pool 同时登记 Android 13～16 并切换默认 Image | 镜像数量不相加；已有设备不重装，后续自动补建设备使用新默认 Image |
 | AT-EMU-016 | P0 | `total_target=3/min_ready=0/max_concurrency=2` | 空闲时不维持常驻预热设备；出现默认 Image 可满足的 pending Reservation 时按需创建；总设备数不超过 3、同时占用不超过 2，三个值可在 Console 独立调整并受关系校验 |
+| AT-EMU-017 | P0 | 空闲或隔离 Emulator 执行受控 reimage | 旧容器和数据卷被删除重建；Device ID/Pool membership 不变；目标配置通过 ADB、STF、Appium 后才生效并恢复 ready/healthy |
+| AT-EMU-018 | P0 | reimage 目标配置启动失败 | 当前 Image/规格不提前切换；只尝试恢复旧配置一次；恢复成功记录失败状态，恢复也失败则隔离并保留审计和健康事件 |
 
 ### 4.5 STF 和 Appium
 

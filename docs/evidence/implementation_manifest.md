@@ -1,4 +1,4 @@
-# DF-003～DF-033 实施与证据清单
+# DF-003～DF-034 实施与证据清单
 
 本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代；`pending` 表示已建立正式任务和验收模板，但尚未开始实现。
 
@@ -35,6 +35,7 @@
 | DF-031 | completed | `本次提交：加入管理员设备远程控制` | `docs/evidence/DF-031/acceptance.md` |
 | DF-032 | completed | `d8f573d 按实际资源动态计算设备容量` | `docs/evidence/DF-032/acceptance.md` |
 | DF-033 | completed | `本次提交：改为按设备池总目标动态扩缩容` | `docs/evidence/DF-033/acceptance.md` |
+| DF-034 | completed | `本次提交：支持单台模拟器更换镜像和配置` | `docs/evidence/DF-034/acceptance.md` |
 
 ## 当前剩余条件
 

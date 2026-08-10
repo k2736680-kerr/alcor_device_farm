@@ -549,6 +549,94 @@ func (service *Service) RebuildDeviceAudited(ctx context.Context, id, reason str
 	return service.rebuildDevice(ctx, id, reason, idempotencyKey, event)
 }
 
+func (service *Service) ReimageDeviceAudited(ctx context.Context, id string, input DeviceReimageInput, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "reimage_device", input.Reason)
+	if err != nil {
+		return Device{}, err
+	}
+	if strings.TrimSpace(input.ImageID) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
+		return Device{}, ErrInvalidArgument
+	}
+	targetProfile, err := runtimeprofile.Parse(input.RuntimeProfile)
+	if err != nil {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	requestHash := operationStructuredRequestHash("reimage", current.ID, input)
+	commandKey := operationCommandKey("reimage", event.ActorID, idempotencyKey)
+	if replayed, found, replayErr := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "rebuild", requestHash); replayErr != nil {
+		return Device{}, replayErr
+	} else if found {
+		return replayed, nil
+	}
+	if current.DeviceKind != "emulator" || current.ProviderType != "docker_emulator" {
+		return Device{}, ErrInvalidArgument
+	}
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped && current.LifecycleStatus != domain.DeviceQuarantined {
+		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceProvisioning)}
+	}
+	targetImage, err := service.store.GetImage(ctx, strings.TrimSpace(input.ImageID))
+	if err != nil {
+		return Device{}, err
+	}
+	if targetImage.Status != domain.ImageReady || !providers.ValidRuntimeImageReference(targetImage.DockerImage) {
+		return Device{}, ErrImageUnavailable
+	}
+	currentProfile, err := runtimeprofile.Parse(current.EffectiveRuntimeProfile)
+	if err != nil {
+		return Device{}, ErrInvalidArgument
+	}
+	capacityResult, err := service.store.CheckDeviceReimageCapacity(ctx, current, currentProfile, targetProfile, targetImage.ID)
+	if err != nil {
+		return Device{}, err
+	}
+	if !capacityResult.Fits {
+		return Device{}, &CapacityError{Result: capacityResult}
+	}
+	if current.ImageID == nil {
+		return Device{}, ErrInvalidArgument
+	}
+	oldImage, err := service.store.GetImage(ctx, *current.ImageID)
+	if err != nil {
+		return Device{}, err
+	}
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
+	if err != nil {
+		return Device{}, err
+	}
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, input.Reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceProvisioning, input.Reason, time.Now().UTC()); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	payload := map[string]any{
+		"operation_source": "management", "operation_kind": "reimage", "operation_state": current.LifecycleStatus,
+		"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
+		"image_id": targetImage.ID, "docker_image": targetImage.DockerImage, "docker_digest": targetImage.DockerDigest,
+		"capabilities": cloneMap(current.Capabilities), "runtime_profile": targetProfile.Map(),
+		"rollback": map[string]any{"image_id": oldImage.ID, "docker_image": oldImage.DockerImage,
+			"docker_digest": oldImage.DockerDigest, "runtime_profile": currentProfile.Map()},
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: "rebuild", IdempotencyKey: commandKey, MaxAttempts: 1,
+		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true, Reimage: true,
+		PendingImageID: targetImage.ID, PendingRuntimeProfile: targetProfile.Map(),
+	})
+}
+
 func (service *Service) DeleteDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
 	event, err := service.deviceAudit(actor, requestID, "delete_device", reason)
 	if err != nil {
@@ -665,6 +753,12 @@ func operationCommandKey(action, actorID, idempotencyKey string) string {
 
 func operationRequestHash(action, deviceID, reason string) string {
 	digest := sha256.Sum256([]byte(action + "\x00" + strings.TrimSpace(deviceID) + "\x00" + strings.TrimSpace(reason)))
+	return hex.EncodeToString(digest[:])
+}
+
+func operationStructuredRequestHash(action, deviceID string, value any) string {
+	encoded, _ := json.Marshal(value)
+	digest := sha256.Sum256(append([]byte(action+"\x00"+strings.TrimSpace(deviceID)+"\x00"), encoded...))
 	return hex.EncodeToString(digest[:])
 }
 

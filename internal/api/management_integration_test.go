@@ -378,6 +378,75 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 }
 
+func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	ctx := context.Background()
+	hostID, oldImageID, targetImageID, deviceID := "host_reimage_00000001", "image_reimage_old_001", "image_reimage_new_001", "device_reimage_000001"
+	oldProfile := `{"container_cpu_cores":4,"container_memory_mb":5120,"guest_cpu_cores":4,"guest_memory_mb":4096,"data_disk_mb":4096,"width":1080,"height":2400,"density_dpi":420,"vm_heap_mb":512,"graphics":"auto"}`
+	targetProfile := map[string]any{"container_cpu_cores": 4, "container_memory_mb": 8192, "guest_cpu_cores": 4,
+		"guest_memory_mb": 6144, "data_disk_mb": 4096, "width": 1080, "height": 2400, "density_dpi": 420, "vm_heap_mb": 512, "graphics": "software"}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_hosts
+		(id,name,host_type,capacity,used_capacity,status,draining,last_heartbeat_at)
+		VALUES($1,'reimage-host','docker_emulator',
+		'{"resource_model":"dynamic_v1","cpu_cores":16,"memory_total_mb":32768,"memory_available_mb":20000,"disk_total_mb":200000,"disk_available_mb":100000,"device_slots":4,"collected_at":"2099-01-01T00:00:00Z"}',
+		'{"cpu_cores":4,"memory_mb":5120,"data_disk_mb":4096,"device_slots":1}','online',false,clock_timestamp())`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_images
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status) VALUES
+		($1,'android-old','registry.example/alcor/android-emulator:api34','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x2400',$3,'ready'),
+		($2,'android-new','registry.example/alcor/android-emulator:api36','sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',36,'x86_64','1080x2400',$3,'ready')`, oldImageID, targetImageID, oldProfile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
+		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status,last_seen_at)
+		VALUES($1,$2,$3,'emulator','docker_emulator','provider-reimage-001','rebuild','serial-reimage-001','{"platformName":"Android"}','ready','healthy',clock_timestamp())`,
+		deviceID, hostID, oldImageID); err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{"image_id": targetImageID, "runtime_profile": targetProfile, "reason": "验证 Android 16 和 8GB 规格"}
+	response := environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/reimages", body, serviceToken, "reimage-success-0001")
+	assertStatus(t, response, http.StatusAccepted)
+	var pending management.Device
+	decodeData(t, response, &pending)
+	if pending.ReimageStatus != "pending" || pending.PendingImageID == nil || *pending.PendingImageID != targetImageID || pending.ImageID == nil || *pending.ImageID != oldImageID {
+		t.Fatalf("pending reimage exposed target as current: %#v", pending)
+	}
+	commands, err := environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("claim=%#v err=%v", commands, err)
+	}
+	result := map[string]any{"reimage_applied": true, "generation": 2,
+		"connection": map[string]any{"serial": "10.0.0.1:31001", "adb_endpoint": "10.0.0.1:31001", "appium_endpoint": "http://10.0.0.1:32001", "appium_udid": "emulator-5556"},
+		"health":     map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true}}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "succeeded", Result: result}); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || applied.ImageID == nil || *applied.ImageID != targetImageID || applied.ReimageStatus != "idle" || int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 8192 {
+		t.Fatalf("applied=%#v err=%v", applied, err)
+	}
+
+	rollbackBody := map[string]any{"image_id": oldImageID, "runtime_profile": map[string]any{"container_cpu_cores": 4, "container_memory_mb": 5120}, "reason": "验证失败恢复旧配置"}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/reimages", rollbackBody, serviceToken, "reimage-rollback-001"), http.StatusAccepted)
+	commands, err = environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("rollback claim=%#v err=%v", commands, err)
+	}
+	result["reimage_applied"], result["rollback_restored"] = false, true
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "failed", Result: result,
+		Error: &hostcommand.CompletionError{Code: "REIMAGE_TARGET_FAILED", Message: "target failed; old restored", Retryable: false}}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || restored.ImageID == nil || *restored.ImageID != targetImageID || restored.ReimageStatus != "failed" || restored.ReimageError == nil || restored.LifecycleStatus != "ready" {
+		t.Fatalf("restored=%#v err=%v", restored, err)
+	}
+}
+
 func TestEveryManagementRouteIsProtected(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	routes := []struct{ method, path string }{

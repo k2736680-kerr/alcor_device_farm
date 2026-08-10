@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -295,17 +298,18 @@ func (store *Store) RemoveDeviceFromPool(ctx context.Context, poolID, deviceID s
 }
 
 func (store *Store) CreateDevice(ctx context.Context, device management.Device) (management.Device, error) {
-	value, err := scanDevice(store.db.Pool().QueryRow(ctx, `INSERT INTO devices
+	_, err := store.db.Pool().Exec(ctx, `INSERT INTO devices
         (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
          adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-        RETURNING id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
-                  adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,
-                  consecutive_failures,created_at,updated_at`,
+		`,
 		device.ID, device.HostID, device.ImageID, device.DeviceKind, device.ProviderType, device.ProviderRef,
 		device.LifecycleMode, device.Serial, device.STFSerial, device.ADBEndpoint, device.AppiumEndpoint,
-		mustJSON(device.Capabilities), device.LifecycleStatus, device.HealthStatus, device.HealthReason, device.ConsecutiveFailures))
-	return value, rowError(err)
+		mustJSON(device.Capabilities), device.LifecycleStatus, device.HealthStatus, device.HealthReason, device.ConsecutiveFailures)
+	if err != nil {
+		return management.Device{}, rowError(err)
+	}
+	return store.GetDevice(ctx, device.ID)
 }
 
 func (store *Store) ListDevices(ctx context.Context, page paging.Page, filter management.DeviceFilter) ([]management.Device, int, error) {
@@ -381,15 +385,19 @@ func (store *Store) UpdateDeviceState(ctx context.Context, device management.Dev
 	var value management.Device
 	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var err error
-		value, err = scanDevice(tx.QueryRow(ctx, `UPDATE devices SET
+		result, updateErr := tx.Exec(ctx, `UPDATE devices SET
 			lifecycle_status=$2::varchar,health_status=$3::varchar,health_reason=$4,
 			consecutive_failures=CASE WHEN $2::varchar='provisioning' AND $3::varchar='unknown' THEN 0 ELSE consecutive_failures END,
 			updated_at=clock_timestamp()
-			WHERE id=$1 AND lifecycle_status=$5 AND health_status=$6
-			RETURNING id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
-				adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,
-				consecutive_failures,created_at,updated_at`,
-			device.ID, device.LifecycleStatus, device.HealthStatus, device.HealthReason, oldLifecycle, oldHealth))
+			WHERE id=$1 AND lifecycle_status=$5 AND health_status=$6`,
+			device.ID, device.LifecycleStatus, device.HealthStatus, device.HealthReason, oldLifecycle, oldHealth)
+		if updateErr != nil {
+			return updateErr
+		}
+		if result.RowsAffected() != 1 {
+			return management.ErrConflict
+		}
+		value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, device.ID))
 		if err != nil {
 			return err
 		}
@@ -458,8 +466,8 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 		if operation.RequireNoActiveCommand {
 			var active bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_host_commands
-				WHERE command_type=$2 AND payload->>'device_id'=$1 AND status IN ('pending','leased'))`,
-				operation.Device.ID, operation.CommandType).Scan(&active); err != nil {
+				WHERE payload->>'device_id'=$1 AND status IN ('pending','leased'))`,
+				operation.Device.ID).Scan(&active); err != nil {
 				return err
 			}
 			if active {
@@ -491,18 +499,26 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 			value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, operation.Device.ID))
 			return err
 		}
-		value, err = scanDevice(tx.QueryRow(ctx, `UPDATE devices SET
+		result, updateErr := tx.Exec(ctx, `UPDATE devices SET
 			lifecycle_status=$2::varchar,health_status=$3::varchar,health_reason=$4,updated_at=clock_timestamp()
-			WHERE id=$1 AND host_id=$5 AND provider_ref=$6 AND lifecycle_status=$7 AND health_status=$8
-			RETURNING id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
-				adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,
-				consecutive_failures,created_at,updated_at`,
+			WHERE id=$1 AND host_id=$5 AND provider_ref=$6 AND lifecycle_status=$7 AND health_status=$8`,
 			operation.Device.ID, operation.Device.LifecycleStatus, operation.Device.HealthStatus,
 			operation.Device.HealthReason, operation.Device.HostID, operation.Device.ProviderRef,
-			operation.ExpectedLifecycle, operation.ExpectedHealth))
-		if errors.Is(err, pgx.ErrNoRows) {
+			operation.ExpectedLifecycle, operation.ExpectedHealth)
+		if updateErr != nil {
+			return updateErr
+		}
+		if result.RowsAffected() != 1 {
 			return management.ErrConflict
 		}
+		if operation.Reimage {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET pending_image_id=$2,pending_runtime_profile=$3,
+				reimage_status='pending',reimage_error=NULL,updated_at=clock_timestamp() WHERE id=$1`,
+				operation.Device.ID, operation.PendingImageID, mustJSON(operation.PendingRuntimeProfile)); err != nil {
+				return err
+			}
+		}
+		value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, operation.Device.ID))
 		if err != nil {
 			return err
 		}
@@ -523,13 +539,115 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 	return value, normalize(err)
 }
 
+func (store *Store) CheckDeviceReimageCapacity(ctx context.Context, device management.Device, current, target runtimeprofile.Profile, imageID string) (capacity.Result, error) {
+	var capacityRaw, usedRaw, pendingRaw []byte
+	var status domain.HostStatus
+	var draining, imageCached bool
+	var lastHeartbeat *time.Time
+	err := store.db.Pool().QueryRow(ctx, `SELECT h.capacity,h.used_capacity,h.status,h.draining,h.last_heartbeat_at,
+		COALESCE((SELECT jsonb_agg(c.payload) FROM device_host_commands c
+			WHERE c.host_id=h.id AND c.status IN ('pending','leased')
+			AND c.command_type IN ('create','rebuild','validate_image')
+			AND COALESCE(c.payload->>'device_id','')<>$2),'[]'::jsonb),
+		EXISTS (SELECT 1 FROM devices cached WHERE cached.host_id=h.id AND cached.image_id=$3
+			AND cached.lifecycle_status<>'deleted') OR EXISTS (SELECT 1 FROM device_host_commands cached_command
+			WHERE cached_command.host_id=h.id AND cached_command.command_type='validate_image'
+			AND cached_command.status='succeeded' AND cached_command.payload->>'image_id'=$3)
+		FROM device_hosts h WHERE h.id=$1`, device.HostID, device.ID, imageID).
+		Scan(&capacityRaw, &usedRaw, &status, &draining, &lastHeartbeat, &pendingRaw, &imageCached)
+	if err != nil {
+		return capacity.Result{}, rowError(err)
+	}
+	if status != domain.HostOnline || draining || lastHeartbeat == nil || time.Since(*lastHeartbeat) > 30*time.Second {
+		return capacity.Result{}, management.ErrHostUnavailable
+	}
+	var capacityMap, usedMap map[string]any
+	var pending []map[string]any
+	if json.Unmarshal(capacityRaw, &capacityMap) != nil || json.Unmarshal(usedRaw, &usedMap) != nil || json.Unmarshal(pendingRaw, &pending) != nil {
+		return capacity.Result{}, management.ErrInvalidArgument
+	}
+	host, dynamic := capacity.HostFromMap(capacityMap)
+	if !dynamic {
+		return capacity.Result{Fits: true, Additional: 1}, nil
+	}
+	if host.CollectedAt.IsZero() || time.Since(host.CollectedAt) > 30*time.Second {
+		return capacity.Result{}, management.ErrHostUnavailable
+	}
+	existing := capacity.Allocation{
+		CPUCores: number(usedMap["cpu_cores"]), MemoryMB: int64(number(usedMap["memory_mb"])),
+		DiskMB: int64(number(usedMap["data_disk_mb"])), Slots: int(number(usedMap["device_slots"])),
+	}
+	existing.CPUCores = maxFloat(0, existing.CPUCores-current.ContainerCPUCores)
+	existing.MemoryMB = maxInt64(0, existing.MemoryMB-current.ContainerMemoryMB)
+	existing.DiskMB = maxInt64(0, existing.DiskMB-current.DataDiskMB)
+	existing.Slots = maxInt(0, existing.Slots-1)
+	host.MemoryAvailableMB = minInt64(host.MemoryTotalMB, host.MemoryAvailableMB+current.ContainerMemoryMB)
+	host.DiskAvailableMB = minInt64(host.DiskTotalMB, host.DiskAvailableMB+current.DataDiskMB)
+	pendingAllocation := capacity.Allocation{}
+	for _, payload := range pending {
+		profile, parseErr := runtimeprofile.Parse(mapValue(payload, "runtime_profile"))
+		if parseErr != nil {
+			return capacity.Result{}, management.ErrInvalidArgument
+		}
+		pendingAllocation.CPUCores += profile.ContainerCPUCores
+		pendingAllocation.MemoryMB += profile.ContainerMemoryMB
+		pendingAllocation.DiskMB += profile.DataDiskMB + profile.ImageDiskMB
+		pendingAllocation.Slots++
+	}
+	return capacity.Evaluate(host, existing, pendingAllocation, target, imageCached), nil
+}
+
+func number(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int64:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+func mapValue(values map[string]any, key string) map[string]any {
+	value, _ := values[key].(map[string]any)
+	return value
+}
+func maxFloat(left, right float64) float64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+func minInt64(left, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
+}
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
 const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
 const hostSelect = `SELECT id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
 const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
 const deviceSelect = `SELECT devices.id,devices.host_id,devices.image_id,devices.device_kind,devices.provider_type,devices.provider_ref,
     devices.lifecycle_mode,devices.serial,devices.stf_serial,devices.adb_endpoint,devices.appium_endpoint,devices.capabilities,
-    devices.lifecycle_status,devices.health_status,devices.health_reason,devices.consecutive_failures,devices.created_at,devices.updated_at FROM devices`
+    devices.runtime_profile_override,COALESCE(devices.runtime_profile_override,device_image.resource_config,'{}'::jsonb),
+    devices.pending_image_id,devices.pending_runtime_profile,devices.reimage_status,devices.reimage_error,
+    devices.lifecycle_status,devices.health_status,devices.health_reason,devices.consecutive_failures,devices.created_at,devices.updated_at
+    FROM devices LEFT JOIN device_images device_image ON device_image.id=devices.image_id`
 
 func getImage(ctx context.Context, query database.Querier, id string) (management.Image, error) {
 	value, err := scanImage(query.QueryRow(ctx, imageSelect+` WHERE id=$1`, id))
@@ -577,10 +695,21 @@ func scanPoolImage(row rowScanner) (management.PoolImage, error) {
 }
 func scanDevice(row rowScanner) (management.Device, error) {
 	var v management.Device
-	var raw []byte
-	err := row.Scan(&v.ID, &v.HostID, &v.ImageID, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint, &raw, &v.LifecycleStatus, &v.HealthStatus, &v.HealthReason, &v.ConsecutiveFailures, &v.CreatedAt, &v.UpdatedAt)
+	var capabilities, override, effective, pending []byte
+	err := row.Scan(&v.ID, &v.HostID, &v.ImageID, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
+		&capabilities, &override, &effective, &v.PendingImageID, &pending, &v.ReimageStatus, &v.ReimageError,
+		&v.LifecycleStatus, &v.HealthStatus, &v.HealthReason, &v.ConsecutiveFailures, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {
-		err = json.Unmarshal(raw, &v.Capabilities)
+		err = json.Unmarshal(capabilities, &v.Capabilities)
+	}
+	if err == nil && len(override) > 0 {
+		err = json.Unmarshal(override, &v.RuntimeProfileOverride)
+	}
+	if err == nil {
+		err = json.Unmarshal(effective, &v.EffectiveRuntimeProfile)
+	}
+	if err == nil && len(pending) > 0 {
+		err = json.Unmarshal(pending, &v.PendingRuntimeProfile)
 	}
 	return v, err
 }

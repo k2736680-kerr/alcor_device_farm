@@ -244,4 +244,30 @@ describe('DevicesPage device categories', () => {
     await waitFor(() => expect(deleteRequests).toBe(1))
     expect(await screen.findByText(/删除任务已受理/)).toBeInTheDocument()
   })
+
+  it('edits an idle emulator only after warning that APK and device data are erased', async () => {
+    const user = userEvent.setup()
+    let reimageRequests = 0
+    server.use(http.post('/api/v1/devices/:id/reimages', async ({ request, params }) => {
+      const body = await request.json() as { image_id: string; runtime_profile: { container_memory_mb?: number }; reason: string }
+      expect(params.id).toBe('device_00000000000001')
+      expect(body.image_id).toBe('image_00000000000001')
+      expect(body.runtime_profile.container_memory_mb).toBe(5120)
+      expect(body.reason).toBe('验证不同运行规格')
+      reimageRequests += 1
+      return HttpResponse.json({ request_id: 'req_reimage_test', data: { ...sampleDevices[0], lifecycle_status: 'provisioning', reimage_status: 'pending' }, error: null }, { status: 202 })
+    }))
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '编辑配置' }))
+    expect(await screen.findByText('重装会清空这台模拟器里的 APK 和全部设备数据')).toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('例如：需要验证 Android 15 兼容性'), '验证不同运行规格')
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    expect((await screen.findAllByText('确认更换镜像并重装？')).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '确认清空并重装' }))
+    await waitFor(() => expect(reimageRequests).toBe(1))
+    expect(await screen.findByText(/重装任务已受理/)).toBeInTheDocument()
+  })
 })

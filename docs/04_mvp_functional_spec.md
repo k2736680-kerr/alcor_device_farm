@@ -257,7 +257,7 @@ Reconciler：
 - Image：列表、详情、创建/编辑、验证状态和池配置；
 - Host：列表、心跳、容量、drain/undrain；
 - Pool：列表、租期、Image、Device membership 和单一目标设备数；Pool 并发由启用 Image 目标自动同步；
-- Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine；
+- Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine，以及空闲 Emulator 的镜像和运行规格编辑；
 - Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
 - STF 原生远控：管理员从 Device 行一键创建精确设备短租约，无需再次输入 STF 账号密码，并在新标签页打开 STF 原生单设备控制页；
 - 设备域审计：按资源查看操作人、原因、request ID、动作和时间。
@@ -273,12 +273,15 @@ Reconciler：
 - 不能实现 STF 的画面、触控、日志、文件和 ADB 协议，只复用 STF 原生页面和 Adapter。
 - 远控点击挂断或检测到标签页关闭时必须结束 Reservation、释放 STF claim 并进入重建；浏览器崩溃、断网或整机关闭由心跳停止、短租约和 Reaper 兜底。
 - 第一阶段只允许管理员同时操控一台设备；STF Web JWT 极短有效，签名 Secret、STF API Token 和 ADB TCP `remoteConnect` 地址不得进入浏览器持久存储或普通日志。
+- Emulator 更换 Image、CPU、内存、数据盘或图形模式必须二次确认并明确提示 APK 和设备数据会被清空；当前配置只在目标实例通过 ADB、STF、Appium 全部检查后切换，失败时恢复旧配置一次，不能提前把数据库伪装成目标配置。
 
 技术栈固定为 pnpm 11、Vite、React、TypeScript、Ant Design、React Router、TanStack Query 和 Orval；Orval 从设备 OpenAPI 生成 fetch client、类型和 Query hooks。测试使用 Vitest、React Testing Library、MSW 和 Playwright。生产构建嵌入现有 Go Server 并由 `/console/` 同源提供。
 
 DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现有 Service Bearer 和 `/api/v1/device-*` 路径保持兼容，只增加 Console 会话、安全方案、精确成功响应和分页元数据。
 
 DF-031 只向现有 `1.2.0` 契约增加管理员专用 `/console/api/v1/devices/{id}/remote-control*` 接口；既有 Alcor Adapter 的 Service Bearer、Reservation 和 Device 响应保持兼容，冻结哈希随有意变更更新。
+
+DF-034 将契约版本提升为 `1.5.0`，新增 Device 当前/有效/待应用运行规格和 `POST /api/v1/devices/{id}/reimages`。该接口只编排设备域已有的 Host Command、Docker Provider、STF 和 Appium Adapter，不在 Console 重写底层能力。
 
 ### 4.12 其他资源状态
 
@@ -324,6 +327,7 @@ DF-031 只向现有 `1.2.0` 契约增加管理员专用 `/console/api/v1/devices
 - `GET /api/v1/devices/:id`
 - `POST /api/v1/devices/:id/restarts`
 - `POST /api/v1/devices/:id/rebuilds`
+- `POST /api/v1/devices/:id/reimages`
 - `POST /api/v1/devices/:id/quarantines`
 - `DELETE /api/v1/devices/:id/quarantines`
 

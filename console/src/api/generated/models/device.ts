@@ -3,13 +3,15 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.4.0
+ * OpenAPI spec version: 1.5.0
  */
 import type { Identifier } from './identifier';
 import type { DeviceDeviceKind } from './deviceDeviceKind';
 import type { DeviceProviderType } from './deviceProviderType';
 import type { DeviceLifecycleMode } from './deviceLifecycleMode';
 import type { DeviceCapabilities } from './deviceCapabilities';
+import type { EmulatorRuntimeProfile } from './emulatorRuntimeProfile';
+import type { DeviceReimageStatus } from './deviceReimageStatus';
 import type { DeviceLifecycleStatus } from './deviceLifecycleStatus';
 import type { HealthStatus } from './healthStatus';
 
@@ -28,6 +30,12 @@ export interface Device {
   appium_endpoint?: string;
   /** appiumUdid 存放 Appium 所在网络空间使用的 UDID；缺省时 Adapter 回退 serial。 */
   capabilities: DeviceCapabilities;
+  runtime_profile_override?: EmulatorRuntimeProfile;
+  effective_runtime_profile: EmulatorRuntimeProfile;
+  pending_image_id?: Identifier;
+  pending_runtime_profile?: EmulatorRuntimeProfile;
+  reimage_status: DeviceReimageStatus;
+  reimage_error?: string;
   lifecycle_status: DeviceLifecycleStatus;
   health_status: HealthStatus;
   health_reason?: string;
