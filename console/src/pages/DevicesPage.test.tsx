@@ -1,7 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { focusManager } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { sampleDevices } from '../test/handlers'
 import { server } from '../test/server'
@@ -23,6 +24,8 @@ function DevicesPageWithRemoteControl({
 }
 
 describe('DevicesPage device categories', () => {
+  afterEach(() => focusManager.setFocused(undefined))
+
   it('opens the selected STF control page and ends the session when the tab closes', async () => {
     const user = userEvent.setup()
     let endRequests = 0
@@ -83,6 +86,42 @@ describe('DevicesPage device categories', () => {
     expect(endRequests).toBe(0)
     expect(within(row as HTMLElement).getByRole('button', { name: /挂\s*断/ })).toBeInTheDocument()
   }, 8_000)
+
+  it('continues polling and opens STF while the Console tab is in the background', async () => {
+    const user = userEvent.setup()
+    let statusRequests = 0
+    const replace = vi.fn()
+    const popup = {
+      closed: false,
+      close: vi.fn(() => { popup.closed = true }),
+      document: { title: '', body: { textContent: '' } },
+      location: { replace },
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const connecting = {
+      device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'connecting', heartbeat_interval_seconds: 15,
+    }
+    const connected = {
+      ...connecting, status: 'connected', url: 'http://stf.test/#!/control/emulator-5554',
+    }
+    server.use(
+      http.post('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_start', data: connecting, error: null })),
+      http.get('/console/api/v1/devices/:id/remote-control', () => {
+        statusRequests += 1
+        const data = statusRequests === 1 ? connecting : connected
+        return HttpResponse.json({ request_id: 'req_remote_get', data, error: null })
+      }),
+    )
+    focusManager.setFocused(false)
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(connected.url), { timeout: 3_000 })
+    expect(statusRequests).toBeGreaterThanOrEqual(2)
+  }, 6_000)
 
   it('cancels a connection that never leaves the connecting state', async () => {
     const user = userEvent.setup()

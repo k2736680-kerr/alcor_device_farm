@@ -95,6 +95,10 @@ export function RemoteControlProvider({
         enabled: remoteState?.started === true,
         retry: false,
         refetchInterval: remoteState?.started ? 1_000 : false,
+        // Opening the placeholder popup backgrounds the Console tab. Keep
+        // polling there so a ready STF URL can replace about:blank without
+        // requiring the administrator to focus the Console again.
+        refetchIntervalInBackground: true,
       },
     },
   )

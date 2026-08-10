@@ -22,10 +22,19 @@ ID 映射保持一致：Reservation 的精确目标和最终 `device_id` 都使�
 - 取消/挂断遇到设备或远控 404 时按“已经结束”收敛，不显示异常错误。
 - 远控会话提升到 Console 全局 Provider，跨路由继续心跳，刷新后可从 `sessionStorage` 恢复服务端真相。
 - 跨域窗口只在稳定观察窗口后才启用关闭检测，避免 STF 跳转期间误释放。
+- 打开 `about:blank` 占位页后，即使 Console 成为后台标签页，也继续轮询远控状态；STF URL 就绪后自动替换占位页，不再依赖管理员切回 Console 触发窗口焦点查询。
 
 ## 验证
 
 - `go test ./...`：通过。
-- `pnpm test`：7 个测试文件、25 项测试通过。
+- `pnpm test`：7 个测试文件、26 项测试通过。
 - `pnpm build`：OpenAPI 生成、TypeScript 编译和 Vite 生产构建通过。
-- 回归覆盖：请求超时、服务端 deadline、永久 connecting 自动取消、启动响应丢失补偿、404 幂等挂断、跨路由心跳、刷新恢复、跨域窗口误判与真实关闭释放。
+- 回归覆盖：请求超时、服务端 deadline、永久 connecting 自动取消、启动响应丢失补偿、404 幂等挂断、后台标签页持续查询、跨路由心跳、刷新恢复、跨域窗口误判与真实关闭释放。
+
+## 后台轮询现场回归
+
+- 现场 Reservation `de0acab1-004c-4721-bc51-79b7e7c82209` 于 `04:24:51` 激活；首次 GET 后直到管理员于 `04:25:24` 切回 Console 才再次 GET，证明设备已就绪但前端后台轮询暂停，空等约 33 秒。
+- 正式容器已部署 `alcor-device-farm:df031-20260810-fullfix-bg-poll`，镜像 ID `sha256:c97fa4faf0bd28f7424b2768c972615b371bb85de94f59be98840d696b0b8ed8`。
+- 正式 HTTPS `/healthz`、`/readyz` 均返回 200，Console 资源为 `assets/index-hcSkV5ht.js`；部署前生命周期修复镜像保留在停止容器 `alcor-device-farm-server-df017-rollback-lifecycle-only-20260810`。
+
+本轮同时确认 Android 16 冷启动存在独立的系统级 ANR：SystemUI、Google Play 服务、Phone 与输入法在同一启动窗口发生超时，Launcher 首次绘制约 12.6 秒。该问题属于 Emulator Image 启动稳定门禁，不以增加 Console 等待时间冒充修复，后续需单独修改并真实验收镜像。
