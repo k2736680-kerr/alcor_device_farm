@@ -198,7 +198,10 @@ func (handler *managementHandler) updatePool(writer http.ResponseWriter, request
 	if !decode(writer, request, &input) {
 		return
 	}
-	value, err := handler.service.UpdatePool(request.Context(), request.PathValue("id"), input)
+	value, err := handler.service.UpdatePool(
+		request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID,
+	)
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) listPoolImages(writer http.ResponseWriter, request *http.Request) {

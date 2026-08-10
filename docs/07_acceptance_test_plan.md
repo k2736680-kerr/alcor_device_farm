@@ -120,14 +120,16 @@
 | AT-EMU-004 | P0 | rebuild | 新实例不保留上一次 App 和测试文件 |
 | AT-EMU-005 | P0 | 创建两个不同 Device Image | Host Command、Agent 校验和 Docker 容器分别使用各自 `docker_image`，rebuild 不串换版本 |
 | AT-EMU-006 | P1 | 删除设备 | 容器、网络、端口、卷和数据库引用按策略清理 |
-| AT-EMU-007 | P0 | `min_ready=1/max_instances=1` 且池为空 | 自动创建并加入一台；两个 Controller 并发不超建；第二个预约不突破上限 |
+| AT-EMU-007 | P0 | Pool `total_target=1/min_ready=1` 且为空 | 使用 Pool 默认 Image 自动创建并加入一台；两个 Controller 并发不超建；第二个预约不突破总目标/最大并发 |
 | AT-EMU-008 | P2 | 资源允许时创建两台 Emulator | serial、ADB/Appium 端口、容器名互不冲突 |
-| AT-EMU-009 | P0 | 控制台把目标从 1 调到 2 | 无需修改/重启 Agent；Pool 并发和 Host 槽位自动同步；Controller 自动补齐到 2 |
+| AT-EMU-009 | P0 | 控制台把 Pool 总目标和最小预热从 1 调到 2 | 无需修改/重启 Agent；资源足够时 Controller 自动补齐到 2，资源不足时保留目标并报告容量不足，不伪造 Host 容量 |
 | AT-EMU-010 | P0 | 目标从 3 调到 1，三台均空闲 | 删除最旧两台并保留最新；Device 标记 deleted；容器、网络和卷无残留 |
-| AT-EMU-011 | P0 | 最旧设备存在 active Reservation 时缩容 | 不强删、不影响预约；释放后自动继续缩容 |
+| AT-EMU-011 | P0 | 最旧设备存在 active Reservation 时缩容 | 不强删、不影响预约；存在其他空闲设备时删除最旧的可删空闲设备，全部占用时等待释放 |
 | AT-EMU-012 | P0 | 两个 Controller 并发缩容 | 每台超额设备只有一个有效 delete Command，无重复删除或扩缩容振荡 |
 | AT-EMU-013 | P0 | delete 连续失败 | Host Command 按上限重试；设备最终 quarantined/unhealthy、不可调度且有健康事件和审计 |
 | AT-EMU-014 | P0 | 管理员删除隔离设备 | 仅 quarantined/stopped 且无活动预约可提交；相同幂等键单命令；成功后资源清理、membership 禁用、Device=deleted、Endpoint 为空 |
+| AT-EMU-015 | P0 | Pool 同时登记 Android 13～16 并切换默认 Image | 镜像数量不相加；已有设备不重装，后续自动补建设备使用新默认 Image |
+| AT-EMU-016 | P0 | `total_target=3/min_ready=0/max_concurrency=2` | 空闲时不维持常驻预热设备；出现默认 Image 可满足的 pending Reservation 时按需创建；总设备数不超过 3、同时占用不超过 2，三个值可在 Console 独立调整并受关系校验 |
 
 ### 4.5 STF 和 Appium
 

@@ -141,7 +141,9 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatalf("scale-down audit rows=%d", scaleDownAudits)
 	}
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-pools/"+pool.ID+"/images", nil, serviceToken, ""), http.StatusOK)
-	assertStatus(t, environment.request(t, http.MethodDelete, poolImagePath, nil, serviceToken, ""), http.StatusOK)
+	// The active default image cannot be disabled. Administrators must first
+	// select another ready catalog image as the Pool default.
+	assertStatus(t, environment.request(t, http.MethodDelete, poolImagePath, nil, serviceToken, ""), http.StatusConflict)
 	assertStatus(t, environment.request(t, http.MethodPut, poolImagePath, map[string]any{"min_ready": 2, "max_instances": 2, "enabled": true}, serviceToken, ""), http.StatusOK)
 
 	if _, err := environment.db.Pool().Exec(context.Background(), "UPDATE device_hosts SET status='online',draining=false WHERE id=$1", host.ID); err != nil {
@@ -346,6 +348,26 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusConflict)
 	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+pool.ID, validPoolInput(true), serviceToken, ""), http.StatusOK)
 	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusOK)
+	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+pool.ID, map[string]any{
+		"name":                  "default-pool",
+		"default_lease_seconds": 900,
+		"max_lease_seconds":     1800,
+		"max_concurrency":       1,
+		"total_target":          1,
+		"min_ready":             0,
+		"default_image_id":      image.ID,
+		"reason":                "reduce integration pool capacity",
+	}, serviceToken, ""), http.StatusOK)
+	var totalTarget, minReady, maxConcurrency int
+	var defaultImageID string
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT total_target,min_ready,max_concurrency,default_image_id
+		FROM device_pools WHERE id=$1`, pool.ID).Scan(&totalTarget, &minReady, &maxConcurrency, &defaultImageID); err != nil {
+		t.Fatal(err)
+	}
+	if totalTarget != 1 || minReady != 0 || maxConcurrency != 1 || defaultImageID != image.ID {
+		t.Fatalf("pool capacity total=%d min_ready=%d max_concurrency=%d default_image=%s",
+			totalTarget, minReady, maxConcurrency, defaultImageID)
+	}
 
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-hosts/"+host.ID+"/drains", reasonBody(), serviceToken, ""), http.StatusOK)
 	_, err = environment.service.ProvisionMockDevice(context.Background(), management.ProvisionMockDeviceInput{

@@ -3,8 +3,9 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.3.0
+ * OpenAPI spec version: 1.4.0
  */
+import type { Identifier } from './identifier';
 
 export interface DevicePoolInput {
   /**
@@ -18,5 +19,22 @@ export interface DevicePoolInput {
   max_lease_seconds: number;
   /** @minimum 1 */
   max_concurrency: number;
+  /**
+   * Must be greater than or equal to max_concurrency.
+   * @minimum 1
+   */
+  total_target?: number;
+  /**
+   * Must not exceed total_target.
+   * @minimum 0
+   */
+  min_ready?: number;
+  /** Must be an enabled, ready Image associated with the Pool when updating. */
+  default_image_id?: Identifier;
   enabled?: boolean;
+  /**
+   * Required when lowering total_target because automatic scale down deletes idle emulator resources.
+   * @maxLength 500
+   */
+  reason?: string;
 }

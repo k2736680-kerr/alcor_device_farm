@@ -53,8 +53,30 @@ $test$;
 INSERT INTO device_hosts (id, name, host_type, status)
 VALUES ('host_000000000000001', 'df004-host', 'docker_emulator', 'online');
 
-INSERT INTO device_pools (id, name, default_lease_seconds, max_lease_seconds, max_concurrency)
-VALUES ('pool_000000000000001', 'df004-pool', 1800, 7200, 2);
+INSERT INTO device_pools (
+    id, name, default_lease_seconds, max_lease_seconds, max_concurrency,
+    total_target, min_ready, default_image_id
+)
+VALUES (
+    'pool_000000000000001', 'df004-pool', 1800, 7200, 2,
+    2, 1, 'img_0000000000000001'
+);
+
+DO $test$
+DECLARE
+    rejected boolean := false;
+BEGIN
+    BEGIN
+        UPDATE device_pools SET total_target = 1, min_ready = 2
+        WHERE id = 'pool_000000000000001';
+    EXCEPTION WHEN check_violation THEN
+        rejected := true;
+    END;
+    IF NOT rejected THEN
+        RAISE EXCEPTION 'pool min_ready above total_target was accepted';
+    END IF;
+END
+$test$;
 
 INSERT INTO devices (
     id, host_id, image_id, device_kind, provider_type, provider_ref,

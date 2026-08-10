@@ -3,9 +3,10 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.3.0
+ * OpenAPI spec version: 1.4.0
  */
 import type { Identifier } from './identifier';
+import type { DevicePoolDefaultImageId } from './devicePoolDefaultImageId';
 import type { DevicePoolStatus } from './devicePoolStatus';
 
 export interface DevicePool {
@@ -14,6 +15,15 @@ export interface DevicePool {
   default_lease_seconds: number;
   max_lease_seconds: number;
   max_concurrency: number;
+  /** Pool-wide emulator target; Image targets are not summed. */
+  total_target: number;
+  /** Minimum ready objective within total_target. */
+  min_ready: number;
+  /**
+   * Image used for future automatic additions; changing it does not reimage existing Devices.
+   * @nullable
+   */
+  default_image_id?: DevicePoolDefaultImageId;
   status: DevicePoolStatus;
   created_at: string;
   updated_at: string;

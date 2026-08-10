@@ -83,11 +83,11 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	result.ValidationsQueued += validations.ValidationsQueued
 	result.ValidationsCompleted += validations.ValidationsCompleted
 	result.ValidationsFailed += validations.ValidationsFailed
-	rows, err := controller.db.Pool().Query(ctx, `SELECT pi.pool_id,pi.image_id
-		FROM device_pool_images pi
-		JOIN device_pools p ON p.id=pi.pool_id AND p.status='active'
-		JOIN device_images i ON i.id=pi.image_id AND i.status='ready'
-		WHERE pi.enabled ORDER BY pi.pool_id,pi.image_id`)
+	rows, err := controller.db.Pool().Query(ctx, `SELECT p.id,p.default_image_id
+		FROM device_pools p
+		JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=p.default_image_id AND pi.enabled
+		JOIN device_images i ON i.id=p.default_image_id AND i.status='ready'
+		WHERE p.status='active' ORDER BY p.id`)
 	if err != nil {
 		return Result{}, err
 	}
@@ -124,6 +124,7 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 type scaleDownDevice struct {
 	ID           string
 	HostID       string
+	ImageID      string
 	ProviderRef  string
 	Lifecycle    domain.DeviceLifecycleStatus
 	Health       domain.HealthStatus
@@ -266,22 +267,29 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 func (controller *Controller) queueScaleDown(
 	ctx context.Context,
 	tx pgx.Tx,
-	poolID, imageID string,
+	poolID string,
 	target, excess int,
 ) (int, error) {
 	queued := 0
 	for queued < excess {
 		var current scaleDownDevice
-		err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT d.id,d.host_id,d.provider_ref,d.lifecycle_status,d.health_status,
+		err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT d.id,d.host_id,d.image_id,d.provider_ref,d.lifecycle_status,d.health_status,
 			EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status='active'),
 			EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased')),
 			EXISTS (SELECT 1 FROM device_pool_devices other WHERE other.device_id=d.id AND other.enabled AND other.pool_id<>$1)
 			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
 			JOIN device_hosts h ON h.id=d.host_id
-			WHERE pd.pool_id=$1 AND pd.enabled AND d.image_id=$2 AND d.device_kind='emulator'
+			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator'
 			AND d.provider_type='docker_emulator' AND %s
+			AND d.lifecycle_status IN ('ready','stopped','quarantined')
+			AND NOT EXISTS (SELECT 1 FROM device_reservations active_use
+				WHERE active_use.device_id=d.id AND active_use.status='active')
+			AND NOT EXISTS (SELECT 1 FROM device_host_commands active_command
+				WHERE active_command.payload->>'device_id'=d.id AND active_command.status IN ('pending','leased'))
+			AND NOT EXISTS (SELECT 1 FROM device_pool_devices shared_membership
+				WHERE shared_membership.device_id=d.id AND shared_membership.enabled AND shared_membership.pool_id<>$1)
 			ORDER BY d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate),
-			poolID, imageID).Scan(&current.ID, &current.HostID, &current.ProviderRef, &current.Lifecycle,
+			poolID).Scan(&current.ID, &current.HostID, &current.ImageID, &current.ProviderRef, &current.Lifecycle,
 			&current.Health, &current.HasActiveUse, &current.HasCommand, &current.Shared)
 		if errors.Is(err, pgx.ErrNoRows) {
 			break
@@ -313,12 +321,12 @@ func (controller *Controller) queueScaleDown(
 			return queued, err
 		}
 		payload, err := json.Marshal(map[string]any{"operation_source": "warm_pool_scale_down",
-			"device_id": current.ID, "pool_id": poolID, "image_id": imageID, "provider_ref": current.ProviderRef,
+			"device_id": current.ID, "pool_id": poolID, "image_id": current.ImageID, "provider_ref": current.ProviderRef,
 			"target_instances": target})
 		if err != nil {
 			return queued, err
 		}
-		hash := sha256.Sum256([]byte(poolID + "\x00" + imageID + "\x00" + current.ID + "\x00" + fmt.Sprint(target)))
+		hash := sha256.Sum256([]byte(poolID + "\x00" + current.ImageID + "\x00" + current.ID + "\x00" + fmt.Sprint(target)))
 		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
 			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
 			VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`, commandID, current.HostID, payload,
@@ -342,7 +350,7 @@ func (controller *Controller) queueScaleDown(
 			VALUES($1,'system','system','scale_down_device','device',$2,$3,
 			'automatic fixed target scale down',jsonb_build_object('command_id',$4::text,'pool_id',$5::text,
 			'image_id',$6::text,'target_instances',$7::int))`, auditID, current.ID, "scale-down-"+commandID,
-			commandID, poolID, imageID, target); err != nil {
+			commandID, poolID, current.ImageID, target); err != nil {
 			return queued, err
 		}
 		queued++
@@ -744,67 +752,80 @@ func transitionImage(ctx context.Context, tx pgx.Tx, imageID string, from, to do
 func (controller *Controller) reconcile(ctx context.Context, poolID, imageID string) (Result, error) {
 	result := Result{}
 	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
-		var minReady, maxInstances int
+		var minReady, totalTarget int
 		var apiLevel int
 		var runtimeImage, digest, abi, resolution string
 		var resourceConfig []byte
-		if err := tx.QueryRow(ctx, `SELECT pi.min_ready,pi.max_instances,i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,i.resource_config
-			FROM device_pool_images pi JOIN device_pools p ON p.id=pi.pool_id
-			JOIN device_images i ON i.id=pi.image_id
-			WHERE pi.pool_id=$1 AND pi.image_id=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
-			FOR UPDATE OF pi`, poolID, imageID).Scan(&minReady, &maxInstances, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &resourceConfig); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT p.min_ready,p.total_target,i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,i.resource_config
+			FROM device_pools p JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=p.default_image_id
+			JOIN device_images i ON i.id=p.default_image_id
+			WHERE p.id=$1 AND p.default_image_id=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
+			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &resourceConfig); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
 			return err
 		}
-		ready, invalid, err := controller.completeSuccessfulCreates(ctx, tx, poolID, imageID)
+		capabilities := map[string]any{"platformName": "Android", "apiLevel": apiLevel, "abi": abi, "resolution": resolution}
+		var resources map[string]any
+		if err := json.Unmarshal(resourceConfig, &resources); err != nil {
+			return fmt.Errorf("invalid image resource config: %w", err)
+		}
+		for key, value := range resources {
+			capabilities[key] = value
+		}
+		capabilitiesJSON, err := json.Marshal(capabilities)
+		if err != nil {
+			return err
+		}
+		ready, invalid, err := controller.completeSuccessfulCreates(ctx, tx, poolID)
 		if err != nil {
 			return err
 		}
 		result.DevicesReady = ready
 		result.DevicesFailed = invalid
-		failed, err := controller.quarantineFailedCreates(ctx, tx, poolID, imageID)
+		failed, err := controller.quarantineFailedCreates(ctx, tx, poolID)
 		if err != nil {
 			return err
 		}
 		result.DevicesFailed += failed
-		backoff, err := creationBackoff(ctx, tx, poolID, imageID)
+		backoff, err := creationBackoff(ctx, tx, poolID)
 		if err != nil {
 			return err
 		}
-		var activeInstances, readyOrCreating int
+		var activeInstances, readyOrCreating, defaultReadyOrCreating int
 		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT
 			count(*) FILTER (WHERE %s),
-			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready'))
+			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready')),
+			count(*) FILTER (WHERE d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting','ready'))
 			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
 			JOIN device_hosts h ON h.id=d.host_id
-			WHERE pd.pool_id=$1 AND pd.enabled AND d.image_id=$2 AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
-			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating); err != nil {
+			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
+			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating); err != nil {
 			return err
 		}
-		if activeInstances > maxInstances {
-			queued, err := controller.queueScaleDown(ctx, tx, poolID, imageID, maxInstances, activeInstances-maxInstances)
+		if activeInstances > totalTarget {
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, totalTarget, activeInstances-totalTarget)
 			if err != nil {
 				return err
 			}
 			result.DeletesQueued += queued
 			return nil
 		}
-		missing := min(minReady-readyOrCreating, maxInstances-activeInstances)
+		var pendingDemand int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_reservations
+			WHERE pool_id=$1 AND status='pending'
+			AND NOT requested_capabilities ? '_device_farm_target_device_id'
+			AND $2::jsonb @> requested_capabilities`, poolID, capabilitiesJSON).Scan(&pendingDemand); err != nil {
+			return err
+		}
+		missing := min(max(minReady-readyOrCreating, pendingDemand-defaultReadyOrCreating), totalTarget-activeInstances)
 		if missing <= 0 {
 			return nil
 		}
 		if backoff {
 			result.BackoffSkips++
 			return nil
-		}
-		capabilities := map[string]any{"platformName": "Android", "apiLevel": apiLevel, "abi": abi, "resolution": resolution}
-		var resources map[string]any
-		if json.Unmarshal(resourceConfig, &resources) == nil {
-			for key, value := range resources {
-				capabilities[key] = value
-			}
 		}
 		profile, err := runtimeprofile.Parse(resources)
 		if err != nil {
@@ -829,16 +850,16 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 	return result, err
 }
 
-func (controller *Controller) completeSuccessfulCreates(ctx context.Context, tx pgx.Tx, poolID, imageID string) (int, int, error) {
+func (controller *Controller) completeSuccessfulCreates(ctx context.Context, tx pgx.Tx, poolID string) (int, int, error) {
 	rows, err := tx.Query(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,c.result
 		FROM devices d JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
 		JOIN LATERAL (SELECT result FROM device_host_commands WHERE command_type='create'
 			AND payload->>'device_id'=d.id AND status='succeeded' ORDER BY completed_at DESC,id DESC LIMIT 1) c ON true
-		WHERE pd.pool_id=$1 AND d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting')
+		WHERE pd.pool_id=$1 AND d.lifecycle_status IN ('provisioning','booting')
 		AND NOT EXISTS (SELECT 1 FROM device_host_commands active_rebuild
 			WHERE active_rebuild.payload->>'device_id'=d.id AND active_rebuild.command_type='rebuild'
 			AND active_rebuild.status IN ('pending','leased'))
-		FOR UPDATE OF d`, poolID, imageID)
+		FOR UPDATE OF d`, poolID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1071,13 +1092,13 @@ func mapValue(values map[string]any, key string) map[string]any {
 	return nil
 }
 
-func (controller *Controller) quarantineFailedCreates(ctx context.Context, tx pgx.Tx, poolID, imageID string) (int, error) {
+func (controller *Controller) quarantineFailedCreates(ctx context.Context, tx pgx.Tx, poolID string) (int, error) {
 	rows, err := tx.Query(ctx, `SELECT d.id,d.lifecycle_status,d.health_status
 		FROM devices d JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
-		WHERE pd.pool_id=$1 AND d.image_id=$2 AND d.lifecycle_status='provisioning'
+		WHERE pd.pool_id=$1 AND d.lifecycle_status='provisioning'
 		AND EXISTS (SELECT 1 FROM device_host_commands c WHERE c.command_type='create'
 			AND c.payload->>'device_id'=d.id AND c.status IN ('failed','timed_out'))
-		FOR UPDATE OF d`, poolID, imageID)
+		FOR UPDATE OF d`, poolID)
 	if err != nil {
 		return 0, err
 	}
@@ -1136,14 +1157,14 @@ func (controller *Controller) quarantineFailedCreates(ctx context.Context, tx pg
 	return len(devices), nil
 }
 
-func creationBackoff(ctx context.Context, tx pgx.Tx, poolID, imageID string) (bool, error) {
+func creationBackoff(ctx context.Context, tx pgx.Tx, poolID string) (bool, error) {
 	var failures int
 	var lastFailure *time.Time
 	err := tx.QueryRow(ctx, `SELECT count(*),max(c.completed_at) FROM device_host_commands c
 		JOIN devices d ON d.id=c.payload->>'device_id'
 		JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
-		WHERE pd.pool_id=$1 AND d.image_id=$2 AND c.command_type='create'
-		AND c.status IN ('failed','timed_out') AND c.completed_at>clock_timestamp()-interval '1 hour'`, poolID, imageID).
+		WHERE pd.pool_id=$1 AND c.command_type='create'
+		AND c.status IN ('failed','timed_out') AND c.completed_at>clock_timestamp()-interval '1 hour'`, poolID).
 		Scan(&failures, &lastFailure)
 	if err != nil || failures == 0 || lastFailure == nil {
 		return false, err

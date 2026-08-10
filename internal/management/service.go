@@ -210,8 +210,24 @@ func (service *Service) SetHostDraining(ctx context.Context, id string, draining
 }
 
 func (service *Service) CreatePool(ctx context.Context, clientID, key string, input PoolInput) (Pool, error) {
-	if err := validatePoolInput(input); err != nil {
+	totalTarget, minReady := input.MaxConcurrency, input.MaxConcurrency
+	if input.TotalTarget != nil {
+		totalTarget = *input.TotalTarget
+	}
+	if input.MinReady != nil {
+		minReady = *input.MinReady
+	}
+	if err := validatePoolInput(input, totalTarget, minReady); err != nil {
 		return Pool{}, err
+	}
+	var defaultImageID *string
+	if input.DefaultImageID != nil && strings.TrimSpace(*input.DefaultImageID) != "" {
+		imageID := strings.TrimSpace(*input.DefaultImageID)
+		image, err := service.store.GetImage(ctx, imageID)
+		if err != nil || image.Status != domain.ImageReady {
+			return Pool{}, ErrInvalidArgument
+		}
+		defaultImageID = &imageID
 	}
 	id, err := service.newID()
 	if err != nil {
@@ -222,7 +238,8 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 		status = domain.PoolDisabled
 	}
 	pool := Pool{ID: id, Name: input.Name, DefaultLeaseSeconds: input.DefaultLeaseSeconds,
-		MaxLeaseSeconds: input.MaxLeaseSeconds, MaxConcurrency: input.MaxConcurrency, Status: status}
+		MaxLeaseSeconds: input.MaxLeaseSeconds, MaxConcurrency: input.MaxConcurrency,
+		TotalTarget: totalTarget, MinReady: minReady, DefaultImageID: defaultImageID, Status: status}
 	meta, err := idempotency(clientID, "create_device_pool", key, "device_pool", id, input, 201)
 	if err != nil {
 		return Pool{}, err
@@ -241,13 +258,40 @@ func (service *Service) GetPool(ctx context.Context, id string) (Pool, error) {
 	return service.store.GetPool(ctx, id)
 }
 
-func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInput) (Pool, error) {
-	if err := validatePoolInput(input); err != nil {
-		return Pool{}, err
-	}
+func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInput, actor audit.Actor, requestID string) (Pool, error) {
 	current, err := service.store.GetPool(ctx, id)
 	if err != nil {
 		return Pool{}, err
+	}
+	oldTotalTarget := current.TotalTarget
+	totalTarget, minReady := current.TotalTarget, current.MinReady
+	if input.TotalTarget != nil {
+		totalTarget = *input.TotalTarget
+	}
+	if input.MinReady != nil {
+		minReady = *input.MinReady
+	}
+	if err := validatePoolInput(input, totalTarget, minReady); err != nil {
+		return Pool{}, err
+	}
+	if totalTarget < current.TotalTarget && !validReason(input.Reason) {
+		return Pool{}, ErrInvalidArgument
+	}
+	defaultImageID := current.DefaultImageID
+	if input.DefaultImageID != nil {
+		imageID := strings.TrimSpace(*input.DefaultImageID)
+		if imageID == "" {
+			return Pool{}, ErrInvalidArgument
+		}
+		image, imageErr := service.store.GetImage(ctx, imageID)
+		if imageErr != nil || image.Status != domain.ImageReady {
+			return Pool{}, ErrInvalidArgument
+		}
+		membership, membershipErr := service.store.GetPoolImage(ctx, id, imageID)
+		if membershipErr != nil || !membership.Enabled {
+			return Pool{}, ErrInvalidArgument
+		}
+		defaultImageID = &imageID
 	}
 	from := current.Status
 	if input.Enabled != nil {
@@ -268,7 +312,17 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 	}
 	current.Name, current.DefaultLeaseSeconds = input.Name, input.DefaultLeaseSeconds
 	current.MaxLeaseSeconds, current.MaxConcurrency = input.MaxLeaseSeconds, input.MaxConcurrency
-	return service.store.UpdatePool(ctx, current, from)
+	current.TotalTarget, current.MinReady, current.DefaultImageID = totalTarget, minReady, defaultImageID
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "pool capacity configuration updated"
+	}
+	event, err := service.deviceAudit(actor, requestID, "update_device_pool_capacity", reason)
+	if err != nil {
+		return Pool{}, err
+	}
+	event.DestructiveApproved = totalTarget >= oldTotalTarget || validReason(input.Reason)
+	return service.store.UpdatePool(ctx, current, from, event)
 }
 
 func (service *Service) ListPoolImages(ctx context.Context, poolID string, page paging.Page) (paging.Result[PoolImage], error) {
@@ -323,6 +377,13 @@ func (service *Service) SetPoolImage(
 func (service *Service) DisablePoolImage(ctx context.Context, poolID, imageID string) (PoolImage, error) {
 	if strings.TrimSpace(poolID) == "" || strings.TrimSpace(imageID) == "" {
 		return PoolImage{}, ErrInvalidArgument
+	}
+	pool, err := service.store.GetPool(ctx, poolID)
+	if err != nil {
+		return PoolImage{}, err
+	}
+	if pool.DefaultImageID != nil && *pool.DefaultImageID == imageID {
+		return PoolImage{}, ErrConflict
 	}
 	return service.store.DisablePoolImage(ctx, poolID, imageID)
 }
@@ -683,9 +744,10 @@ func mustRuntimeProfile(values map[string]any) runtimeprofile.Profile {
 	return profile
 }
 
-func validatePoolInput(input PoolInput) error {
+func validatePoolInput(input PoolInput, totalTarget, minReady int) error {
 	if strings.TrimSpace(input.Name) == "" || input.DefaultLeaseSeconds < 60 ||
-		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 1 {
+		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 1 || totalTarget < 1 ||
+		minReady < 0 || minReady > totalTarget || input.MaxConcurrency > totalTarget {
 		return ErrInvalidArgument
 	}
 	return nil

@@ -41,7 +41,8 @@ export const sampleHosts: DeviceHost[] = [
 export const samplePools: DevicePool[] = [
   {
     id: 'pool_000000000000001', name: 'default-android', default_lease_seconds: 1800, max_lease_seconds: 7200,
-    max_concurrency: 2, status: 'active', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
+    total_target: 2, min_ready: 2, max_concurrency: 2, default_image_id: 'image_00000000000001',
+    status: 'active', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
 ]
 

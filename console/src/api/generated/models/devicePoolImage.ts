@@ -3,14 +3,19 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.3.0
+ * OpenAPI spec version: 1.4.0
  */
 import type { Identifier } from './identifier';
 
+/**
+ * Pool Image catalog membership. Capacity is owned by DevicePool; legacy target fields remain during API migration.
+ */
 export interface DevicePoolImage {
   pool_id: Identifier;
   image_id: Identifier;
+  /** @deprecated */
   min_ready: number;
+  /** @deprecated */
   max_instances: number;
   enabled: boolean;
   created_at: string;

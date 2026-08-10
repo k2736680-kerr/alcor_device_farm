@@ -57,7 +57,7 @@ func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testi
 	assertCount(t, db, "SELECT count(*) FROM devices", 2)
 }
 
-func TestDifferentDeviceImagesCreateCommandsWithIndependentRuntimeImages(t *testing.T) {
+func TestPoolUsesOnlyDefaultImageAndSwitchDoesNotReimageExistingDevice(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 1, 1, 2)
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images
@@ -68,8 +68,9 @@ func TestDifferentDeviceImagesCreateCommandsWithIndependentRuntimeImages(t *test
 		VALUES('pool_000000000000001','image_00000000000002',1,1,true)`); err != nil {
 		t.Fatal(err)
 	}
-	result, err := warmpool.New(db, sequentialGenerator(), nil).RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 2 {
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 {
 		t.Fatalf("multi-image result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
@@ -78,7 +79,45 @@ func TestDifferentDeviceImagesCreateCommandsWithIndependentRuntimeImages(t *test
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
 		AND payload->>'image_id'='image_00000000000002'
 		AND payload->>'docker_image'='registry.example/alcor/android-emulator:api36'
-		AND payload->>'docker_digest'='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'`, 1)
+		AND payload->>'docker_digest'='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'`, 0)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET
+		default_image_id='image_00000000000002',total_target=2,min_ready=2,max_concurrency=2
+		WHERE id='pool_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("default image switch result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'image_id'='image_00000000000001'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'image_id'='image_00000000000002'`, 1)
+}
+
+func TestPendingReservationCreatesDefaultImageWhenMinimumReadyIsZero(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 0, 2, 2)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("zero warm target result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_reservations
+		(id,client_id,pool_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,idempotency_key)
+		VALUES('reservation_jit_000001','service','pool_000000000000001','manual','jit-user',
+		'{"platformName":"Android","apiLevel":34}',600,'pending','jit-reservation-0001')`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("pending demand result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'image_id'='image_00000000000001'`, 1)
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("pending demand duplicate result=%+v error=%v", result, err)
+	}
 }
 
 func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.T) {
@@ -91,7 +130,7 @@ func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.
 		t.Fatalf("initial target result=%+v error=%v", result, err)
 	}
 
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET max_concurrency=4;
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET max_concurrency=4,total_target=4,min_ready=4;
 		UPDATE device_pool_images SET min_ready=4,max_instances=4`); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +142,7 @@ func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.
 	assertCount(t, db, "SELECT count(*) FROM device_pool_devices WHERE enabled", 4)
 	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 4)
 
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET max_concurrency=3;
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET max_concurrency=3,total_target=3,min_ready=3;
 		UPDATE device_pool_images SET min_ready=3,max_instances=3`); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +187,7 @@ func TestControllerScaleDownDeletesOldestIdleDevicesAndKeepsNewest(t *testing.T)
 		AND lifecycle_status='ready' AND health_status='healthy'`, 1)
 }
 
-func TestControllerScaleDownWaitsForOldestActiveDevice(t *testing.T) {
+func TestControllerScaleDownProtectsActiveDeviceAndDeletesAnotherIdleDevice(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 1, 1, 2)
 	seedReadyDevices(t, db, 2)
@@ -162,22 +201,15 @@ func TestControllerScaleDownWaitsForOldestActiveDevice(t *testing.T) {
 	}
 	controller := warmpool.New(db, sequentialGenerator(), nil)
 	result, err := controller.RunOnce(context.Background())
-	if err != nil || result.DeletesQueued != 0 {
+	if err != nil || result.DeletesQueued != 1 {
 		t.Fatalf("active oldest result=%+v error=%v", result, err)
 	}
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='delete'", 0)
-
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations SET status='released',released_at=clock_timestamp(),
-		updated_at=clock_timestamp() WHERE id='scale_reservation_0001';
-		UPDATE devices SET lifecycle_status='ready' WHERE id='scale_device_00000001'`); err != nil {
-		t.Fatal(err)
-	}
-	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DeletesQueued != 1 {
-		t.Fatalf("released oldest result=%+v error=%v", result, err)
-	}
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'device_id'='scale_device_00000001'`, 1)
+		AND payload->>'device_id'='scale_device_00000002'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='scale_device_00000001'
+		AND lifecycle_status='busy'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='scale_device_00000001'
+		AND enabled`, 1)
 }
 
 func TestConcurrentControllersQueueOneDeletePerExcessDevice(t *testing.T) {
@@ -250,7 +282,7 @@ func TestControllerRespectsHostCapacityImageStatusAndSafeScaleDown(t *testing.T)
 	if err != nil || result.DevicesCreated != 1 || result.CapacityMisses != 1 {
 		t.Fatalf("capacity result=%+v error=%v", result, err)
 	}
-	if _, err := db.Pool().Exec(context.Background(), "UPDATE device_pool_images SET min_ready=0"); err != nil {
+	if _, err := db.Pool().Exec(context.Background(), "UPDATE device_pools SET min_ready=0; UPDATE device_pool_images SET min_ready=0"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := controller.RunOnce(context.Background()); err != nil {
@@ -587,8 +619,10 @@ func seedWarmPool(t *testing.T, db *database.DB, imageStatus string, minReady, m
 		VALUES('host_000000000000001','warm-host','docker_emulator',jsonb_build_object('device_slots',$1::int),'online')`, hostSlots); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pools(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status)
-		VALUES('pool_000000000000001','default-android',600,3600,2,'active')`); err != nil {
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pools
+		(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,status)
+		VALUES('pool_000000000000001','default-android',600,3600,LEAST(2,$2),$2,$1,'image_00000000000001','active')`,
+		minReady, maxInstances); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_images(pool_id,image_id,min_ready,max_instances,enabled)

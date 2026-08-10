@@ -1,5 +1,6 @@
 import {
   App as AntApp,
+  Alert,
   Button,
   Drawer,
   Form,
@@ -22,13 +23,13 @@ import {
   getListDevicesQueryKey,
   useAddDeviceToPool,
   useDisableDevicePoolImageTarget,
+  useListDeviceImages,
   useListDevicePoolImages,
   useListDevicePools,
   useListDevices,
-  useSetDevicePoolImageTarget,
   useUpdateDevicePool,
 } from '../api/generated/device-farm'
-import type { DevicePool, DevicePoolImage, Device } from '../api/generated/models'
+import type { DevicePool, DevicePoolImage, Device, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
@@ -40,10 +41,9 @@ interface PoolFormValues {
   default_lease_seconds: number
   max_lease_seconds: number
   max_concurrency: number
-}
-
-interface TargetFormValues {
-  target_instances: number
+  total_target: number
+  min_ready: number
+  default_image_id: string
   reason: string
 }
 
@@ -56,14 +56,11 @@ export function PoolsPage() {
   const { message, modal } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [configPool, setConfigPool] = useState<DevicePool | null>(null)
-  const [editTarget, setEditTarget] = useState<DevicePoolImage | null>(null)
   const [addDeviceOpen, setAddDeviceOpen] = useState(false)
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null)
-  const [targetForm] = Form.useForm<TargetFormValues>()
   const [poolForm] = Form.useForm<PoolFormValues>()
 
   const updatePool = useUpdateDevicePool()
-  const setTarget = useSetDevicePoolImageTarget()
   const disableTarget = useDisableDevicePoolImageTarget()
   const addDevice = useAddDeviceToPool()
 
@@ -83,10 +80,28 @@ export function PoolsPage() {
     { query: { enabled: Boolean(configPool) } },
   )
   const poolImages = unwrapPage<DevicePoolImage>(poolImagesQuery.data)?.items ?? []
+  const imagesQuery = useListDeviceImages(
+    { page: 1, page_size: 200 },
+    { query: { enabled: Boolean(configPool) } },
+  )
+  const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
+  const imageByID = new Map(images.map((image) => [image.id, image]))
+  const poolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id },
+    {
+      query: {
+        enabled: Boolean(configPool),
+        refetchInterval: 5_000,
+        refetchOnWindowFocus: true,
+        refetchOnReconnect: true,
+      },
+    },
+  )
+  const currentPoolDevices = unwrapPage<Device>(poolDevicesQuery.data)?.total ?? 0
   const devicesQuery = useListDevices({ page: 1, page_size: 200 }, { query: { enabled: addDeviceOpen } })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
 
-  const savePool = (values: PoolFormValues) => {
+  const updatePoolConfiguration = (values: PoolFormValues) => {
     if (!configPool) {
       return
     }
@@ -95,43 +110,12 @@ export function PoolsPage() {
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
+          const updated = (data as unknown as { data?: DevicePool } | undefined)?.data
+          if (updated) {
+            setConfigPool(updated)
+            poolForm.setFieldValue('reason', '')
+          }
           message.success(`池配置已更新（request_id: ${requestID}）`)
-          invalidatePools()
-        },
-        onError: (error) => message.error(`更新失败：${errorText(error)}`),
-      },
-    )
-  }
-
-  const updateTarget = (values: TargetFormValues) => {
-    if (!configPool || !editTarget) {
-      return
-    }
-    setTarget.mutate(
-      {
-        id: configPool.id,
-        imageId: editTarget.image_id,
-        data: {
-          min_ready: values.target_instances,
-          max_instances: values.target_instances,
-          enabled: true,
-          reason: values.reason,
-        },
-      },
-      {
-        onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`镜像目标已更新（request_id: ${requestID}）`)
-          const nextConcurrency = Math.max(1, poolImages.reduce((total, target) => {
-            if (target.image_id === editTarget.image_id) {
-              return total + values.target_instances
-            }
-            return target.enabled ? total + target.max_instances : total
-          }, 0))
-          setConfigPool({ ...configPool, max_concurrency: nextConcurrency })
-          poolForm.setFieldValue('max_concurrency', nextConcurrency)
-          setEditTarget(null)
-          invalidatePoolImages()
           invalidatePools()
           invalidateDevices()
         },
@@ -140,26 +124,34 @@ export function PoolsPage() {
     )
   }
 
-  const saveTarget = (values: TargetFormValues) => {
-    if (!editTarget) {
+  const savePool = (values: PoolFormValues) => {
+    if (!configPool) {
       return
     }
-    if (values.target_instances < editTarget.max_instances) {
+    if (values.max_concurrency > values.total_target) {
+      poolForm.setFields([{ name: 'max_concurrency', errors: ['最大并发不能超过总目标数量'] }])
+      return
+    }
+    if (values.min_ready > values.total_target) {
+      poolForm.setFields([{ name: 'min_ready', errors: ['最小预热不能超过总目标数量'] }])
+      return
+    }
+    if (values.total_target < configPool.total_target) {
       if (values.reason.trim().length < 3) {
-        targetForm.setFields([{ name: 'reason', errors: ['缩容时请填写至少 3 个字的调整原因'] }])
+        poolForm.setFields([{ name: 'reason', errors: ['缩容时请填写至少 3 个字的调整原因'] }])
         return
       }
       modal.confirm({
-        title: `确认缩容到 ${values.target_instances} 台？`,
+        title: `确认把设备池总目标缩容到 ${values.total_target} 台？`,
         content: '系统会删除最旧的空闲模拟器并保留最新设备；正在占用的设备会等待释放，不会被强制中断。',
         okText: '确认缩容',
         okButtonProps: { danger: true },
         cancelText: '取消',
-        onOk: () => updateTarget(values),
+        onOk: () => updatePoolConfiguration(values),
       })
       return
     }
-    updateTarget(values)
+    updatePoolConfiguration(values)
   }
 
   const disable = (target: DevicePoolImage) => {
@@ -199,25 +191,17 @@ export function PoolsPage() {
   }
 
   const targetColumns: TableColumnsType<DevicePoolImage> = [
-    { title: '镜像 ID', dataIndex: 'image_id', width: 190, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '目标设备数', dataIndex: 'max_instances', width: 110 },
+    { title: '镜像', dataIndex: 'image_id', width: 230, render: (value: string) => imageByID.get(value)?.name ?? shortID(value) },
+    { title: 'Android', dataIndex: 'image_id', width: 90, render: (value: string) => imageByID.get(value) ? `API ${imageByID.get(value)?.api_level}` : '-' },
+    { title: '默认', dataIndex: 'image_id', width: 70, render: (value: string) => (value === configPool?.default_image_id ? <Tag color="blue">默认</Tag> : <Tag>可选</Tag>) },
     { title: '启用', dataIndex: 'enabled', width: 70, render: (value: boolean) => (value ? <Tag color="green">是</Tag> : <Tag>否</Tag>) },
     {
       title: '操作',
       key: 'actions',
-      width: 140,
+      width: 100,
       render: (_, target) => (
         <Space size={4}>
-          <Button
-            size="small"
-            onClick={() => {
-              setEditTarget(target)
-              targetForm.setFieldsValue({ target_instances: target.max_instances, reason: '' })
-            }}
-          >
-            编辑
-          </Button>
-          {target.enabled && (
+          {target.enabled && target.image_id !== configPool?.default_image_id && (
             <Popconfirm title="停用该镜像目标？" okText="停用" onConfirm={() => disable(target)}>
               <Button size="small" danger>停用</Button>
             </Popconfirm>
@@ -233,6 +217,8 @@ export function PoolsPage() {
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
     { title: '默认租期（秒）', dataIndex: 'default_lease_seconds', width: 130 },
     { title: '最长租期（秒）', dataIndex: 'max_lease_seconds', width: 130 },
+    { title: '总目标', dataIndex: 'total_target', width: 90 },
+    { title: '最小预热', dataIndex: 'min_ready', width: 90 },
     { title: '最大并发', dataIndex: 'max_concurrency', width: 100 },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
@@ -250,6 +236,10 @@ export function PoolsPage() {
               default_lease_seconds: pool.default_lease_seconds,
               max_lease_seconds: pool.max_lease_seconds,
               max_concurrency: pool.max_concurrency,
+              total_target: pool.total_target,
+              min_ready: pool.min_ready,
+              default_image_id: pool.default_image_id ?? '',
+              reason: '',
             })
           }}
         >
@@ -296,18 +286,62 @@ export function PoolsPage() {
             <Form.Item name="max_lease_seconds" label="最长租期（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
+            <Form.Item name="total_target" label="总目标数量" rules={[{ required: true }]}>
+              <InputNumber min={1} max={1000} />
+            </Form.Item>
+            <Form.Item name="min_ready" label="最小预热数量" rules={[{ required: true }]}>
+              <InputNumber min={0} max={1000} />
+            </Form.Item>
             <Form.Item name="max_concurrency" label="最大并发" rules={[{ required: true }]}>
-              <InputNumber min={1} max={1000} disabled />
+              <InputNumber min={1} max={1000} />
             </Form.Item>
           </Space>
+          <Form.Item name="default_image_id" label="自动补建默认镜像" rules={[{ required: true, message: '请选择默认镜像' }]}>
+            <Select
+              loading={poolImagesQuery.isFetching || imagesQuery.isFetching}
+              options={poolImages.filter((target) => target.enabled).map((target) => {
+                const image = imageByID.get(target.image_id)
+                return { value: target.image_id, label: image ? `${image.name}（Android API ${image.api_level}）` : target.image_id }
+              })}
+            />
+          </Form.Item>
           <Typography.Paragraph type="secondary">
-            最大并发由下方所有启用镜像的目标设备数自动同步，无需单独修改。
+            总目标是该池最多维持的设备总数，不会把 Android 13～16 的镜像数量相加。自动增加设备只使用默认镜像；切换默认镜像不会重装已有设备。最大并发不能超过总目标，最小预热可以设置为 0；此时平常不保留暖机，但出现可由默认镜像满足的待处理预约时仍会按需创建。
           </Typography.Paragraph>
+          {configPool && (
+            <Alert
+              showIcon
+              style={{ marginBottom: 16 }}
+              type={currentPoolDevices < configPool.min_ready ? 'warning' : 'info'}
+              message={`当前 ${currentPoolDevices} 台 · 总目标 ${configPool.total_target} 台 · 最小预热 ${configPool.min_ready} 台`}
+              description={currentPoolDevices < configPool.min_ready
+                ? `尚缺 ${configPool.min_ready - currentPoolDevices} 台。系统会按默认镜像自动补建；如果持续不变化，通常是宿主机实际 CPU、内存或 Docker 数据盘不足，可到“宿主机”页面查看实时资源。目标会保留，资源恢复后继续补建。`
+                : '当前设备数已达到最小预热要求；总目标仍是设备池允许维持的数量上限。'}
+            />
+          )}
+          <Form.Item
+            name="reason"
+            label="调整原因（缩容时必填并写入审计）"
+            dependencies={['total_target']}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator: (_, value?: string) => {
+                  const target = Number(getFieldValue('total_target'))
+                  if (configPool && target < configPool.total_target && (value?.trim().length ?? 0) < 3) {
+                    return Promise.reject(new Error('缩容时请填写至少 3 个字的调整原因'))
+                  }
+                  return Promise.resolve()
+                },
+              }),
+            ]}
+          >
+            <Input.TextArea rows={2} maxLength={200} placeholder="扩容可不填；缩容例如：测试环境释放资源" />
+          </Form.Item>
           <Button type="primary" loading={updatePool.isPending} onClick={() => poolForm.submit()}>保存基本信息</Button>
         </Form>
 
         <Typography.Title level={5} style={{ marginTop: 24 }}>
-          镜像目标
+          可选镜像
           <Button size="small" style={{ marginLeft: 8 }} loading={poolImagesQuery.isFetching} onClick={() => void queryClient.invalidateQueries({ queryKey: getListDevicePoolImagesQueryKey() })}>
             刷新
           </Button>
@@ -318,49 +352,12 @@ export function PoolsPage() {
           columns={targetColumns}
           dataSource={poolImages}
           pagination={false}
-          locale={{ emptyText: '该池暂无镜像目标' }}
+          locale={{ emptyText: '该池暂无可选镜像' }}
         />
 
         <Typography.Title level={5} style={{ marginTop: 24 }}>设备</Typography.Title>
         <Button size="small" onClick={() => setAddDeviceOpen(true)}>加入设备</Button>
       </Drawer>
-
-      <Modal
-        open={editTarget !== null}
-        title="设置目标设备数"
-        okText="保存"
-        onCancel={() => setEditTarget(null)}
-        onOk={() => targetForm.submit()}
-        confirmLoading={setTarget.isPending}
-        destroyOnHidden
-      >
-        <Form<TargetFormValues> form={targetForm} layout="vertical" onFinish={saveTarget}>
-          <Typography.Paragraph type="secondary">
-            保存后自动扩容或缩容，不需要登录服务器。缩容会删除最旧的空闲模拟器；占用中的设备会等待释放。
-          </Typography.Paragraph>
-          <Form.Item name="target_instances" label="目标设备数" rules={[{ required: true, message: '请输入目标设备数' }]}>
-            <InputNumber min={1} max={1000} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="reason"
-            label="调整原因（缩容时必填并写入审计）"
-            dependencies={['target_instances']}
-            rules={[
-              ({ getFieldValue }) => ({
-                validator: (_, value?: string) => {
-                  const target = Number(getFieldValue('target_instances'))
-                  if (editTarget && target < editTarget.max_instances && (value?.trim().length ?? 0) < 3) {
-                    return Promise.reject(new Error('缩容时请填写至少 3 个字的调整原因'))
-                  }
-                  return Promise.resolve()
-                },
-              }),
-            ]}
-          >
-            <Input.TextArea rows={3} maxLength={200} placeholder="例如：将测试环境固定容量调整为 2 台" />
-          </Form.Item>
-        </Form>
-      </Modal>
 
       <Modal
         open={addDeviceOpen}

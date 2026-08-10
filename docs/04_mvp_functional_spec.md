@@ -363,8 +363,8 @@ DF-031 只向现有 `1.2.0` 契约增加管理员专用 `/console/api/v1/devices
 | `device_images` | id、name、docker_image、docker_digest、api_level、abi、resolution、resource_config、status |
 | `device_hosts` | id、name、host_type、capabilities、capacity、used_capacity、status、draining、last_heartbeat_at |
 | `device_host_commands` | id、host_id、command_type、payload、status、lease_token、lease_expires_at、attempts、idempotency_key、result |
-| `device_pools` | id、name、default_lease_seconds、max_lease_seconds、status |
-| `device_pool_images` | pool_id、image_id、min_ready、max_instances、enabled；驱动固定目标自动补齐 Emulator |
+| `device_pools` | id、name、default_lease_seconds、max_lease_seconds、total_target、min_ready、max_concurrency、default_image_id、status；Pool 总量是唯一扩缩容目标 |
+| `device_pool_images` | pool_id、image_id、min_ready、max_instances、enabled；保留旧客户端兼容字段，只表示可选镜像目录，不再把各镜像目标相加 |
 | `device_pool_devices` | pool_id、device_id、enabled |
 | `devices` | id、host_id、image_id、device_kind、provider_type、provider_ref、serial、stf_serial、adb_endpoint、appium_endpoint、capabilities、lifecycle_status、health_status、health_reason |
 | `device_reservations` | id、pool_id、device_id、owner_type、owner_id、requested_capabilities、status、idempotency_key、starts_at、expires_at、released_at、failure_code |

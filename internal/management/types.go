@@ -89,6 +89,9 @@ type Pool struct {
 	DefaultLeaseSeconds int               `json:"default_lease_seconds"`
 	MaxLeaseSeconds     int               `json:"max_lease_seconds"`
 	MaxConcurrency      int               `json:"max_concurrency"`
+	TotalTarget         int               `json:"total_target"`
+	MinReady            int               `json:"min_ready"`
+	DefaultImageID      *string           `json:"default_image_id,omitempty"`
 	Status              domain.PoolStatus `json:"status"`
 	CreatedAt           time.Time         `json:"created_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`
@@ -145,11 +148,15 @@ type HostInput struct {
 }
 
 type PoolInput struct {
-	Name                string `json:"name"`
-	DefaultLeaseSeconds int    `json:"default_lease_seconds"`
-	MaxLeaseSeconds     int    `json:"max_lease_seconds"`
-	MaxConcurrency      int    `json:"max_concurrency"`
-	Enabled             *bool  `json:"enabled,omitempty"`
+	Name                string  `json:"name"`
+	DefaultLeaseSeconds int     `json:"default_lease_seconds"`
+	MaxLeaseSeconds     int     `json:"max_lease_seconds"`
+	MaxConcurrency      int     `json:"max_concurrency"`
+	TotalTarget         *int    `json:"total_target,omitempty"`
+	MinReady            *int    `json:"min_ready,omitempty"`
+	DefaultImageID      *string `json:"default_image_id,omitempty"`
+	Enabled             *bool   `json:"enabled,omitempty"`
+	Reason              string  `json:"reason,omitempty"`
 }
 
 type PoolImageInput struct {
@@ -187,7 +194,7 @@ type Store interface {
 	CreatePool(context.Context, Idempotency, Pool) (Pool, error)
 	ListPools(context.Context, paging.Page) ([]Pool, int, error)
 	GetPool(context.Context, string) (Pool, error)
-	UpdatePool(context.Context, Pool, domain.PoolStatus) (Pool, error)
+	UpdatePool(context.Context, Pool, domain.PoolStatus, DeviceAudit) (Pool, error)
 	ListPoolImages(context.Context, string, paging.Page) ([]PoolImage, int, error)
 	GetPoolImage(context.Context, string, string) (PoolImage, error)
 	SetPoolImage(context.Context, PoolImage, DeviceAudit) (PoolImage, error)
