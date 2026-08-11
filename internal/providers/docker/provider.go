@@ -207,6 +207,9 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		return providers.Snapshot{}, err
 	}
 	applyRuntimeEnvironment(environment, request.RuntimeProfile, graphics)
+	if avdDevice, ok := request.Capabilities["avd_device"].(string); ok && strings.TrimSpace(avdDevice) != "" {
+		environment["EMULATOR_DEVICE"] = strings.TrimSpace(avdDevice)
+	}
 	err = provider.backend.CreateContainer(ctx, containerSpec{
 		Name: name, Hostname: name, Image: runtimeImage, Network: networkName, Volume: volumeName,
 		DataMountPath: provider.config.DataMountPath, KVMDevice: provider.config.KVMDevice, GPUDevice: provider.gpuDevice, RenderDevice: renderDevice,

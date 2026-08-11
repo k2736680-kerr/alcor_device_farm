@@ -10,17 +10,22 @@ api_level="${android_package#android-}"
 
 # The Console never supplies a URL or a shell fragment. These are the only
 # combinations currently exposed by the stable-channel synchronizer.
-case "$package_kind:$api_level:$image_type:$abi:${extra:-}" in
-  system-images:33:google_apis:x86_64:|system-images:34:google_apis:x86_64:|system-images:35:google_apis:x86_64:|system-images:36:google_apis:x86_64:|system-images:33:google_play:x86_64:|system-images:34:google_play:x86_64:|system-images:35:google_play:x86_64:|system-images:36:google_play:x86_64:) ;;
-  *) echo "unsupported stable Android System Image selection" >&2; exit 64 ;;
-esac
+if [[ ! "$package_kind:$api_level:$image_type:$abi:${extra:-}" =~ ^system-images:(2[6-9]|[3-9][0-9]):(default|google_apis|google_play):x86_64:$ ]]; then
+  echo "unsupported stable Android System Image selection" >&2
+  exit 64
+fi
 case "$revision" in *[!A-Za-z0-9._-]*|'') echo "invalid Android SDK package revision" >&2; exit 64;; esac
 
 case "${DEVICE_FARM_ANDROID_REPOSITORY:-alcor-device-farm/android-emulator}" in
   *:latest|latest) echo "floating image tags are not allowed" >&2; exit 64 ;;
 esac
 
-android_version=$((api_level - 20))
+case "$api_level" in
+  26) android_version=8.0 ;; 27) android_version=8.1 ;; 28) android_version=9.0 ;; 29) android_version=10.0 ;;
+  30) android_version=11.0 ;; 31) android_version=12.0 ;; 32) android_version=12.1 ;; 33) android_version=13.0 ;;
+  34) android_version=14.0 ;; 35) android_version=15.0 ;; 36) android_version=16.0 ;;
+  *) android_version="api${api_level}" ;;
+esac
 tag="${android_version}.0-api${api_level}-${image_type}-${abi}-sdk${revision}"
 local_repository="${DEVICE_FARM_ANDROID_REPOSITORY:-alcor-device-farm/android-emulator}"
 : "${DEVICE_FARM_ANDROID_PUBLISH_REPOSITORY:?set the controlled Registry repository}"

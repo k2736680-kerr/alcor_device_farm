@@ -99,3 +99,7 @@ Android System Image 的版本、映像类型和 ABI 由 Android SDK 官方稳�
 # DF-036 镜像生命周期与默认选择补充（2026-08-11）
 
 旧 Device Image 的清理属于设备域运维：只有不再作为任何 Pool 默认镜像、且只被 `deleted` 历史 Device 引用时才能受控停用。停用记录默认不进入 Console 和新版 Alcor 的可选列表，但继续保留设备域审计及历史外键。管理员在 Image 页面选择已验证 Image 作为某个 Pool 的默认值时，只改变后续自动补建选择，不创建 Alcor Image/Artifact，不隐式重装现有 Device，也不让 Server 或浏览器直接操作 Registry/Docker。
+
+# DF-037 Phone 硬件模板和受控创建补充（2026-08-11）
+
+DF-037 只扩展 Device Farm 的基础设施创建入口：管理员在 Device Farm Console 选择 Phone 硬件模板、官方 System Image、Pool 和运行规格，Server 以持久化 `create` Host Command 编排已有 Agent/Provider 链路。设备创建状态、Pool membership、Host 容量、镜像准备和健康检查仍是设备域真相；不新增 Alcor App、Build、Case、Run、RunAttempt、Result 或 Artifact 模型。首期不实现 Phone 以外的 Android form factor，未来扩展必须另行更新复用矩阵与验收项。

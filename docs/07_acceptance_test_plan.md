@@ -289,3 +289,7 @@ docs/evidence/
 # DF-036 镜像生命周期补充
 
 验收应证明：停用仍被 Pool 默认值或活动 Device 引用的 Image 必须返回 409；仅有 `deleted` 历史 Device 引用时可停用并保留历史查询和审计，默认可用列表不返回它。管理员可从 Image 页面选择任意 `ready` Image 作为指定 Pool 默认值；服务端原子启用 Pool Image 关系并切换默认值，拒绝非 `ready` Image，且不修改已有 Device 的 Image。
+
+# DF-037 Phone 创建向导补充
+
+验收应证明：Phone 模板列表至少可搜索、显示多条 SDK Profile 和屏幕参数，且不出现 Tablet、Wear、TV、Automotive、Desktop、XR；系统镜像选择使用 Server 的官方目录，旧的 API 33～36 固定正则不再限制目录。选择已验证镜像并提交完整 runtime profile 后，Server 在事务中创建 provisioning Device、Pool membership 和 `create` Host Command，并增加 Pool `total_target`；容量不足、镜像未就绪、非法硬件模板均不能留下半条记录。Agent 实际收到的 Docker 环境必须使用选定 Phone Profile；真实 Linux KVM 环境需证明最终 ADB、STF、Appium 全部通过后设备才 ready/healthy。

@@ -141,6 +141,7 @@ func TestDockerProviderAppliesPerDeviceRuntimeProfile(t *testing.T) {
 		ContainerCPUCores: 2, ContainerMemoryMB: 4096, GuestCPUCores: 2, GuestMemoryMB: 3072,
 		DataDiskMB: 8192, Width: 720, Height: 1600, DensityDPI: 320, VMHeapMB: 384, Graphics: runtimeprofile.GraphicsSoftware,
 	}
+	request.Capabilities["avd_device"] = "Pixel 9"
 	if _, err := provider.Create(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +150,9 @@ func TestDockerProviderAppliesPerDeviceRuntimeProfile(t *testing.T) {
 	if spec.CPUs != 2 || spec.Memory != "4096m" || spec.Environment["EMULATOR_DATA_PARTITION"] != "8192M" ||
 		!strings.Contains(spec.Environment["EMULATOR_ADDITIONAL_ARGS"], "-cores 2 -memory 3072 -gpu swiftshader_indirect -skin 720x1600 -dpi-device 320 -prop dalvik.vm.heapsize=384m") {
 		t.Fatalf("container spec=%+v environment=%v", spec, spec.Environment)
+	}
+	if spec.Environment["EMULATOR_DEVICE"] != "Pixel 9" {
+		t.Fatalf("EMULATOR_DEVICE=%q", spec.Environment["EMULATOR_DEVICE"])
 	}
 	discovered, err := provider.Discover(context.Background(), request.HostID)
 	if err != nil || len(discovered) != 1 || discovered[0].RuntimeProfile != request.RuntimeProfile {

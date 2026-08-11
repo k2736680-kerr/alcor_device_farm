@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { AndroidSystemImage, Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord, RemoteControl } from '../api/generated/models'
+import type { AndroidHardwareProfile, AndroidSystemImage, Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord, RemoteControl } from '../api/generated/models'
 
 /** Envelope matching the real backend: { request_id, data, error }. */
 function pageEnvelope<T>(items: T[], total: number, page = 1, pageSize = 20) {
@@ -43,6 +43,12 @@ export const sampleAndroidSystemImages: AndroidSystemImage[] = [
     source_updated_at: '2026-08-10T00:00:00Z', last_seen_at: '2026-08-10T00:00:00Z',
     preparation_id: 'prepare_00000000000001', image_id: 'image_00000000000001',
   },
+]
+
+export const sampleAndroidHardwareProfiles: AndroidHardwareProfile[] = [
+  { id: 'medium_phone', name: 'Medium Phone', width: 1080, height: 2400, density_dpi: 420 },
+  { id: 'pixel_9', name: 'Pixel 9', width: 1080, height: 2424, density_dpi: 420 },
+  { id: 'pixel_8_pro', name: 'Pixel 8 Pro', width: 1344, height: 2992, density_dpi: 480 },
 ]
 
 export const sampleHosts: DeviceHost[] = [
@@ -150,6 +156,10 @@ export const handlers = [
     return HttpResponse.json({ request_id: 'req_retire_image', data: { ...image, status: 'disabled' }, error: null })
   }),
   http.get('/api/v1/android-system-images', () => HttpResponse.json({ request_id: 'req_catalog', data: sampleAndroidSystemImages, error: null })),
+  http.get('/api/v1/android-hardware-profiles', () => HttpResponse.json({ request_id: 'req_hardware', data: sampleAndroidHardwareProfiles, error: null })),
+  http.post('/api/v1/device-provisionings', () => HttpResponse.json({
+    request_id: 'req_device_provision', data: { device_id: 'device_00000000000009', command_id: 'command_00000000000009', host_id: 'host_000000000000001', status: 'provisioning' }, error: null,
+  }, { status: 202 })),
   http.post('/api/v1/android-system-images/synchronizations', () => HttpResponse.json({
     request_id: 'req_catalog_sync', data: { id: 'command_00000000000001', host_id: 'host_000000000000001', command_id: 'command_00000000000001', runtime_profile: {}, status: 'queued', created_at: '2026-08-10T00:00:00Z', updated_at: '2026-08-10T00:00:00Z' }, error: null,
   }, { status: 202 })),

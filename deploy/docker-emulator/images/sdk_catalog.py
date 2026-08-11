@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 PACKAGE = re.compile(
-    r"^system-images;android-(33|34|35|36);(google_apis|google_play);(x86_64)\s*\|\s*([^|\s]+)"
+    r"^system-images;android-([0-9]+);(default|google_apis|google_play);(x86_64)\s*\|\s*([^|\s]+)"
 )
 
 
@@ -29,6 +29,8 @@ def available_entries(text: str) -> list[dict]:
         if not match:
             continue
         api, image_type, abi, revision = match.groups()
+        if int(api) < 26:
+            continue
         package_name = f"system-images;android-{api};{image_type};{abi}"
         if package_name in seen:
             continue

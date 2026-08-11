@@ -42,6 +42,7 @@ type Services struct {
 	ConsoleQuery  *consolequery.Service
 	RemoteControl *remotecontrol.Service
 	ImageCatalog  *imagecatalog.Service
+	WarmPool      *warmpool.Controller
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -68,6 +69,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	mux.Handle("/metrics", services.Metrics)
 	api.RegisterManagement(mux, services.Management)
 	api.RegisterImageCatalog(mux, services.ImageCatalog)
+	api.RegisterProvisioning(mux, services.WarmPool)
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
@@ -124,8 +126,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 		services.HostCommands = hostcommand.New(db)
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
-		warmPoolController := warmpool.New(db, nil, logger)
-		go warmPoolController.Run(ctx, cfg.WarmPool.Interval)
+		services.WarmPool = warmpool.New(db, nil, logger)
+		go services.WarmPool.Run(ctx, cfg.WarmPool.Interval)
 		services.ConsoleQuery = consolequery.New(db)
 		if cfg.Console.Enabled {
 			users, loadErr := consoleauth.LoadUsers(cfg.Console.UsersFile)

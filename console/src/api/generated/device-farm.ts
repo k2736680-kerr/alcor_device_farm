@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.7.0
+ * OpenAPI spec version: 1.8.0
  */
 import {
   useMutation,
@@ -25,6 +25,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AndroidHardwareProfileListSuccessResponse,
   AndroidImagePreparationInput,
   AndroidSystemImageListSuccessResponse,
   AuditEventListSuccessResponse,
@@ -42,6 +43,8 @@ import type {
   DeviceListSuccessResponse,
   DevicePoolImageInputBody,
   DevicePoolInputBody,
+  DeviceProvisioningAcceptedResponse,
+  DeviceProvisioningInput,
   DeviceReimageInputBody,
   DeviceSuccessResponse,
   ErrorResponse,
@@ -59,6 +62,7 @@ import type {
   ImagePreparationAcceptedResponse,
   ImageSuccessResponse,
   LeaseExtensionBody,
+  ListAndroidHardwareProfilesParams,
   ListDeviceAuditEventsParams,
   ListDeviceHealthEventsParams,
   ListDeviceHostsParams,
@@ -1484,6 +1488,245 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getPrepareAndroidSystemImageMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Phone-only Android SDK hardware profiles supported by the controlled emulator build.
+ */
+export type listAndroidHardwareProfilesResponse200 = {
+  data: AndroidHardwareProfileListSuccessResponse
+  status: 200
+}
+
+export type listAndroidHardwareProfilesResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type listAndroidHardwareProfilesResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type listAndroidHardwareProfilesResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type listAndroidHardwareProfilesResponseSuccess = (listAndroidHardwareProfilesResponse200) & {
+  headers: Headers;
+};
+export type listAndroidHardwareProfilesResponseError = (listAndroidHardwareProfilesResponse401 | listAndroidHardwareProfilesResponse403 | listAndroidHardwareProfilesResponse500) & {
+  headers: Headers;
+};
+
+export type listAndroidHardwareProfilesResponse = (listAndroidHardwareProfilesResponseSuccess | listAndroidHardwareProfilesResponseError)
+
+export const getListAndroidHardwareProfilesUrl = (params?: ListAndroidHardwareProfilesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/android-hardware-profiles?${stringifiedParams}` : `/api/v1/android-hardware-profiles`
+}
+
+export const listAndroidHardwareProfiles = async (params?: ListAndroidHardwareProfilesParams, options?: RequestInit): Promise<listAndroidHardwareProfilesResponse> => {
+
+  return deviceFarmFetch<listAndroidHardwareProfilesResponse>(getListAndroidHardwareProfilesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAndroidHardwareProfilesQueryKey = (params?: ListAndroidHardwareProfilesParams,) => {
+    return [
+    `/api/v1/android-hardware-profiles`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+
+export const getListAndroidHardwareProfilesQueryOptions = <TData = Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListAndroidHardwareProfilesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAndroidHardwareProfilesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>> = ({ signal }) => listAndroidHardwareProfiles(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAndroidHardwareProfilesQueryResult = NonNullable<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>>
+export type ListAndroidHardwareProfilesQueryError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+
+export function useListAndroidHardwareProfiles<TData = Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params: undefined |  ListAndroidHardwareProfilesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAndroidHardwareProfiles>>,
+          TError,
+          Awaited<ReturnType<typeof listAndroidHardwareProfiles>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAndroidHardwareProfiles<TData = Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params?: ListAndroidHardwareProfilesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAndroidHardwareProfiles>>,
+          TError,
+          Awaited<ReturnType<typeof listAndroidHardwareProfiles>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAndroidHardwareProfiles<TData = Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params?: ListAndroidHardwareProfilesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListAndroidHardwareProfiles<TData = Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params?: ListAndroidHardwareProfilesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidHardwareProfiles>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAndroidHardwareProfilesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type createDeviceProvisioningResponse202 = {
+  data: DeviceProvisioningAcceptedResponse
+  status: 202
+}
+
+export type createDeviceProvisioningResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type createDeviceProvisioningResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type createDeviceProvisioningResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type createDeviceProvisioningResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type createDeviceProvisioningResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type createDeviceProvisioningResponseSuccess = (createDeviceProvisioningResponse202) & {
+  headers: Headers;
+};
+export type createDeviceProvisioningResponseError = (createDeviceProvisioningResponse400 | createDeviceProvisioningResponse401 | createDeviceProvisioningResponse403 | createDeviceProvisioningResponse409 | createDeviceProvisioningResponse500) & {
+  headers: Headers;
+};
+
+export type createDeviceProvisioningResponse = (createDeviceProvisioningResponseSuccess | createDeviceProvisioningResponseError)
+
+export const getCreateDeviceProvisioningUrl = () => {
+
+
+
+
+  return `/api/v1/device-provisionings`
+}
+
+export const createDeviceProvisioning = async (deviceProvisioningInput: DeviceProvisioningInput, options?: RequestInit): Promise<createDeviceProvisioningResponse> => {
+
+  return deviceFarmFetch<createDeviceProvisioningResponse>(getCreateDeviceProvisioningUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deviceProvisioningInput,)
+  }
+);}
+
+
+
+
+export const getCreateDeviceProvisioningMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDeviceProvisioning>>, TError,{data: DeviceProvisioningInput}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createDeviceProvisioning>>, TError,{data: DeviceProvisioningInput}, TContext> => {
+
+const mutationKey = ['createDeviceProvisioning'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDeviceProvisioning>>, {data: DeviceProvisioningInput}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createDeviceProvisioning(data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateDeviceProvisioningMutationResult = NonNullable<Awaited<ReturnType<typeof createDeviceProvisioning>>>
+    export type CreateDeviceProvisioningMutationBody = DeviceProvisioningInput
+    export type CreateDeviceProvisioningMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useCreateDeviceProvisioning = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDeviceProvisioning>>, TError,{data: DeviceProvisioningInput}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createDeviceProvisioning>>,
+        TError,
+        {data: DeviceProvisioningInput},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateDeviceProvisioningMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

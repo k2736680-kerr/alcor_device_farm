@@ -23,6 +23,8 @@ var expectedOperations = map[string][]string{
 	"/api/v1/android-system-images":                         {"get"},
 	"/api/v1/android-system-images/synchronizations":        {"post"},
 	"/api/v1/android-system-images/preparations":            {"post"},
+	"/api/v1/android-hardware-profiles":                     {"get"},
+	"/api/v1/device-provisionings":                          {"post"},
 	"/api/v1/device-hosts":                                  {"get", "post"},
 	"/api/v1/device-hosts/{id}":                             {"get", "put"},
 	"/api/v1/device-hosts/{id}/drains":                      {"post", "delete"},
@@ -67,7 +69,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "1.7.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "1.8.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 

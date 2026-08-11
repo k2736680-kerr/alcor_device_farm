@@ -1,13 +1,17 @@
-import { Alert, App as AntApp, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Card, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
+  useCreateDeviceProvisioning,
   useDeleteDevice,
+  useListAndroidHardwareProfiles,
+  useListAndroidSystemImages,
   useListDeviceHosts,
   useListDeviceImages,
+  useListDevicePools,
   useListDevices,
   useQuarantineDevice,
   useRebuildDevice,
@@ -15,8 +19,8 @@ import {
   useRestartDevice,
   useUnquarantineDevice,
 } from '../api/generated/device-farm'
-import type { ConsoleRole, Device, DeviceHost, DeviceImage, EmulatorRuntimeProfile } from '../api/generated/models'
-import { unwrapPage } from '../api/unwrap'
+import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile } from '../api/generated/models'
+import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import {
@@ -72,6 +76,12 @@ interface ReimageValues extends EmulatorRuntimeProfile {
   reason: string
 }
 
+interface CreateDeviceValues extends EmulatorRuntimeProfile {
+  pool_id: string
+  image_id: string
+  hardware_profile_id: string
+}
+
 interface DevicesPageProps {
   role?: ConsoleRole
 }
@@ -108,12 +118,15 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [actionState, setActionState] = useState<ActionState | null>(null)
   const [reimageDevice, setReimageDevice] = useState<Device | null>(null)
   const [reimageForm] = Form.useForm<ReimageValues>()
+  const [createDevice, setCreateDevice] = useState(false)
+  const [createForm] = Form.useForm<CreateDeviceValues>()
   const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
 
   const restart = useRestartDevice()
   const rebuild = useRebuildDevice()
   const reimage = useReimageDevice()
+  const provision = useCreateDeviceProvisioning()
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
@@ -121,6 +134,12 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 200 })
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
   const hosts = unwrapPage<DeviceHost>(hostsQuery.data)?.items ?? []
+  const hardwareQuery = useListAndroidHardwareProfiles()
+  const catalogQuery = useListAndroidSystemImages()
+  const poolsQuery = useListDevicePools({ page: 1, page_size: 200 })
+  const hardwareProfiles = unwrapData<AndroidHardwareProfile[]>(hardwareQuery.data) ?? []
+  const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
+  const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }, [queryClient])
@@ -217,6 +236,32 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     })
   }
 
+  const openCreateDevice = () => {
+    createForm.setFieldsValue({
+      pool_id: pools.find((pool) => pool.status === 'active')?.id,
+      hardware_profile_id: 'pixel_9',
+      container_cpu_cores: 4, container_memory_mb: 5120, guest_cpu_cores: 4, guest_memory_mb: 4096,
+      data_disk_mb: 4096, image_disk_mb: 0, width: 1080, height: 2424, density_dpi: 420, vm_heap_mb: 512, graphics: 'auto',
+    })
+    setCreateDevice(true)
+  }
+
+  const submitCreateDevice = (values: CreateDeviceValues) => {
+    const { pool_id, image_id, hardware_profile_id, ...runtime_profile } = values
+    provision.mutate({ data: { pool_id, image_id, hardware_profile_id, runtime_profile } }, {
+      onSuccess: (data) => {
+        const requestID = (data as { data?: { request_id?: string } } | undefined)?.data?.request_id ?? '-'
+        message.success(`创建设备已受理，正在等待 ADB、STF、Appium 健康检查（request_id: ${requestID}）`)
+        setCreateDevice(false)
+        invalidate()
+      },
+      onError: (error) => {
+        const err = error as { code?: string; requestId?: string; message?: string }
+        message.error(`创建被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+      },
+    })
+  }
+
   const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
   const actionColumn: TableColumnsType<Device>[number] = {
@@ -305,6 +350,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   return (
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
+        <Card size="small" title="Phone 模拟器" extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>创建设备</Button> : undefined}>
+          <Typography.Text type="secondary">选择 Phone 硬件模板、官方系统镜像和高级运行规格。只有已验证的系统镜像可提交创建；其他目录项会保留为待准备状态。</Typography.Text>
+        </Card>
         <Alert
           type="info"
           showIcon
@@ -342,6 +390,52 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           locale={{ emptyText: '当前分类下没有设备' }}
         />
       </Space>
+      <Modal
+        open={createDevice}
+        title="创建 Phone 模拟器"
+        okText="创建并加入设备池"
+        cancelText="取消"
+        confirmLoading={provision.isPending}
+        onCancel={() => setCreateDevice(false)}
+        onOk={() => createForm.submit()}
+        width={820}
+        destroyOnHidden
+      >
+        <Alert type="info" showIcon message="仅支持 Phone" description="当前不提供 Tablet、Wear、TV、Automotive、Desktop 或 XR。提交后由宿主 Agent 创建，设备通过 ADB、STF、Appium 检查前不会显示为可用。" style={{ marginBottom: 16 }} />
+        <Form<CreateDeviceValues> form={createForm} layout="vertical" onFinish={submitCreateDevice}>
+          <Form.Item name="hardware_profile_id" label="1. Phone 硬件模板" rules={[{ required: true, message: '请选择 Phone 模板' }]}>
+            <Select showSearch optionFilterProp="label" loading={hardwareQuery.isFetching} options={hardwareProfiles.map((profile) => ({
+              value: profile.id, label: `${profile.name} · ${profile.width}×${profile.height} · ${profile.density_dpi} dpi`,
+            }))} onChange={(id) => {
+              const profile = hardwareProfiles.find((item) => item.id === id)
+              if (profile) createForm.setFieldsValue({ width: profile.width, height: profile.height, density_dpi: profile.density_dpi })
+            }} />
+          </Form.Item>
+          <Form.Item name="image_id" label="2. Android 系统镜像" rules={[{ required: true, message: '请选择已验证系统镜像' }]} extra="目录中的未准备镜像会显示状态但不可直接创建；请先在“设备镜像”页准备并验证。">
+            <Select showSearch optionFilterProp="label" loading={catalogQuery.isFetching} options={catalog.map((image) => ({
+              value: image.image_id ?? image.id,
+              disabled: image.status !== 'cached' || !image.image_id,
+              label: `Android API ${image.api_level} · ${image.image_type} · ${image.abi} · ${image.status === 'cached' ? '已验证可用' : `待准备（${image.status}）`}`,
+            }))} />
+          </Form.Item>
+          <Form.Item name="pool_id" label="3. 加入设备池" rules={[{ required: true, message: '请选择活动设备池' }]}>
+            <Select loading={poolsQuery.isFetching} options={pools.filter((pool) => pool.status === 'active').map((pool) => ({ value: pool.id, label: `${pool.name} · 当前目标 ${pool.total_target}` }))} />
+          </Form.Item>
+          <Typography.Title level={5}>高级选项</Typography.Title>
+          <Space wrap align="start">
+            <Form.Item name="container_cpu_cores" label="容器 CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={64} /></Form.Item>
+            <Form.Item name="container_memory_mb" label="容器内存（MiB）" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={512} /></Form.Item>
+            <Form.Item name="guest_cpu_cores" label="Android CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
+            <Form.Item name="guest_memory_mb" label="Android 内存（MiB）" rules={[{ required: true }]}><InputNumber min={1536} step={512} /></Form.Item>
+            <Form.Item name="data_disk_mb" label="设备数据盘（MiB）" rules={[{ required: true }]}><InputNumber min={2048} step={1024} /></Form.Item>
+            <Form.Item name="width" label="分辨率宽" rules={[{ required: true }]}><InputNumber min={320} /></Form.Item>
+            <Form.Item name="height" label="分辨率高" rules={[{ required: true }]}><InputNumber min={480} /></Form.Item>
+            <Form.Item name="density_dpi" label="DPI" rules={[{ required: true }]}><InputNumber min={120} max={960} /></Form.Item>
+            <Form.Item name="vm_heap_mb" label="VM Heap（MiB）" rules={[{ required: true }]}><InputNumber min={128} /></Form.Item>
+            <Form.Item name="graphics" label="图形模式" rules={[{ required: true }]}><Select style={{ width: 130 }} options={[{ value: 'auto', label: '自动' }, { value: 'host', label: '宿主机 GPU' }, { value: 'software', label: '软件渲染' }]} /></Form.Item>
+          </Space>
+        </Form>
+      </Modal>
       <Modal
         open={actionState !== null}
         title={actionState ? `${actionTitles[actionState.action]} · ${shortID(actionState.device.id)}` : ''}

@@ -17,7 +17,7 @@ trap cleanup EXIT
 
 command -v docker >/dev/null
 command -v git >/dev/null
-if [[ ! "${DEVICE_FARM_ANDROID_PREPARE_REQUEST:-}" =~ ^api(33|34|35|36)-(google_apis|google_play)-(x86_64)-sdk([A-Za-z0-9._-]+)$ ]]; then
+if [[ ! "${DEVICE_FARM_ANDROID_PREPARE_REQUEST:-}" =~ ^api(2[6-9]|[3-9][0-9])-(default|google_apis|google_play)-(x86_64)-sdk([A-Za-z0-9._-]+)$ ]]; then
   echo "build.sh is internal to the controlled Build Agent and requires a validated preparation selector" >&2
   exit 64
 fi
@@ -25,7 +25,12 @@ api_level="${BASH_REMATCH[1]}"
 image_type="${BASH_REMATCH[2]}"
 abi="${BASH_REMATCH[3]}"
 revision="${BASH_REMATCH[4]}"
-android_version="$((api_level - 20)).0"
+case "$api_level" in
+  26) android_version=8.0 ;; 27) android_version=8.1 ;; 28) android_version=9.0 ;; 29) android_version=10.0 ;;
+  30) android_version=11.0 ;; 31) android_version=12.0 ;; 32) android_version=12.1 ;; 33) android_version=13.0 ;;
+  34) android_version=14.0 ;; 35) android_version=15.0 ;; 36) android_version=16.0 ;;
+  *) android_version="api${api_level}" ;;
+esac
 tag="${android_version}-api${api_level}-${image_type}-${abi}-sdk${revision}"
 case "$base_image" in
   *:latest|latest)

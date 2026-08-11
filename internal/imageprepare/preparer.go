@@ -32,7 +32,7 @@ func (script *Script) SyncCatalog(ctx context.Context) (map[string]any, error) {
 }
 func (script *Script) Prepare(ctx context.Context, packageName, revision string) (map[string]any, error) {
 	parts := strings.Split(packageName, ";")
-	if len(parts) != 4 || parts[0] != "system-images" || !strings.HasPrefix(parts[1], "android-") || (parts[2] != "google_apis" && parts[2] != "google_play") || (parts[3] != "x86_64" && parts[3] != "arm64-v8a") {
+	if len(parts) != 4 || parts[0] != "system-images" || !strings.HasPrefix(parts[1], "android-") || (parts[2] != "default" && parts[2] != "google_apis" && parts[2] != "google_play") || (parts[3] != "x86_64" && parts[3] != "arm64-v8a") {
 		return nil, errors.New("invalid Android SDK package")
 	}
 	if !validRevision(revision) {

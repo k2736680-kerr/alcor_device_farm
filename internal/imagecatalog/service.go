@@ -441,7 +441,7 @@ func failPreparation(ctx context.Context, tx pgx.Tx, id, code string) error {
 }
 
 func validEntry(packageName string, api int, imageType, abi, revision string) bool {
-	return api >= 33 && api <= 36 && (imageType == "google_apis" || imageType == "google_play") && abi == "x86_64" && validRevision(revision) && packageName == fmt.Sprintf("system-images;android-%d;%s;%s", api, imageType, abi)
+	return api >= 26 && api <= 99 && (imageType == "default" || imageType == "google_apis" || imageType == "google_play") && abi == "x86_64" && validRevision(revision) && packageName == fmt.Sprintf("system-images;android-%d;%s;%s", api, imageType, abi)
 }
 func validDigest(value string) bool {
 	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {

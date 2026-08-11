@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { App as AntApp, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Card, Form, Input, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -59,7 +59,6 @@ export function ImagesPage({ role }: ImagesPageProps) {
   const validate = useValidateDeviceImage()
   const retire = useRetireDeviceImage()
   const selectDefault = useSelectDevicePoolDefaultImage()
-  const [form] = Form.useForm<EmulatorRuntimeProfile>()
   const [defaultForm] = Form.useForm<DefaultSelectionValues>()
   const [retirementForm] = Form.useForm<RetirementValues>()
   const [selected, setSelected] = useState<AndroidSystemImage>()
@@ -117,9 +116,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
 
   const submitPreparation = async () => {
     if (!selected) return
-    const runtime_profile = await form.validateFields().catch(() => undefined)
-    if (!runtime_profile) return
-    prepare.mutate({ data: { catalog_id: selected.id, runtime_profile } }, {
+    prepare.mutate({ data: { catalog_id: selected.id, runtime_profile: defaultProfile } }, {
       onSuccess: () => { message.success('镜像准备任务已受理，首次下载和构建需要等待'); setSelected(undefined); invalidate() },
       onError: (error) => message.error(`准备任务被拒绝：${(error as { message?: string }).message ?? '未知错误'}`),
     })
@@ -210,7 +207,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
         extra={role === 'admin' ? <Button loading={synchronize.isPending} onClick={synchronizeCatalog}>同步官方目录</Button> : undefined}
       >
         <Typography.Paragraph type="secondary">
-          版本、镜像类型和 ABI 来自 Android SDK 稳定频道；CPU、内存、磁盘、分辨率和 GPU 是本设备农场的运行规格。浏览器不会访问 Google。
+          版本、镜像类型和 ABI 来自 Android SDK 稳定频道。这里仅负责受控下载、构建和验证；Phone、CPU、内存、磁盘、分辨率和 GPU 在“设备 → 创建设备”中选择。浏览器不会访问 Google。
         </Typography.Paragraph>
         <Table<AndroidSystemImage>
           rowKey="id" size="small" loading={catalogQuery.isLoading} dataSource={catalog} pagination={false}
@@ -227,7 +224,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
             { title: '官方修订', dataIndex: 'revision' },
             { title: '状态', dataIndex: 'status', render: (value: string) => { const item = catalogStatus[value] ?? { label: value, color: 'default' }; return <Tag color={item.color}>{item.label}</Tag> } },
             { title: '操作', key: 'action', render: (_, value) => role === 'admin' && !['preparing', 'validating'].includes(value.status)
-              ? <Button size="small" onClick={() => { form.setFieldsValue(defaultProfile); setSelected(value) }}>{value.status === 'cached' ? '重新准备' : '准备镜像'}</Button>
+              ? <Button size="small" onClick={() => setSelected(value)}>{value.status === 'cached' ? '重新准备' : '准备镜像'}</Button>
               : <Typography.Text type="secondary">-</Typography.Text> },
           ]}
         />
@@ -247,21 +244,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
         open={Boolean(selected)} title={selected ? `准备 Android ${selected.api_level - 20} / ${selected.image_type} / ${selected.abi}` : ''}
         okText="提交准备任务" cancelText="取消" confirmLoading={prepare.isPending} onCancel={() => setSelected(undefined)} onOk={() => void submitPreparation()}
       >
-        <Typography.Paragraph type="warning">首次使用会从官方源下载并构建，成功验证前不会出现在可用设备镜像中。</Typography.Paragraph>
-        <Form form={form} layout="vertical" initialValues={defaultProfile}>
-          <Space wrap align="start">
-            <Form.Item name="container_cpu_cores" label="容器 CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={64} /></Form.Item>
-            <Form.Item name="container_memory_mb" label="容器内存（MiB）" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={1024} /></Form.Item>
-            <Form.Item name="guest_cpu_cores" label="Android CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
-            <Form.Item name="guest_memory_mb" label="Android 内存（MiB）" rules={[{ required: true }]}><InputNumber min={1536} step={512} /></Form.Item>
-            <Form.Item name="data_disk_mb" label="设备数据盘（MiB）" rules={[{ required: true }]}><InputNumber min={2048} step={1024} /></Form.Item>
-            <Form.Item name="width" label="宽度" rules={[{ required: true }]}><InputNumber min={320} /></Form.Item>
-            <Form.Item name="height" label="高度" rules={[{ required: true }]}><InputNumber min={480} /></Form.Item>
-            <Form.Item name="density_dpi" label="DPI" rules={[{ required: true }]}><InputNumber min={120} max={960} /></Form.Item>
-            <Form.Item name="vm_heap_mb" label="VM Heap（MiB）" rules={[{ required: true }]}><InputNumber min={128} /></Form.Item>
-            <Form.Item name="graphics" label="GPU 模式" rules={[{ required: true }]}><Select style={{ width: 140 }} options={[{ value: 'auto', label: '自动' }, { value: 'host', label: '宿主机 GPU' }, { value: 'software', label: '软件渲染' }]} /></Form.Item>
-          </Space>
-        </Form>
+        <Typography.Paragraph type="warning">首次使用会从官方源下载并构建，成功验证前不会出现在创建设备的可选列表中。构建验证使用受控默认规格；实际设备规格由创建向导保存。</Typography.Paragraph>
       </Modal>
       <Modal
         open={Boolean(selectedReadyImage)}

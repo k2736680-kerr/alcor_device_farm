@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.7.0
+ * OpenAPI spec version: 1.8.0
  */
 import type { Identifier } from './identifier';
 import type { AndroidSystemImageImageType } from './androidSystemImageImageType';
@@ -12,11 +12,11 @@ import type { AndroidSystemImageStatus } from './androidSystemImageStatus';
 
 export interface AndroidSystemImage {
   id: Identifier;
-  /** @pattern ^system-images;android-(33|34|35|36);(google_apis|google_play);x86_64$ */
+  /** @pattern ^system-images;android-([0-9]+);(default|google_apis|google_play);x86_64$ */
   package_name: string;
   /**
-   * @minimum 33
-   * @maximum 36
+   * @minimum 26
+   * @maximum 99
    */
   api_level: number;
   image_type: AndroidSystemImageImageType;

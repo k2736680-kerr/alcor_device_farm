@@ -14,6 +14,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/phoneprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/jackc/pgx/v5"
 )
@@ -46,6 +47,23 @@ type Result struct {
 	BackoffSkips         int
 }
 
+// ProvisionInput is the user-selected Phone configuration. The browser only
+// reaches this service; the resulting Docker work remains an Agent command.
+type ProvisionInput struct {
+	PoolID            string
+	ImageID           string
+	HardwareProfileID string
+	RuntimeProfile    runtimeprofile.Profile
+	IdempotencyKey    string
+}
+
+type Provisioning struct {
+	DeviceID  string `json:"device_id"`
+	CommandID string `json:"command_id"`
+	HostID    string `json:"host_id"`
+	Status    string `json:"status"`
+}
+
 type Controller struct {
 	db     *database.DB
 	newID  func() (string, error)
@@ -60,6 +78,85 @@ func New(db *database.DB, generator func() (string, error), logger *slog.Logger)
 		logger = slog.Default()
 	}
 	return &Controller{db: db, newID: generator, logger: logger}
+}
+
+// Provision creates the persistent Device, its Pool membership and the Agent
+// create command atomically. Warm-pool reconciliation retains ownership of the
+// later readiness transition, so the normal ADB/STF/Appium gate is unchanged.
+func (controller *Controller) Provision(ctx context.Context, input ProvisionInput) (Provisioning, error) {
+	if controller == nil || controller.db == nil || input.PoolID == "" || input.ImageID == "" || len(input.IdempotencyKey) < 8 {
+		return Provisioning{}, errors.New("invalid device provisioning request")
+	}
+	if err := input.RuntimeProfile.Validate(); err != nil {
+		return Provisioning{}, err
+	}
+	profile, ok := phoneprofile.Find(input.HardwareProfileID)
+	if !ok {
+		return Provisioning{}, errors.New("unknown Phone hardware profile")
+	}
+	result := Provisioning{Status: "provisioning"}
+	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var existingDeviceID, existingCommandID, existingHostID string
+		err := tx.QueryRow(ctx, `SELECT payload->>'device_id',id,host_id FROM device_host_commands
+			WHERE command_type='create' AND payload->>'provisioning_key'=$1 ORDER BY created_at DESC LIMIT 1`, input.IdempotencyKey).
+			Scan(&existingDeviceID, &existingCommandID, &existingHostID)
+		if err == nil {
+			result.DeviceID, result.CommandID, result.HostID = existingDeviceID, existingCommandID, existingHostID
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		var status domain.PoolStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 FOR UPDATE`, input.PoolID).Scan(&status); err != nil {
+			return err
+		}
+		// The Pool row serializes concurrent create submissions. Recheck after
+		// acquiring it so two identical browser retries cannot both add target.
+		err = tx.QueryRow(ctx, `SELECT payload->>'device_id',id,host_id FROM device_host_commands
+			WHERE command_type='create' AND payload->>'provisioning_key'=$1 ORDER BY created_at DESC LIMIT 1`, input.IdempotencyKey).
+			Scan(&existingDeviceID, &existingCommandID, &existingHostID)
+		if err == nil {
+			result.DeviceID, result.CommandID, result.HostID = existingDeviceID, existingCommandID, existingHostID
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if status != domain.PoolActive {
+			return errors.New("device pool is not active")
+		}
+		var runtimeImage, digest string
+		var api int
+		var abi string
+		if err := tx.QueryRow(ctx, `SELECT docker_image,docker_digest,api_level,abi FROM device_images WHERE id=$1 AND status='ready' FOR UPDATE`, input.ImageID).
+			Scan(&runtimeImage, &digest, &api, &abi); err != nil {
+			return err
+		}
+		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile)
+		if err != nil {
+			return err
+		}
+		capabilities := map[string]any{
+			"platformName": "Android", "apiLevel": api, "abi": abi,
+			"resolution":          fmt.Sprintf("%dx%d", input.RuntimeProfile.Width, input.RuntimeProfile.Height),
+			"hardware_profile_id": profile.ID, "hardware_profile_name": profile.Name,
+			"avd_device": profile.Name,
+		}
+		for key, value := range input.RuntimeProfile.Map() {
+			capabilities[key] = value
+		}
+		deviceID, commandID, err := controller.createDeviceCommand(ctx, tx, input.PoolID, input.ImageID, runtimeImage, digest, hostID, capabilities, input.RuntimeProfile, input.IdempotencyKey)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE device_pools SET total_target=total_target+1,updated_at=clock_timestamp() WHERE id=$1`, input.PoolID); err != nil {
+			return err
+		}
+		result.DeviceID, result.CommandID, result.HostID = deviceID, commandID, hostID
+		return nil
+	})
+	return result, err
 }
 
 func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
@@ -840,7 +937,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			if err != nil {
 				return err
 			}
-			if err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities, profile); err != nil {
+			if _, _, err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities, profile, ""); err != nil {
 				return err
 			}
 			result.DevicesCreated++
@@ -958,41 +1055,49 @@ func (controller *Controller) quarantineCreateResult(
 	return err
 }
 
-func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any, profile runtimeprofile.Profile) error {
+func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any, profile runtimeprofile.Profile, provisioningKey string) (string, string, error) {
 	deviceID, err := controller.newID()
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	commandID, err := controller.newID()
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	providerRef := "emulator-" + deviceID
 	serial := "pending-" + deviceID
 	encodedCapabilities, err := json.Marshal(capabilities)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO devices
 		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status)
 		VALUES($1,$2,$3,'emulator','docker_emulator',$4,'rebuild',$5,$6::jsonb,'provisioning','unknown')`,
 		deviceID, hostID, imageID, providerRef, serial, encodedCapabilities); err != nil {
-		return err
+		return "", "", err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, poolID, deviceID); err != nil {
-		return err
+		return "", "", err
 	}
-	payload, err := json.Marshal(map[string]any{"device_id": deviceID, "image_id": imageID, "provider_ref": providerRef,
-		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities, "runtime_profile": profile.Map()})
+	payloadMap := map[string]any{"device_id": deviceID, "image_id": imageID, "provider_ref": providerRef,
+		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities, "runtime_profile": profile.Map()}
+	if provisioningKey != "" {
+		payloadMap["provisioning_key"] = provisioningKey
+	}
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	keyHash := sha256.Sum256([]byte(poolID + "\x00" + imageID + "\x00" + deviceID))
 	idempotencyKey := "warm-" + hex.EncodeToString(keyHash[:16])
+	if provisioningKey != "" {
+		provisioningHash := sha256.Sum256([]byte(provisioningKey))
+		idempotencyKey = "provision-" + hex.EncodeToString(provisioningHash[:16])
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO device_host_commands
 		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
 		VALUES($1,$2,'create',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload, idempotencyKey)
-	return err
+	return deviceID, commandID, err
 }
 
 func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile) (string, error) {

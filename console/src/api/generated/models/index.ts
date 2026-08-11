@@ -3,13 +3,17 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.7.0
+ * OpenAPI spec version: 1.8.0
  */
 
 export * from './aPIError';
 export * from './aPIErrorDetails';
 export * from './acceptedResponse';
 export * from './actorIDParameter';
+export * from './androidHardwareProfile';
+export * from './androidHardwareProfileListEnvelope';
+export * from './androidHardwareProfileListEnvelopeError';
+export * from './androidHardwareProfileListSuccessResponse';
 export * from './androidImagePreparation';
 export * from './androidImagePreparationInput';
 export * from './androidImagePreparationStatus';
@@ -99,6 +103,12 @@ export * from './devicePoolPage';
 export * from './devicePoolPageAllOf';
 export * from './devicePoolStatus';
 export * from './deviceProviderType';
+export * from './deviceProvisioning';
+export * from './deviceProvisioningAcceptedResponse';
+export * from './deviceProvisioningEnvelope';
+export * from './deviceProvisioningEnvelopeError';
+export * from './deviceProvisioningInput';
+export * from './deviceProvisioningStatus';
 export * from './deviceReimageInput';
 export * from './deviceReimageInputBody';
 export * from './deviceReimageStatus';
@@ -154,6 +164,7 @@ export * from './imagePreparationEnvelopeError';
 export * from './imageSuccessResponse';
 export * from './leaseExtension';
 export * from './leaseExtensionBody';
+export * from './listAndroidHardwareProfilesParams';
 export * from './listDeviceAuditEventsParams';
 export * from './listDeviceHealthEventsParams';
 export * from './listDeviceHostsParams';

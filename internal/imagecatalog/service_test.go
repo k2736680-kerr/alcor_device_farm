@@ -3,7 +3,7 @@ package imagecatalog
 import "testing"
 
 func TestValidEntryAcceptsOnlyOfficialSystemImageSelectors(t *testing.T) {
-	if !validEntry("system-images;android-36;google_apis;x86_64", 36, "google_apis", "x86_64", "16") {
+	if !validEntry("system-images;android-30;default;x86_64", 30, "default", "x86_64", "11") {
 		t.Fatal("expected stable official selector to be valid")
 	}
 	invalid := []struct {
@@ -14,7 +14,7 @@ func TestValidEntryAcceptsOnlyOfficialSystemImageSelectors(t *testing.T) {
 		revision    string
 	}{
 		{"https://example.invalid/system.img", 36, "google_apis", "x86_64", "16"},
-		{"system-images;android-36;default;x86_64", 36, "default", "x86_64", "16"},
+		{"system-images;android-25;default;x86_64", 25, "default", "x86_64", "1"},
 		{"system-images;android-36;google_apis;armeabi-v7a", 36, "google_apis", "armeabi-v7a", "16"},
 		{"system-images;android-36;google_apis;x86_64", 36, "google_apis", "x86_64", "16;curl"},
 	}

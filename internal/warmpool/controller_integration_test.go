@@ -12,6 +12,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/warmpool"
 )
@@ -55,6 +56,28 @@ func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testi
 		t.Fatalf("second reconciliation result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 2)
+}
+
+func TestProvisionPhoneCreatesOneCommandAndRaisesPoolTarget(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 2)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	input := warmpool.ProvisionInput{
+		PoolID: "pool_000000000000001", ImageID: "image_00000000000001", HardwareProfileID: "pixel_9",
+		RuntimeProfile: runtimeprofile.Default(), IdempotencyKey: "provision-phone-test-key",
+	}
+	first, err := controller.Provision(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := controller.Provision(context.Background(), input)
+	if err != nil || second != first {
+		t.Fatalf("idempotent provision=%+v first=%+v err=%v", second, first, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning'", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_pool_devices WHERE enabled", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create' AND payload->'capabilities'->>'hardware_profile_id'='pixel_9'", 1)
+	assertCount(t, db, "SELECT total_target FROM device_pools WHERE id='pool_000000000000001'", 2)
 }
 
 func TestPoolUsesOnlyDefaultImageAndSwitchDoesNotReimageExistingDevice(t *testing.T) {

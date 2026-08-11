@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.7.0
+  version: 1.8.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-10
   x-platform-semantics: Case/Run/RunAttempt
@@ -170,6 +170,35 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/android-hardware-profiles:
+    get:
+      tags: [Devices]
+      operationId: listAndroidHardwareProfiles
+      description: Phone-only Android SDK hardware profiles supported by the controlled emulator build.
+      parameters:
+        - {name: q, in: query, schema: {type: string, maxLength: 100}}
+      responses:
+        "200": {$ref: "#/components/responses/AndroidHardwareProfileListSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/device-provisionings:
+    post:
+      tags: [Devices]
+      operationId: createDeviceProvisioning
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DeviceProvisioningInput"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceProvisioningAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
         "409": {$ref: "#/components/responses/Conflict"}
         "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-hosts:
@@ -959,6 +988,12 @@ components:
     AndroidSystemImageListSuccess:
       description: 官方稳定 Android System Image 目录
       content: {application/json: {schema: {$ref: "#/components/schemas/AndroidSystemImageListEnvelope"}}}
+    AndroidHardwareProfileListSuccess:
+      description: Phone 硬件模板目录
+      content: {application/json: {schema: {$ref: "#/components/schemas/AndroidHardwareProfileListEnvelope"}}}
+    DeviceProvisioningAccepted:
+      description: Phone Emulator 创建命令已持久化
+      content: {application/json: {schema: {$ref: "#/components/schemas/DeviceProvisioningEnvelope"}}}
     ImagePreparationAccepted:
       description: 目录同步或镜像准备任务已接受
       content: {application/json: {schema: {$ref: "#/components/schemas/ImagePreparationEnvelope"}}}
@@ -1135,9 +1170,9 @@ components:
       required: [id, package_name, api_level, image_type, abi, revision, source_updated_at, last_seen_at, status]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
-        package_name: {type: string, pattern: "^system-images;android-(33|34|35|36);(google_apis|google_play);x86_64$"}
-        api_level: {type: integer, minimum: 33, maximum: 36}
-        image_type: {type: string, enum: [google_apis, google_play]}
+        package_name: {type: string, pattern: "^system-images;android-([0-9]+);(default|google_apis|google_play);x86_64$"}
+        api_level: {type: integer, minimum: 26, maximum: 99}
+        image_type: {type: string, enum: [default, google_apis, google_play]}
         abi: {type: string, enum: [x86_64]}
         revision: {type: string}
         source_updated_at: {type: string, format: date-time}
@@ -1168,6 +1203,50 @@ components:
       properties:
         catalog_id: {$ref: "#/components/schemas/Identifier"}
         runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
+    AndroidHardwareProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, width, height, density_dpi]
+      properties:
+        id: {type: string, pattern: "^[a-z0-9_]+$"}
+        name: {type: string}
+        width: {type: integer, minimum: 320}
+        height: {type: integer, minimum: 480}
+        density_dpi: {type: integer, minimum: 120}
+    AndroidHardwareProfileListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {type: array, items: {$ref: "#/components/schemas/AndroidHardwareProfile"}}
+        error: {nullable: true}
+    DeviceProvisioningInput:
+      type: object
+      additionalProperties: false
+      required: [pool_id, image_id, hardware_profile_id, runtime_profile]
+      properties:
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        image_id: {$ref: "#/components/schemas/Identifier"}
+        hardware_profile_id: {type: string, pattern: "^[a-z0-9_]+$"}
+        runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
+    DeviceProvisioning:
+      type: object
+      additionalProperties: false
+      required: [device_id, command_id, host_id, status]
+      properties:
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        command_id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        status: {type: string, enum: [provisioning]}
+    DeviceProvisioningEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/DeviceProvisioning"}
+        error: {nullable: true}
     DeviceImageStatus:
       type: string
       enum: [draft, validating, ready, failed, disabled]

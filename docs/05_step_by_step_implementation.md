@@ -57,6 +57,7 @@
 | DF-034 | 设备规格编辑和受控重装 | completed | DF-033 |
 | DF-035 | Android 13～16 镜像目录和真实多规格验收 | completed | DF-034 |
 | DF-036 | 旧镜像受控停用和可用镜像选择 | completed | DF-035 |
+| DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -374,6 +375,14 @@
 产出：ADR-0016、OpenAPI、Management Service/Store、Console 镜像选择与归档视图、PostgreSQL 集成测试和 `docs/evidence/DF-036/`。
 
 验收：旧镜像仍是 Pool 默认值或被非 `deleted` Device 引用时停用返回 409；只被历史 Device 引用时停用成功、Pool Image 关系禁用、审计完整且默认列表不再显示；归档视图仍可追溯。选择已验证 Image 后其 Pool Image 关系启用且成为默认值，后续补建使用它，已有 Device 不发生重装；非 `ready` Image 不可选择。真实环境清理旧 DF-035 前镜像后只显示当前可用镜像，当前 ready/healthy 设备、STF 和 Appium 不受影响。
+
+### DF-037 Phone 硬件模板和受控模拟器创建向导
+
+实施：只为 Phone 提供 Android SDK 硬件模板搜索和选择；从已同步的官方 System Image 目录选择系统版本，未准备条目明确显示准备状态，已验证条目可直接创建。创建页提供容器/Android CPU 和内存、数据盘、分辨率、DPI、VM Heap、图形模式等完整 runtime profile，并选择目标 Pool。Server 必须在一个数据库事务内锁定 Pool 和 Host 实际容量、登记 provisioning Device、Pool membership 与 `create` Host Command、增加 Pool `total_target`；Agent/Provider 使用指定 Phone Profile 创建，既有 Controller 完成 ADB、STF、Appium 健康收敛。首期不提供 Tablet、Wear、TV、Automotive、Desktop 或 XR。
+
+产出：ADR-0017、Phone Profile 目录接口、受控创建 API、Provider Profile 参数映射、Console 创建向导、单元/集成/契约测试和 `docs/evidence/DF-037/`。
+
+验收：Console 可搜索并从多条 Phone 模板选择；系统镜像目录不再只允许 API 33～36 四项，未准备项不会被误认为可创建；提交后不会由浏览器或 Server 直连 Docker/Google，设备、Pool membership、Host Command 和目标数原子登记；容量不足或非 ready 镜像返回稳定错误且无半条记录；指定 Profile、CPU、内存、分辨率和 GPU 参数进入 Agent/Provider；真实 Linux KVM 创建后通过 ADB、STF、Appium 才进入 ready/healthy。
 
 ## 10. 阶段 H：新版 Alcor 接入
 
