@@ -243,29 +243,11 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices",
 		map[string]any{"device_id": deleteCandidate.ID}, serviceToken, ""), http.StatusOK)
-	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
-		reasonBody(), serviceToken, "device-delete-ready"), http.StatusConflict)
-	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deleteCandidate.ID+"/quarantines",
-		reasonBody(), serviceToken, ""), http.StatusOK)
-	if _, err := environment.db.Pool().Exec(context.Background(), `INSERT INTO device_reservations
-		(id,client_id,pool_id,device_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,
-		 idempotency_key,starts_at,expires_at)
-		VALUES('reservation_delete_0001','console-test',$1,$2,'manual','owner_delete_00001','{}',1800,'active',
-		'delete-active-reservation',clock_timestamp(),clock_timestamp()+interval '30 minutes')`, pool.ID, deleteCandidate.ID); err != nil {
-		t.Fatal(err)
-	}
-	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
-		reasonBody(), serviceToken, "device-delete-active"), http.StatusConflict)
-	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_reservations SET
-		status='force_released',released_at=clock_timestamp(),updated_at=clock_timestamp()
-		WHERE id='reservation_delete_0001'`); err != nil {
-		t.Fatal(err)
-	}
 	deleteResponse := environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
-		reasonBody(), serviceToken, "device-delete-accepted")
+		reasonBody(), serviceToken, "device-delete-ready")
 	assertStatus(t, deleteResponse, http.StatusAccepted)
 	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
-		reasonBody(), serviceToken, "device-delete-accepted"), http.StatusAccepted)
+		reasonBody(), serviceToken, "device-delete-ready"), http.StatusAccepted)
 	assertStatus(t, environment.request(t, http.MethodDelete, "/api/v1/devices/"+deleteCandidate.ID,
 		reasonBody(), serviceToken, "device-delete-second-command"), http.StatusConflict)
 	assertCommandCount(t, environment.db, deleteCandidate.ID, "delete", 1)

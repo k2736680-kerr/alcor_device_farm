@@ -359,7 +359,7 @@ func (store *Store) SelectPoolDefaultImage(
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET default_image_id=$2,updated_at=clock_timestamp()
 			WHERE id=$1 RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
-			default_image_id,status,created_at,updated_at`, poolID, imageID))
+			default_image_id,base_device_id,status,created_at,updated_at`, poolID, imageID))
 		if err != nil {
 			return err
 		}
