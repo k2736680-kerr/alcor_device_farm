@@ -18,18 +18,23 @@ ALTER TABLE device_pools
 -- their legacy default-image fallback until an administrator selects a base.
 UPDATE device_pools p
 SET base_device_id = candidate.device_id
-FROM LATERAL (
-    SELECT pd.device_id
-    FROM device_pool_devices pd
-    JOIN devices d ON d.id = pd.device_id
-    WHERE pd.pool_id = p.id
-      AND pd.enabled
-      AND d.device_kind = 'emulator'
-      AND d.provider_type = 'docker_emulator'
-      AND d.lifecycle_status = 'ready'
-      AND d.health_status = 'healthy'
-      AND d.capabilities ? 'hardware_profile_id'
-    ORDER BY d.updated_at DESC, d.id DESC
-    LIMIT 1
+FROM (
+    SELECT p2.id AS pool_id, (
+        SELECT pd.device_id
+        FROM device_pool_devices pd
+        JOIN devices d ON d.id = pd.device_id
+        WHERE pd.pool_id = p2.id
+          AND pd.enabled
+          AND d.device_kind = 'emulator'
+          AND d.provider_type = 'docker_emulator'
+          AND d.lifecycle_status = 'ready'
+          AND d.health_status = 'healthy'
+          AND d.capabilities ? 'hardware_profile_id'
+        ORDER BY d.updated_at DESC, d.id DESC
+        LIMIT 1
+    ) AS device_id
+    FROM device_pools p2
+    WHERE p2.base_device_id IS NULL
 ) candidate
-WHERE p.base_device_id IS NULL;
+WHERE p.id = candidate.pool_id
+  AND candidate.device_id IS NOT NULL;
