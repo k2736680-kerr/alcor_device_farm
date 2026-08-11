@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord, RemoteControl } from '../api/generated/models'
+import type { AndroidSystemImage, Device, DeviceHost, DeviceImage, DevicePool, DevicePoolImage, Reservation, AuditEvent, HealthEventRecord, RemoteControl } from '../api/generated/models'
 
 /** Envelope matching the real backend: { request_id, data, error }. */
 function pageEnvelope<T>(items: T[], total: number, page = 1, pageSize = 20) {
@@ -20,13 +20,22 @@ export const sampleImages: DeviceImage[] = [
   {
     id: 'image_00000000000001', name: 'android-14', docker_image: 'registry.example/alcor/android-emulator:api34',
     docker_digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-    api_level: 34, abi: 'x86_64', resolution: '1080x2400', resource_config: { container_cpu_cores: 4, container_memory_mb: 5120, guest_cpu_cores: 4, guest_memory_mb: 4096, data_disk_mb: 4096, graphics: 'auto' }, status: 'ready',
+    api_level: 34, abi: 'x86_64', resolution: '1080x2400', resource_config: { container_cpu_cores: 4, container_memory_mb: 5120, guest_cpu_cores: 4, guest_memory_mb: 4096, data_disk_mb: 4096, image_disk_mb: 7880, graphics: 'auto' }, status: 'ready',
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
   {
     id: 'image_00000000000002', name: 'android-15', docker_digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     api_level: 35, abi: 'arm64-v8a', resolution: '1080x2400', resource_config: {}, status: 'failed', validation_error: 'IMAGE_REFERENCE_REQUIRED',
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
+  },
+]
+
+export const sampleAndroidSystemImages: AndroidSystemImage[] = [
+  {
+    id: 'catalog_00000000000001', package_name: 'system-images;android-36;google_apis;x86_64', api_level: 36,
+    image_type: 'google_apis', abi: 'x86_64', revision: '16', status: 'cached',
+    source_updated_at: '2026-08-10T00:00:00Z', last_seen_at: '2026-08-10T00:00:00Z',
+    preparation_id: 'prepare_00000000000001', image_id: 'image_00000000000001',
   },
 ]
 
@@ -127,6 +136,13 @@ export const handlers = [
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
     return HttpResponse.json(pageEnvelope(sampleImages.slice(0, size), sampleImages.length, page, size))
   }),
+  http.get('/api/v1/android-system-images', () => HttpResponse.json({ request_id: 'req_catalog', data: sampleAndroidSystemImages, error: null })),
+  http.post('/api/v1/android-system-images/synchronizations', () => HttpResponse.json({
+    request_id: 'req_catalog_sync', data: { id: 'command_00000000000001', host_id: 'host_000000000000001', command_id: 'command_00000000000001', runtime_profile: {}, status: 'queued', created_at: '2026-08-10T00:00:00Z', updated_at: '2026-08-10T00:00:00Z' }, error: null,
+  }, { status: 202 })),
+  http.post('/api/v1/android-system-images/preparations', () => HttpResponse.json({
+    request_id: 'req_prepare', data: { id: 'prepare_00000000000002', catalog_id: 'catalog_00000000000001', host_id: 'host_000000000000001', command_id: 'command_00000000000002', runtime_profile: {}, status: 'queued', created_at: '2026-08-10T00:00:00Z', updated_at: '2026-08-10T00:00:00Z' }, error: null,
+  }, { status: 202 })),
   http.get('/api/v1/device-hosts', ({ request }) => {
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)

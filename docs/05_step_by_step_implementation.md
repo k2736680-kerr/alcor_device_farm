@@ -55,7 +55,7 @@
 | DF-032 | 动态 Host 容量和设备运行规格 | completed | DF-014、DF-016、DF-029、DF-031 |
 | DF-033 | Pool 总目标和默认镜像 | completed | DF-032 |
 | DF-034 | 设备规格编辑和受控重装 | completed | DF-033 |
-| DF-035 | Android 13～16 镜像目录和真实多规格验收 | pending | DF-034 |
+| DF-035 | Android 13～16 镜像目录和真实多规格验收 | completed | DF-034 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -358,13 +358,13 @@
 
 验收：使用中的设备不能编辑；4 GB 改 8 GB 时按实际剩余容量判断；重装明确提示会清空 APK 和设备数据；成功后 Device ID/Pool membership 不变，Image、有效规格和动态 Endpoint 正确更新；失败不把数据库伪装成目标 Image，恢复失败时隔离且审计可追踪；刷新页面不会丢失处理中状态。
 
-### DF-035 Android 13～16 镜像目录和真实多规格验收
+### DF-035 官方 Android System Image 目录同步、后台按需准备和真实多规格验收
 
-实施：在同一受控仓库发布 Android 13/API 33、14/API 34、15/API 35、16/API 36 的可用 x86_64 镜像，登记不可变 digest、下载地址和默认规格；Android 16 为 Pool 默认。按 Host 能力验证 GPU host/auto/software 回退以及两种内存规格的容量结果。
+实施：Server 同步 Android SDK 官方稳定频道的 System Image 目录；Console 仅能选择目录中的 Android/API、`google_apis`/`google_play` 和 ABI，并继续配置 runtime profile。点击“准备镜像”后，Server 创建可恢复的异步构建命令，由受控 Build Agent 用固定版本 `sdkmanager`/`avdmanager` 下载、叠加既有 Appium、UiAutomator2 和启动脚本，推送内部 Registry 并记录不可变 digest。只有既有验证成功后才写入 `device_images` 为可用；已缓存 digest 直接复用。Android 16 为默认候选，不预先创建四台设备。按 Host 能力验证 GPU host/auto/software 回退以及两种内存规格的容量结果。
 
-产出：镜像构建清单/脚本、四个 Image 登记、摘要和兼容性证据、容量与重装真实验收、回滚说明及 `docs/evidence/DF-035/`。
+产出：官方目录同步契约、受控构建 Agent 命令、镜像准备状态/审计、不可变 digest/缓存策略、容量与重装真实验收、回滚说明及 `docs/evidence/DF-035/`。
 
-验收：新 Host 可从统一地址拉取四个版本且摘要匹配；默认创建 Android 16；管理员可把同一空闲 Device 重装到任一版本并通过 ADB、STF、Appium 冒烟；镜像层缓存与设备卷占用在 Console 中可区分；测试 Host 最终只保留用户设定的设备数量和默认版本，不因镜像数量自动创建四台。
+验收：Console 可显示可下载、下载/构建中、验证中、已缓存可使用、准备失败和官方已更新；浏览器不访问 Google 且不能提交任意下载地址/命令；Build Agent 使用官方稳定目录的固定包名并记录 digest；验证成功前 `device_images` 无候选记录；相同 digest 复用缓存；默认创建 Android 16；管理员可把同一空闲 Device 重装到已可用版本并通过 ADB、STF、Appium 冒烟；镜像层缓存与设备卷占用在 Console 中可区分；测试 Host 最终只保留用户设定的设备数量和默认版本，不因目录条目自动创建四台。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.5.0
+ * OpenAPI spec version: 1.6.0
  */
 import {
   useMutation,
@@ -25,9 +25,12 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AndroidImagePreparationInput,
+  AndroidSystemImageListSuccessResponse,
   AuditEventListSuccessResponse,
   CommandClaimBody,
   CommandCompletionBody,
+  CommandLeaseExtensionBody,
   ConsoleLoginBody,
   ConsoleLogoutSuccessResponse,
   ConsoleSessionCreatedResponse,
@@ -53,6 +56,7 @@ import type {
   ImageAcceptedResponse,
   ImageCreatedResponse,
   ImageListSuccessResponse,
+  ImagePreparationAcceptedResponse,
   ImageSuccessResponse,
   LeaseExtensionBody,
   ListDeviceAuditEventsParams,
@@ -1021,6 +1025,350 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getValidateDeviceImageMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Returns the stable official Android SDK catalogue last synchronized by a controlled Build Agent.
+ */
+export type listAndroidSystemImagesResponse200 = {
+  data: AndroidSystemImageListSuccessResponse
+  status: 200
+}
+
+export type listAndroidSystemImagesResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type listAndroidSystemImagesResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type listAndroidSystemImagesResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type listAndroidSystemImagesResponseSuccess = (listAndroidSystemImagesResponse200) & {
+  headers: Headers;
+};
+export type listAndroidSystemImagesResponseError = (listAndroidSystemImagesResponse401 | listAndroidSystemImagesResponse403 | listAndroidSystemImagesResponse500) & {
+  headers: Headers;
+};
+
+export type listAndroidSystemImagesResponse = (listAndroidSystemImagesResponseSuccess | listAndroidSystemImagesResponseError)
+
+export const getListAndroidSystemImagesUrl = () => {
+
+
+
+
+  return `/api/v1/android-system-images`
+}
+
+export const listAndroidSystemImages = async ( options?: RequestInit): Promise<listAndroidSystemImagesResponse> => {
+
+  return deviceFarmFetch<listAndroidSystemImagesResponse>(getListAndroidSystemImagesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAndroidSystemImagesQueryKey = () => {
+    return [
+    `/api/v1/android-system-images`
+    ] as const;
+    }
+
+
+export const getListAndroidSystemImagesQueryOptions = <TData = Awaited<ReturnType<typeof listAndroidSystemImages>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidSystemImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAndroidSystemImagesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAndroidSystemImages>>> = ({ signal }) => listAndroidSystemImages({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAndroidSystemImages>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAndroidSystemImagesQueryResult = NonNullable<Awaited<ReturnType<typeof listAndroidSystemImages>>>
+export type ListAndroidSystemImagesQueryError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+
+export function useListAndroidSystemImages<TData = Awaited<ReturnType<typeof listAndroidSystemImages>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidSystemImages>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAndroidSystemImages>>,
+          TError,
+          Awaited<ReturnType<typeof listAndroidSystemImages>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAndroidSystemImages<TData = Awaited<ReturnType<typeof listAndroidSystemImages>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidSystemImages>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAndroidSystemImages>>,
+          TError,
+          Awaited<ReturnType<typeof listAndroidSystemImages>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAndroidSystemImages<TData = Awaited<ReturnType<typeof listAndroidSystemImages>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidSystemImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListAndroidSystemImages<TData = Awaited<ReturnType<typeof listAndroidSystemImages>>, TError = UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAndroidSystemImages>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAndroidSystemImagesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Queues a stable-channel sdkmanager catalogue synchronization on a controlled Build Agent.
+ */
+export type synchronizeAndroidSystemImagesResponse202 = {
+  data: ImagePreparationAcceptedResponse
+  status: 202
+}
+
+export type synchronizeAndroidSystemImagesResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type synchronizeAndroidSystemImagesResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type synchronizeAndroidSystemImagesResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type synchronizeAndroidSystemImagesResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type synchronizeAndroidSystemImagesResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type synchronizeAndroidSystemImagesResponseSuccess = (synchronizeAndroidSystemImagesResponse202) & {
+  headers: Headers;
+};
+export type synchronizeAndroidSystemImagesResponseError = (synchronizeAndroidSystemImagesResponse400 | synchronizeAndroidSystemImagesResponse401 | synchronizeAndroidSystemImagesResponse403 | synchronizeAndroidSystemImagesResponse409 | synchronizeAndroidSystemImagesResponse500) & {
+  headers: Headers;
+};
+
+export type synchronizeAndroidSystemImagesResponse = (synchronizeAndroidSystemImagesResponseSuccess | synchronizeAndroidSystemImagesResponseError)
+
+export const getSynchronizeAndroidSystemImagesUrl = () => {
+
+
+
+
+  return `/api/v1/android-system-images/synchronizations`
+}
+
+export const synchronizeAndroidSystemImages = async ( options?: RequestInit): Promise<synchronizeAndroidSystemImagesResponse> => {
+
+  return deviceFarmFetch<synchronizeAndroidSystemImagesResponse>(getSynchronizeAndroidSystemImagesUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getSynchronizeAndroidSystemImagesMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof synchronizeAndroidSystemImages>>, TError,void, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof synchronizeAndroidSystemImages>>, TError,void, TContext> => {
+
+const mutationKey = ['synchronizeAndroidSystemImages'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof synchronizeAndroidSystemImages>>, void> = () => {
+
+
+          return  synchronizeAndroidSystemImages(requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SynchronizeAndroidSystemImagesMutationResult = NonNullable<Awaited<ReturnType<typeof synchronizeAndroidSystemImages>>>
+
+    export type SynchronizeAndroidSystemImagesMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useSynchronizeAndroidSystemImages = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof synchronizeAndroidSystemImages>>, TError,void, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof synchronizeAndroidSystemImages>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getSynchronizeAndroidSystemImagesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+export type prepareAndroidSystemImageResponse202 = {
+  data: ImagePreparationAcceptedResponse
+  status: 202
+}
+
+export type prepareAndroidSystemImageResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type prepareAndroidSystemImageResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type prepareAndroidSystemImageResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type prepareAndroidSystemImageResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type prepareAndroidSystemImageResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type prepareAndroidSystemImageResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type prepareAndroidSystemImageResponseSuccess = (prepareAndroidSystemImageResponse202) & {
+  headers: Headers;
+};
+export type prepareAndroidSystemImageResponseError = (prepareAndroidSystemImageResponse400 | prepareAndroidSystemImageResponse401 | prepareAndroidSystemImageResponse403 | prepareAndroidSystemImageResponse404 | prepareAndroidSystemImageResponse409 | prepareAndroidSystemImageResponse500) & {
+  headers: Headers;
+};
+
+export type prepareAndroidSystemImageResponse = (prepareAndroidSystemImageResponseSuccess | prepareAndroidSystemImageResponseError)
+
+export const getPrepareAndroidSystemImageUrl = () => {
+
+
+
+
+  return `/api/v1/android-system-images/preparations`
+}
+
+export const prepareAndroidSystemImage = async (androidImagePreparationInput: AndroidImagePreparationInput, options?: RequestInit): Promise<prepareAndroidSystemImageResponse> => {
+
+  return deviceFarmFetch<prepareAndroidSystemImageResponse>(getPrepareAndroidSystemImageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      androidImagePreparationInput,)
+  }
+);}
+
+
+
+
+export const getPrepareAndroidSystemImageMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareAndroidSystemImage>>, TError,{data: AndroidImagePreparationInput}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof prepareAndroidSystemImage>>, TError,{data: AndroidImagePreparationInput}, TContext> => {
+
+const mutationKey = ['prepareAndroidSystemImage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prepareAndroidSystemImage>>, {data: AndroidImagePreparationInput}> = (props) => {
+          const {data} = props ?? {};
+
+          return  prepareAndroidSystemImage(data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrepareAndroidSystemImageMutationResult = NonNullable<Awaited<ReturnType<typeof prepareAndroidSystemImage>>>
+    export type PrepareAndroidSystemImageMutationBody = AndroidImagePreparationInput
+    export type PrepareAndroidSystemImageMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const usePrepareAndroidSystemImage = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareAndroidSystemImage>>, TError,{data: AndroidImagePreparationInput}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof prepareAndroidSystemImage>>,
+        TError,
+        {data: AndroidImagePreparationInput},
+        TContext
+      > => {
+
+      const mutationOptions = getPrepareAndroidSystemImageMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -5894,6 +6242,120 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getCompleteHostCommandMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Renews a leased Host Command while a controlled long-running operation such as image preparation is still executing.
+ */
+export type extendHostCommandLeaseResponse200 = {
+  data: SuccessResponse
+  status: 200
+}
+
+export type extendHostCommandLeaseResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type extendHostCommandLeaseResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type extendHostCommandLeaseResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type extendHostCommandLeaseResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type extendHostCommandLeaseResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type extendHostCommandLeaseResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type extendHostCommandLeaseResponseSuccess = (extendHostCommandLeaseResponse200) & {
+  headers: Headers;
+};
+export type extendHostCommandLeaseResponseError = (extendHostCommandLeaseResponse400 | extendHostCommandLeaseResponse401 | extendHostCommandLeaseResponse403 | extendHostCommandLeaseResponse404 | extendHostCommandLeaseResponse409 | extendHostCommandLeaseResponse500) & {
+  headers: Headers;
+};
+
+export type extendHostCommandLeaseResponse = (extendHostCommandLeaseResponseSuccess | extendHostCommandLeaseResponseError)
+
+export const getExtendHostCommandLeaseUrl = (id: string,) => {
+
+
+
+
+  return `/internal/v1/device-host-commands/${id}/extensions`
+}
+
+export const extendHostCommandLease = async (id: string,
+    commandLeaseExtensionBody: CommandLeaseExtensionBody, options?: RequestInit): Promise<extendHostCommandLeaseResponse> => {
+
+  return deviceFarmFetch<extendHostCommandLeaseResponse>(getExtendHostCommandLeaseUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      commandLeaseExtensionBody,)
+  }
+);}
+
+
+
+
+export const getExtendHostCommandLeaseMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof extendHostCommandLease>>, TError,{id: string;data: CommandLeaseExtensionBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof extendHostCommandLease>>, TError,{id: string;data: CommandLeaseExtensionBody}, TContext> => {
+
+const mutationKey = ['extendHostCommandLease'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof extendHostCommandLease>>, {id: string;data: CommandLeaseExtensionBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  extendHostCommandLease(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ExtendHostCommandLeaseMutationResult = NonNullable<Awaited<ReturnType<typeof extendHostCommandLease>>>
+    export type ExtendHostCommandLeaseMutationBody = CommandLeaseExtensionBody
+    export type ExtendHostCommandLeaseMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useExtendHostCommandLease = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof extendHostCommandLease>>, TError,{id: string;data: CommandLeaseExtensionBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof extendHostCommandLease>>,
+        TError,
+        {id: string;data: CommandLeaseExtensionBody},
+        TContext
+      > => {
+
+      const mutationOptions = getExtendHostCommandLeaseMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

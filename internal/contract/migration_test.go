@@ -48,6 +48,33 @@ func TestImageValidationCommandMigrationContract(t *testing.T) {
 	assertSQLAbsent(t, down, `validate_image`)
 }
 
+func TestAndroidSystemImageCatalogMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000009_android_system_image_catalog.up.sql"))
+	down := readFile(t, filepath.Join(root, "000009_android_system_image_catalog.down.sql"))
+	for _, table := range []string{"android_system_image_catalog", "device_image_preparations"} {
+		assertSQLContains(t, up, `CREATE\s+TABLE\s+`+table+`\b`)
+		assertSQLContains(t, down, `DROP\s+TABLE\s+IF\s+EXISTS\s+`+table+`\b`)
+	}
+	assertSQLContains(t, up, `catalog_revision`)
+	assertSQLContains(t, up, `build_command_id`)
+	assertSQLContains(t, up, `validation_command_id`)
+	assertSQLContains(t, up, `status\s+<>\s+'cached'\s+OR\s+image_id\s+IS\s+NOT\s+NULL`)
+	assertSQLContains(t, up, `uq_device_images_digest_runtime_profile`)
+	assertSQLContains(t, down, `device_images_docker_digest_key`)
+}
+
+func TestVerifiedImagePreparationCompatibilityMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000010_verified_image_preparation_gate.up.sql"))
+	down := readFile(t, filepath.Join(root, "000010_verified_image_preparation_gate.down.sql"))
+	assertSQLContains(t, up, `RENAME\s+COLUMN\s+command_id\s+TO\s+build_command_id`)
+	assertSQLContains(t, up, `ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+validation_command_id`)
+	assertSQLContains(t, up, `status\s+<>\s+'cached'\s+OR\s+image_id\s+IS\s+NOT\s+NULL`)
+	assertSQLContains(t, up, `api_level\s+BETWEEN\s+33\s+AND\s+36`)
+	assertSQLContains(t, down, `DROP\s+COLUMN\s+IF\s+EXISTS\s+validation_command_id`)
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -43,6 +44,7 @@ type Config struct {
 	AdvertiseHost       string
 	BindAddress         string
 	KVMDevice           string
+	RenderDevice        string
 	ContainerADBPort    int
 	ContainerAppiumPort int
 	ContainerADBSerial  string
@@ -56,8 +58,10 @@ type Config struct {
 }
 
 type Provider struct {
-	config  Config
-	backend backend
+	config       Config
+	backend      backend
+	gpuDevice    string
+	renderDevice string
 }
 
 func New(ctx context.Context, config Config) (*Provider, error) {
@@ -79,7 +83,16 @@ func newProvider(ctx context.Context, config Config, docker backend, host hostPr
 	if err := docker.Ping(ctx); err != nil {
 		return nil, providerError(providers.OperationDiscover, "DOCKER_UNAVAILABLE", "Docker Engine is unavailable", true, err)
 	}
-	return &Provider{config: config, backend: docker}, nil
+	renderDevice := ""
+	gpuDevice := ""
+	if host.RenderDeviceAvailable(config.RenderDevice) {
+		renderDevice = config.RenderDevice
+		candidate := filepath.Join(filepath.Dir(config.RenderDevice), "card0")
+		if host.RenderDeviceAvailable(candidate) {
+			gpuDevice = candidate
+		}
+	}
+	return &Provider{config: config, backend: docker, gpuDevice: gpuDevice, renderDevice: renderDevice}, nil
 }
 
 func (provider *Provider) Discover(ctx context.Context, hostID string) ([]providers.Snapshot, error) {
@@ -188,10 +201,15 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
 	}
 	environment := cloneStringMap(provider.config.Environment)
-	applyRuntimeEnvironment(environment, request.RuntimeProfile)
+	graphics, renderDevice, err := provider.resolveGraphics(request.RuntimeProfile.Graphics)
+	if err != nil {
+		provider.cleanup(request.ProviderRef)
+		return providers.Snapshot{}, err
+	}
+	applyRuntimeEnvironment(environment, request.RuntimeProfile, graphics)
 	err = provider.backend.CreateContainer(ctx, containerSpec{
 		Name: name, Hostname: name, Image: runtimeImage, Network: networkName, Volume: volumeName,
-		DataMountPath: provider.config.DataMountPath, KVMDevice: provider.config.KVMDevice,
+		DataMountPath: provider.config.DataMountPath, KVMDevice: provider.config.KVMDevice, GPUDevice: provider.gpuDevice, RenderDevice: renderDevice,
 		BindAddress: provider.config.BindAddress, ContainerADBPort: provider.config.ContainerADBPort,
 		ContainerAppiumPort: provider.config.ContainerAppiumPort,
 		CPUs:                request.RuntimeProfile.ContainerCPUCores, Memory: fmt.Sprintf("%dm", request.RuntimeProfile.ContainerMemoryMB), PidsLimit: provider.config.PidsLimit,
@@ -488,6 +506,9 @@ func withDefaults(config Config) Config {
 	if config.KVMDevice == "" {
 		config.KVMDevice = "/dev/kvm"
 	}
+	if config.RenderDevice == "" {
+		config.RenderDevice = "/dev/dri/renderD128"
+	}
 	if config.ContainerADBPort == 0 {
 		config.ContainerADBPort = 5555
 	}
@@ -527,7 +548,7 @@ func validateConfig(config Config) error {
 	}
 	if config.ContainerADBPort < 1 || config.ContainerADBPort > 65535 || config.ContainerAppiumPort < 1 || config.ContainerAppiumPort > 65535 ||
 		config.ContainerADBPort == config.ContainerAppiumPort || strings.TrimSpace(config.ContainerADBSerial) == "" ||
-		strings.TrimSpace(config.ADBPath) == "" || !path.IsAbs(config.KVMDevice) || config.CPUs <= 0 ||
+		strings.TrimSpace(config.ADBPath) == "" || !path.IsAbs(config.KVMDevice) || !path.IsAbs(config.RenderDevice) || config.CPUs <= 0 ||
 		strings.TrimSpace(config.Memory) == "" || config.PidsLimit < 1 || !path.IsAbs(config.DataMountPath) {
 		return errors.New("invalid Docker emulator resource configuration")
 	}
@@ -561,14 +582,25 @@ func validateCreateRequest(request providers.CreateRequest) error {
 	return nil
 }
 
-func applyRuntimeEnvironment(environment map[string]string, profile runtimeprofile.Profile) {
-	graphics := "auto"
-	switch profile.Graphics {
+func (provider *Provider) resolveGraphics(requested string) (string, string, error) {
+	switch requested {
 	case runtimeprofile.GraphicsHost:
-		graphics = "host"
+		if provider.renderDevice == "" {
+			return "", "", providerError(providers.OperationCreate, "GPU_RENDER_UNAVAILABLE", "host graphics requires an available render device", false, nil)
+		}
+		return "host", provider.renderDevice, nil
 	case runtimeprofile.GraphicsSoftware:
-		graphics = "swiftshader_indirect"
+		return "swiftshader_indirect", "", nil
+	default:
+		// A render node only proves that the kernel device exists. Headless
+		// Emulator host rendering can still fail before ADB (driver/EGL/display
+		// compatibility). Keep auto safe and deterministic; administrators can
+		// explicitly select host to opt into the mapped render devices.
+		return "swiftshader_indirect", "", nil
 	}
+}
+
+func applyRuntimeEnvironment(environment map[string]string, profile runtimeprofile.Profile, graphics string) {
 	environment["EMULATOR_DATA_PARTITION"] = fmt.Sprintf("%dM", profile.DataDiskMB)
 	environment["EMULATOR_ADDITIONAL_ARGS"] = fmt.Sprintf(
 		"-no-window -no-audio -no-boot-anim -cores %d -memory %d -gpu %s -skin %dx%d -dpi-device %d -prop dalvik.vm.heapsize=%dm",
@@ -609,6 +641,14 @@ func (systemHostProbe) ValidateKVM(device string) error {
 		return fmt.Errorf("%s is not readable and writable: %w", device, err)
 	}
 	return file.Close()
+}
+
+func (systemHostProbe) RenderDeviceAvailable(device string) bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	info, err := os.Stat(device)
+	return err == nil && info.Mode()&os.ModeDevice != 0 && info.Mode()&os.ModeCharDevice != 0
 }
 
 var _ providers.Provider = (*Provider)(nil)

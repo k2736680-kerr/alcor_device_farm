@@ -11,6 +11,7 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/imageprepare"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
@@ -18,6 +19,7 @@ import (
 type Client interface {
 	Heartbeat(context.Context, string, hostcommand.HeartbeatInput) error
 	Claim(context.Context, string, hostcommand.ClaimInput) ([]hostcommand.Command, error)
+	Extend(context.Context, string, hostcommand.LeaseExtensionInput) error
 	Complete(context.Context, string, hostcommand.CompletionInput) error
 }
 
@@ -30,17 +32,19 @@ type CapacityProbe interface {
 }
 
 type Config struct {
-	HostID            string
-	ProviderType      string
-	HeartbeatInterval time.Duration
-	LeaseSeconds      int
-	WaitSeconds       int
-	Concurrency       int
-	CommandTimeout    time.Duration
-	ShutdownTimeout   time.Duration
-	Capacity          map[string]any
-	CapacityProbe     CapacityProbe
-	STFADBRegistrar   EndpointRegistrar
+	HostID              string
+	ProviderType        string
+	HeartbeatInterval   time.Duration
+	LeaseSeconds        int
+	WaitSeconds         int
+	Concurrency         int
+	CommandTimeout      time.Duration
+	ImagePrepareTimeout time.Duration
+	ShutdownTimeout     time.Duration
+	Capacity            map[string]any
+	CapacityProbe       CapacityProbe
+	STFADBRegistrar     EndpointRegistrar
+	ImagePreparer       imageprepare.Preparer
 }
 
 type Agent struct {
@@ -48,22 +52,25 @@ type Agent struct {
 	client     Client
 	provider   providers.Provider
 	registrar  EndpointRegistrar
+	preparer   imageprepare.Preparer
 	logger     *slog.Logger
 	resourceMu sync.Mutex
 }
 
 func New(config Config, client Client, provider providers.Provider, logger *slog.Logger) (*Agent, error) {
 	config.ProviderType = strings.ToLower(strings.TrimSpace(config.ProviderType))
-	leaseDuration := time.Duration(config.LeaseSeconds) * time.Second
+	if config.ImagePrepareTimeout <= 0 {
+		config.ImagePrepareTimeout = config.CommandTimeout
+	}
 	if len(config.HostID) < 16 || client == nil || provider == nil || config.HeartbeatInterval <= 0 ||
 		config.LeaseSeconds < 5 || config.LeaseSeconds > 300 || config.Concurrency < 1 ||
-		config.CommandTimeout <= 0 || leaseDuration <= config.CommandTimeout || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
+		config.CommandTimeout <= 0 || config.ImagePrepareTimeout <= 0 || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
 		return nil, errors.New("invalid agent configuration")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Agent{config: config, client: client, provider: provider, registrar: config.STFADBRegistrar, logger: logger}, nil
+	return &Agent{config: config, client: client, provider: provider, registrar: config.STFADBRegistrar, preparer: config.ImagePreparer, logger: logger}, nil
 }
 
 func (agent *Agent) Run(ctx context.Context) error {
@@ -162,6 +169,9 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 		})
 	}
 	capacity, environment := agent.config.Capacity, map[string]any{"provider": agent.config.ProviderType}
+	if agent.preparer != nil {
+		environment["image_build_agent"] = true
+	}
 	if agent.config.CapacityProbe != nil {
 		measured, capabilities, probeErr := agent.config.CapacityProbe.Snapshot(ctx)
 		if probeErr != nil {
@@ -179,8 +189,12 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 }
 
 func (agent *Agent) execute(parent context.Context, command hostcommand.Command) {
-	ctx, cancel := context.WithTimeout(parent, agent.config.CommandTimeout)
-	defer cancel()
+	timeout := agent.config.CommandTimeout
+	if command.CommandType == "sync_android_catalog" || command.CommandType == "prepare_android_image" {
+		timeout = agent.config.ImagePrepareTimeout
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	stopRenewal := agent.startLeaseRenewal(parent, cancel, command)
 	var err error
 	result := map[string]any(nil)
 	providerRef, _ := command.Payload["provider_ref"].(string)
@@ -280,9 +294,25 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		}
 	case "validate_image":
 		result, err = agent.validateImage(ctx, command.Payload)
+	case "sync_android_catalog":
+		if agent.preparer == nil {
+			err = errors.New("image preparation is not enabled on this Agent")
+		} else {
+			result, err = agent.preparer.SyncCatalog(ctx)
+		}
+	case "prepare_android_image":
+		if agent.preparer == nil {
+			err = errors.New("image preparation is not enabled on this Agent")
+		} else {
+			result, err = agent.preparer.Prepare(ctx, stringValue(command.Payload, "package_name"), stringValue(command.Payload, "revision"))
+		}
 	default:
 		err = fmt.Errorf("unsupported command type %s", command.CommandType)
 	}
+	if renewalErr := stopRenewal(); err == nil && renewalErr != nil {
+		err = renewalErr
+	}
+	cancel()
 	completion := hostcommand.CompletionInput{Attempt: command.Attempt, Status: "succeeded", Result: result}
 	if command.LeaseToken != nil {
 		completion.LeaseToken = *command.LeaseToken
@@ -293,9 +323,39 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 			Code: providerErrorCode(err), Message: err.Error(), Retryable: providerErrorRetryable(err),
 		}
 	}
-	if completeErr := agent.client.Complete(context.Background(), command.ID, completion); completeErr != nil {
+	completionContext, completionCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer completionCancel()
+	if completeErr := agent.client.Complete(completionContext, command.ID, completion); completeErr != nil {
 		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
 	}
+}
+
+func (agent *Agent) startLeaseRenewal(ctx context.Context, cancelOperation context.CancelFunc, command hostcommand.Command) func() error {
+	if command.LeaseToken == nil || *command.LeaseToken == "" {
+		return func() error { return nil }
+	}
+	renewContext, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	interval := time.Duration(agent.config.LeaseSeconds) * time.Second / 3
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-renewContext.Done():
+				done <- nil
+				return
+			case <-ticker.C:
+				err := agent.client.Extend(renewContext, command.ID, hostcommand.LeaseExtensionInput{LeaseToken: *command.LeaseToken, Attempt: command.Attempt, LeaseSeconds: agent.config.LeaseSeconds})
+				if err != nil {
+					cancelOperation()
+					done <- fmt.Errorf("extend command lease: %w", err)
+					return
+				}
+			}
+		}
+	}()
+	return func() error { stop(); return <-done }
 }
 
 func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[string]any, error) {
@@ -322,14 +382,20 @@ func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[st
 	}
 	rollback, ok := mapValue(payload, "rollback"), false
 	if rollback != nil {
+		// The target boot can consume the entire command deadline. Rollback is
+		// a safety operation and needs its own bounded window; otherwise a boot
+		// timeout makes restoration fail immediately with the same canceled
+		// context. Lease renewal remains active until this recovery finishes.
+		rollbackContext, cancelRollback := context.WithTimeout(context.WithoutCancel(ctx), agent.config.CommandTimeout)
+		defer cancelRollback()
 		rollback["device_id"] = stringValue(payload, "device_id")
 		rollback["host_id"] = stringValue(payload, "host_id")
 		rollback["provider_ref"] = stringValue(payload, "provider_ref")
 		rollback["capabilities"] = mapValue(payload, "capabilities")
 		var restored providers.Snapshot
-		restored, err = agent.recreate(ctx, rollback)
+		restored, err = agent.recreate(rollbackContext, rollback)
 		if err == nil {
-			err = agent.registerSTF(ctx, restored)
+			err = agent.registerSTF(rollbackContext, restored)
 		}
 		if err == nil {
 			result := snapshotResult(restored)
@@ -498,8 +564,9 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 	}
 	agent.resourceMu.Lock()
 	err = agent.preflightCreate(ctx, profile, stringValue(payload, "image_id"))
+	var snapshot providers.Snapshot
 	if err == nil {
-		_, err = agent.provider.Create(ctx, providers.CreateRequest{
+		snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
 			DeviceID: stringValue(payload, "device_id"), HostID: agent.config.HostID,
 			ImageID: stringValue(payload, "image_id"), RuntimeImage: stringValue(payload, "docker_image"), ProviderRef: providerRef,
 			Capabilities: mapValue(payload, "capabilities"), RuntimeProfile: profile,
@@ -510,29 +577,24 @@ func (agent *Agent) validateImage(ctx context.Context, payload map[string]any) (
 		return nil, err
 	}
 	created = true
-	if _, err = agent.provider.Start(ctx, providerRef); err != nil {
+	if snapshot, err = agent.provider.Start(ctx, providerRef); err != nil {
 		_ = cleanup()
 		return nil, err
 	}
-	for {
-		health, healthErr := agent.provider.InspectHealth(ctx, providerRef)
-		if healthErr == nil && health.Ready() {
-			if err := cleanup(); err != nil {
-				return nil, err
-			}
-			return map[string]any{"provider_ref": providerRef, "image_id": stringValue(payload, "image_id"),
-				"digest_verified": true, "ready": true}, nil
-		}
-		select {
-		case <-ctx.Done():
-			_ = cleanup()
-			if healthErr != nil {
-				return nil, healthErr
-			}
-			return nil, ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
+	if snapshot, err = agent.waitReady(ctx, snapshot); err != nil {
+		_ = cleanup()
+		return nil, err
 	}
+	if err = agent.registerSTF(ctx, snapshot); err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	if err = cleanup(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"provider_ref": providerRef, "image_id": stringValue(payload, "image_id"),
+		"digest_verified": true, "ready": true, "stf_registered": agent.registrar != nil,
+		"adb_endpoint": snapshot.Connection.ADBEndpoint, "appium_endpoint": snapshot.Connection.AppiumEndpoint}, nil
 }
 
 func profileFromPayload(payload map[string]any) (runtimeprofile.Profile, error) {

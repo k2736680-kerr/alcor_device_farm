@@ -12,6 +12,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
@@ -71,6 +72,12 @@ type CompletionInput struct {
 	Status     string           `json:"status"`
 	Result     map[string]any   `json:"result,omitempty"`
 	Error      *CompletionError `json:"error,omitempty"`
+}
+
+type LeaseExtensionInput struct {
+	LeaseToken   string `json:"lease_token"`
+	Attempt      int    `json:"attempt"`
+	LeaseSeconds int    `json:"lease_seconds"`
 }
 
 type Command struct {
@@ -459,6 +466,17 @@ func (service *Service) Complete(ctx context.Context, id string, input Completio
 	return toCommand(record)
 }
 
+func (service *Service) Extend(ctx context.Context, id string, input LeaseExtensionInput) (Command, error) {
+	if service == nil || service.db == nil || len(id) < 16 || len(input.LeaseToken) < 16 || input.Attempt < 1 || input.LeaseSeconds < 5 || input.LeaseSeconds > 300 {
+		return Command{}, ErrInvalidArgument
+	}
+	record, err := service.repo.ExtendLease(ctx, service.db.Pool(), id, input.LeaseToken, input.Attempt, time.Duration(input.LeaseSeconds)*time.Second)
+	if err != nil {
+		return Command{}, translate(err)
+	}
+	return toCommand(record)
+}
+
 func (service *Service) RecoverExpiredOnce(ctx context.Context) (Command, error) {
 	var record repository.CommandRecord
 	err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
@@ -497,6 +515,9 @@ type managementOperationResult struct {
 }
 
 func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx.Tx, record repository.CommandRecord) error {
+	if err := imagecatalog.ReconcileCommand(ctx, tx, record, service.newID); err != nil {
+		return err
+	}
 	if record.Status == domain.CommandPending || record.Status == domain.CommandLeased {
 		return nil
 	}
@@ -805,7 +826,7 @@ func mapValue(values map[string]any, key string) map[string]any {
 
 func validCommandType(value string) bool {
 	switch value {
-	case "create", "start", "stop", "restart", "rebuild", "delete", "inspect", "validate_image":
+	case "create", "start", "stop", "restart", "rebuild", "delete", "inspect", "validate_image", "sync_android_catalog", "prepare_android_image":
 		return true
 	default:
 		return false

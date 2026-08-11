@@ -19,6 +19,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -40,6 +41,7 @@ type Services struct {
 	ConsoleAuth   *consoleauth.Service
 	ConsoleQuery  *consolequery.Service
 	RemoteControl *remotecontrol.Service
+	ImageCatalog  *imagecatalog.Service
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -65,6 +67,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	mux.HandleFunc("/readyz", readinessHandler(services.Metrics))
 	mux.Handle("/metrics", services.Metrics)
 	api.RegisterManagement(mux, services.Management)
+	api.RegisterImageCatalog(mux, services.ImageCatalog)
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
@@ -99,6 +102,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			}
 		}
 		services.Management = management.NewService(managementpostgres.New(db), nil, nil)
+		services.ImageCatalog = imagecatalog.New(db)
 		if stfClient != nil {
 			services.Reservations = reservation.NewService(db, nil, stfClient)
 			services.Scheduler = scheduler.New(db, nil, logger, stfClient)

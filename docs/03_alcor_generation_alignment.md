@@ -92,3 +92,6 @@
 5. 核对关联 Header 和审计 Actor 的传递方式；
 6. 用双方 OpenAPI 做契约测试后再开始真实接入；
 7. 任何不一致先更新本文件和 ADR，不在 Adapter 中堆临时兼容分支。
+# DF-035 官方目录与按需准备补充（2026-08-10）
+
+Android System Image 的版本、映像类型和 ABI 由 Android SDK 官方稳定频道提供；CPU、内存、数据盘、分辨率、DPI 和图形模式属于本设备域的 `runtime_profile`。Device Farm Console 只调用 Server 的目录和准备任务 API，既不访问 Google，也不获取下载链接、Registry 凭证、Host 命令或 Docker Socket。Server 仅编排受控 Build Agent；只有 Agent 完成构建、内部 Registry 推送、不可变 digest 获取和现有验证链路后，才创建或更新 `device_images`。这仍是设备域基础设施准备，不形成新版 Alcor 的 Image/Artifact 业务索引或 Run 队列。

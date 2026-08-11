@@ -18,6 +18,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/agent"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcapacity"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/imageprepare"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	providerdocker "github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
@@ -32,6 +33,7 @@ func main() {
 	deviceSlotLimit := flag.Int("device-slot-limit", envIntAllowZero("DEVICE_FARM_AGENT_DEVICE_SLOT_LIMIT", 0), "optional hard device count safety limit; zero uses only CPU, memory and disk")
 	leaseSeconds := flag.Int("lease-seconds", envInt("DEVICE_FARM_AGENT_LEASE_SECONDS", 300), "host command lease duration in seconds")
 	commandTimeout := flag.Duration("command-timeout", envDuration("DEVICE_FARM_AGENT_COMMAND_TIMEOUT", 270*time.Second), "provider command execution timeout")
+	imagePrepareTimeout := flag.Duration("image-prepare-timeout", envDuration("DEVICE_FARM_IMAGE_PREPARE_TIMEOUT", 2*time.Hour), "Android catalogue synchronization and image build timeout")
 	providerType := flag.String("provider", strings.TrimSpace(os.Getenv("DEVICE_FARM_AGENT_PROVIDER")), "device provider: mock or docker; required")
 	dockerBinary := flag.String("docker-binary", envOr("DEVICE_FARM_DOCKER_BINARY", "docker"), "Docker CLI path")
 	dockerImage := flag.String("docker-image", os.Getenv("DEVICE_FARM_DOCKER_IMAGE"), "optional fixed fallback image for direct provider tests; production commands select the Device Image runtime reference")
@@ -51,6 +53,7 @@ func main() {
 	dockerPidsLimit := flag.Int("docker-pids-limit", envInt("DEVICE_FARM_DOCKER_PIDS_LIMIT", 512), "PID limit per emulator")
 	dockerDataRoot := flag.String("docker-data-root", envOr("DEVICE_FARM_DOCKER_DATA_ROOT", "/var/lib/docker"), "Docker data filesystem used for capacity measurement")
 	dockerRenderDevice := flag.String("docker-render-device", envOr("DEVICE_FARM_DOCKER_RENDER_DEVICE", "/dev/dri/renderD128"), "optional GPU render node detected by the agent")
+	imagePrepareScript := flag.String("image-prepare-script", strings.TrimSpace(os.Getenv("DEVICE_FARM_IMAGE_PREPARE_SCRIPT")), "trusted local Android image preparation script; empty disables Build Agent commands")
 	flag.Parse()
 
 	if *version {
@@ -71,7 +74,7 @@ func main() {
 	}
 	deviceProvider, err := buildProvider(*providerType, providerdocker.Config{
 		Binary: *dockerBinary, Image: *dockerImage, AdvertiseHost: *dockerAdvertiseHost,
-		BindAddress: *dockerBindAddress, KVMDevice: *dockerKVMDevice,
+		BindAddress: *dockerBindAddress, KVMDevice: *dockerKVMDevice, RenderDevice: *dockerRenderDevice,
 		ContainerADBPort: *dockerADBPort, ContainerAppiumPort: *dockerAppiumPort, ContainerADBSerial: *dockerADBSerial,
 		DataMountPath: *dockerDataMountPath,
 		CPUs:          *dockerCPUs, Memory: *dockerMemory, PidsLimit: *dockerPidsLimit,
@@ -93,12 +96,22 @@ func main() {
 	if strings.EqualFold(strings.TrimSpace(*providerType), "docker") {
 		capacityProbe = hostcapacity.NewSystem(*dockerDataRoot, *dockerRenderDevice, *deviceSlotLimit)
 	}
+	var imagePreparer imageprepare.Preparer
+	if strings.TrimSpace(*imagePrepareScript) != "" {
+		imagePreparer, err = imageprepare.New(*imagePrepareScript)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "image preparer configuration error: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	runtime, err := agent.New(agent.Config{
 		HostID: *hostID, ProviderType: strings.ToLower(strings.TrimSpace(*providerType)),
 		HeartbeatInterval: 5 * time.Second, LeaseSeconds: *leaseSeconds,
 		WaitSeconds: 5, Concurrency: *concurrency, CommandTimeout: *commandTimeout,
-		ShutdownTimeout: 30 * time.Second,
-		Capacity:        map[string]any{"device_slots": *concurrency}, CapacityProbe: capacityProbe, STFADBRegistrar: stfRegistrar,
+		ImagePrepareTimeout: *imagePrepareTimeout,
+		ShutdownTimeout:     30 * time.Second,
+		Capacity:            map[string]any{"device_slots": *concurrency}, CapacityProbe: capacityProbe, STFADBRegistrar: stfRegistrar,
+		ImagePreparer: imagePreparer,
 	}, client, deviceProvider, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent configuration error: %v\n", err)

@@ -49,7 +49,7 @@ Android 13、14、15、16 是可选择的镜像版本，不是四个必须常驻
 - DF-032：运行规格模型、Host 实际容量心跳、Server/Agent 双重预检和可解释容量结果。
 - DF-033：Pool 总目标、最小预热、最大并发和默认 Image，移除按 Image 数量相加语义。
 - DF-034：Console 容量提示、Device 编辑规格和异步重装/失败恢复。
-- DF-035：发布并登记 Android 13～16 镜像，默认 Android 16，完成多规格真实容量验收。
+- DF-035：同步官方稳定 System Image 目录，由 Build Agent 按需构建、验证并登记不可变镜像；Android 16 为默认候选，完成多规格真实容量验收。
 
 ## 后果与限制
 

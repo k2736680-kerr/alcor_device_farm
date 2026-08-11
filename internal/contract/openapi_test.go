@@ -13,12 +13,15 @@ import (
 )
 
 var expectedOperations = map[string][]string{
-	"/healthz":                                              {"get"},
-	"/readyz":                                               {"get"},
-	"/metrics":                                              {"get"},
-	"/api/v1/device-images":                                 {"get", "post"},
-	"/api/v1/device-images/{id}":                            {"get", "put"},
-	"/api/v1/device-images/{id}/validations":                {"post"},
+	"/healthz":                               {"get"},
+	"/readyz":                                {"get"},
+	"/metrics":                               {"get"},
+	"/api/v1/device-images":                  {"get", "post"},
+	"/api/v1/device-images/{id}":             {"get", "put"},
+	"/api/v1/device-images/{id}/validations": {"post"},
+	"/api/v1/android-system-images":          {"get"},
+	"/api/v1/android-system-images/synchronizations":        {"post"},
+	"/api/v1/android-system-images/preparations":            {"post"},
 	"/api/v1/device-hosts":                                  {"get", "post"},
 	"/api/v1/device-hosts/{id}":                             {"get", "put"},
 	"/api/v1/device-hosts/{id}/drains":                      {"post", "delete"},
@@ -48,6 +51,7 @@ var expectedOperations = map[string][]string{
 	"/internal/v1/device-hosts/{id}/heartbeats":             {"post"},
 	"/internal/v1/device-hosts/{id}/commands/claims":        {"post"},
 	"/internal/v1/device-host-commands/{id}/completions":    {"post"},
+	"/internal/v1/device-host-commands/{id}/extensions":     {"post"},
 	"/internal/v1/devices/{id}/health-events":               {"post"},
 }
 
@@ -61,7 +65,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "1.5.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "1.6.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 

@@ -1,12 +1,31 @@
 ARG BASE_IMAGE=alcor-df-build/docker-android-base:v3.5.2-p0
 FROM ${BASE_IMAGE}
 
+ARG ANDROID_VERSION
+ARG API_LEVEL
+ARG SYSTEM_IMAGE_ABI=x86_64
+ARG SYSTEM_IMAGE_TYPE=google_apis
+ARG SYSTEM_IMAGE_REVISION
+ARG SDKMANAGER_VERSION
+ARG UPSTREAM_COMMIT
+
+LABEL org.opencontainers.image.title="Alcor Device Farm Android Emulator" \
+      org.opencontainers.image.source="https://github.com/budtmo/docker-android" \
+      org.opencontainers.image.revision="${UPSTREAM_COMMIT}" \
+      io.alcor.device-farm.android-version="${ANDROID_VERSION}" \
+      io.alcor.device-farm.api-level="${API_LEVEL}" \
+      io.alcor.device-farm.abi="${SYSTEM_IMAGE_ABI}"
+
 USER root
 
-ENV EMULATOR_ANDROID_VERSION=16.0 \
-    EMULATOR_API_LEVEL=36 \
-    EMULATOR_SYS_IMG=x86_64 \
-    EMULATOR_IMG_TYPE=google_apis \
+RUN test -n "${SDKMANAGER_VERSION}" \
+ && test "$(sdkmanager --version | awk 'NF { value=$0 } END { gsub(/^[ \t\r]+|[ \t\r]+$/, "", value); print value }')" = "${SDKMANAGER_VERSION}" \
+ && test "$(dirname "$(readlink -f "$(command -v sdkmanager)")")" = "$(dirname "$(readlink -f "$(command -v avdmanager)")")"
+
+ENV EMULATOR_ANDROID_VERSION=${ANDROID_VERSION} \
+    EMULATOR_API_LEVEL=${API_LEVEL} \
+    EMULATOR_SYS_IMG=${SYSTEM_IMAGE_ABI} \
+    EMULATOR_IMG_TYPE=${SYSTEM_IMAGE_TYPE} \
     EMULATOR_BROWSER=chrome \
     EMULATOR_HEADLESS=true \
     EMULATOR_DATA_PARTITION=4g \
@@ -26,8 +45,16 @@ RUN yes | sdkmanager --licenses >/dev/null \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-RUN appium driver install uiautomator2@8.2.2 \
- && appium driver list --installed
+RUN package_path="system-images;android-${EMULATOR_API_LEVEL};${EMULATOR_IMG_TYPE};${EMULATOR_SYS_IMG}" \
+ && if [ -n "${SYSTEM_IMAGE_REVISION}" ]; then \
+      installed_revision="$(sdkmanager --list_installed | awk -F '|' -v expected="$package_path" '{path=$1; gsub(/^[ \t]+|[ \t]+$/, "", path); if (path==expected) {version=$2; gsub(/^[ \t]+|[ \t]+$/, "", version); print version; exit}}')"; \
+      test "$installed_revision" = "${SYSTEM_IMAGE_REVISION}"; \
+    fi \
+ && echo no | avdmanager create avd --force --name df-build-validation --package "$package_path" --device pixel_9 \
+ && avdmanager delete avd --name df-build-validation
+
+RUN appium driver list --installed 2>&1 | grep -q 'uiautomator2@8.2.2' \
+ || appium driver install uiautomator2@8.2.2
 
 RUN rm -rf ${SCRIPT_PATH}
 ENV SCRIPT_PATH=docker-android \

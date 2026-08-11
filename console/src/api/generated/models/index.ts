@@ -3,13 +3,23 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.5.0
+ * OpenAPI spec version: 1.6.0
  */
 
 export * from './aPIError';
 export * from './aPIErrorDetails';
 export * from './acceptedResponse';
 export * from './actorIDParameter';
+export * from './androidImagePreparation';
+export * from './androidImagePreparationInput';
+export * from './androidImagePreparationStatus';
+export * from './androidSystemImage';
+export * from './androidSystemImageAbi';
+export * from './androidSystemImageImageType';
+export * from './androidSystemImageListEnvelope';
+export * from './androidSystemImageListEnvelopeError';
+export * from './androidSystemImageListSuccessResponse';
+export * from './androidSystemImageStatus';
 export * from './auditEvent';
 export * from './auditEventActorType';
 export * from './auditEventListEnvelope';
@@ -26,6 +36,8 @@ export * from './commandCompletion';
 export * from './commandCompletionBody';
 export * from './commandCompletionResult';
 export * from './commandCompletionStatus';
+export * from './commandLeaseExtension';
+export * from './commandLeaseExtensionBody';
 export * from './conflictResponse';
 export * from './consoleLogin';
 export * from './consoleLoginBody';
@@ -136,6 +148,9 @@ export * from './imageEnvelope';
 export * from './imageListEnvelope';
 export * from './imageListEnvelopeError';
 export * from './imageListSuccessResponse';
+export * from './imagePreparationAcceptedResponse';
+export * from './imagePreparationEnvelope';
+export * from './imagePreparationEnvelopeError';
 export * from './imageSuccessResponse';
 export * from './leaseExtension';
 export * from './leaseExtensionBody';

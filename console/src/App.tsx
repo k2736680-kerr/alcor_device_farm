@@ -168,7 +168,7 @@ function AuthenticatedConsole({
           )}
           <Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/images" element={<ImagesPage />} />
+            <Route path="/images" element={<ImagesPage role={session.user.role} />} />
             <Route path="/hosts" element={<HostsPage />} />
             <Route path="/pools" element={<PoolsPage />} />
             <Route path="/devices" element={<DevicesPage role={session.user.role} />} />

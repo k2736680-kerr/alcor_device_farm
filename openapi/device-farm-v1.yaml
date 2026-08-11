@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.5.0
+  version: 1.6.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-10
   x-platform-semantics: Case/Run/RunAttempt
@@ -107,6 +107,47 @@ paths:
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       responses:
         "202": {$ref: "#/components/responses/ImageAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/android-system-images:
+    get:
+      tags: [Images]
+      operationId: listAndroidSystemImages
+      description: Returns the stable official Android SDK catalogue last synchronized by a controlled Build Agent.
+      responses:
+        "200": {$ref: "#/components/responses/AndroidSystemImageListSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/android-system-images/synchronizations:
+    post:
+      tags: [Images]
+      operationId: synchronizeAndroidSystemImages
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      description: Queues a stable-channel sdkmanager catalogue synchronization on a controlled Build Agent.
+      responses:
+        "202": {$ref: "#/components/responses/ImagePreparationAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/android-system-images/preparations:
+    post:
+      tags: [Images]
+      operationId: prepareAndroidSystemImage
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AndroidImagePreparationInput"}
+      responses:
+        "202": {$ref: "#/components/responses/ImagePreparationAccepted"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -684,6 +725,15 @@ paths:
       security: [{agentBearer: []}]
       requestBody: {$ref: "#/components/requestBodies/CommandCompletion"}
       responses: *standardResponses
+  /internal/v1/device-host-commands/{id}/extensions:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Agent]
+      operationId: extendHostCommandLease
+      description: Renews a leased Host Command while a controlled long-running operation such as image preparation is still executing.
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/CommandLeaseExtension"}
+      responses: *standardResponses
   /internal/v1/devices/{id}/health-events:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -840,6 +890,11 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/CommandCompletion"}
+    CommandLeaseExtension:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/CommandLeaseExtension"}
     HealthEvent:
       required: true
       content:
@@ -863,6 +918,12 @@ components:
     ImageAccepted:
       description: 镜像验证已接受
       content: {application/json: {schema: {$ref: "#/components/schemas/ImageEnvelope"}}}
+    AndroidSystemImageListSuccess:
+      description: 官方稳定 Android System Image 目录
+      content: {application/json: {schema: {$ref: "#/components/schemas/AndroidSystemImageListEnvelope"}}}
+    ImagePreparationAccepted:
+      description: 目录同步或镜像准备任务已接受
+      content: {application/json: {schema: {$ref: "#/components/schemas/ImagePreparationEnvelope"}}}
     HostListSuccess:
       description: Host 分页列表
       content: {application/json: {schema: {$ref: "#/components/schemas/HostListEnvelope"}}}
@@ -1027,6 +1088,48 @@ components:
         validation_error: {type: string}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    AndroidSystemImageStatus:
+      type: string
+      enum: [downloadable, preparing, validating, cached, failed, official_updated]
+    AndroidSystemImage:
+      type: object
+      additionalProperties: false
+      required: [id, package_name, api_level, image_type, abi, revision, source_updated_at, last_seen_at, status]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        package_name: {type: string, pattern: "^system-images;android-(33|34|35|36);(google_apis|google_play);x86_64$"}
+        api_level: {type: integer, minimum: 33, maximum: 36}
+        image_type: {type: string, enum: [google_apis, google_play]}
+        abi: {type: string, enum: [x86_64]}
+        revision: {type: string}
+        source_updated_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        status: {$ref: "#/components/schemas/AndroidSystemImageStatus"}
+        preparation_id: {$ref: "#/components/schemas/Identifier"}
+        image_id: {$ref: "#/components/schemas/Identifier"}
+        error_code: {type: string}
+    AndroidImagePreparation:
+      type: object
+      additionalProperties: false
+      required: [id, host_id, command_id, runtime_profile, status, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/Identifier"}
+        catalog_id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        command_id: {$ref: "#/components/schemas/Identifier"}
+        runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
+        status: {type: string, enum: [queued, building, validating, cached, failed]}
+        image_id: {$ref: "#/components/schemas/Identifier"}
+        error_code: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AndroidImagePreparationInput:
+      type: object
+      additionalProperties: false
+      required: [catalog_id, runtime_profile]
+      properties:
+        catalog_id: {$ref: "#/components/schemas/Identifier"}
+        runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
     DeviceHost:
       type: object
       additionalProperties: false
@@ -1214,6 +1317,22 @@ components:
       additionalProperties: false
       required: [request_id, data, error]
       properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/DeviceImagePage"}, error: {nullable: true}}
+    AndroidSystemImageListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {type: array, items: {$ref: "#/components/schemas/AndroidSystemImage"}}
+        error: {nullable: true}
+    ImagePreparationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/AndroidImagePreparation"}
+        error: {nullable: true}
     HostEnvelope:
       type: object
       additionalProperties: false
@@ -1572,6 +1691,14 @@ components:
         status: {type: string, enum: [succeeded, failed, timed_out]}
         result: {type: object, additionalProperties: true}
         error: {$ref: "#/components/schemas/APIError"}
+    CommandLeaseExtension:
+      type: object
+      additionalProperties: false
+      required: [lease_token, attempt, lease_seconds]
+      properties:
+        lease_token: {type: string, minLength: 16}
+        attempt: {type: integer, minimum: 1}
+        lease_seconds: {type: integer, minimum: 5, maximum: 300}
     HealthEvent:
       type: object
       additionalProperties: false

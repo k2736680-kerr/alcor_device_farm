@@ -110,6 +110,29 @@ func (CommandRepository) Get(ctx context.Context, querier database.Querier, id s
 	return record, err
 }
 
+func (CommandRepository) ExtendLease(
+	ctx context.Context,
+	querier database.Querier,
+	id, leaseToken string,
+	attempt int,
+	leaseDuration time.Duration,
+) (CommandRecord, error) {
+	record, err := scanCommand(querier.QueryRow(ctx, `UPDATE device_host_commands SET
+		lease_expires_at=clock_timestamp()+($4 * interval '1 millisecond'),updated_at=clock_timestamp()
+		WHERE id=$1 AND status='leased' AND lease_token=$2 AND attempts=$3
+		  AND lease_expires_at >= clock_timestamp()
+		RETURNING id,host_id,command_type,payload,status,lease_token,lease_expires_at,
+		attempts,max_attempts,idempotency_key,created_at,updated_at,result,error_code,completed_at`,
+		id, leaseToken, attempt, leaseDuration.Milliseconds()))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CommandRecord{}, ErrLeaseConflict
+	}
+	if err != nil {
+		return CommandRecord{}, fmt.Errorf("extend host command lease: %w", err)
+	}
+	return record, nil
+}
+
 type CommandRepository struct{}
 
 func (CommandRepository) Create(ctx context.Context, querier database.Querier, params CreateCommandParams) (CommandRecord, error) {

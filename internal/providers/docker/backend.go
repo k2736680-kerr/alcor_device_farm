@@ -15,6 +15,8 @@ type containerSpec struct {
 	Volume              string
 	DataMountPath       string
 	KVMDevice           string
+	GPUDevice           string
+	RenderDevice        string
 	BindAddress         string
 	ContainerADBPort    int
 	ContainerAppiumPort int
@@ -58,4 +60,5 @@ type backend interface {
 
 type hostProbe interface {
 	ValidateKVM(string) error
+	RenderDeviceAvailable(string) bool
 }

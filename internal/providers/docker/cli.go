@@ -90,13 +90,21 @@ func (client *cliBackend) CreateContainer(ctx context.Context, spec containerSpe
 		"create", "--name", spec.Name, "--hostname", spec.Hostname,
 		"--network", spec.Network,
 		"--device", spec.KVMDevice + ":" + spec.KVMDevice,
+	}
+	if spec.RenderDevice != "" {
+		if spec.GPUDevice != "" {
+			args = append(args, "--device", spec.GPUDevice+":"+spec.GPUDevice)
+		}
+		args = append(args, "--device", spec.RenderDevice+":"+spec.RenderDevice)
+	}
+	args = append(args,
 		"--cpus", strconv.FormatFloat(spec.CPUs, 'f', -1, 64),
 		"--memory", spec.Memory,
 		"--pids-limit", strconv.Itoa(spec.PidsLimit),
 		"--publish", fmt.Sprintf("%s::%d/tcp", spec.BindAddress, spec.ContainerADBPort),
 		"--publish", fmt.Sprintf("%s::%d/tcp", spec.BindAddress, spec.ContainerAppiumPort),
 		"--mount", fmt.Sprintf("type=volume,source=%s,target=%s", spec.Volume, spec.DataMountPath),
-	}
+	)
 	args = appendLabelArgs(args, spec.Labels)
 	keys := sortedKeys(spec.Environment)
 	for _, key := range keys {

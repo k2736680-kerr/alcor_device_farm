@@ -40,6 +40,10 @@ func (client *HTTPClient) Claim(ctx context.Context, hostID string, input hostco
 	return response.Items, err
 }
 
+func (client *HTTPClient) Extend(ctx context.Context, commandID string, input hostcommand.LeaseExtensionInput) error {
+	return client.call(ctx, http.MethodPost, "/internal/v1/device-host-commands/"+commandID+"/extensions", input, nil)
+}
+
 func (client *HTTPClient) Complete(ctx context.Context, commandID string, input hostcommand.CompletionInput) error {
 	return client.call(ctx, http.MethodPost, "/internal/v1/device-host-commands/"+commandID+"/completions", input, nil)
 }

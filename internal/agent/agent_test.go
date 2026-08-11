@@ -54,6 +54,7 @@ func (client *fakeClient) Claim(ctx context.Context, _ string, input hostcommand
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
+func (*fakeClient) Extend(context.Context, string, hostcommand.LeaseExtensionInput) error { return nil }
 func (client *fakeClient) Complete(_ context.Context, _ string, input hostcommand.CompletionInput) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -80,14 +81,14 @@ func TestAgentRequiresExplicitProvider(t *testing.T) {
 	}
 }
 
-func TestAgentRejectsCommandTimeoutThatCanOutliveLease(t *testing.T) {
+func TestAgentAcceptsLongRunningCommandsBecauseLeasesAreRenewed(t *testing.T) {
 	_, err := agent.New(agent.Config{
 		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: time.Second,
 		LeaseSeconds: 60, WaitSeconds: 1, Concurrency: 1,
 		CommandTimeout: 60 * time.Second, ShutdownTimeout: time.Second,
 	}, &fakeClient{}, providermock.New(providermock.Config{}), nil)
-	if err == nil {
-		t.Fatal("agent accepted a command timeout that can outlive its lease")
+	if err != nil {
+		t.Fatalf("agent rejected a renewable long-running command: %v", err)
 	}
 }
 

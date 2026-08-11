@@ -282,3 +282,6 @@ docs/evidence/
 6. 新版 Alcor 团队可使用 Mock 契约包开发 Device Farm Adapter；
 7. ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收。
 8. 用户可以通过 Device Farm Console 完成设备查看、人工预约、续租/释放和受控设备操作，不需要使用命令行或直接访问内部服务；Console 不展示伪 STF Web 入口。
+# DF-035 官方目录与按需准备补充
+
+验收应在真实 Linux KVM Build Agent 上证明：官方稳定目录只能由 Server 同步；Console 没有外部下载或任意命令入口；一个选定的 System Image 依次经历下载/构建、验证、内部 Registry digest 锁定和可用登记；构建失败不会产生 `device_images`；第二次相同请求命中缓存；官方目录变更可见但不自动替换已验证成品。CPU、内存、数据盘、分辨率、DPI、图形模式与品牌硬件预设仅改变 runtime profile，不改变官方 System Image 选择。

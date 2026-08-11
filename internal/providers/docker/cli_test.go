@@ -12,7 +12,7 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 	err := client.CreateContainer(context.Background(), containerSpec{
 		Name: "alcor-df-device", Hostname: "alcor-df-device", Image: "android:2026.08",
 		Network: "device-net", Volume: "device-data", DataMountPath: "/home/androidusr",
-		KVMDevice: "/dev/kvm", BindAddress: "127.0.0.1", ContainerADBPort: 5555, ContainerAppiumPort: 4723,
+		KVMDevice: "/dev/kvm", GPUDevice: "/dev/dri/card0", RenderDevice: "/dev/dri/renderD128", BindAddress: "127.0.0.1", ContainerADBPort: 5555, ContainerAppiumPort: 4723,
 		CPUs: 2, Memory: "4g", PidsLimit: 512,
 		Labels:      map[string]string{labelManaged: "true", labelProviderRef: "device-1"},
 		Environment: map[string]string{"EMULATOR_DEVICE": "Pixel 7"},
@@ -21,7 +21,7 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 		t.Fatal(err)
 	}
 	wantParts := [][]string{
-		{"--device", "/dev/kvm:/dev/kvm"}, {"--cpus", "2"}, {"--memory", "4g"},
+		{"--device", "/dev/kvm:/dev/kvm"}, {"--device", "/dev/dri/card0:/dev/dri/card0"}, {"--device", "/dev/dri/renderD128:/dev/dri/renderD128"}, {"--cpus", "2"}, {"--memory", "4g"},
 		{"--pids-limit", "512"}, {"--publish", "127.0.0.1::5555/tcp"},
 		{"--publish", "127.0.0.1::4723/tcp"},
 		{"--mount", "type=volume,source=device-data,target=/home/androidusr"},

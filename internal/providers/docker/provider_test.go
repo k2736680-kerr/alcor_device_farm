@@ -156,6 +156,53 @@ func TestDockerProviderAppliesPerDeviceRuntimeProfile(t *testing.T) {
 	}
 }
 
+func TestDockerProviderResolvesGraphicsAgainstHostRenderCapability(t *testing.T) {
+	tests := []struct {
+		name            string
+		requested       string
+		renderAvailable bool
+		wantGraphics    string
+		wantDevice      bool
+		wantCode        string
+	}{
+		{name: "explicit host", requested: runtimeprofile.GraphicsHost, renderAvailable: true, wantGraphics: "host", wantDevice: true},
+		{name: "auto safely falls back with render node", requested: runtimeprofile.GraphicsAuto, renderAvailable: true, wantGraphics: "swiftshader_indirect"},
+		{name: "auto safely falls back without render node", requested: runtimeprofile.GraphicsAuto, wantGraphics: "swiftshader_indirect"},
+		{name: "explicit software", requested: runtimeprofile.GraphicsSoftware, renderAvailable: true, wantGraphics: "swiftshader_indirect"},
+		{name: "host unavailable", requested: runtimeprofile.GraphicsHost, wantCode: "GPU_RENDER_UNAVAILABLE"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeBackend()
+			provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{renderAvailable: test.renderAvailable})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := dockerCreateRequest(fmt.Sprintf("device_gpu_%012d", index), fmt.Sprintf("gpu-profile-%d", index))
+			request.RuntimeProfile = runtimeprofile.Default()
+			request.RuntimeProfile.Graphics = test.requested
+			_, err = provider.Create(context.Background(), request)
+			if test.wantCode != "" {
+				if providers.ErrorCode(err) != test.wantCode {
+					t.Fatalf("error=%v code=%q", err, providers.ErrorCode(err))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			name, _, _ := resourceNames(request.ProviderRef)
+			spec := engine.specs[name]
+			if !strings.Contains(spec.Environment["EMULATOR_ADDITIONAL_ARGS"], "-gpu "+test.wantGraphics) {
+				t.Fatalf("emulator args=%q", spec.Environment["EMULATOR_ADDITIONAL_ARGS"])
+			}
+			if (spec.RenderDevice != "") != test.wantDevice {
+				t.Fatalf("render device=%q want mapped=%v", spec.RenderDevice, test.wantDevice)
+			}
+		})
+	}
+}
+
 func TestDockerProviderRequiresIndependentHealthyAppiumEndpoints(t *testing.T) {
 	engine := newFakeBackend()
 	probe := &recordingAppiumProbe{}
@@ -232,9 +279,13 @@ func dockerCreateRequest(deviceID, providerRef string) providers.CreateRequest {
 	}
 }
 
-type staticHostProbe struct{ err error }
+type staticHostProbe struct {
+	err             error
+	renderAvailable bool
+}
 
-func (probe staticHostProbe) ValidateKVM(string) error { return probe.err }
+func (probe staticHostProbe) ValidateKVM(string) error          { return probe.err }
+func (probe staticHostProbe) RenderDeviceAvailable(string) bool { return probe.renderAvailable }
 
 type recordingAppiumProbe struct{ endpoints []string }
 

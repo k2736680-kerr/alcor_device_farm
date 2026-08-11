@@ -49,6 +49,79 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 	}
 }
 
+func TestLongImagePreparationRenewsCommandLease(t *testing.T) {
+	client := &completionClient{}
+	runtime, err := New(Config{
+		HostID: "host_000000000000001", ProviderType: "mock", HeartbeatInterval: time.Second,
+		LeaseSeconds: 5, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second, ImagePrepareTimeout: 3 * time.Second,
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1}, ImagePreparer: slowImagePreparer{},
+	}, client, providermock.New(providermock.Config{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "lease_token_000000000001"
+	runtime.execute(context.Background(), hostcommand.Command{ID: "command_0000000000099", CommandType: "prepare_android_image", LeaseToken: &token, Attempt: 1,
+		Payload: map[string]any{"package_name": "system-images;android-36;google_apis;x86_64", "revision": "16"}})
+	if client.extensions < 1 {
+		t.Fatalf("lease extensions=%d, want at least one", client.extensions)
+	}
+	if client.completion.Status != "succeeded" {
+		t.Fatalf("completion=%+v", client.completion)
+	}
+}
+
+func TestReimageRollbackGetsFreshDeadlineAfterTargetTimeout(t *testing.T) {
+	provider := &rollbackDeadlineProvider{}
+	runtime := &Agent{config: Config{ProviderType: "mock", CommandTimeout: time.Second}, provider: provider}
+	targetContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	profile := map[string]any{"container_cpu_cores": 4, "container_memory_mb": 5120, "guest_cpu_cores": 4,
+		"guest_memory_mb": 4096, "data_disk_mb": 4096, "graphics": "host"}
+	result, err := runtime.reimage(targetContext, map[string]any{
+		"device_id": "device_0000000000001", "host_id": "host_000000000000001", "image_id": "target_image_0000001",
+		"provider_ref": "emulator-1", "runtime_profile": profile, "capabilities": map[string]any{},
+		"rollback": map[string]any{"image_id": "previous_image_001", "runtime_profile": profile},
+	})
+	if providers.ErrorCode(err) != "REIMAGE_TARGET_FAILED" || result["rollback_restored"] != true || provider.currentImage != "previous_image_001" {
+		t.Fatalf("result=%#v error=%v current image=%q", result, err, provider.currentImage)
+	}
+}
+
+type rollbackDeadlineProvider struct{ currentImage string }
+
+func (provider *rollbackDeadlineProvider) Discover(context.Context, string) ([]providers.Snapshot, error) {
+	return nil, nil
+}
+func (provider *rollbackDeadlineProvider) Create(_ context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
+	provider.currentImage = request.ImageID
+	return providers.Snapshot{DeviceID: request.DeviceID, HostID: request.HostID, ImageID: request.ImageID,
+		ProviderRef: request.ProviderRef, State: providers.StateCreated, RuntimeProfile: request.RuntimeProfile}, nil
+}
+func (provider *rollbackDeadlineProvider) Start(context.Context, string) (providers.Snapshot, error) {
+	return providers.Snapshot{DeviceID: "device_0000000000001", HostID: "host_000000000000001", ImageID: provider.currentImage,
+		ProviderRef: "emulator-1", State: providers.StateRunning}, nil
+}
+func (*rollbackDeadlineProvider) Stop(context.Context, string) (providers.Snapshot, error) {
+	return providers.Snapshot{}, nil
+}
+func (*rollbackDeadlineProvider) Restart(context.Context, string) (providers.Snapshot, error) {
+	return providers.Snapshot{}, nil
+}
+func (*rollbackDeadlineProvider) Rebuild(context.Context, string) (providers.Snapshot, error) {
+	return providers.Snapshot{}, nil
+}
+func (*rollbackDeadlineProvider) Delete(context.Context, string) error { return nil }
+func (provider *rollbackDeadlineProvider) InspectHealth(context.Context, string) (providers.Health, error) {
+	if provider.currentImage == "previous_image_001" {
+		return providers.Health{Online: true, ADBOnline: true, BootCompleted: true, AppiumHealthy: true}, nil
+	}
+	return providers.Health{}, nil
+}
+func (provider *rollbackDeadlineProvider) GetConnectionInfo(context.Context, string) (providers.ConnectionInfo, error) {
+	return providers.ConnectionInfo{Serial: "serial-1", ADBEndpoint: "127.0.0.1:5555",
+		AppiumEndpoint: "http://127.0.0.1:4723", AppiumUDID: "emulator-5554"}, nil
+}
+
 func TestAgentKeepsReadyEmulatorWhenSTFRegistrationIsTemporarilyUnavailable(t *testing.T) {
 	client := &completionClient{}
 	provider := providermock.New(providermock.Config{})
@@ -124,11 +197,12 @@ func TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability(t *testin
 func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
 	client := &completionClient{}
 	base := providermock.New(providermock.Config{})
+	registrar := &fakeRegistrar{}
 	provider := &digestVerifyingProvider{Provider: base, expectedImage: "registry.example/alcor/android-emulator:api34", expected: "sha256:" + strings.Repeat("a", 64)}
 	runtime, err := New(Config{
 		HostID: "host_000000000000001", ProviderType: "docker", HeartbeatInterval: time.Second,
 		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
-		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1}, STFADBRegistrar: registrar,
 	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +212,8 @@ func TestAgentValidatesDigestReadinessAndCleansTemporaryEmulator(t *testing.T) {
 		Payload: map[string]any{"device_id": "validation-device-01", "image_id": "image_00000000000001",
 			"provider_ref": "validation-command-01", "docker_image": provider.expectedImage, "docker_digest": provider.expected,
 			"capabilities": map[string]any{"apiLevel": float64(34)}}})
-	if client.completion.Status != "succeeded" || client.completion.Result["digest_verified"] != true || client.completion.Result["ready"] != true {
+	if client.completion.Status != "succeeded" || client.completion.Result["digest_verified"] != true || client.completion.Result["ready"] != true ||
+		client.completion.Result["stf_registered"] != true || registrar.calls != 1 || registrar.endpoint == "" {
 		t.Fatalf("completion=%#v", client.completion)
 	}
 	values, err := base.Discover(context.Background(), "host_000000000000001")
@@ -185,7 +260,24 @@ func TestAgentCreateWaitsForReadinessClassifiesFailureAndCleans(t *testing.T) {
 	}
 }
 
-type completionClient struct{ completion hostcommand.CompletionInput }
+type completionClient struct {
+	completion hostcommand.CompletionInput
+	extensions int
+}
+
+type slowImagePreparer struct{}
+
+func (slowImagePreparer) SyncCatalog(context.Context) (map[string]any, error) {
+	return map[string]any{"entries": []any{}}, nil
+}
+func (slowImagePreparer) Prepare(ctx context.Context, _, _ string) (map[string]any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(2 * time.Second):
+	}
+	return map[string]any{"docker_image": "registry.example/android:api36", "docker_digest": "sha256:" + strings.Repeat("a", 64), "image_disk_mb": 8192}, nil
+}
 
 type fakeRegistrar struct {
 	endpoint string
@@ -204,6 +296,10 @@ func (*completionClient) Heartbeat(context.Context, string, hostcommand.Heartbea
 }
 func (*completionClient) Claim(context.Context, string, hostcommand.ClaimInput) ([]hostcommand.Command, error) {
 	return nil, nil
+}
+func (client *completionClient) Extend(context.Context, string, hostcommand.LeaseExtensionInput) error {
+	client.extensions++
+	return nil
 }
 func (client *completionClient) Complete(_ context.Context, _ string, input hostcommand.CompletionInput) error {
 	client.completion = input

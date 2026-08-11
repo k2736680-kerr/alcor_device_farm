@@ -40,6 +40,15 @@ func TestAgentHeartbeatClaimAndCompletionAPI(t *testing.T) {
 	if len(claimed.Items) != 1 || claimed.Items[0].ID != created.ID || claimed.Items[0].LeaseToken == nil {
 		t.Fatalf("claimed=%+v", claimed.Items)
 	}
+	extensionResponse := environment.request(t, http.MethodPost,
+		"/internal/v1/device-host-commands/"+created.ID+"/extensions",
+		map[string]any{"lease_token": *claimed.Items[0].LeaseToken, "attempt": claimed.Items[0].Attempt, "lease_seconds": 30}, agentToken, "")
+	assertStatus(t, extensionResponse, http.StatusOK)
+	var extended hostcommand.Command
+	decodeData(t, extensionResponse, &extended)
+	if extended.LeaseExpiresAt == nil || extended.Status != "leased" {
+		t.Fatalf("extended=%+v", extended)
+	}
 	completionResponse := environment.request(t, http.MethodPost,
 		"/internal/v1/device-host-commands/"+created.ID+"/completions",
 		map[string]any{"lease_token": *claimed.Items[0].LeaseToken, "attempt": claimed.Items[0].Attempt,
@@ -51,6 +60,9 @@ func TestAgentHeartbeatClaimAndCompletionAPI(t *testing.T) {
 	if completed.Status != "succeeded" || completed.CompletedAt == nil {
 		t.Fatalf("completed=%+v", completed)
 	}
+	assertStatus(t, environment.request(t, http.MethodPost,
+		"/internal/v1/device-host-commands/"+created.ID+"/extensions",
+		map[string]any{"lease_token": *claimed.Items[0].LeaseToken, "attempt": claimed.Items[0].Attempt, "lease_seconds": 30}, agentToken, ""), http.StatusConflict)
 	var leaked int
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_host_commands
 		WHERE id=$1 AND result::text LIKE '%command-result-secret%' OR id=$1 AND result::text LIKE '%command-password%'`, created.ID).Scan(&leaked); err != nil {

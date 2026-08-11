@@ -19,7 +19,7 @@
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
 | Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
 | 动态容量扩缩容 | Console 设置 Pool 总目标和设备规格；Server 按 Host 实际 CPU、内存、磁盘与在途预留计算可创建数量；Controller 通过 Host Command 自动创建或删除 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录 |
-| Emulator 规格与重装 | Image 保存默认规格，Device 可覆盖；管理员可把空闲 Emulator 受控重装到 Android 13～16，默认 Android 16 | 新版 Alcor 可通过稳定 Device 能力选择版本，不直接操作 Docker/AVD | 不为每个版本硬保一台；不把运行参数留在 Agent 全局环境变量；失败不提前改写当前 Image |
+| Android 官方目录与按需准备 | Console 读取 Server 同步的官方稳定 System Image 目录，选择 Android/API、`google_apis`/`google_play` 和 ABI，并配置既有 runtime profile；Server 只创建异步构建命令，Build Agent 下载、构建、推送、验证并锁定 digest | 新版 Alcor 只选择已可用 Image，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；未验证、无 digest 的候选项不得写入 `device_images`；品牌不是官方系统属性 |
 | 隔离设备人工删除 | Console 仅允许管理员对 `quarantined/stopped` Device 提交带原因和幂等键的删除；Server 原子检查活动预约并退出 Pool，Agent 通过既有 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作；目标容量不变时 Warm Pool 可正常补建 | 不允许删除 ready/reserved/busy/recycling；不物理删库；不新增 Docker 直连 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
@@ -40,7 +40,7 @@
 - Reconciler、Reaper、健康事件、隔离和重建；
 - 控制台统一 Pool 总目标、按真实资源动态扩容和最旧空闲 Emulator 安全缩容；
 - Host 实际 CPU/内存/磁盘心跳、设备有效运行规格、Server/Agent 双重资源预检和可解释容量结果；
-- Android 13～16 不可变镜像目录、Android 16 默认镜像和空闲 Emulator 受控重装；
+- 官方稳定 Android System Image 目录同步、后台按需准备、内部缓存、不可变 digest 验证，以及空闲 Emulator 受控重装；
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；

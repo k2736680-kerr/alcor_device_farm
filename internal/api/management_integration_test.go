@@ -19,6 +19,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -452,6 +453,9 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 	routes := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/device-images"}, {http.MethodPost, "/api/v1/device-images"},
 		{http.MethodGet, "/api/v1/device-images/id"}, {http.MethodPut, "/api/v1/device-images/id"}, {http.MethodPost, "/api/v1/device-images/id/validations"},
+		{http.MethodGet, "/api/v1/android-system-images"},
+		{http.MethodPost, "/api/v1/android-system-images/synchronizations"},
+		{http.MethodPost, "/api/v1/android-system-images/preparations"},
 		{http.MethodGet, "/api/v1/device-hosts"}, {http.MethodPost, "/api/v1/device-hosts"},
 		{http.MethodGet, "/api/v1/device-hosts/id"}, {http.MethodPut, "/api/v1/device-hosts/id"}, {http.MethodPost, "/api/v1/device-hosts/id/drains"}, {http.MethodDelete, "/api/v1/device-hosts/id/drains"},
 		{http.MethodGet, "/api/v1/device-pools"}, {http.MethodPost, "/api/v1/device-pools"},
@@ -537,6 +541,7 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 		t.Fatal(err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `TRUNCATE TABLE
+        device_image_preparations,android_system_image_catalog,
         device_idempotency_records,device_audit_events,device_health_events,device_sessions,
         device_reservations,device_pool_devices,devices,device_pool_images,device_pools,
         device_host_commands,device_hosts,device_images RESTART IDENTITY CASCADE`); err != nil {
@@ -552,8 +557,10 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	healthService := reconcile.New(db, provider, nil, 3, 0, logger)
 	hostCommands := hostcommand.New(db)
+	imageCatalog := imagecatalog.New(db)
 	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{
-		Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands, Metrics: farmmetrics.New(db),
+		Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands,
+		ImageCatalog: imageCatalog, Metrics: farmmetrics.New(db),
 	}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
 	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands, reservations: reservationService}

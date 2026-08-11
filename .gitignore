@@ -10,6 +10,7 @@ artifacts/
 data/
 logs/
 tmp/
+.tmp/
 *.log
 
 # Python

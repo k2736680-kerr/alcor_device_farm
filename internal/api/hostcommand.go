@@ -14,7 +14,20 @@ func RegisterHostCommands(mux *http.ServeMux, service *hostcommand.Service) {
 	handler := &hostCommandHandler{service: service}
 	mux.HandleFunc("POST /internal/v1/device-hosts/{id}/heartbeats", handler.heartbeat)
 	mux.HandleFunc("POST /internal/v1/device-hosts/{id}/commands/claims", handler.claim)
+	mux.HandleFunc("POST /internal/v1/device-host-commands/{id}/extensions", handler.extend)
 	mux.HandleFunc("POST /internal/v1/device-host-commands/{id}/completions", handler.complete)
+}
+
+func (handler *hostCommandHandler) extend(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	var input hostcommand.LeaseExtensionInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.Extend(request.Context(), request.PathValue("id"), input)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 
 func (handler *hostCommandHandler) heartbeat(writer http.ResponseWriter, request *http.Request) {
