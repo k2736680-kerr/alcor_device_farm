@@ -1323,10 +1323,14 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return "", "", err
 	}
+	encodedProfile, err := json.Marshal(profile.Map())
+	if err != nil {
+		return "", "", err
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO devices
-		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status)
-		VALUES($1,$2,$3,'emulator','docker_emulator',$4,'clean',$5,$6::jsonb,'provisioning','unknown')`,
-		deviceID, hostID, imageID, providerRef, serial, encodedCapabilities); err != nil {
+		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,runtime_profile_override,lifecycle_status,health_status)
+		VALUES($1,$2,$3,'emulator','docker_emulator',$4,'clean',$5,$6::jsonb,$7::jsonb,'provisioning','unknown')`,
+		deviceID, hostID, imageID, providerRef, serial, encodedCapabilities, encodedProfile); err != nil {
 		return "", "", err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, poolID, deviceID); err != nil {
@@ -1355,7 +1359,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 
 func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile) (string, error) {
 	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT h.id,h.capacity,h.used_capacity,h.last_heartbeat_at,
-		COALESCE((SELECT jsonb_agg(jsonb_build_object('profile',d.capabilities,'image_id',d.image_id))
+		COALESCE((SELECT jsonb_agg(jsonb_build_object('profile',COALESCE(d.runtime_profile_override,d.capabilities),'image_id',d.image_id))
 			FROM devices d WHERE d.host_id=h.id AND %s),'[]'::jsonb),
 		COALESCE((SELECT jsonb_agg(c.payload) FROM device_host_commands c WHERE c.host_id=h.id
 			AND c.command_type='validate_image' AND c.status IN ('pending','leased')),'[]'::jsonb),
