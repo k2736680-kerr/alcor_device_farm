@@ -226,7 +226,10 @@ func assertStateCounts(t *testing.T, db *database.DB, reservationID, status stri
 	t.Helper()
 	assertCount(t, db, "SELECT count(*) FROM device_reservations WHERE id=$1 AND status='"+status+"'", reservationID, 1)
 	assertCount(t, db, "SELECT count(*) FROM device_sessions WHERE reservation_id=$1 AND status='closed' AND ended_at IS NOT NULL", reservationID, 1)
-	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='recycling'", "", 1)
+	// DF-038 keeps long-lived devices and their data volume after a reservation.
+	// Release closes access only; factory reset remains an explicit rebuild action.
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='ready' AND health_status='healthy'", "", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='recycling'", "", 0)
 }
 
 func assertCount(t *testing.T, db *database.DB, query, argument string, want int) {
