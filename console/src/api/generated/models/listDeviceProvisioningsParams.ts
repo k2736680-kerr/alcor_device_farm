@@ -5,9 +5,17 @@
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
  * OpenAPI spec version: 1.8.0
  */
-import type { DeviceProvisioningEnvelope } from './deviceProvisioningEnvelope';
+import type { PageParameter } from './pageParameter';
+import type { PageSizeParameter } from './pageSizeParameter';
 
+export type ListDeviceProvisioningsParams = {
 /**
- * Phone Emulator 的持久化创建流程已接受
+ * @minimum 1
  */
-export type DeviceProvisioningAcceptedResponse = DeviceProvisioningEnvelope;
+page?: PageParameter;
+/**
+ * @minimum 1
+ * @maximum 200
+ */
+page_size?: PageSizeParameter;
+};

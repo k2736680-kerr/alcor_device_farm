@@ -19,6 +19,10 @@ export interface Device {
   id: Identifier;
   host_id: Identifier;
   image_id?: Identifier;
+  pool_id?: Identifier;
+  pool_name?: string;
+  /** Whether this Device is the selected configuration source for its Pool. */
+  is_pool_base?: boolean;
   device_kind: DeviceDeviceKind;
   provider_type: DeviceProviderType;
   provider_ref: string;

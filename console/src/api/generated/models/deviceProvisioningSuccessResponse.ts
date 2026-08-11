@@ -8,6 +8,6 @@
 import type { DeviceProvisioningEnvelope } from './deviceProvisioningEnvelope';
 
 /**
- * Phone Emulator 的持久化创建流程已接受
+ * Phone Emulator 创建流程详情
  */
-export type DeviceProvisioningAcceptedResponse = DeviceProvisioningEnvelope;
+export type DeviceProvisioningSuccessResponse = DeviceProvisioningEnvelope;

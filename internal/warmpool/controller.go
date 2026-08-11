@@ -14,6 +14,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/phoneprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/jackc/pgx/v5"
@@ -58,10 +59,25 @@ type ProvisionInput struct {
 }
 
 type Provisioning struct {
-	DeviceID  string `json:"device_id"`
-	CommandID string `json:"command_id"`
-	HostID    string `json:"host_id"`
-	Status    string `json:"status"`
+	ID         string `json:"id,omitempty"`
+	DeviceID   string `json:"device_id"`
+	CommandID  string `json:"command_id"`
+	HostID     string `json:"host_id"`
+	Status     string `json:"status"`
+	ErrorStage string `json:"error_stage,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
+}
+
+// CatalogProvisionInput is the durable, browser-independent version of a
+// create request. Image preparation is deliberately not performed here: only
+// the Image Catalog service may queue its fixed Build Agent command types.
+type CatalogProvisionInput struct {
+	ClientID          string
+	IdempotencyKey    string
+	PoolID            string
+	CatalogID         string
+	HardwareProfileID string
+	RuntimeProfile    runtimeprofile.Profile
 }
 
 type Controller struct {
@@ -78,6 +94,140 @@ func New(db *database.DB, generator func() (string, error), logger *slog.Logger)
 		logger = slog.Default()
 	}
 	return &Controller{db: db, newID: generator, logger: logger}
+}
+
+func (controller *Controller) CreateCatalogProvisioning(ctx context.Context, input CatalogProvisionInput) (Provisioning, bool, error) {
+	if controller == nil || controller.db == nil || input.ClientID == "" || len(input.IdempotencyKey) < 8 || input.PoolID == "" || input.CatalogID == "" || input.HardwareProfileID == "" {
+		return Provisioning{}, false, errors.New("invalid device provisioning request")
+	}
+	if _, ok := phoneprofile.Find(input.HardwareProfileID); !ok || input.RuntimeProfile.Validate() != nil {
+		return Provisioning{}, false, errors.New("invalid Phone hardware profile or runtime profile")
+	}
+	requestJSON, err := json.Marshal(map[string]any{"pool_id": input.PoolID, "catalog_id": input.CatalogID, "hardware_profile_id": input.HardwareProfileID, "runtime_profile": input.RuntimeProfile.Map()})
+	if err != nil {
+		return Provisioning{}, false, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(requestJSON))
+	jobID, err := controller.newID()
+	if err != nil {
+		return Provisioning{}, false, err
+	}
+	var output Provisioning
+	created := false
+	err = controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var poolStatus domain.PoolStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 FOR UPDATE`, input.PoolID).Scan(&poolStatus); err != nil {
+			return err
+		}
+		if poolStatus != domain.PoolActive {
+			return errors.New("device pool is not active")
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM android_system_image_catalog WHERE id=$1`, input.CatalogID).Scan(new(string)); err != nil {
+			return err
+		}
+		var existingHash string
+		err := tx.QueryRow(ctx, `SELECT id,request_hash,status,COALESCE(device_id,''),COALESCE(command_id,''),COALESCE(error_stage,''),COALESCE(error_code,'')
+			FROM device_provisioning_jobs WHERE client_id=$1 AND idempotency_key=$2 FOR UPDATE`, input.ClientID, input.IdempotencyKey).
+			Scan(&output.ID, &existingHash, &output.Status, &output.DeviceID, &output.CommandID, &output.ErrorStage, &output.ErrorCode)
+		if err == nil {
+			if existingHash != hash {
+				return errors.New("device provisioning idempotency key conflicts with another request")
+			}
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO device_provisioning_jobs(id,client_id,idempotency_key,request_hash,pool_id,catalog_id,hardware_profile_id,runtime_profile)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`, jobID, input.ClientID, input.IdempotencyKey, hash, input.PoolID, input.CatalogID, input.HardwareProfileID, input.RuntimeProfile.Map())
+		if err != nil {
+			return err
+		}
+		output = Provisioning{ID: jobID, Status: "preparing_image"}
+		created = true
+		return nil
+	})
+	return output, created, err
+}
+
+func (controller *Controller) AttachPreparation(ctx context.Context, jobID, preparationID string) error {
+	if controller == nil || controller.db == nil || jobID == "" || preparationID == "" {
+		return errors.New("invalid provisioning preparation")
+	}
+	result, err := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET preparation_id=$2,updated_at=clock_timestamp()
+		WHERE id=$1 AND status='preparing_image' AND preparation_id IS NULL`, jobID, preparationID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return errors.New("device provisioning state changed")
+	}
+	return nil
+}
+
+// AttachCachedPreparation reuses a verified Image built for the exact runtime
+// profile. It prevents a new browser request from needlessly downloading the
+// same Android SDK package again.
+func (controller *Controller) AttachCachedPreparation(ctx context.Context, jobID string) (bool, error) {
+	result, err := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs j SET preparation_id=(
+		SELECT p.id FROM device_image_preparations p WHERE p.catalog_id=j.catalog_id AND p.runtime_profile=j.runtime_profile
+		AND p.status='cached' AND p.image_id IS NOT NULL ORDER BY p.updated_at DESC,p.id DESC LIMIT 1),updated_at=clock_timestamp()
+		WHERE j.id=$1 AND j.status='preparing_image' AND j.preparation_id IS NULL AND EXISTS (
+		SELECT 1 FROM device_image_preparations p WHERE p.catalog_id=j.catalog_id AND p.runtime_profile=j.runtime_profile
+		AND p.status='cached' AND p.image_id IS NOT NULL)`, jobID)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() == 1, nil
+}
+
+// FailCatalogProvisioning records a synchronous scheduling error so refreshes
+// never leave a job that appears to be preparing forever.
+func (controller *Controller) FailCatalogProvisioning(ctx context.Context, jobID, stage, code string) error {
+	if controller == nil || controller.db == nil || jobID == "" {
+		return errors.New("invalid device provisioning job")
+	}
+	_, err := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs
+		SET status='failed',error_stage=$2,error_code=$3,updated_at=clock_timestamp()
+		WHERE id=$1 AND status NOT IN ('ready','failed')`, jobID, stage, code)
+	return err
+}
+
+func (controller *Controller) GetCatalogProvisioning(ctx context.Context, id string) (Provisioning, error) {
+	var output Provisioning
+	err := controller.db.Pool().QueryRow(ctx, `SELECT id,COALESCE(device_id,''),COALESCE(command_id,''),status,COALESCE(error_stage,''),COALESCE(error_code,'')
+		FROM device_provisioning_jobs WHERE id=$1`, id).Scan(&output.ID, &output.DeviceID, &output.CommandID, &output.Status, &output.ErrorStage, &output.ErrorCode)
+	return output, err
+}
+
+// ListCatalogProvisionings exposes durable creation state for a refreshed
+// Console page. The SQL window keeps completed job history bounded.
+func (controller *Controller) ListCatalogProvisionings(ctx context.Context, page paging.Page) (paging.Result[Provisioning], error) {
+	if controller == nil || controller.db == nil {
+		return paging.Result[Provisioning]{}, errors.New("warm pool database is not configured")
+	}
+	var total int
+	if err := controller.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_provisioning_jobs`).Scan(&total); err != nil {
+		return paging.Result[Provisioning]{}, err
+	}
+	rows, err := controller.db.Pool().Query(ctx, `SELECT id,COALESCE(device_id,''),COALESCE(command_id,''),status,COALESCE(error_stage,''),COALESCE(error_code,'')
+		FROM device_provisioning_jobs ORDER BY created_at DESC,id DESC LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	if err != nil {
+		return paging.Result[Provisioning]{}, err
+	}
+	defer rows.Close()
+	items := []Provisioning{}
+	for rows.Next() {
+		var item Provisioning
+		if err := rows.Scan(&item.ID, &item.DeviceID, &item.CommandID, &item.Status, &item.ErrorStage, &item.ErrorCode); err != nil {
+			return paging.Result[Provisioning]{}, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return paging.Result[Provisioning]{}, err
+	}
+	return paging.NewResult(items, page, total), nil
 }
 
 // Provision creates the persistent Device, its Pool membership and the Agent
@@ -101,7 +251,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			WHERE command_type='create' AND payload->>'provisioning_key'=$1 ORDER BY created_at DESC LIMIT 1`, input.IdempotencyKey).
 			Scan(&existingDeviceID, &existingCommandID, &existingHostID)
 		if err == nil {
-			result.DeviceID, result.CommandID, result.HostID = existingDeviceID, existingCommandID, existingHostID
+			result.ID, result.DeviceID, result.CommandID, result.HostID = existingCommandID, existingDeviceID, existingCommandID, existingHostID
 			return nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -117,7 +267,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			WHERE command_type='create' AND payload->>'provisioning_key'=$1 ORDER BY created_at DESC LIMIT 1`, input.IdempotencyKey).
 			Scan(&existingDeviceID, &existingCommandID, &existingHostID)
 		if err == nil {
-			result.DeviceID, result.CommandID, result.HostID = existingDeviceID, existingCommandID, existingHostID
+			result.ID, result.DeviceID, result.CommandID, result.HostID = existingCommandID, existingDeviceID, existingCommandID, existingHostID
 			return nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -154,7 +304,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			base_device_id=COALESCE(base_device_id,$2),updated_at=clock_timestamp() WHERE id=$1`, input.PoolID, deviceID); err != nil {
 			return err
 		}
-		result.DeviceID, result.CommandID, result.HostID = deviceID, commandID, hostID
+		result.ID, result.DeviceID, result.CommandID, result.HostID = commandID, deviceID, commandID, hostID
 		return nil
 	})
 	return result, err
@@ -181,6 +331,9 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	result.ValidationsQueued += validations.ValidationsQueued
 	result.ValidationsCompleted += validations.ValidationsCompleted
 	result.ValidationsFailed += validations.ValidationsFailed
+	if err := controller.reconcileCatalogProvisioningJobs(ctx); err != nil {
+		return result, err
+	}
 	rows, err := controller.db.Pool().Query(ctx, `SELECT p.id,COALESCE(b.image_id,p.default_image_id)
 		FROM device_pools p
 		LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
@@ -218,6 +371,96 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 		result.BackoffSkips += partial.BackoffSkips
 	}
 	return result, nil
+}
+
+func (controller *Controller) reconcileCatalogProvisioningJobs(ctx context.Context) error {
+	rows, err := controller.db.Pool().Query(ctx, `SELECT j.id,j.pool_id,j.hardware_profile_id,j.runtime_profile,
+		COALESCE(j.preparation_id,''),COALESCE(j.image_id,''),COALESCE(j.device_id,''),j.status,
+		COALESCE(p.status,''),COALESCE(p.image_id,''),COALESCE(p.error_code,'')
+		FROM device_provisioning_jobs j
+		LEFT JOIN device_image_preparations p ON p.id=j.preparation_id
+		WHERE j.status NOT IN ('ready','failed') ORDER BY j.created_at,j.id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type job struct {
+		id, pool, hardware, preparation, image, device, status, preparationStatus, preparedImage, errorCode string
+		profile                                                                                             map[string]any
+	}
+	jobs := []job{}
+	for rows.Next() {
+		var item job
+		var profile []byte
+		if err := rows.Scan(&item.id, &item.pool, &item.hardware, &profile, &item.preparation, &item.image, &item.device, &item.status, &item.preparationStatus, &item.preparedImage, &item.errorCode); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(profile, &item.profile); err != nil {
+			return err
+		}
+		jobs = append(jobs, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range jobs {
+		if item.preparation == "" {
+			continue
+		} // API will attach the catalog job immediately after it is queued.
+		if item.preparationStatus == "failed" {
+			_, err := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET status='failed',error_stage='prepare_system_image',error_code=$2,updated_at=clock_timestamp() WHERE id=$1 AND status<>'failed'`, item.id, item.errorCode)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if item.preparationStatus != "cached" || item.preparedImage == "" {
+			continue
+		}
+		if item.device == "" {
+			profile, err := runtimeprofile.Parse(item.profile)
+			if err != nil {
+				_, updateErr := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET status='failed',error_stage='runtime_profile',error_code='INVALID_RUNTIME_PROFILE',updated_at=clock_timestamp() WHERE id=$1`, item.id)
+				if updateErr != nil {
+					return updateErr
+				}
+				continue
+			}
+			created, err := controller.Provision(ctx, ProvisionInput{PoolID: item.pool, ImageID: item.preparedImage, HardwareProfileID: item.hardware, RuntimeProfile: profile, IdempotencyKey: "catalog-provision-" + item.id})
+			if err != nil {
+				continue
+			} // Capacity/build-agent recovery is retried by the durable job.
+			_, err = controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET image_id=$2,device_id=$3,command_id=$4,status='creating_emulator',updated_at=clock_timestamp() WHERE id=$1`, item.id, item.preparedImage, created.DeviceID, created.CommandID)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		var lifecycle domain.DeviceLifecycleStatus
+		var health domain.HealthStatus
+		err := controller.db.Pool().QueryRow(ctx, `SELECT lifecycle_status,health_status FROM devices WHERE id=$1`, item.device).Scan(&lifecycle, &health)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		status, stage := "creating_emulator", ""
+		if lifecycle == domain.DeviceReady && health == domain.HealthHealthy {
+			status = "ready"
+		}
+		if lifecycle == domain.DeviceQuarantined {
+			status, stage = "failed", "device_readiness"
+		}
+		if lifecycle == domain.DeviceBooting {
+			status = "adb_check"
+		}
+		_, err = controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET status=$2,error_stage=CASE WHEN $3='' THEN NULL ELSE $3 END,updated_at=clock_timestamp() WHERE id=$1`, item.id, status, stage)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type scaleDownDevice struct {
@@ -930,7 +1173,11 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			result.BackoffSkips++
 			return nil
 		}
-		profile, err := runtimeprofile.Parse(baseRuntimeProfile)
+		var baseProfile map[string]any
+		if err := json.Unmarshal(baseRuntimeProfile, &baseProfile); err != nil {
+			return fmt.Errorf("decode base device runtime profile: %w", err)
+		}
+		profile, err := runtimeprofile.Parse(baseProfile)
 		if err != nil {
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}

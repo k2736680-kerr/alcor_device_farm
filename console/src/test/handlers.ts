@@ -158,8 +158,11 @@ export const handlers = [
   http.get('/api/v1/android-system-images', () => HttpResponse.json({ request_id: 'req_catalog', data: sampleAndroidSystemImages, error: null })),
   http.get('/api/v1/android-hardware-profiles', () => HttpResponse.json({ request_id: 'req_hardware', data: sampleAndroidHardwareProfiles, error: null })),
   http.post('/api/v1/device-provisionings', () => HttpResponse.json({
-    request_id: 'req_device_provision', data: { device_id: 'device_00000000000009', command_id: 'command_00000000000009', host_id: 'host_000000000000001', status: 'provisioning' }, error: null,
+    request_id: 'req_device_provision', data: { id: 'provisioning_00000000000009', status: 'preparing_image' }, error: null,
   }, { status: 202 })),
+  http.get('/api/v1/device-provisionings/:id', ({ params }) => HttpResponse.json({
+    request_id: 'req_device_provision_state', data: { id: params.id, status: 'ready', device_id: 'device_00000000000009' }, error: null,
+  })),
   http.post('/api/v1/android-system-images/synchronizations', () => HttpResponse.json({
     request_id: 'req_catalog_sync', data: { id: 'command_00000000000001', host_id: 'host_000000000000001', command_id: 'command_00000000000001', runtime_profile: {}, status: 'queued', created_at: '2026-08-10T00:00:00Z', updated_at: '2026-08-10T00:00:00Z' }, error: null,
   }, { status: 202 })),

@@ -185,6 +185,16 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-provisionings:
+    get:
+      tags: [Devices]
+      operationId: listDeviceProvisionings
+      parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
+      responses:
+        "200": {$ref: "#/components/responses/DeviceProvisioningListSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/ServerError"}
     post:
       tags: [Devices]
       operationId: createDeviceProvisioning
@@ -335,6 +345,17 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/device-provisionings/{id}:
+    get:
+      tags: [Devices]
+      operationId: getDeviceProvisioning
+      parameters: [{$ref: "#/components/parameters/ResourceID"}]
+      responses:
+        "200": {$ref: "#/components/responses/DeviceProvisioningSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
         "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools/{id}/base-device:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
@@ -1012,8 +1033,14 @@ components:
       description: Phone 硬件模板目录
       content: {application/json: {schema: {$ref: "#/components/schemas/AndroidHardwareProfileListEnvelope"}}}
     DeviceProvisioningAccepted:
-      description: Phone Emulator 创建命令已持久化
+      description: Phone Emulator 的持久化创建流程已接受
       content: {application/json: {schema: {$ref: "#/components/schemas/DeviceProvisioningEnvelope"}}}
+    DeviceProvisioningSuccess:
+      description: Phone Emulator 创建流程详情
+      content: {application/json: {schema: {$ref: "#/components/schemas/DeviceProvisioningEnvelope"}}}
+    DeviceProvisioningListSuccess:
+      description: Phone Emulator 创建流程分页列表
+      content: {application/json: {schema: {$ref: "#/components/schemas/DeviceProvisioningListEnvelope"}}}
     ImagePreparationAccepted:
       description: 目录同步或镜像准备任务已接受
       content: {application/json: {schema: {$ref: "#/components/schemas/ImagePreparationEnvelope"}}}
@@ -1244,21 +1271,38 @@ components:
     DeviceProvisioningInput:
       type: object
       additionalProperties: false
-      required: [pool_id, image_id, hardware_profile_id, runtime_profile]
+      required: [pool_id, hardware_profile_id, runtime_profile]
       properties:
         pool_id: {$ref: "#/components/schemas/Identifier"}
-        image_id: {$ref: "#/components/schemas/Identifier"}
+        catalog_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          nullable: true
+          description: Preferred Android SDK catalog entry. The server prepares and verifies its device image when necessary.
+        image_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          nullable: true
+          deprecated: true
+          description: Compatibility input for an already verified device image. New Console flows use catalog_id.
         hardware_profile_id: {type: string, pattern: "^[a-z0-9_]+$"}
         runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
     DeviceProvisioning:
       type: object
       additionalProperties: false
-      required: [device_id, command_id, host_id, status]
+      required: [id, status]
       properties:
-        device_id: {$ref: "#/components/schemas/Identifier"}
-        command_id: {$ref: "#/components/schemas/Identifier"}
-        host_id: {$ref: "#/components/schemas/Identifier"}
-        status: {type: string, enum: [provisioning]}
+        id: {$ref: "#/components/schemas/Identifier"}
+        device_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          nullable: true
+        command_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          nullable: true
+        host_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          nullable: true
+        status: {type: string, enum: [preparing_image, creating_emulator, adb_check, stf_registration, appium_check, ready, failed, provisioning]}
+        error_stage: {type: string, nullable: true}
+        error_code: {type: string, nullable: true}
     DeviceProvisioningEnvelope:
       type: object
       additionalProperties: false
@@ -1266,6 +1310,14 @@ components:
       properties:
         request_id: {type: string}
         data: {$ref: "#/components/schemas/DeviceProvisioning"}
+        error: {nullable: true}
+    DeviceProvisioningListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/DeviceProvisioningPage"}
         error: {nullable: true}
     DeviceImageStatus:
       type: string
@@ -1438,6 +1490,10 @@ components:
       allOf:
         - {$ref: "#/components/schemas/PageMetadata"}
         - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/Device"}}}}
+    DeviceProvisioningPage:
+      allOf:
+        - {$ref: "#/components/schemas/PageMetadata"}
+        - {type: object, required: [items], properties: {items: {type: array, items: {$ref: "#/components/schemas/DeviceProvisioning"}}}}
     ReservationPage:
       allOf:
         - {$ref: "#/components/schemas/PageMetadata"}
@@ -1713,6 +1769,9 @@ components:
         id: {$ref: "#/components/schemas/Identifier"}
         host_id: {$ref: "#/components/schemas/Identifier"}
         image_id: {$ref: "#/components/schemas/Identifier"}
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        pool_name: {type: string}
+        is_pool_base: {type: boolean, description: Whether this Device is the selected configuration source for its Pool.}
         device_kind: {type: string, enum: [emulator, physical]}
         provider_type: {type: string, enum: [docker_emulator, usb_android, mock]}
         provider_ref: {type: string}

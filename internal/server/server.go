@@ -69,7 +69,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	mux.Handle("/metrics", services.Metrics)
 	api.RegisterManagement(mux, services.Management)
 	api.RegisterImageCatalog(mux, services.ImageCatalog)
-	api.RegisterProvisioning(mux, services.WarmPool)
+	api.RegisterProvisioning(mux, services.WarmPool, services.ImageCatalog)
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)

@@ -45,6 +45,8 @@ import type {
   DevicePoolInputBody,
   DeviceProvisioningAcceptedResponse,
   DeviceProvisioningInput,
+  DeviceProvisioningListSuccessResponse,
+  DeviceProvisioningSuccessResponse,
   DeviceReimageInputBody,
   DeviceSuccessResponse,
   ErrorResponse,
@@ -69,6 +71,7 @@ import type {
   ListDeviceImagesParams,
   ListDevicePoolImagesParams,
   ListDevicePoolsParams,
+  ListDeviceProvisioningsParams,
   ListDeviceReservationsParams,
   ListDevicesParams,
   OperationReasonBody,
@@ -1627,6 +1630,142 @@ export function useListAndroidHardwareProfiles<TData = Awaited<ReturnType<typeof
 
 
 
+export type listDeviceProvisioningsResponse200 = {
+  data: DeviceProvisioningListSuccessResponse
+  status: 200
+}
+
+export type listDeviceProvisioningsResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type listDeviceProvisioningsResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type listDeviceProvisioningsResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type listDeviceProvisioningsResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type listDeviceProvisioningsResponseSuccess = (listDeviceProvisioningsResponse200) & {
+  headers: Headers;
+};
+export type listDeviceProvisioningsResponseError = (listDeviceProvisioningsResponse400 | listDeviceProvisioningsResponse401 | listDeviceProvisioningsResponse403 | listDeviceProvisioningsResponse500) & {
+  headers: Headers;
+};
+
+export type listDeviceProvisioningsResponse = (listDeviceProvisioningsResponseSuccess | listDeviceProvisioningsResponseError)
+
+export const getListDeviceProvisioningsUrl = (params?: ListDeviceProvisioningsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/device-provisionings?${stringifiedParams}` : `/api/v1/device-provisionings`
+}
+
+export const listDeviceProvisionings = async (params?: ListDeviceProvisioningsParams, options?: RequestInit): Promise<listDeviceProvisioningsResponse> => {
+
+  return deviceFarmFetch<listDeviceProvisioningsResponse>(getListDeviceProvisioningsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDeviceProvisioningsQueryKey = (params?: ListDeviceProvisioningsParams,) => {
+    return [
+    `/api/v1/device-provisionings`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+
+export const getListDeviceProvisioningsQueryOptions = <TData = Awaited<ReturnType<typeof listDeviceProvisionings>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params?: ListDeviceProvisioningsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceProvisionings>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDeviceProvisioningsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeviceProvisionings>>> = ({ signal }) => listDeviceProvisionings(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDeviceProvisionings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListDeviceProvisioningsQueryResult = NonNullable<Awaited<ReturnType<typeof listDeviceProvisionings>>>
+export type ListDeviceProvisioningsQueryError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+
+export function useListDeviceProvisionings<TData = Awaited<ReturnType<typeof listDeviceProvisionings>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params: undefined |  ListDeviceProvisioningsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceProvisionings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDeviceProvisionings>>,
+          TError,
+          Awaited<ReturnType<typeof listDeviceProvisionings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDeviceProvisionings<TData = Awaited<ReturnType<typeof listDeviceProvisionings>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params?: ListDeviceProvisioningsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceProvisionings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDeviceProvisionings>>,
+          TError,
+          Awaited<ReturnType<typeof listDeviceProvisionings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDeviceProvisionings<TData = Awaited<ReturnType<typeof listDeviceProvisionings>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params?: ListDeviceProvisioningsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceProvisionings>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListDeviceProvisionings<TData = Awaited<ReturnType<typeof listDeviceProvisionings>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params?: ListDeviceProvisioningsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeviceProvisionings>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListDeviceProvisioningsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 export type createDeviceProvisioningResponse202 = {
   data: DeviceProvisioningAcceptedResponse
   status: 202
@@ -3039,6 +3178,135 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
       return useMutation(mutationOptions, queryClient);
     }
+
+export type getDeviceProvisioningResponse200 = {
+  data: DeviceProvisioningSuccessResponse
+  status: 200
+}
+
+export type getDeviceProvisioningResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type getDeviceProvisioningResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type getDeviceProvisioningResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type getDeviceProvisioningResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type getDeviceProvisioningResponseSuccess = (getDeviceProvisioningResponse200) & {
+  headers: Headers;
+};
+export type getDeviceProvisioningResponseError = (getDeviceProvisioningResponse401 | getDeviceProvisioningResponse403 | getDeviceProvisioningResponse404 | getDeviceProvisioningResponse500) & {
+  headers: Headers;
+};
+
+export type getDeviceProvisioningResponse = (getDeviceProvisioningResponseSuccess | getDeviceProvisioningResponseError)
+
+export const getGetDeviceProvisioningUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/device-provisionings/${id}`
+}
+
+export const getDeviceProvisioning = async (id: string, options?: RequestInit): Promise<getDeviceProvisioningResponse> => {
+
+  return deviceFarmFetch<getDeviceProvisioningResponse>(getGetDeviceProvisioningUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDeviceProvisioningQueryKey = (id?: string,) => {
+    return [
+    `/api/v1/device-provisionings/${id}`
+    ] as const;
+    }
+
+
+export const getGetDeviceProvisioningQueryOptions = <TData = Awaited<ReturnType<typeof getDeviceProvisioning>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse | ServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceProvisioning>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDeviceProvisioningQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDeviceProvisioning>>> = ({ signal }) => getDeviceProvisioning(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDeviceProvisioning>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDeviceProvisioningQueryResult = NonNullable<Awaited<ReturnType<typeof getDeviceProvisioning>>>
+export type GetDeviceProvisioningQueryError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse | ServerErrorResponse
+
+
+export function useGetDeviceProvisioning<TData = Awaited<ReturnType<typeof getDeviceProvisioning>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse | ServerErrorResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceProvisioning>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDeviceProvisioning>>,
+          TError,
+          Awaited<ReturnType<typeof getDeviceProvisioning>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDeviceProvisioning<TData = Awaited<ReturnType<typeof getDeviceProvisioning>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse | ServerErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceProvisioning>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDeviceProvisioning>>,
+          TError,
+          Awaited<ReturnType<typeof getDeviceProvisioning>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDeviceProvisioning<TData = Awaited<ReturnType<typeof getDeviceProvisioning>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse | ServerErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceProvisioning>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetDeviceProvisioning<TData = Awaited<ReturnType<typeof getDeviceProvisioning>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse | ServerErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeviceProvisioning>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDeviceProvisioningQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
 
 /**
  * Selects a long-lived member Device as the source configuration for future scale-out; application data is never cloned.

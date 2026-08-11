@@ -7,10 +7,8 @@ import {
   Input,
   InputNumber,
   Modal,
-  Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Typography,
 } from 'antd'
@@ -18,19 +16,15 @@ import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
-  getListDevicePoolImagesQueryKey,
   getListDevicePoolsQueryKey,
   getListDevicesQueryKey,
   useAddDeviceToPool,
-  useDisableDevicePoolImageTarget,
-  useListDeviceImages,
-  useListDevicePoolImages,
   useListDevicePools,
   useListDevices,
   useSelectDevicePoolBaseDevice,
   useUpdateDevicePool,
 } from '../api/generated/device-farm'
-import type { DevicePool, DevicePoolImage, Device, DeviceImage } from '../api/generated/models'
+import type { DevicePool, Device } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
@@ -44,7 +38,6 @@ interface PoolFormValues {
   max_concurrency: number
   total_target: number
   min_ready: number
-  default_image_id: string
   reason: string
 }
 
@@ -62,32 +55,16 @@ export function PoolsPage() {
   const [poolForm] = Form.useForm<PoolFormValues>()
 
   const updatePool = useUpdateDevicePool()
-  const disableTarget = useDisableDevicePoolImageTarget()
   const addDevice = useAddDeviceToPool()
   const selectBaseDevice = useSelectDevicePoolBaseDevice()
 
   const invalidatePools = () => {
     void queryClient.invalidateQueries({ queryKey: getListDevicePoolsQueryKey() })
   }
-  const invalidatePoolImages = () => {
-    void queryClient.invalidateQueries({ queryKey: getListDevicePoolImagesQueryKey() })
-  }
   const invalidateDevices = () => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }
 
-  const poolImagesQuery = useListDevicePoolImages(
-    configPool?.id ?? '',
-    { page: 1, page_size: 100 },
-    { query: { enabled: Boolean(configPool) } },
-  )
-  const poolImages = unwrapPage<DevicePoolImage>(poolImagesQuery.data)?.items ?? []
-  const imagesQuery = useListDeviceImages(
-    { page: 1, page_size: 200 },
-    { query: { enabled: Boolean(configPool) } },
-  )
-  const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
-  const imageByID = new Map(images.map((image) => [image.id, image]))
   const poolDevicesQuery = useListDevices(
     { page: 1, page_size: 1, pool_id: configPool?.id },
     {
@@ -156,24 +133,6 @@ export function PoolsPage() {
     updatePoolConfiguration(values)
   }
 
-  const disable = (target: DevicePoolImage) => {
-    if (!configPool) {
-      return
-    }
-    disableTarget.mutate(
-      { id: configPool.id, imageId: target.image_id },
-      {
-        onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`镜像目标已停用（request_id: ${requestID}）`)
-          invalidatePoolImages()
-          invalidateDevices()
-        },
-        onError: (error) => message.error(`停用失败：${errorText(error)}`),
-      },
-    )
-  }
-
   const addToPool = (deviceID: string) => {
     if (!configPool) {
       return
@@ -205,27 +164,6 @@ export function PoolsPage() {
     })
   }
 
-  const targetColumns: TableColumnsType<DevicePoolImage> = [
-    { title: '镜像', dataIndex: 'image_id', width: 230, render: (value: string) => imageByID.get(value)?.name ?? shortID(value) },
-    { title: 'Android', dataIndex: 'image_id', width: 90, render: (value: string) => imageByID.get(value) ? `API ${imageByID.get(value)?.api_level}` : '-' },
-    { title: '默认', dataIndex: 'image_id', width: 70, render: (value: string) => (value === configPool?.default_image_id ? <Tag color="blue">默认</Tag> : <Tag>可选</Tag>) },
-    { title: '启用', dataIndex: 'enabled', width: 70, render: (value: boolean) => (value ? <Tag color="green">是</Tag> : <Tag>否</Tag>) },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 100,
-      render: (_, target) => (
-        <Space size={4}>
-          {target.enabled && target.image_id !== configPool?.default_image_id && (
-            <Popconfirm title="停用该镜像目标？" okText="停用" onConfirm={() => disable(target)}>
-              <Button size="small" danger>停用</Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
-    },
-  ]
-
   const columns: TableColumnsType<DevicePool> = [
     { title: '设备池编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 180 },
@@ -254,7 +192,6 @@ export function PoolsPage() {
               max_concurrency: pool.max_concurrency,
               total_target: pool.total_target,
               min_ready: pool.min_ready,
-              default_image_id: pool.default_image_id ?? '',
               reason: '',
             })
           }}
@@ -312,15 +249,6 @@ export function PoolsPage() {
               <InputNumber min={0} max={1000} />
             </Form.Item>
           </Space>
-          <Form.Item name="default_image_id" label="兼容默认镜像" rules={[{ required: true, message: '请选择默认镜像' }]}>
-            <Select
-              loading={poolImagesQuery.isFetching || imagesQuery.isFetching}
-              options={poolImages.filter((target) => target.enabled).map((target) => {
-                const image = imageByID.get(target.image_id)
-                return { value: target.image_id, label: image ? `${image.name}（Android API ${image.api_level}）` : target.image_id }
-              })}
-            />
-          </Form.Item>
           <Typography.Paragraph type="secondary">
             总目标是该池最多维持的设备总数。选定基础设备后，自动增加设备会复制它当前的镜像、Phone 模板和 CPU/内存等运行配置，但始终使用全新的空数据卷；不会复制 APK、帐号或缓存。基础设备修改配置后，下一次扩容自动生效。
           </Typography.Paragraph>
@@ -331,7 +259,9 @@ export function PoolsPage() {
               type={currentPoolDevices < configPool.min_ready ? 'warning' : 'info'}
               message={`当前 ${currentPoolDevices} 台 · 总目标 ${configPool.total_target} 台 · 最小预热 ${configPool.min_ready} 台`}
               description={currentPoolDevices < configPool.min_ready
-                ? `尚缺 ${configPool.min_ready - currentPoolDevices} 台。系统会按默认镜像自动补建；如果持续不变化，通常是宿主机实际 CPU、内存或 Docker 数据盘不足，可到“宿主机”页面查看实时资源。目标会保留，资源恢复后继续补建。`
+                ? configPool.base_device_id
+                  ? `尚缺 ${configPool.min_ready - currentPoolDevices} 台。系统会按基础设备当前配置自动补建；如果持续不变化，通常是宿主机实际 CPU、内存或 Docker 数据盘不足。`
+                  : '该设备池尚未选择基础设备。历史默认镜像仅作为兼容兜底；请在下方选择一台健康 Phone 设备后再扩容。'
                 : '当前设备数已达到最小预热要求；总目标仍是设备池允许维持的数量上限。'}
             />
           )}
@@ -356,21 +286,6 @@ export function PoolsPage() {
           <Button type="primary" loading={updatePool.isPending} onClick={() => poolForm.submit()}>保存基本信息</Button>
         </Form>
 
-        <Typography.Title level={5} style={{ marginTop: 24 }}>
-          可选镜像
-          <Button size="small" style={{ marginLeft: 8 }} loading={poolImagesQuery.isFetching} onClick={() => void queryClient.invalidateQueries({ queryKey: getListDevicePoolImagesQueryKey() })}>
-            刷新
-          </Button>
-        </Typography.Title>
-        <Table<DevicePoolImage>
-          rowKey="image_id"
-          size="small"
-          columns={targetColumns}
-          dataSource={poolImages}
-          pagination={false}
-          locale={{ emptyText: '该池暂无可选镜像' }}
-        />
-
         <Typography.Title level={5} style={{ marginTop: 24 }}>设备</Typography.Title>
         <Typography.Paragraph type="secondary">基础设备决定后续扩容的配置，不会共享或复制这台设备内的数据。</Typography.Paragraph>
         <Select
@@ -379,7 +294,7 @@ export function PoolsPage() {
           placeholder="选择基础设备"
           loading={devicesQuery.isFetching || selectBaseDevice.isPending}
           onChange={setBaseDevice}
-          options={devices.filter((device) => ['ready', 'reserved', 'busy'].includes(device.lifecycle_status)).map((device) => ({
+          options={devices.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator').map((device) => ({
             value: device.id, label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
           }))}
         />

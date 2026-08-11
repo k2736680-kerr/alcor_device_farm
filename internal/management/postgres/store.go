@@ -379,21 +379,24 @@ func (store *Store) SetPoolBaseDevice(ctx context.Context, poolID, deviceID stri
 	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var enabled bool
 		var lifecycle domain.DeviceLifecycleStatus
-		if err := tx.QueryRow(ctx, `SELECT pd.enabled,d.lifecycle_status FROM device_pool_devices pd
-			JOIN devices d ON d.id=pd.device_id WHERE pd.pool_id=$1 AND pd.device_id=$2 FOR UPDATE`, poolID, deviceID).Scan(&enabled, &lifecycle); err != nil {
+		var health domain.HealthStatus
+		if err := tx.QueryRow(ctx, `SELECT pd.enabled,d.lifecycle_status,d.health_status FROM device_pool_devices pd
+			JOIN devices d ON d.id=pd.device_id WHERE pd.pool_id=$1 AND pd.device_id=$2 FOR UPDATE`, poolID, deviceID).Scan(&enabled, &lifecycle, &health); err != nil {
 			return err
 		}
-		if !enabled || (lifecycle != domain.DeviceReady && lifecycle != domain.DeviceReserved && lifecycle != domain.DeviceBusy) {
+		if !enabled || lifecycle != domain.DeviceReady || health != domain.HealthHealthy {
 			return management.ErrInvalidArgument
 		}
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET base_device_id=$2,updated_at=clock_timestamp()
 			WHERE id=$1 RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at`, poolID, deviceID))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
 			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
 			VALUES($1,$2,$3,$4,'device_pool',$5,$6,$7,jsonb_build_object('base_device_id',$8::text))`,
-			audit.ID,audit.ActorType,audit.ActorID,audit.Action,poolID,audit.RequestID,sensitive.RedactText(audit.Reason),deviceID)
+			audit.ID, audit.ActorType, audit.ActorID, audit.Action, poolID, audit.RequestID, sensitive.RedactText(audit.Reason), deviceID)
 		return err
 	})
 	return value, normalize(err)
@@ -499,6 +502,12 @@ func (store *Store) ListSchedulableDevices(ctx context.Context, poolID string) (
 func (store *Store) GetDevice(ctx context.Context, id string) (management.Device, error) {
 	value, err := scanDevice(store.db.Pool().QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, id))
 	return value, rowError(err)
+}
+
+func (store *Store) IsDevicePoolBase(ctx context.Context, deviceID string) (bool, error) {
+	var exists bool
+	err := store.db.Pool().QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM device_pools WHERE base_device_id=$1)`, deviceID).Scan(&exists)
+	return exists, normalize(err)
 }
 
 func (store *Store) UpdateDeviceState(ctx context.Context, device management.Device, oldLifecycle domain.DeviceLifecycleStatus, oldHealth domain.HealthStatus, audit management.DeviceAudit) (management.Device, error) {
@@ -655,12 +664,6 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 				total_target=GREATEST(0,p.total_target-1),
 				min_ready=LEAST(p.min_ready,GREATEST(0,p.total_target-1)),
 				max_concurrency=LEAST(p.max_concurrency,GREATEST(0,p.total_target-1)),
-				base_device_id=CASE WHEN p.base_device_id=$1 THEN (
-					SELECT pd.device_id FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
-					WHERE pd.pool_id=p.id AND pd.enabled AND pd.device_id<>$1
-					AND d.lifecycle_status IN ('ready','quarantined','stopped')
-					ORDER BY d.updated_at DESC,d.id DESC LIMIT 1
-				) ELSE p.base_device_id END,
 				updated_at=clock_timestamp()
 				WHERE EXISTS (SELECT 1 FROM device_pool_devices pd WHERE pd.pool_id=p.id AND pd.device_id=$1)`, operation.Device.ID); err != nil {
 				return err
@@ -780,7 +783,13 @@ const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_
 const hostSelect = `SELECT id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
 const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
-const deviceSelect = `SELECT devices.id,devices.host_id,devices.image_id,devices.device_kind,devices.provider_type,devices.provider_ref,
+const deviceSelect = `SELECT devices.id,devices.host_id,devices.image_id,
+    (SELECT pool.id FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
+        WHERE membership.device_id=devices.id AND membership.enabled ORDER BY pool.created_at,pool.id LIMIT 1),
+    (SELECT pool.name FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
+        WHERE membership.device_id=devices.id AND membership.enabled ORDER BY pool.created_at,pool.id LIMIT 1),
+    EXISTS(SELECT 1 FROM device_pools pool WHERE pool.base_device_id=devices.id),
+    devices.device_kind,devices.provider_type,devices.provider_ref,
     devices.lifecycle_mode,devices.serial,devices.stf_serial,devices.adb_endpoint,devices.appium_endpoint,devices.capabilities,
     devices.runtime_profile_override,COALESCE(devices.runtime_profile_override,device_image.resource_config,'{}'::jsonb),
     devices.pending_image_id,devices.pending_runtime_profile,devices.reimage_status,devices.reimage_error,
@@ -834,7 +843,7 @@ func scanPoolImage(row rowScanner) (management.PoolImage, error) {
 func scanDevice(row rowScanner) (management.Device, error) {
 	var v management.Device
 	var capabilities, override, effective, pending []byte
-	err := row.Scan(&v.ID, &v.HostID, &v.ImageID, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
+	err := row.Scan(&v.ID, &v.HostID, &v.ImageID, &v.PoolID, &v.PoolName, &v.IsPoolBase, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
 		&capabilities, &override, &effective, &v.PendingImageID, &pending, &v.ReimageStatus, &v.ReimageError,
 		&v.LifecycleStatus, &v.HealthStatus, &v.HealthReason, &v.ConsecutiveFailures, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {

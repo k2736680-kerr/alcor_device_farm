@@ -6,11 +6,23 @@
  * OpenAPI spec version: 1.8.0
  */
 import type { Identifier } from './identifier';
+import type { DeviceProvisioningInputCatalogId } from './deviceProvisioningInputCatalogId';
+import type { DeviceProvisioningInputImageId } from './deviceProvisioningInputImageId';
 import type { EmulatorRuntimeProfile } from './emulatorRuntimeProfile';
 
 export interface DeviceProvisioningInput {
   pool_id: Identifier;
-  image_id: Identifier;
+  /**
+   * Preferred Android SDK catalog entry. The server prepares and verifies its device image when necessary.
+   * @nullable
+   */
+  catalog_id?: DeviceProvisioningInputCatalogId;
+  /**
+   * Compatibility input for an already verified device image. New Console flows use catalog_id.
+   * @deprecated
+   * @nullable
+   */
+  image_id?: DeviceProvisioningInputImageId;
   /** @pattern ^[a-z0-9_]+$ */
   hardware_profile_id: string;
   runtime_profile: EmulatorRuntimeProfile;

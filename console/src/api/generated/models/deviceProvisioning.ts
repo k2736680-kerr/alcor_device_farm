@@ -6,11 +6,22 @@
  * OpenAPI spec version: 1.8.0
  */
 import type { Identifier } from './identifier';
+import type { DeviceProvisioningDeviceId } from './deviceProvisioningDeviceId';
+import type { DeviceProvisioningCommandId } from './deviceProvisioningCommandId';
+import type { DeviceProvisioningHostId } from './deviceProvisioningHostId';
 import type { DeviceProvisioningStatus } from './deviceProvisioningStatus';
 
 export interface DeviceProvisioning {
-  device_id: Identifier;
-  command_id: Identifier;
-  host_id: Identifier;
+  id: Identifier;
+  /** @nullable */
+  device_id?: DeviceProvisioningDeviceId;
+  /** @nullable */
+  command_id?: DeviceProvisioningCommandId;
+  /** @nullable */
+  host_id?: DeviceProvisioningHostId;
   status: DeviceProvisioningStatus;
+  /** @nullable */
+  error_stage?: string | null;
+  /** @nullable */
+  error_code?: string | null;
 }

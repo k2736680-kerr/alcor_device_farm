@@ -13,8 +13,9 @@ ALTER TABLE device_pools
     ADD CONSTRAINT ck_device_pools_total_target CHECK (total_target >= 0),
     ADD CONSTRAINT ck_device_pools_min_ready CHECK (min_ready >= 0 AND min_ready <= total_target);
 
--- Preserve existing behaviour after an upgrade: use the newest usable member
--- as the initial base where one is available. Administrators can change it.
+-- Preserve existing behaviour after an upgrade only when a member is already
+-- a healthy Phone emulator with a complete hardware profile. Other pools keep
+-- their legacy default-image fallback until an administrator selects a base.
 UPDATE device_pools p
 SET base_device_id = candidate.device_id
 FROM LATERAL (
@@ -25,7 +26,9 @@ FROM LATERAL (
       AND pd.enabled
       AND d.device_kind = 'emulator'
       AND d.provider_type = 'docker_emulator'
-      AND d.lifecycle_status IN ('ready','reserved','busy')
+      AND d.lifecycle_status = 'ready'
+      AND d.health_status = 'healthy'
+      AND d.capabilities ? 'hardware_profile_id'
     ORDER BY d.updated_at DESC, d.id DESC
     LIMIT 1
 ) candidate

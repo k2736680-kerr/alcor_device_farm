@@ -722,6 +722,11 @@ func (service *Service) deleteDevice(ctx context.Context, id, reason, idempotenc
 	if err != nil {
 		return Device{}, err
 	}
+	if base, baseErr := service.store.IsDevicePoolBase(ctx, id); baseErr != nil {
+		return Device{}, baseErr
+	} else if base {
+		return Device{}, ErrConflict
+	}
 	commandKey := operationCommandKey("delete", audit.ActorID, idempotencyKey)
 	requestHash := operationRequestHash("delete", current.ID, reason)
 	if replayed, found, err := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "delete", requestHash); err != nil {

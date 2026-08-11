@@ -1,7 +1,7 @@
-import { Alert, App as AntApp, Button, Card, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Card, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
@@ -9,10 +9,10 @@ import {
   useDeleteDevice,
   useListAndroidHardwareProfiles,
   useListAndroidSystemImages,
+  useGetDeviceProvisioning,
   useListDeviceHosts,
   useListDeviceImages,
   useListDevicePools,
-	usePrepareAndroidSystemImage,
   useListDevices,
   useQuarantineDevice,
   useRebuildDevice,
@@ -79,7 +79,7 @@ interface ReimageValues extends EmulatorRuntimeProfile {
 
 interface CreateDeviceValues extends EmulatorRuntimeProfile {
   pool_id: string
-  image_id: string
+  catalog_id: string
   hardware_profile_id: string
 }
 
@@ -121,7 +121,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [reimageForm] = Form.useForm<ReimageValues>()
   const [createDevice, setCreateDevice] = useState(false)
   const [createForm] = Form.useForm<CreateDeviceValues>()
-	const [pendingCreate, setPendingCreate] = useState<CreateDeviceValues | null>(null)
+  const [createStep, setCreateStep] = useState(0)
+  const [profileSearch, setProfileSearch] = useState('')
+  const [provisioningID, setProvisioningID] = useState<string | null>(null)
   const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
 
@@ -129,7 +131,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const rebuild = useRebuildDevice()
   const reimage = useReimageDevice()
   const provision = useCreateDeviceProvisioning()
-	const prepareImage = usePrepareAndroidSystemImage()
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
@@ -138,11 +139,19 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
   const hosts = unwrapPage<DeviceHost>(hostsQuery.data)?.items ?? []
   const hardwareQuery = useListAndroidHardwareProfiles()
-  const catalogQuery = useListAndroidSystemImages({ query: { refetchInterval: pendingCreate ? 5_000 : false } })
+  const catalogQuery = useListAndroidSystemImages()
   const poolsQuery = useListDevicePools({ page: 1, page_size: 200 })
   const hardwareProfiles = unwrapData<AndroidHardwareProfile[]>(hardwareQuery.data) ?? []
   const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
+  const filteredHardwareProfiles = useMemo(() => {
+    const needle = profileSearch.trim().toLowerCase()
+    return needle === '' ? hardwareProfiles : hardwareProfiles.filter((profile) => profile.name.toLowerCase().includes(needle) || profile.id.includes(needle))
+  }, [hardwareProfiles, profileSearch])
+  const provisioningQuery = useGetDeviceProvisioning(provisioningID ?? '', {
+    query: { enabled: provisioningID !== null, refetchInterval: provisioningID ? 2_000 : false },
+  })
+  const provisioningState = unwrapData<{ id: string; status: string; error_stage?: string; error_code?: string }>(provisioningQuery.data)
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }, [queryClient])
@@ -246,18 +255,21 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       container_cpu_cores: 4, container_memory_mb: 5120, guest_cpu_cores: 4, guest_memory_mb: 4096,
       data_disk_mb: 4096, image_disk_mb: 0, width: 1080, height: 2424, density_dpi: 420, vm_heap_mb: 512, graphics: 'auto',
     })
+    setCreateStep(0)
+    setProfileSearch('')
     setCreateDevice(true)
   }
 
-  const provisionSelectedDevice = (values: CreateDeviceValues, resolvedImageID: string) => {
-    const { pool_id, hardware_profile_id, ...runtime_profile } = values
-		provision.mutate({ data: { pool_id, image_id: resolvedImageID, hardware_profile_id, runtime_profile } }, {
+  const submitCreateDevice = (values: CreateDeviceValues) => {
+    const { pool_id, catalog_id, hardware_profile_id, ...runtime_profile } = values
+    provision.mutate({ data: { pool_id, catalog_id, hardware_profile_id, runtime_profile } }, {
       onSuccess: (data) => {
-        const requestID = (data as { data?: { request_id?: string } } | undefined)?.data?.request_id ?? '-'
-        message.success(`创建设备已受理，正在等待 ADB、STF、Appium 健康检查（request_id: ${requestID}）`)
+        const response = data as { data?: { request_id?: string; data?: { id?: string } } }
+        const requestID = response.data?.request_id ?? '-'
+        const jobID = response.data?.data?.id
+        if (jobID) setProvisioningID(jobID)
+        message.success(`设备创建流程已受理（request_id: ${requestID}）`)
         setCreateDevice(false)
-		setPendingCreate(null)
-        invalidate()
       },
       onError: (error) => {
         const err = error as { code?: string; requestId?: string; message?: string }
@@ -266,30 +278,19 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     })
   }
 
-	const submitCreateDevice = (values: CreateDeviceValues) => {
-		const selected = catalog.find((item) => item.id === values.image_id)
-		if (!selected) { message.error('所选 Android 版本已变化，请重新选择'); return }
-		if (selected.status === 'cached' && selected.image_id) {
-			provisionSelectedDevice(values, selected.image_id)
-			return
-		}
-		const { pool_id, image_id: _catalogID, hardware_profile_id, ...runtime_profile } = values
-		void pool_id
-		void _catalogID
-		void hardware_profile_id
-		setPendingCreate(values)
-		prepareImage.mutate({ data: { catalog_id: selected.id, runtime_profile } }, {
-			onSuccess: () => message.info('已开始准备所选 Android 版本；验证完成后会自动继续创建设备。'),
-			onError: (error) => { setPendingCreate(null); message.error(`镜像准备被拒绝：${(error as { message?: string }).message ?? ''}`) },
-		})
-	}
 
-	useEffect(() => {
-		if (!pendingCreate || provision.isPending) return
-		const selected = catalog.find((item) => item.id === pendingCreate.image_id)
-		if (selected?.status === 'cached' && selected.image_id) provisionSelectedDevice(pendingCreate, selected.image_id)
-		if (selected?.status === 'failed') { setPendingCreate(null); message.error('所选 Android 版本准备失败，请选择其他版本或稍后重试') }
-	}, [catalog, pendingCreate, provision.isPending])
+  useEffect(() => {
+    if (!provisioningState) return
+    if (provisioningState.status === 'ready') {
+      message.success('设备已通过 ADB、STF 和 Appium 检查，可以使用')
+      setProvisioningID(null)
+      invalidate()
+    }
+    if (provisioningState.status === 'failed') {
+      message.error(`设备创建失败：${provisioningState.error_stage ?? 'unknown'} ${provisioningState.error_code ?? ''}`)
+      setProvisioningID(null)
+    }
+  }, [invalidate, message, provisioningState])
 
   const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
@@ -339,6 +340,10 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
 
   const columns: TableColumnsType<Device> = [
     { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
+    { title: 'Phone 型号', width: 160, render: (_, device) => String(device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-') },
+    { title: 'Android 版本', width: 130, render: (_, device) => `API ${String(device.capabilities.apiLevel ?? '-')}` },
+    { title: '设备池', dataIndex: 'pool_name', width: 150, render: (value?: string) => value ?? '-' },
+    { title: '基础设备', dataIndex: 'is_pool_base', width: 100, render: (value?: boolean) => value ? <Tag color="blue">基础设备</Tag> : '-' },
     { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
     { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
     { title: '运行方式', dataIndex: 'provider_type', width: 130, render: (value: string) => providerTypeLabel(value) },
@@ -379,9 +384,15 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   return (
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
-        <Card size="small" title="Phone 模拟器" extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>创建设备</Button> : undefined}>
-          <Typography.Text type="secondary">这是你自己管理的长期设备：预约结束后不会清空 APK、应用数据或文件；只有“编辑配置/更换镜像”或删除才会恢复/清理。</Typography.Text>
+        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>新增设备</Button> : undefined} title="我的 Phone 设备">
+          <Typography.Text type="secondary">设备数据会长期保留；只有你明确选择“编辑配置/更换镜像”或删除时才清空。</Typography.Text>
         </Card>
+        {provisioningState && <Alert
+          type={provisioningState.status === 'failed' ? 'error' : provisioningState.status === 'ready' ? 'success' : 'info'}
+          showIcon
+          message={`设备创建进度：${({ preparing_image: '准备系统镜像', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? provisioningState.status}`}
+          description={provisioningState.status === 'failed' ? `${provisioningState.error_stage ?? 'unknown'} ${provisioningState.error_code ?? ''}` : '可关闭页面；创建流程由服务端持续执行。'}
+        />}
         <Alert
           type="info"
           showIcon
@@ -421,36 +432,42 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       </Space>
       <Modal
         open={createDevice}
-        title="创建 Phone 模拟器"
-        okText="创建并加入设备池"
+        title="新增 Phone 设备"
+        footer={[
+          <Button key="cancel" onClick={() => setCreateDevice(false)}>取消</Button>,
+          createStep > 0 && <Button key="previous" onClick={() => setCreateStep((current) => current - 1)}>上一步</Button>,
+          createStep < 3
+            ? <Button key="next" type="primary" onClick={() => {
+              const field = createStep === 0 ? 'hardware_profile_id' : createStep === 1 ? 'catalog_id' : 'pool_id'
+              void createForm.validateFields([field]).then(() => setCreateStep((current) => current + 1))
+            }}>下一步</Button>
+            : <Button key="create" type="primary" loading={provision.isPending} onClick={() => createForm.submit()}>创建设备</Button>,
+        ]}
         cancelText="取消"
-        confirmLoading={provision.isPending}
         onCancel={() => setCreateDevice(false)}
-        onOk={() => createForm.submit()}
-        width={820}
+        width={900}
         destroyOnHidden
       >
-        <Alert type="info" showIcon message="创建步骤：选择 Phone 模板 → 选择 Android 版本 → 设置高级规格 → 创建" description="当前只提供 Phone。提交后由宿主 Agent 创建，设备通过 ADB、STF、Appium 检查前不会显示为可用；创建完成后它会成为此设备池后续扩容的基础设备。" style={{ marginBottom: 16 }} />
+        <Steps current={createStep} size="small" style={{ marginBottom: 20 }} items={[{ title: '选择 Phone' }, { title: '选择 Android' }, { title: '选择设备池' }, { title: '高级配置' }]} />
         <Form<CreateDeviceValues> form={createForm} layout="vertical" onFinish={submitCreateDevice}>
-          <Form.Item name="hardware_profile_id" label="1. Phone 硬件模板" rules={[{ required: true, message: '请选择 Phone 模板' }]}>
-            <Select showSearch optionFilterProp="label" loading={hardwareQuery.isFetching} options={hardwareProfiles.map((profile) => ({
-              value: profile.id, label: `${profile.name} · ${profile.width}×${profile.height} · ${profile.density_dpi} dpi`,
-            }))} onChange={(id) => {
+          <Form.Item name="hardware_profile_id" hidden rules={[{ required: true, message: '请选择 Phone 模板' }]}><Input /></Form.Item>
+          <Form.Item name="catalog_id" hidden rules={[{ required: true, message: '请选择 Android 版本' }]}><Input /></Form.Item>
+          {createStep === 0 && <>
+            <Input.Search placeholder="搜索 Pixel 或 Phone 型号" value={profileSearch} onChange={(event) => setProfileSearch(event.target.value)} style={{ marginBottom: 12 }} />
+            <Table<AndroidHardwareProfile> size="small" loading={hardwareQuery.isFetching} rowKey="id" pagination={{ pageSize: 8 }} dataSource={filteredHardwareProfiles} rowSelection={{ type: 'radio', selectedRowKeys: [createForm.getFieldValue('hardware_profile_id')].filter(Boolean), onChange: (keys) => {
+              const id = String(keys[0] ?? '')
               const profile = hardwareProfiles.find((item) => item.id === id)
-              if (profile) createForm.setFieldsValue({ width: profile.width, height: profile.height, density_dpi: profile.density_dpi })
-            }} />
-          </Form.Item>
-          <Form.Item name="image_id" label="2. Android 版本" rules={[{ required: true, message: '请选择已验证系统镜像' }]} extra="目录列出可用 Android 版本；首次使用尚未准备的版本需要先由平台完成镜像准备和验证。">
-            <Select showSearch optionFilterProp="label" loading={catalogQuery.isFetching} options={catalog.map((image) => ({
-              value: image.id,
-              label: `Android API ${image.api_level} · ${image.image_type} · ${image.abi} · ${image.status === 'cached' ? '已验证可用' : `待准备（${image.status}）`}`,
-            }))} />
-          </Form.Item>
-          <Form.Item name="pool_id" label="3. 加入设备池" rules={[{ required: true, message: '请选择活动设备池' }]}>
-            <Select loading={poolsQuery.isFetching} options={pools.filter((pool) => pool.status === 'active').map((pool) => ({ value: pool.id, label: `${pool.name} · 当前目标 ${pool.total_target}` }))} />
-          </Form.Item>
-          <Typography.Title level={5}>高级选项</Typography.Title>
-          <Space wrap align="start">
+              createForm.setFieldsValue({ hardware_profile_id: id, width: profile?.width, height: profile?.height, density_dpi: profile?.density_dpi })
+            } }} columns={[{ title: 'Phone 名称', dataIndex: 'name' }, { title: '宽', dataIndex: 'width', width: 90 }, { title: '高', dataIndex: 'height', width: 90 }, { title: 'DPI', dataIndex: 'density_dpi', width: 90 }, { title: '最低 API', width: 100, render: () => '26+' }]} />
+          </>}
+          {createStep === 1 && <>
+            <Typography.Paragraph type="secondary">未缓存版本也可选择。服务端将持续完成“准备系统镜像 → 创建模拟器 → ADB → STF → Appium”流程，无需保持此页面开启。</Typography.Paragraph>
+            <Table<AndroidSystemImage> size="small" loading={catalogQuery.isFetching} rowKey="id" pagination={{ pageSize: 8 }} dataSource={catalog} rowSelection={{ type: 'radio', selectedRowKeys: [createForm.getFieldValue('catalog_id')].filter(Boolean), onChange: (keys) => createForm.setFieldValue('catalog_id', String(keys[0] ?? '')) }} columns={[{ title: 'Android / API', render: (_, image) => `Android API ${image.api_level}` }, { title: '类型', dataIndex: 'image_type' }, { title: 'ABI', dataIndex: 'abi' }, { title: '修订', dataIndex: 'revision' }, { title: '缓存状态', render: (_, image) => <Tag color={image.status === 'cached' ? 'green' : image.status === 'failed' ? 'red' : 'default'}>{image.status === 'cached' ? '已缓存可用' : image.status}</Tag> }]} />
+          </>}
+          {createStep === 2 && <Form.Item name="pool_id" label="活动设备池" rules={[{ required: true, message: '请选择活动设备池' }]}>
+            <Select loading={poolsQuery.isFetching} options={pools.filter((pool) => pool.status === 'active').map((pool) => ({ value: pool.id, label: `${pool.name} · 目标 ${pool.total_target} · ${pool.base_device_id ? '已设置基础设备' : '待设置基础设备'}` }))} />
+          </Form.Item>}
+          {createStep === 3 && <Collapse defaultActiveKey={['runtime']} items={[{ key: 'runtime', label: '高级选项（CPU、内存、磁盘、分辨率和 GPU）', children: <Space wrap align="start">
             <Form.Item name="container_cpu_cores" label="容器 CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={64} /></Form.Item>
             <Form.Item name="container_memory_mb" label="容器内存（MiB）" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={512} /></Form.Item>
             <Form.Item name="guest_cpu_cores" label="Android CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
@@ -461,7 +478,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             <Form.Item name="density_dpi" label="DPI" rules={[{ required: true }]}><InputNumber min={120} max={960} /></Form.Item>
             <Form.Item name="vm_heap_mb" label="VM Heap（MiB）" rules={[{ required: true }]}><InputNumber min={128} /></Form.Item>
             <Form.Item name="graphics" label="图形模式" rules={[{ required: true }]}><Select style={{ width: 130 }} options={[{ value: 'auto', label: '自动' }, { value: 'host', label: '宿主机 GPU' }, { value: 'software', label: '软件渲染' }]} /></Form.Item>
-          </Space>
+          </Space> }]} />}
         </Form>
       </Modal>
       <Modal

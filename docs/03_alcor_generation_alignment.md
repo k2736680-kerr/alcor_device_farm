@@ -85,7 +85,7 @@
 
 ## 5.1 DF-038 长期设备和基础设备扩容补充
 
-DF-038 仍只改变 Device、Pool、Reservation、Host Command 与设备域审计：系统镜像继续作为受控基础设施缓存，创建向导可自动触发准备，但不新增 Alcor App、Build、Run 或 Artifact。Pool 的基础设备只提供 Phone Profile、已验证 Image 和 runtime profile 给后续干净 Emulator 创建；不复制业务 APK、账户、缓存或数据卷。Reservation release 仅释放 STF 和数据库占用，设备直接回到 `ready/healthy`，只有显式 rebuild/reimage 或 delete 才清空 Provider 数据。管理员直接删除空闲设备会原子降低 Pool 目标以避免自动补回。
+DF-038 仍只改变 Device、Pool、Reservation、Host Command、持久化 provisioning job 与设备域审计：系统镜像继续作为受控基础设施缓存，创建向导仅提交目录项，Server 自动触发或复用准备并在验证后继续创建，但不新增 Alcor App、Build、Run 或 Artifact。Pool 的基础设备只提供 Phone Profile、已验证 Image 和 runtime profile 给后续干净 Emulator 创建；不复制业务 APK、账户、缓存或数据卷。Reservation release 仅释放 STF 和数据库占用，设备直接回到 `ready/healthy`，只有显式 rebuild/reimage 或 delete 才清空 Provider 数据。管理员直接删除空闲设备会原子降低 Pool 目标以避免自动补回。
 
 ## 6. 接入前检查点
 

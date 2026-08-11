@@ -14,7 +14,7 @@ describe('ImagesPage', () => {
     expect(screen.getByText('共 1 条')).toBeInTheDocument()
     // 状态标签使用面向用户的中文，不直接暴露内部枚举值。
     expect(screen.getByText('可用')).toBeInTheDocument()
-    expect(screen.getByText('default-android 默认')).toBeInTheDocument()
+    expect(screen.queryByText('default-android 默认')).not.toBeInTheDocument()
     expect(await screen.findByText('Android 官方系统目录')).toBeInTheDocument()
     expect(screen.getByText('Android 16 / API 36')).toBeInTheDocument()
     expect(screen.getByText('默认候选')).toBeInTheDocument()
@@ -25,18 +25,12 @@ describe('ImagesPage', () => {
     expect(screen.getByText('4 GiB')).toBeInTheDocument()
   }, 10_000)
 
-  it('selects a ready image for a pool and exposes retired images separately', async () => {
+  it('keeps ready images out of daily pool selection and exposes retired images separately', async () => {
     const user = userEvent.setup()
     renderWithProviders(<ImagesPage role="admin" />)
 
     expect(await screen.findByText('android-14')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '选择使用' }))
-    expect(await screen.findByText(/不会重装或清空当前已有设备/)).toBeInTheDocument()
-    await user.click(screen.getByRole('combobox', { name: '设备池' }))
-    await user.click(await screen.findByText('default-android（当前默认）'))
-    await user.type(screen.getByRole('textbox', { name: '选择原因（写入审计）' }), '后续设备使用该镜像')
-    await user.click(screen.getByRole('button', { name: '设为默认镜像' }))
-    expect(await screen.findByText(/已设为设备池默认镜像/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '选择使用' })).not.toBeInTheDocument()
 
     await user.click(screen.getByText('已停用归档'))
     expect(await screen.findByText('android-13-old')).toBeInTheDocument()

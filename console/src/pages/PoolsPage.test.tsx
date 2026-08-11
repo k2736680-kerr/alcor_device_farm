@@ -29,7 +29,6 @@ async function openPoolEditor() {
   expect(await screen.findByRole('spinbutton', { name: '总目标数量' })).toHaveValue('2')
   expect(screen.getByRole('spinbutton', { name: '最小预热数量' })).toHaveValue('2')
   expect(screen.getByRole('spinbutton', { name: '最大并发' })).toHaveValue('2')
-  expect(screen.getByText('兼容默认镜像')).toBeInTheDocument()
   return user
 }
 
@@ -51,7 +50,6 @@ describe('PoolsPage pool capacity', () => {
       total_target: 3,
       min_ready: 3,
       max_concurrency: 3,
-      default_image_id: 'image_00000000000001',
       reason: '',
     }))
   }, 10_000)

@@ -387,11 +387,11 @@
 
 ### DF-038 长期设备、基础设备扩容和 Android Studio 式创建流程
 
-实施：以 Device 页面为唯一日常入口，新增分步创建向导：选择 Phone、Android SDK 版本、Pool 和高级 runtime profile 后创建；未缓存版本由受控 Server/Agent 链路自动准备并继续创建，镜像缓存移出主导航。每个 Pool 可选择一台 ready/healthy Phone Emulator 作为基础设备，后续扩容只复制其已生效 Image、Phone Profile 和 runtime profile，数据卷保持干净。Reservation release 只释放占用并把 Device 从 busy 返回 ready，不再自动 rebuild 或删除数据卷。管理员可删除没有活动预约的 ready/quarantined/stopped Device；删除同时降低所属 Pool 的总目标，避免自动补建。
+实施：以 Device 页面为唯一日常入口，新增四步创建向导：选择 Phone、Android SDK 版本、Pool 和高级 runtime profile 后创建；向导提交 `catalog_id` 至持久化 provisioning job，未缓存版本由受控 Server/Agent 链路自动准备并在验证后继续创建，刷新和幂等重试恢复同一 job，镜像缓存移出主导航。每个 Pool 可选择一台 ready/healthy Phone Emulator 作为基础设备，后续扩容只复制其已生效 Image、Phone Profile 和 runtime profile，数据卷保持干净。Reservation release 只释放占用并把 Device 从 busy 返回 ready，不再自动 rebuild 或删除数据卷。管理员可删除没有活动预约的 ready/quarantined/stopped Device；删除同时降低所属 Pool 的总目标，避免自动补建；删除基础设备必须先选定替代基础设备。
 
 产出：ADR-0018、Pool 基础设备持久化和迁移、创建准备编排、release 保留数据、直接删除编排、OpenAPI/Console 与 `docs/evidence/DF-038/`。
 
-验收：设备使用后 APK、账号、缓存和文件保持；显式 rebuild/reimage 仍恢复出厂。基础设备修改成功后新扩容实例使用其最新 Phone/Image/runtime profile，但不复制其数据。创建向导允许选择未缓存 Android 版本并在验证后自动完成创建。ready 空闲设备可直接删除且 Pool 目标同步减少；reserved/busy/recycling 或有活动预约设备拒绝删除；真实 Linux KVM 验证创建、release 保留数据、基础设备扩容以及删除不自动补回。
+验收：设备使用后 APK、账号、缓存和文件保持；显式 rebuild/reimage 仍恢复出厂。创建 job 覆盖已缓存直接创建、未缓存自动准备、失败阶段、页面刷新恢复和同一幂等键只生成一个 job/Device/Host Command/Pool 目标。基础设备修改成功后新扩容实例使用其最新 Phone/Image/runtime profile，但不复制其数据；非本 Pool、非 healthy Phone 或删除前未切换替代基础设备均拒绝。ready 空闲设备可直接删除且 Pool 目标同步减少；reserved/busy/recycling 或有活动预约设备拒绝删除；真实 Linux KVM 验证创建、release 保留数据、基础设备扩容以及删除不自动补回。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

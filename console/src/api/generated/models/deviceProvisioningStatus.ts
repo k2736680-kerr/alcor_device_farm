@@ -11,5 +11,12 @@ export type DeviceProvisioningStatus = typeof DeviceProvisioningStatus[keyof typ
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const DeviceProvisioningStatus = {
+  preparing_image: 'preparing_image',
+  creating_emulator: 'creating_emulator',
+  adb_check: 'adb_check',
+  stf_registration: 'stf_registration',
+  appium_check: 'appium_check',
+  ready: 'ready',
+  failed: 'failed',
   provisioning: 'provisioning',
 } as const;

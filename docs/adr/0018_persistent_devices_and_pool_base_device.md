@@ -9,3 +9,5 @@ Device Farm 的 Emulator 是用户可长期维护的设备。Reservation release
 ## 后果
 
 Pool 默认 Image 保留为历史兼容和无基础设备迁移兜底，但新 Console 不再让用户直接配置它。直接删除空闲 Device 时同步降低其 Pool 的目标数，避免用户删除后被自动补建。删除基础设备前必须先更换基础设备。该决策只涉及设备域，不新增 Alcor 业务对象，也不重写 STF/Appium/DaFit 能力。
+
+Android Studio 式创建由持久化 `device_provisioning_jobs` 编排：Console 只提交 `catalog_id`、Phone Profile、Pool 和 runtime profile；Server 复用或排队既有镜像准备，准备验证完成后再写入既有 Device/Host Command 链路。刷新或幂等重试只恢复同一 job，绝不由浏览器重复下载、重复创建设备或重复增加 Pool 目标。

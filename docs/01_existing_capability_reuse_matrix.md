@@ -117,6 +117,6 @@ DF-036 复用现有 `disabled` Image 状态、Pool 默认镜像、Pool Image 关
 
 DF-037 复用 Android SDK/`avdmanager` 的 Phone Profile 命名、既有官方 System Image 目录和 Image 准备任务。新增的向导与受控创建接口只保存设备域的 Pool、硬件 Profile、系统镜像和 runtime profile；Server 在事务中登记 `create` Host Command，浏览器、Server 均不直连 Docker、SDK 或 Google。TV、Wear、Automotive、Desktop、XR 等 Profile 不进入首期接口或 Console。
 
-DF-038 复用 Reservation 的 STF release、既有 Device/Pool PostgreSQL 锁、Host Command、Host Agent 和 Docker Provider。release 后不再排队 recycle rebuild，直接回到 ready 并保留数据卷；显式 rebuild/reimage 继续使用既有清空链路。基础设备只复制已登记的 Image、Phone Profile 和 runtime profile 来创建干净新实例，绝不复制 App 数据。直接删除仍由既有 delete Host Command 清理容器/网络/卷，并在同一事务收缩所属 Pool 目标。
+DF-038 复用 Reservation 的 STF release、既有 System Image 准备、Device/Pool PostgreSQL 锁、Host Command、Host Agent 和 Docker Provider。新增 `device_provisioning_jobs` 仅持久化编排状态，绝不下载镜像或直接操作 Docker；目录项未缓存时复用既有准备/验证链路，完成后再调用既有创建链路。release 后不再排队 recycle rebuild，直接回到 ready 并保留数据卷；显式 rebuild/reimage 继续使用既有清空链路。基础设备只复制已登记的 Image、Phone Profile 和 runtime profile 来创建干净新实例，绝不复制 App 数据。直接删除仍由既有 delete Host Command 清理容器/网络/卷，并在同一事务收缩所属 Pool 目标。
 
 无法回答或没有更新本矩阵时，不进入编码。

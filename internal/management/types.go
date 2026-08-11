@@ -124,6 +124,9 @@ type Device struct {
 	ID                      string                       `json:"id"`
 	HostID                  string                       `json:"host_id"`
 	ImageID                 *string                      `json:"image_id,omitempty"`
+	PoolID                  *string                      `json:"pool_id,omitempty"`
+	PoolName                *string                      `json:"pool_name,omitempty"`
+	IsPoolBase              bool                         `json:"is_pool_base"`
 	DeviceKind              string                       `json:"device_kind"`
 	ProviderType            string                       `json:"provider_type"`
 	ProviderRef             string                       `json:"provider_ref"`
@@ -241,6 +244,7 @@ type Store interface {
 	ListDevices(context.Context, paging.Page, DeviceFilter) ([]Device, int, error)
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
+	IsDevicePoolBase(context.Context, string) (bool, error)
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)
 	ReplayDeviceOperation(context.Context, string, string, string, string, string) (Device, bool, error)
 	QueueDeviceOperation(context.Context, DeviceOperation) (Device, error)
