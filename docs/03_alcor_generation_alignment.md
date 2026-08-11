@@ -95,3 +95,7 @@
 # DF-035 官方目录与按需准备补充（2026-08-10）
 
 Android System Image 的版本、映像类型和 ABI 由 Android SDK 官方稳定频道提供；CPU、内存、数据盘、分辨率、DPI 和图形模式属于本设备域的 `runtime_profile`。Device Farm Console 只调用 Server 的目录和准备任务 API，既不访问 Google，也不获取下载链接、Registry 凭证、Host 命令或 Docker Socket。Server 仅编排受控 Build Agent；只有 Agent 完成构建、内部 Registry 推送、不可变 digest 获取和现有验证链路后，才创建或更新 `device_images`。这仍是设备域基础设施准备，不形成新版 Alcor 的 Image/Artifact 业务索引或 Run 队列。
+
+# DF-036 镜像生命周期与默认选择补充（2026-08-11）
+
+旧 Device Image 的清理属于设备域运维：只有不再作为任何 Pool 默认镜像、且只被 `deleted` 历史 Device 引用时才能受控停用。停用记录默认不进入 Console 和新版 Alcor 的可选列表，但继续保留设备域审计及历史外键。管理员在 Image 页面选择已验证 Image 作为某个 Pool 的默认值时，只改变后续自动补建选择，不创建 Alcor Image/Artifact，不隐式重装现有 Device，也不让 Server 或浏览器直接操作 Registry/Docker。

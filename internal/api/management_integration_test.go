@@ -448,11 +448,105 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	}
 }
 
+func TestImageRetirementAndPoolDefaultSelection(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	ctx := context.Background()
+	hostID := "10000000-0000-4000-8000-000000000001"
+	oldImageID := "10000000-0000-4000-8000-000000000002"
+	currentImageID := "10000000-0000-4000-8000-000000000003"
+	candidateImageID := "10000000-0000-4000-8000-000000000004"
+	poolID := "10000000-0000-4000-8000-000000000005"
+	oldDeviceID := "10000000-0000-4000-8000-000000000006"
+	currentDeviceID := "10000000-0000-4000-8000-000000000007"
+	profile := `{"container_cpu_cores":4,"container_memory_mb":5120,"guest_cpu_cores":4,"guest_memory_mb":4096,"data_disk_mb":4096,"width":1080,"height":2400,"density_dpi":420,"vm_heap_mb":512,"graphics":"auto"}`
+
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_hosts
+		(id,name,host_type,capacity,used_capacity,status,draining,last_heartbeat_at)
+		VALUES($1,'image-lifecycle-host','docker_emulator','{"cpu":8,"memory_mb":16384,"device_slots":2}','{}','online',false,clock_timestamp())`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_images
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status) VALUES
+		($1,'legacy-image','registry.example/alcor/android-emulator:legacy','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x2400',$4,'ready'),
+		($2,'current-image','registry.example/alcor/android-emulator:current','sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',36,'x86_64','1080x2400',$4,'ready'),
+		($3,'candidate-image','registry.example/alcor/android-emulator:candidate','sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',35,'x86_64','1080x2400',$4,'ready')`,
+		oldImageID, currentImageID, candidateImageID, profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_pools
+		(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,status)
+		VALUES($1,'image-selection-pool',900,1800,1,1,1,$2,'active')`, poolID, currentImageID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_pool_images(pool_id,image_id,min_ready,max_instances,enabled) VALUES
+		($1,$2,1,1,true),($1,$3,1,1,false)`, poolID, currentImageID, oldImageID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
+		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,lifecycle_status,health_status) VALUES
+		($1,$3,$4,'emulator','docker_emulator','retired-provider','rebuild','retired-serial','deleted','healthy'),
+		($2,$3,$5,'emulator','docker_emulator','current-provider','rebuild','current-serial','ready','healthy')`,
+		oldDeviceID, currentDeviceID, hostID, oldImageID, currentImageID); err != nil {
+		t.Fatal(err)
+	}
+
+	assertPageTotal(t, environment.request(t, http.MethodGet, "/api/v1/device-images?status=ready", nil, serviceToken, ""), 3)
+	retired := environment.request(t, http.MethodPost, "/api/v1/device-images/"+oldImageID+"/retirements",
+		map[string]any{"reason": "旧镜像已经不再使用"}, serviceToken, "")
+	assertStatus(t, retired, http.StatusOK)
+	assertPageTotal(t, environment.request(t, http.MethodGet, "/api/v1/device-images?status=ready", nil, serviceToken, ""), 2)
+	assertPageTotal(t, environment.request(t, http.MethodGet, "/api/v1/device-images?status=disabled", nil, serviceToken, ""), 1)
+	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-images?status=unknown", nil, serviceToken, ""), http.StatusBadRequest)
+
+	var imageStatus string
+	var poolLinkEnabled bool
+	var retireAudits int
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT status FROM device_images WHERE id=$1`, oldImageID).Scan(&imageStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT enabled FROM device_pool_images WHERE pool_id=$1 AND image_id=$2`, poolID, oldImageID).Scan(&poolLinkEnabled); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_audit_events WHERE
+		resource_type='device_image' AND resource_id=$1 AND action='retire_device_image'`, oldImageID).Scan(&retireAudits); err != nil {
+		t.Fatal(err)
+	}
+	if imageStatus != "disabled" || poolLinkEnabled || retireAudits != 1 {
+		t.Fatalf("retired image status=%s pool_link=%t audits=%d", imageStatus, poolLinkEnabled, retireAudits)
+	}
+
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-images/"+currentImageID+"/retirements",
+		map[string]any{"reason": "仍在使用不应成功"}, serviceToken, ""), http.StatusConflict)
+	selected := environment.request(t, http.MethodPut, "/api/v1/device-pools/"+poolID+"/default-image",
+		map[string]any{"image_id": candidateImageID, "reason": "后续设备改用候选镜像"}, serviceToken, "")
+	assertStatus(t, selected, http.StatusOK)
+
+	var defaultImageID, currentDeviceImageID string
+	var candidateEnabled bool
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT default_image_id FROM device_pools WHERE id=$1`, poolID).Scan(&defaultImageID); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT enabled FROM device_pool_images WHERE pool_id=$1 AND image_id=$2`, poolID, candidateImageID).Scan(&candidateEnabled); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT image_id FROM devices WHERE id=$1`, currentDeviceID).Scan(&currentDeviceImageID); err != nil {
+		t.Fatal(err)
+	}
+	if defaultImageID != candidateImageID || !candidateEnabled || currentDeviceImageID != currentImageID {
+		t.Fatalf("default=%s enabled=%t current_device_image=%s", defaultImageID, candidateEnabled, currentDeviceImageID)
+	}
+	assertStatus(t, environment.request(t, http.MethodPut, "/api/v1/device-pools/"+poolID+"/default-image",
+		map[string]any{"image_id": oldImageID, "reason": "停用镜像不能重新选择"}, serviceToken, ""), http.StatusConflict)
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-images/"+currentImageID+"/retirements",
+		map[string]any{"reason": "活动设备仍然使用该镜像"}, serviceToken, ""), http.StatusConflict)
+}
+
 func TestEveryManagementRouteIsProtected(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	routes := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/device-images"}, {http.MethodPost, "/api/v1/device-images"},
 		{http.MethodGet, "/api/v1/device-images/id"}, {http.MethodPut, "/api/v1/device-images/id"}, {http.MethodPost, "/api/v1/device-images/id/validations"},
+		{http.MethodPost, "/api/v1/device-images/id/retirements"},
 		{http.MethodGet, "/api/v1/android-system-images"},
 		{http.MethodPost, "/api/v1/android-system-images/synchronizations"},
 		{http.MethodPost, "/api/v1/android-system-images/preparations"},
@@ -460,6 +554,7 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodGet, "/api/v1/device-hosts/id"}, {http.MethodPut, "/api/v1/device-hosts/id"}, {http.MethodPost, "/api/v1/device-hosts/id/drains"}, {http.MethodDelete, "/api/v1/device-hosts/id/drains"},
 		{http.MethodGet, "/api/v1/device-pools"}, {http.MethodPost, "/api/v1/device-pools"},
 		{http.MethodGet, "/api/v1/device-pools/id"}, {http.MethodPut, "/api/v1/device-pools/id"}, {http.MethodPost, "/api/v1/device-pools/id/devices"}, {http.MethodDelete, "/api/v1/device-pools/id/devices"},
+		{http.MethodPut, "/api/v1/device-pools/id/default-image"},
 		{http.MethodGet, "/api/v1/device-pools/id/images"}, {http.MethodPut, "/api/v1/device-pools/id/images/image-id"}, {http.MethodDelete, "/api/v1/device-pools/id/images/image-id"},
 		{http.MethodGet, "/api/v1/devices"}, {http.MethodGet, "/api/v1/devices/id"},
 		{http.MethodPost, "/api/v1/devices/id/restarts"}, {http.MethodPost, "/api/v1/devices/id/rebuilds"},
@@ -492,6 +587,8 @@ func TestManagementAPIRejectsInvalidParameters(t *testing.T) {
 		{http.MethodPost, "/api/v1/device-hosts", sensitiveHost, "valid-key-sensitive-host"},
 		{http.MethodPost, "/api/v1/device-pools", map[string]any{}, "valid-key-03"},
 		{http.MethodPost, "/api/v1/device-images/id/validations", nil, ""},
+		{http.MethodPost, "/api/v1/device-images/id/retirements", map[string]any{}, ""},
+		{http.MethodPut, "/api/v1/device-pools/id/default-image", map[string]any{}, ""},
 		{http.MethodPost, "/api/v1/device-pools/id/devices", map[string]any{}, ""},
 		{http.MethodPut, "/api/v1/device-pools/id/images/image-id", map[string]any{"min_ready": 2, "max_instances": 1, "enabled": true}, ""},
 		{http.MethodPost, "/api/v1/devices/id/restarts", map[string]any{}, "valid-key-04"},

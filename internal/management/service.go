@@ -61,12 +61,40 @@ func (service *Service) CreateImage(ctx context.Context, clientID, key string, i
 	return service.store.CreateImage(ctx, meta, image)
 }
 
-func (service *Service) ListImages(ctx context.Context, page paging.Page) (paging.Result[Image], error) {
-	items, total, err := service.store.ListImages(ctx, page)
+func (service *Service) ListImages(ctx context.Context, page paging.Page, status *domain.ImageStatus) (paging.Result[Image], error) {
+	items, total, err := service.store.ListImages(ctx, page, status)
 	if err != nil {
 		return paging.Result[Image]{}, err
 	}
 	return paging.NewResult(items, page, total), nil
+}
+
+func (service *Service) RetireImage(ctx context.Context, id, reason string, actor audit.Actor, requestID string) (Image, error) {
+	if strings.TrimSpace(id) == "" || !validReason(reason) {
+		return Image{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetImage(ctx, id)
+	if err != nil {
+		return Image{}, err
+	}
+	if current.Status == domain.ImageDisabled || current.Status == domain.ImageValidating {
+		return Image{}, ErrConflict
+	}
+	aggregate, err := domain.RestoreImage(current.ID, current.Status)
+	if err != nil {
+		return Image{}, err
+	}
+	from := aggregate.Status()
+	if err := aggregate.Transition(domain.ImageDisabled, "image retired", time.Now().UTC()); err != nil {
+		return Image{}, err
+	}
+	event, err := service.deviceAudit(actor, requestID, "retire_device_image", strings.TrimSpace(reason))
+	if err != nil {
+		return Image{}, err
+	}
+	event.DestructiveApproved = true
+	current.Status = aggregate.Status()
+	return service.store.RetireImage(ctx, current, from, event)
 }
 func (service *Service) GetImage(ctx context.Context, id string) (Image, error) {
 	return service.store.GetImage(ctx, id)
@@ -75,6 +103,9 @@ func (service *Service) GetImage(ctx context.Context, id string) (Image, error) 
 func (service *Service) UpdateImage(ctx context.Context, id string, input ImageInput) (Image, error) {
 	if err := validateImageInput(input); err != nil {
 		return Image{}, err
+	}
+	if input.Enabled != nil && !*input.Enabled {
+		return Image{}, ErrInvalidArgument
 	}
 	current, err := service.store.GetImage(ctx, id)
 	if err != nil {
@@ -92,9 +123,7 @@ func (service *Service) UpdateImage(ctx context.Context, id string, input ImageI
 		target = domain.ImageDraft
 	}
 	if input.Enabled != nil {
-		if !*input.Enabled && current.Status != domain.ImageDisabled {
-			target = domain.ImageDisabled
-		} else if *input.Enabled && current.Status == domain.ImageDisabled {
+		if *input.Enabled && current.Status == domain.ImageDisabled {
 			target = domain.ImageDraft
 		}
 	}
@@ -386,6 +415,32 @@ func (service *Service) DisablePoolImage(ctx context.Context, poolID, imageID st
 		return PoolImage{}, ErrConflict
 	}
 	return service.store.DisablePoolImage(ctx, poolID, imageID)
+}
+
+func (service *Service) SelectPoolDefaultImage(
+	ctx context.Context,
+	poolID, imageID, reason string,
+	actor audit.Actor,
+	requestID string,
+) (Pool, error) {
+	if strings.TrimSpace(poolID) == "" || strings.TrimSpace(imageID) == "" || !validReason(reason) {
+		return Pool{}, ErrInvalidArgument
+	}
+	image, err := service.store.GetImage(ctx, imageID)
+	if err != nil {
+		return Pool{}, err
+	}
+	if image.Status != domain.ImageReady || !providers.ValidRuntimeImageReference(image.DockerImage) {
+		return Pool{}, ErrImageUnavailable
+	}
+	if _, err := service.store.GetPool(ctx, poolID); err != nil {
+		return Pool{}, err
+	}
+	event, err := service.deviceAudit(actor, requestID, "select_pool_default_image", strings.TrimSpace(reason))
+	if err != nil {
+		return Pool{}, err
+	}
+	return service.store.SelectPoolDefaultImage(ctx, poolID, imageID, event)
 }
 
 func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID string) error {

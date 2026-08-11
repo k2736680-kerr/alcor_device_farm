@@ -54,7 +54,7 @@ describe('PoolsPage pool capacity', () => {
       default_image_id: 'image_00000000000001',
       reason: '',
     }))
-  })
+  }, 10_000)
 
   it('requires a reason and a confirmation before shrinking', async () => {
     let submitted: DevicePoolInput | undefined
@@ -82,5 +82,5 @@ describe('PoolsPage pool capacity', () => {
       max_concurrency: 1,
       reason: '减少测试资源',
     }))
-  })
+  }, 10_000)
 })

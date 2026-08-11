@@ -22,6 +22,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("GET /api/v1/device-images/{id}", handler.getImage)
 	mux.HandleFunc("PUT /api/v1/device-images/{id}", handler.updateImage)
 	mux.HandleFunc("POST /api/v1/device-images/{id}/validations", handler.validateImage)
+	mux.HandleFunc("POST /api/v1/device-images/{id}/retirements", handler.retireImage)
 
 	mux.HandleFunc("GET /api/v1/device-hosts", handler.listHosts)
 	mux.HandleFunc("POST /api/v1/device-hosts", handler.createHost)
@@ -34,6 +35,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("POST /api/v1/device-pools", handler.createPool)
 	mux.HandleFunc("GET /api/v1/device-pools/{id}", handler.getPool)
 	mux.HandleFunc("PUT /api/v1/device-pools/{id}", handler.updatePool)
+	mux.HandleFunc("PUT /api/v1/device-pools/{id}/default-image", handler.selectPoolDefaultImage)
 	mux.HandleFunc("GET /api/v1/device-pools/{id}/images", handler.listPoolImages)
 	mux.HandleFunc("PUT /api/v1/device-pools/{id}/images/{image_id}", handler.setPoolImage)
 	mux.HandleFunc("DELETE /api/v1/device-pools/{id}/images/{image_id}", handler.disablePoolImage)
@@ -59,7 +61,18 @@ func (handler *managementHandler) listImages(writer http.ResponseWriter, request
 		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
 		return
 	}
-	value, err := handler.service.ListImages(request.Context(), page)
+	var status *domain.ImageStatus
+	if raw := request.URL.Query().Get("status"); raw != "" {
+		value := domain.ImageStatus(raw)
+		switch value {
+		case domain.ImageDraft, domain.ImageValidating, domain.ImageReady, domain.ImageFailed, domain.ImageDisabled:
+			status = &value
+		default:
+			writeInvalid(writer, request, "status must be draft, validating, ready, failed, or disabled")
+			return
+		}
+	}
+	value, err := handler.service.ListImages(request.Context(), page, status)
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) createImage(writer http.ResponseWriter, request *http.Request) {
@@ -100,6 +113,21 @@ func (handler *managementHandler) validateImage(writer http.ResponseWriter, requ
 	}
 	value, err := handler.service.StartImageValidation(request.Context(), request.PathValue("id"))
 	handler.write(writer, request, http.StatusAccepted, value, err)
+}
+
+func (handler *managementHandler) retireImage(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	var input reasonInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.RetireImage(
+		request.Context(), request.PathValue("id"), input.Reason,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID,
+	)
+	handler.write(writer, request, http.StatusOK, value, err)
 }
 
 func (handler *managementHandler) listHosts(writer http.ResponseWriter, request *http.Request) {
@@ -201,6 +229,21 @@ func (handler *managementHandler) updatePool(writer http.ResponseWriter, request
 	}
 	value, err := handler.service.UpdatePool(
 		request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID,
+	)
+	handler.write(writer, request, http.StatusOK, value, err)
+}
+
+func (handler *managementHandler) selectPoolDefaultImage(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	var input poolDefaultImageInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.SelectPoolDefaultImage(
+		request.Context(), request.PathValue("id"), input.ImageID, input.Reason,
 		requestActor(request), correlation.FromContext(request.Context()).RequestID,
 	)
 	handler.write(writer, request, http.StatusOK, value, err)
@@ -378,6 +421,11 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 
 type reasonInput struct {
 	Reason string `json:"reason"`
+}
+
+type poolDefaultImageInput struct {
+	ImageID string `json:"image_id"`
+	Reason  string `json:"reason"`
 }
 type poolDeviceInput struct {
 	DeviceID string `json:"device_id"`

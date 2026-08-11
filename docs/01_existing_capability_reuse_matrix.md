@@ -75,6 +75,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -管理员 STF Web 远控编排：精确设备短租约、短时 JWT 入口、心跳和关闭回收；只链接 STF 原生页面，不实现画面或触控；
 -Host 资源探测、设备运行规格校验和动态容量预检；复用 Docker/KVM/Android Emulator 的限制参数，不另建虚拟化层；
 -官方 Android System Image 目录同步、按需镜像准备、不可变 digest 验证和内部缓存；继续复用 Android SDK `sdkmanager`/`avdmanager`、既有 Image、Host Command 和 Docker Provider；
+-已验证 Device Image 的受控停用、默认隐藏和设备池默认镜像选择；复用既有 Image 状态机、Pool Image 关系、设备域审计和 Console，不物理删除历史 Device/Image，也不新增镜像仓库实现；
 -仅用于端到端证明的DaFit Harness。
 
 ## 5. 名称相近但职责不同的能力
@@ -109,5 +110,7 @@ DF-030 的人工删除同样复用上述删除链路，只允许 `quarantined/st
 DF-031 复用 STF 3.7.9 原生 Web UI、JWT 登录、claim/release、现有 Reservation/Reaper 和 rebuild 链路。新增代码只负责管理员精确选中 Device、签发短时 Web 入口、心跳和结束编排；不得把 STF `remoteConnect` TCP 地址或管理 Token 交给浏览器。
 
 DF-032～DF-035 复用 Docker 的资源限制、镜像缓存、KVM、Android Emulator 启动参数以及 Android SDK 官方稳定频道的 `sdkmanager`/`avdmanager`；Server 不访问 Docker Socket 或 Google，Console 不执行宿主机命令、不接受任意下载地址或命令。目录同步、构建、推送和验证由受控 Build Agent 的异步 Host Command 执行；只有完成验证并锁定 digest 的成品才进入 `device_images`。CPU、内存、数据盘、分辨率、DPI 和图形模式继续是 `runtime_profile`，品牌只可作为硬件预设，绝不能表述为官方 System Image 属性。
+
+DF-036 复用现有 `disabled` Image 状态、Pool 默认镜像、Pool Image 关系和设备域审计。停用只退出可选范围并保留历史外键；选择默认镜像只影响后续自动补建，不隐式重装已有设备，不直接删除 Registry/Docker 内容。
 
 无法回答或没有更新本矩阵时，不进入编码。

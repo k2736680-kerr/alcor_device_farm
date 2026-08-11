@@ -13,13 +13,14 @@ import (
 )
 
 var expectedOperations = map[string][]string{
-	"/healthz":                               {"get"},
-	"/readyz":                                {"get"},
-	"/metrics":                               {"get"},
-	"/api/v1/device-images":                  {"get", "post"},
-	"/api/v1/device-images/{id}":             {"get", "put"},
-	"/api/v1/device-images/{id}/validations": {"post"},
-	"/api/v1/android-system-images":          {"get"},
+	"/healthz":                                              {"get"},
+	"/readyz":                                               {"get"},
+	"/metrics":                                              {"get"},
+	"/api/v1/device-images":                                 {"get", "post"},
+	"/api/v1/device-images/{id}":                            {"get", "put"},
+	"/api/v1/device-images/{id}/validations":                {"post"},
+	"/api/v1/device-images/{id}/retirements":                {"post"},
+	"/api/v1/android-system-images":                         {"get"},
 	"/api/v1/android-system-images/synchronizations":        {"post"},
 	"/api/v1/android-system-images/preparations":            {"post"},
 	"/api/v1/device-hosts":                                  {"get", "post"},
@@ -27,6 +28,7 @@ var expectedOperations = map[string][]string{
 	"/api/v1/device-hosts/{id}/drains":                      {"post", "delete"},
 	"/api/v1/device-pools":                                  {"get", "post"},
 	"/api/v1/device-pools/{id}":                             {"get", "put"},
+	"/api/v1/device-pools/{id}/default-image":               {"put"},
 	"/api/v1/device-pools/{id}/devices":                     {"post", "delete"},
 	"/api/v1/device-pools/{id}/images":                      {"get"},
 	"/api/v1/device-pools/{id}/images/{image_id}":           {"put", "delete"},
@@ -65,7 +67,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "1.6.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "1.7.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 

@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.6.0
+ * OpenAPI spec version: 1.7.0
  */
 import type { DeviceImageInputAbi } from './deviceImageInputAbi';
 import type { EmulatorRuntimeProfile } from './emulatorRuntimeProfile';
@@ -29,5 +29,6 @@ export interface DeviceImageInput {
   /** @pattern ^[0-9]+x[0-9]+$ */
   resolution: string;
   resource_config: EmulatorRuntimeProfile;
+  /** May create a disabled draft. Existing Images must use the audited retirement endpoint to become disabled. */
   enabled?: boolean;
 }

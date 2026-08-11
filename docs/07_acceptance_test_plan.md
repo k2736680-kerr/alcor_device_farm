@@ -285,3 +285,7 @@ docs/evidence/
 # DF-035 官方目录与按需准备补充
 
 验收应在真实 Linux KVM Build Agent 上证明：官方稳定目录只能由 Server 同步；Console 没有外部下载或任意命令入口；一个选定的 System Image 依次经历下载/构建、验证、内部 Registry digest 锁定和可用登记；构建失败不会产生 `device_images`；第二次相同请求命中缓存；官方目录变更可见但不自动替换已验证成品。CPU、内存、数据盘、分辨率、DPI、图形模式与品牌硬件预设仅改变 runtime profile，不改变官方 System Image 选择。
+
+# DF-036 镜像生命周期补充
+
+验收应证明：停用仍被 Pool 默认值或活动 Device 引用的 Image 必须返回 409；仅有 `deleted` 历史 Device 引用时可停用并保留历史查询和审计，默认可用列表不返回它。管理员可从 Image 页面选择任意 `ready` Image 作为指定 Pool 默认值；服务端原子启用 Pool Image 关系并切换默认值，拒绝非 `ready` Image，且不修改已有 Device 的 Image。

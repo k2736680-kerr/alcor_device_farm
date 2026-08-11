@@ -56,6 +56,7 @@
 | DF-033 | Pool 总目标和默认镜像 | completed | DF-032 |
 | DF-034 | 设备规格编辑和受控重装 | completed | DF-033 |
 | DF-035 | Android 13～16 镜像目录和真实多规格验收 | completed | DF-034 |
+| DF-036 | 旧镜像受控停用和可用镜像选择 | completed | DF-035 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -365,6 +366,14 @@
 产出：官方目录同步契约、受控构建 Agent 命令、镜像准备状态/审计、不可变 digest/缓存策略、容量与重装真实验收、回滚说明及 `docs/evidence/DF-035/`。
 
 验收：Console 可显示可下载、下载/构建中、验证中、已缓存可使用、准备失败和官方已更新；浏览器不访问 Google 且不能提交任意下载地址/命令；Build Agent 使用官方稳定目录的固定包名并记录 digest；验证成功前 `device_images` 无候选记录；相同 digest 复用缓存；默认创建 Android 16；管理员可把同一空闲 Device 重装到已可用版本并通过 ADB、STF、Appium 冒烟；镜像层缓存与设备卷占用在 Console 中可区分；测试 Host 最终只保留用户设定的设备数量和默认版本，不因目录条目自动创建四台。
+
+### DF-036 旧镜像受控停用和可用镜像选择
+
+实施：为 Device Image 增加带原因、并发保护和设备域审计的受控停用；仍被活动 Device 引用或作为任一 Pool 默认值时拒绝，只有历史 `deleted` Device 引用时允许停用并禁用旧 Pool Image 关系。Console 默认只显示已验证可用镜像，可切换查看已停用归档；管理员可在 Image 页面将任意 `ready` 镜像选择为指定 Pool 的默认镜像，自动启用该 Pool Image 关系，但不重装已有 Device。
+
+产出：ADR-0016、OpenAPI、Management Service/Store、Console 镜像选择与归档视图、PostgreSQL 集成测试和 `docs/evidence/DF-036/`。
+
+验收：旧镜像仍是 Pool 默认值或被非 `deleted` Device 引用时停用返回 409；只被历史 Device 引用时停用成功、Pool Image 关系禁用、审计完整且默认列表不再显示；归档视图仍可追溯。选择已验证 Image 后其 Pool Image 关系启用且成为默认值，后续补建使用它，已有 Device 不发生重装；非 `ready` Image 不可选择。真实环境清理旧 DF-035 前镜像后只显示当前可用镜像，当前 ready/healthy 设备、STF 和 Appium 不受影响。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

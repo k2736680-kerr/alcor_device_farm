@@ -212,9 +212,10 @@ type DeviceFilter struct {
 
 type Store interface {
 	CreateImage(context.Context, Idempotency, Image) (Image, error)
-	ListImages(context.Context, paging.Page) ([]Image, int, error)
+	ListImages(context.Context, paging.Page, *domain.ImageStatus) ([]Image, int, error)
 	GetImage(context.Context, string) (Image, error)
 	UpdateImage(context.Context, Image, domain.ImageStatus) (Image, error)
+	RetireImage(context.Context, Image, domain.ImageStatus, DeviceAudit) (Image, error)
 
 	CreateHost(context.Context, Idempotency, Host) (Host, error)
 	ListHosts(context.Context, paging.Page) ([]Host, int, error)
@@ -229,6 +230,7 @@ type Store interface {
 	GetPoolImage(context.Context, string, string) (PoolImage, error)
 	SetPoolImage(context.Context, PoolImage, DeviceAudit) (PoolImage, error)
 	DisablePoolImage(context.Context, string, string) (PoolImage, error)
+	SelectPoolDefaultImage(context.Context, string, string, DeviceAudit) (Pool, error)
 	AddDeviceToPool(context.Context, string, string) error
 	RemoveDeviceFromPool(context.Context, string, string) error
 

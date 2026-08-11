@@ -37,13 +37,19 @@ func (store *Store) CreateImage(ctx context.Context, meta management.Idempotency
 	)
 }
 
-func (store *Store) ListImages(ctx context.Context, page paging.Page) ([]management.Image, int, error) {
-	total, err := store.count(ctx, `SELECT count(*) FROM device_images`)
-	if err != nil {
-		return nil, 0, err
+func (store *Store) ListImages(ctx context.Context, page paging.Page, status *domain.ImageStatus) ([]management.Image, int, error) {
+	where, args := "", []any{}
+	if status != nil {
+		where, args = ` WHERE status=$1`, append(args, *status)
 	}
-	rows, err := store.db.Pool().Query(ctx,
-		imageSelect+` ORDER BY created_at,id LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
+	var total int
+	if err := store.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_images`+where, args...).Scan(&total); err != nil {
+		return nil, 0, normalize(err)
+	}
+	args = append(args, page.Limit(), page.Offset())
+	limitIndex := len(args) - 1
+	rows, err := store.db.Pool().Query(ctx, imageSelect+where+fmt.Sprintf(
+		` ORDER BY created_at,id LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1), args...)
 	if err != nil {
 		return nil, 0, normalize(err)
 	}
@@ -74,6 +80,53 @@ func (store *Store) UpdateImage(ctx context.Context, image management.Image, exp
 		image.ID, image.Name, image.DockerImage, image.DockerDigest, image.APILevel, image.ABI, image.Resolution,
 		mustJSON(image.ResourceConfig), image.Status, image.ValidationError, expected))
 	return value, rowError(err)
+}
+
+func (store *Store) RetireImage(
+	ctx context.Context,
+	image management.Image,
+	expected domain.ImageStatus,
+	audit management.DeviceAudit,
+) (management.Image, error) {
+	var value management.Image
+	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var current domain.ImageStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_images WHERE id=$1 FOR UPDATE`, image.ID).Scan(&current); err != nil {
+			return rowError(err)
+		}
+		if current != expected {
+			return management.ErrConflict
+		}
+		var defaultReferences, activeDevices int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_pools WHERE default_image_id=$1`, image.ID).Scan(&defaultReferences); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM devices WHERE image_id=$1 AND lifecycle_status<>'deleted'`, image.ID).Scan(&activeDevices); err != nil {
+			return err
+		}
+		if defaultReferences > 0 || activeDevices > 0 {
+			return management.ErrConflict
+		}
+		if _, err := tx.Exec(ctx, `UPDATE device_pool_images SET enabled=false,updated_at=clock_timestamp() WHERE image_id=$1`, image.ID); err != nil {
+			return err
+		}
+		var err error
+		value, err = scanImage(tx.QueryRow(ctx, `UPDATE device_images SET status=$2,updated_at=clock_timestamp()
+			WHERE id=$1 AND status=$3
+			RETURNING id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at`,
+			image.ID, image.Status, expected))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,$2,$3,$4,'device_image',$5,$6,$7,jsonb_build_object(
+			'previous_status',$8::text,'status',$9::text,'pool_links_disabled',true,'history_preserved',true))`,
+			audit.ID, audit.ActorType, audit.ActorID, audit.Action, image.ID, audit.RequestID,
+			sensitive.RedactText(audit.Reason), expected, image.Status)
+		return err
+	})
+	return value, normalize(err)
 }
 
 func (store *Store) CreateHost(ctx context.Context, meta management.Idempotency, host management.Host) (management.Host, error) {
@@ -277,6 +330,48 @@ func (store *Store) DisablePoolImage(ctx context.Context, poolID, imageID string
 		WHERE pool_id=$1 AND image_id=$2
 		RETURNING pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at`, poolID, imageID))
 	return value, rowError(err)
+}
+
+func (store *Store) SelectPoolDefaultImage(
+	ctx context.Context,
+	poolID, imageID string,
+	audit management.DeviceAudit,
+) (management.Pool, error) {
+	var value management.Pool
+	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var totalTarget int
+		if err := tx.QueryRow(ctx, `SELECT total_target FROM device_pools WHERE id=$1 FOR UPDATE`, poolID).Scan(&totalTarget); err != nil {
+			return rowError(err)
+		}
+		var imageStatus domain.ImageStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_images WHERE id=$1 FOR UPDATE`, imageID).Scan(&imageStatus); err != nil {
+			return rowError(err)
+		}
+		if imageStatus != domain.ImageReady {
+			return management.ErrImageUnavailable
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO device_pool_images(pool_id,image_id,min_ready,max_instances,enabled)
+			VALUES($1,$2,$3,$3,true) ON CONFLICT(pool_id,image_id) DO UPDATE SET
+			min_ready=EXCLUDED.min_ready,max_instances=EXCLUDED.max_instances,enabled=true,updated_at=clock_timestamp()`,
+			poolID, imageID, totalTarget); err != nil {
+			return err
+		}
+		var err error
+		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET default_image_id=$2,updated_at=clock_timestamp()
+			WHERE id=$1 RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
+			default_image_id,status,created_at,updated_at`, poolID, imageID))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,$2,$3,$4,'device_pool',$5,$6,$7,jsonb_build_object(
+			'default_image_id',$8::text,'pool_image_enabled',true,'existing_devices_reimaged',false))`,
+			audit.ID, audit.ActorType, audit.ActorID, audit.Action, poolID, audit.RequestID,
+			sensitive.RedactText(audit.Reason), imageID)
+		return err
+	})
+	return value, normalize(err)
 }
 
 func (store *Store) AddDeviceToPool(ctx context.Context, poolID, deviceID string) error {

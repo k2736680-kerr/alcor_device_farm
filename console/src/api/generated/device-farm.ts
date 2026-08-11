@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.6.0
+ * OpenAPI spec version: 1.7.0
  */
 import {
   useMutation,
@@ -69,6 +69,7 @@ import type {
   ListDevicesParams,
   OperationReasonBody,
   PoolCreatedResponse,
+  PoolDefaultImageSelectionBody,
   PoolDeviceInputBody,
   PoolImageListSuccessResponse,
   PoolImageSuccessResponse,
@@ -1025,6 +1026,120 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getValidateDeviceImageMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Disables an unused Image while preserving historical Device and audit references.
+ */
+export type retireDeviceImageResponse200 = {
+  data: ImageSuccessResponse
+  status: 200
+}
+
+export type retireDeviceImageResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type retireDeviceImageResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type retireDeviceImageResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type retireDeviceImageResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type retireDeviceImageResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type retireDeviceImageResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type retireDeviceImageResponseSuccess = (retireDeviceImageResponse200) & {
+  headers: Headers;
+};
+export type retireDeviceImageResponseError = (retireDeviceImageResponse400 | retireDeviceImageResponse401 | retireDeviceImageResponse403 | retireDeviceImageResponse404 | retireDeviceImageResponse409 | retireDeviceImageResponse500) & {
+  headers: Headers;
+};
+
+export type retireDeviceImageResponse = (retireDeviceImageResponseSuccess | retireDeviceImageResponseError)
+
+export const getRetireDeviceImageUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/device-images/${id}/retirements`
+}
+
+export const retireDeviceImage = async (id: string,
+    operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<retireDeviceImageResponse> => {
+
+  return deviceFarmFetch<retireDeviceImageResponse>(getRetireDeviceImageUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      operationReasonBody,)
+  }
+);}
+
+
+
+
+export const getRetireDeviceImageMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retireDeviceImage>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retireDeviceImage>>, TError,{id: string;data: OperationReasonBody}, TContext> => {
+
+const mutationKey = ['retireDeviceImage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retireDeviceImage>>, {id: string;data: OperationReasonBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  retireDeviceImage(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetireDeviceImageMutationResult = NonNullable<Awaited<ReturnType<typeof retireDeviceImage>>>
+    export type RetireDeviceImageMutationBody = OperationReasonBody
+    export type RetireDeviceImageMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useRetireDeviceImage = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retireDeviceImage>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof retireDeviceImage>>,
+        TError,
+        {id: string;data: OperationReasonBody},
+        TContext
+      > => {
+
+      const mutationOptions = getRetireDeviceImageMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -2563,6 +2678,120 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getUpdateDevicePoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Atomically enables a ready Image for the Pool and selects it for future automatic provisioning without reimaging existing Devices.
+ */
+export type selectDevicePoolDefaultImageResponse200 = {
+  data: PoolSuccessResponse
+  status: 200
+}
+
+export type selectDevicePoolDefaultImageResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type selectDevicePoolDefaultImageResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type selectDevicePoolDefaultImageResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type selectDevicePoolDefaultImageResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type selectDevicePoolDefaultImageResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type selectDevicePoolDefaultImageResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type selectDevicePoolDefaultImageResponseSuccess = (selectDevicePoolDefaultImageResponse200) & {
+  headers: Headers;
+};
+export type selectDevicePoolDefaultImageResponseError = (selectDevicePoolDefaultImageResponse400 | selectDevicePoolDefaultImageResponse401 | selectDevicePoolDefaultImageResponse403 | selectDevicePoolDefaultImageResponse404 | selectDevicePoolDefaultImageResponse409 | selectDevicePoolDefaultImageResponse500) & {
+  headers: Headers;
+};
+
+export type selectDevicePoolDefaultImageResponse = (selectDevicePoolDefaultImageResponseSuccess | selectDevicePoolDefaultImageResponseError)
+
+export const getSelectDevicePoolDefaultImageUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/device-pools/${id}/default-image`
+}
+
+export const selectDevicePoolDefaultImage = async (id: string,
+    poolDefaultImageSelectionBody: PoolDefaultImageSelectionBody, options?: RequestInit): Promise<selectDevicePoolDefaultImageResponse> => {
+
+  return deviceFarmFetch<selectDevicePoolDefaultImageResponse>(getSelectDevicePoolDefaultImageUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      poolDefaultImageSelectionBody,)
+  }
+);}
+
+
+
+
+export const getSelectDevicePoolDefaultImageMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof selectDevicePoolDefaultImage>>, TError,{id: string;data: PoolDefaultImageSelectionBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof selectDevicePoolDefaultImage>>, TError,{id: string;data: PoolDefaultImageSelectionBody}, TContext> => {
+
+const mutationKey = ['selectDevicePoolDefaultImage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof selectDevicePoolDefaultImage>>, {id: string;data: PoolDefaultImageSelectionBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  selectDevicePoolDefaultImage(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SelectDevicePoolDefaultImageMutationResult = NonNullable<Awaited<ReturnType<typeof selectDevicePoolDefaultImage>>>
+    export type SelectDevicePoolDefaultImageMutationBody = PoolDefaultImageSelectionBody
+    export type SelectDevicePoolDefaultImageMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useSelectDevicePoolDefaultImage = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof selectDevicePoolDefaultImage>>, TError,{id: string;data: PoolDefaultImageSelectionBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof selectDevicePoolDefaultImage>>,
+        TError,
+        {id: string;data: PoolDefaultImageSelectionBody},
+        TContext
+      > => {
+
+      const mutationOptions = getSelectDevicePoolDefaultImageMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

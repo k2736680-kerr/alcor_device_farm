@@ -23,6 +23,7 @@
 | 隔离设备人工删除 | Console 仅允许管理员对 `quarantined/stopped` Device 提交带原因和幂等键的删除；Server 原子检查活动预约并退出 Pool，Agent 通过既有 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作；目标容量不变时 Warm Pool 可正常补建 | 不允许删除 ready/reserved/busy/recycling；不物理删库；不新增 Docker 直连 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
+| Device Image 生命周期与默认选择 | Console 只展示可用 Image 作为默认选择；管理员可将未被活动设备或 Pool 默认引用的旧 Image 受控停用并查看归档 | 新版 Alcor 只会获得当前可用 Image；历史 Run/Artifact 不由本项目处理 | 不物理删除 Device/Image 审计链；不从 Server/浏览器删除 Registry 或 Docker 数据；切换默认值不重装已有设备 |
 | Docker Emulator Provider | 当前新增 | 由设备农场调度 | 不把 Docker Socket 暴露给 Alcor/浏览器 |
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |

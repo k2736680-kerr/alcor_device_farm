@@ -28,6 +28,12 @@ export const sampleImages: DeviceImage[] = [
     api_level: 35, abi: 'arm64-v8a', resolution: '1080x2400', resource_config: {}, status: 'failed', validation_error: 'IMAGE_REFERENCE_REQUIRED',
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
+  {
+    id: 'image_00000000000003', name: 'android-13-old', docker_image: 'registry.example/alcor/android-emulator:api33-old',
+    docker_digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    api_level: 33, abi: 'x86_64', resolution: '1080x2400', resource_config: {}, status: 'disabled',
+    created_at: '2026-08-05T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
+  },
 ]
 
 export const sampleAndroidSystemImages: AndroidSystemImage[] = [
@@ -132,9 +138,16 @@ export const handlers = [
 
   // Lists
   http.get('/api/v1/device-images', ({ request }) => {
-    const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
-    const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
-    return HttpResponse.json(pageEnvelope(sampleImages.slice(0, size), sampleImages.length, page, size))
+    const search = new URL(request.url).searchParams
+    const page = Number(search.get('page') ?? 1)
+    const size = Number(search.get('page_size') ?? 20)
+    const status = search.get('status')
+    const filtered = sampleImages.filter((image) => !status || image.status === status)
+    return HttpResponse.json(pageEnvelope(filtered.slice(0, size), filtered.length, page, size))
+  }),
+  http.post('/api/v1/device-images/:id/retirements', ({ params }) => {
+    const image = sampleImages.find((item) => item.id === params.id) ?? sampleImages[0]
+    return HttpResponse.json({ request_id: 'req_retire_image', data: { ...image, status: 'disabled' }, error: null })
   }),
   http.get('/api/v1/android-system-images', () => HttpResponse.json({ request_id: 'req_catalog', data: sampleAndroidSystemImages, error: null })),
   http.post('/api/v1/android-system-images/synchronizations', () => HttpResponse.json({
@@ -153,6 +166,9 @@ export const handlers = [
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
     return HttpResponse.json(pageEnvelope(samplePools, samplePools.length, page, size))
   }),
+  http.put('/api/v1/device-pools/:id/default-image', () => HttpResponse.json({
+    request_id: 'req_select_default', data: samplePools[0], error: null,
+  })),
   http.get('/api/v1/device-pools/:id/images', ({ request }) => {
     const page = Number(new URL(request.url).searchParams.get('page') ?? 1)
     const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)

@@ -1,17 +1,22 @@
 import { useState } from 'react'
-import { App as AntApp, Button, Card, Form, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   getListAndroidSystemImagesQueryKey,
   getListDeviceImagesQueryKey,
+  getListDevicePoolImagesQueryKey,
+  getListDevicePoolsQueryKey,
   useListAndroidSystemImages,
   useListDeviceImages,
+  useListDevicePools,
   usePrepareAndroidSystemImage,
+  useRetireDeviceImage,
+  useSelectDevicePoolDefaultImage,
   useSynchronizeAndroidSystemImages,
   useValidateDeviceImage,
 } from '../api/generated/device-farm'
-import type { AndroidSystemImage, ConsoleRole, DeviceImage, EmulatorRuntimeProfile } from '../api/generated/models'
+import type { AndroidSystemImage, ConsoleRole, DeviceImage, DeviceImageStatus, DevicePool, EmulatorRuntimeProfile } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
@@ -40,12 +45,27 @@ const catalogStatus: Record<string, { label: string, color: string }> = {
 
 interface ImagesPageProps { role: ConsoleRole }
 
+interface DefaultSelectionValues { pool_id: string; reason: string }
+interface RetirementValues { reason: string }
+
+function errorText(error: unknown): string {
+  const value = error as { code?: string; requestId?: string; message?: string }
+  return `${value.code ?? 'ERROR'}（request_id: ${value.requestId ?? '-'}）：${value.message ?? ''}`
+}
+
 export function ImagesPage({ role }: ImagesPageProps) {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
   const validate = useValidateDeviceImage()
+  const retire = useRetireDeviceImage()
+  const selectDefault = useSelectDevicePoolDefaultImage()
   const [form] = Form.useForm<EmulatorRuntimeProfile>()
+  const [defaultForm] = Form.useForm<DefaultSelectionValues>()
+  const [retirementForm] = Form.useForm<RetirementValues>()
   const [selected, setSelected] = useState<AndroidSystemImage>()
+  const [selectedReadyImage, setSelectedReadyImage] = useState<DeviceImage>()
+  const [retiringImage, setRetiringImage] = useState<DeviceImage>()
+  const [imageView, setImageView] = useState<DeviceImageStatus>('ready')
   // The shared fetcher generates a fresh idempotency key for every write.
   // Keeping it there avoids accidentally reusing one key for distinct form submissions.
   const synchronize = useSynchronizeAndroidSystemImages()
@@ -54,6 +74,40 @@ export function ImagesPage({ role }: ImagesPageProps) {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDeviceImagesQueryKey() })
     void queryClient.invalidateQueries({ queryKey: getListAndroidSystemImagesQueryKey() })
+    void queryClient.invalidateQueries({ queryKey: getListDevicePoolsQueryKey() })
+    void queryClient.invalidateQueries({ queryKey: getListDevicePoolImagesQueryKey() })
+  }
+
+  const submitDefaultSelection = async () => {
+    if (!selectedReadyImage) return
+    const values = await defaultForm.validateFields().catch(() => undefined)
+    if (!values) return
+    selectDefault.mutate({ id: values.pool_id, data: { image_id: selectedReadyImage.id, reason: values.reason.trim() } }, {
+      onSuccess: (data) => {
+        const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
+        message.success(`已设为设备池默认镜像（request_id: ${requestID}）`)
+        setSelectedReadyImage(undefined)
+        defaultForm.resetFields()
+        invalidate()
+      },
+      onError: (error) => message.error(`选择失败：${errorText(error)}`),
+    })
+  }
+
+  const submitRetirement = async () => {
+    if (!retiringImage) return
+    const values = await retirementForm.validateFields().catch(() => undefined)
+    if (!values) return
+    retire.mutate({ id: retiringImage.id, data: { reason: values.reason.trim() } }, {
+      onSuccess: (data) => {
+        const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
+        message.success(`旧镜像已停用并移入归档（request_id: ${requestID}）`)
+        setRetiringImage(undefined)
+        retirementForm.resetFields()
+        invalidate()
+      },
+      onError: (error) => message.error(`停用失败：${errorText(error)}`),
+    })
   }
 
   const synchronizeCatalog = () => synchronize.mutate(undefined, {
@@ -63,7 +117,8 @@ export function ImagesPage({ role }: ImagesPageProps) {
 
   const submitPreparation = async () => {
     if (!selected) return
-    const runtime_profile = await form.validateFields()
+    const runtime_profile = await form.validateFields().catch(() => undefined)
+    if (!runtime_profile) return
     prepare.mutate({ data: { catalog_id: selected.id, runtime_profile } }, {
       onSuccess: () => { message.success('镜像准备任务已受理，首次下载和构建需要等待'); setSelected(undefined); invalidate() },
       onError: (error) => message.error(`准备任务被拒绝：${(error as { message?: string }).message ?? '未知错误'}`),
@@ -100,12 +155,28 @@ export function ImagesPage({ role }: ImagesPageProps) {
     { title: '摘要', dataIndex: 'docker_digest', ellipsis: true, render: (value: string) => shortID(value) },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
+      title: '设备池使用', key: 'pool_usage', width: 160,
+      render: (_, image) => {
+        const names = pools.filter((pool) => pool.default_image_id === image.id).map((pool) => pool.name)
+        return names.length > 0 ? <Tag color="blue">{`${names.join('、')} 默认`}</Tag> : <Typography.Text type="secondary">未作为默认</Typography.Text>
+      },
+    },
+    {
       title: '操作',
       key: 'actions',
-      width: 90,
+      width: 190,
       fixed: 'right',
-      render: (_, image) =>
-        role === 'admin' && canValidate(image) ? (
+      render: (_, image) => role === 'admin' ? (
+        <Space size={4}>
+          {image.status === 'ready' && <Button size="small" type="primary" onClick={() => {
+            defaultForm.resetFields()
+            setSelectedReadyImage(image)
+          }}>选择使用</Button>}
+          {image.status === 'ready' && <Button size="small" danger onClick={() => {
+            retirementForm.resetFields()
+            setRetiringImage(image)
+          }}>停用</Button>}
+          {canValidate(image) && (
           <Popconfirm
             title="发起镜像验证"
             description="将向宿主代理下发镜像验证命令，验证完成前镜像不可用。"
@@ -114,17 +185,21 @@ export function ImagesPage({ role }: ImagesPageProps) {
           >
             <Button size="small" loading={validate.isPending}>验证</Button>
           </Popconfirm>
-        ) : (
+          )}
+        </Space>
+      ) : (
           <Typography.Text type="secondary">-</Typography.Text>
-        ),
+      ),
     },
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
   const catalogQuery = useListAndroidSystemImages({ query: { refetchInterval: 10_000, refetchOnWindowFocus: true } })
   const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
+  const poolsQuery = useListDevicePools({ page: 1, page_size: 200 }, { query: { refetchOnWindowFocus: true } })
+  const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
   const { data, isLoading } = useListDeviceImages(
-    { page, page_size: pageSize },
+    { page, page_size: pageSize, status: imageView },
     { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
   )
   const result = unwrapPage<DeviceImage>(data)
@@ -157,7 +232,12 @@ export function ImagesPage({ role }: ImagesPageProps) {
           ]}
         />
       </Card>
-      <Card title="已构建并验证的设备镜像" styles={{ body: { padding: 0 } }}>
+      <Card
+        title="设备镜像列表"
+        extra={<Segmented value={imageView} options={[{ label: '可用镜像', value: 'ready' }, { label: '已停用归档', value: 'disabled' }]}
+          onChange={(value) => { setImageView(value as DeviceImageStatus); onPageChange(1, pageSize) }} />}
+        styles={{ body: { padding: 0 } }}
+      >
         <PageTable<DeviceImage>
           columns={columns} dataSource={result?.items} loading={isLoading} total={result?.total ?? 0}
           page={result?.page ?? page} pageSize={result?.page_size ?? pageSize} onPageChange={onPageChange}
@@ -181,6 +261,56 @@ export function ImagesPage({ role }: ImagesPageProps) {
             <Form.Item name="vm_heap_mb" label="VM Heap（MiB）" rules={[{ required: true }]}><InputNumber min={128} /></Form.Item>
             <Form.Item name="graphics" label="GPU 模式" rules={[{ required: true }]}><Select style={{ width: 140 }} options={[{ value: 'auto', label: '自动' }, { value: 'host', label: '宿主机 GPU' }, { value: 'software', label: '软件渲染' }]} /></Form.Item>
           </Space>
+        </Form>
+      </Modal>
+      <Modal
+        open={Boolean(selectedReadyImage)}
+        title={selectedReadyImage ? `选择使用 · ${selectedReadyImage.name}` : ''}
+        okText="设为默认镜像"
+        cancelText="取消"
+        confirmLoading={selectDefault.isPending}
+        onCancel={() => setSelectedReadyImage(undefined)}
+        onOk={() => void submitDefaultSelection()}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary">
+          该操作会把镜像加入所选设备池并设为后续自动补建设备的默认镜像，不会重装或清空当前已有设备。
+        </Typography.Paragraph>
+        <Form form={defaultForm} layout="vertical">
+          <Form.Item name="pool_id" label="设备池" rules={[{ required: true, message: '请选择设备池' }]}>
+            <Select loading={poolsQuery.isFetching} options={pools.filter((pool) => pool.status === 'active').map((pool) => ({
+              value: pool.id, label: `${pool.name}${pool.default_image_id === selectedReadyImage?.id ? '（当前默认）' : ''}`,
+            }))} />
+          </Form.Item>
+          <Form.Item name="reason" label="选择原因（写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写选择原因' },
+            { min: 3, message: '选择原因至少填写 3 个字' },
+          ]}>
+            <Input.TextArea rows={3} maxLength={500} placeholder="例如：后续自动补建设备统一使用 Android 16" />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        open={Boolean(retiringImage)}
+        title={retiringImage ? `停用旧镜像 · ${retiringImage.name}` : ''}
+        okText="确认停用"
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        confirmLoading={retire.isPending}
+        onCancel={() => setRetiringImage(undefined)}
+        onOk={() => void submitRetirement()}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="warning">
+          仍作为设备池默认值或仍被运行中/隔离中的设备引用时，服务端会拒绝停用。成功后默认列表不再显示，但历史设备和审计记录仍会保留。
+        </Typography.Paragraph>
+        <Form form={retirementForm} layout="vertical">
+          <Form.Item name="reason" label="停用原因（必填并写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写停用原因' },
+            { min: 3, message: '停用原因至少填写 3 个字' },
+          ]}>
+            <Input.TextArea rows={3} maxLength={500} placeholder="例如：旧的验收镜像已不再使用" />
+          </Form.Item>
         </Form>
       </Modal>
     </Space>

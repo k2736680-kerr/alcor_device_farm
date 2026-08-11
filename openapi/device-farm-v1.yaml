@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.6.0
+  version: 1.7.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-10
   x-platform-semantics: Case/Run/RunAttempt
@@ -54,7 +54,10 @@ paths:
     get:
       tags: [Images]
       operationId: listDeviceImages
-      parameters: [{$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PageSize"}]
+      parameters:
+        - {$ref: "#/components/parameters/Page"}
+        - {$ref: "#/components/parameters/PageSize"}
+        - {name: status, in: query, schema: {$ref: "#/components/schemas/DeviceImageStatus"}}
       responses:
         "200": {$ref: "#/components/responses/ImageListSuccess"}
         "400": {$ref: "#/components/responses/BadRequest"}
@@ -107,6 +110,21 @@ paths:
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       responses:
         "202": {$ref: "#/components/responses/ImageAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/device-images/{id}/retirements:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Images]
+      operationId: retireDeviceImage
+      description: Disables an unused Image while preserving historical Device and audit references.
+      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      responses:
+        "200": {$ref: "#/components/responses/ImageSuccess"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -266,6 +284,21 @@ paths:
       tags: [Pools]
       operationId: updateDevicePool
       requestBody: {$ref: "#/components/requestBodies/DevicePoolInput"}
+      responses:
+        "200": {$ref: "#/components/responses/PoolSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/device-pools/{id}/default-image:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    put:
+      tags: [Pools]
+      operationId: selectDevicePoolDefaultImage
+      description: Atomically enables a ready Image for the Pool and selects it for future automatic provisioning without reimaging existing Devices.
+      requestBody: {$ref: "#/components/requestBodies/PoolDefaultImageSelection"}
       responses:
         "200": {$ref: "#/components/responses/PoolSuccess"}
         "400": {$ref: "#/components/responses/BadRequest"}
@@ -839,6 +872,11 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/DevicePoolImageInput"}
           example: {min_ready: 2, max_instances: 2, enabled: true}
+    PoolDefaultImageSelection:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/PoolDefaultImageSelection"}
     PoolDeviceInput:
       required: true
       content:
@@ -1084,7 +1122,7 @@ components:
         abi: {type: string}
         resolution: {type: string}
         resource_config: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
-        status: {type: string, enum: [draft, validating, ready, failed, disabled]}
+        status: {$ref: "#/components/schemas/DeviceImageStatus"}
         validation_error: {type: string}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
@@ -1130,6 +1168,9 @@ components:
       properties:
         catalog_id: {$ref: "#/components/schemas/Identifier"}
         runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
+    DeviceImageStatus:
+      type: string
+      enum: [draft, validating, ready, failed, disabled]
     DeviceHost:
       type: object
       additionalProperties: false
@@ -1431,7 +1472,7 @@ components:
         abi: {type: string, enum: [x86_64, arm64-v8a]}
         resolution: {type: string, pattern: "^[0-9]+x[0-9]+$"}
         resource_config: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
-        enabled: {type: boolean, default: true}
+        enabled: {type: boolean, default: true, description: May create a disabled draft. Existing Images must use the audited retirement endpoint to become disabled.}
     DeviceHostInput:
       type: object
       additionalProperties: false
@@ -1507,6 +1548,17 @@ components:
           minLength: 3
           maxLength: 500
           description: Required when lowering max_instances because automatic scale down deletes emulator resources.
+    PoolDefaultImageSelection:
+      type: object
+      additionalProperties: false
+      required: [image_id, reason]
+      properties:
+        image_id: {$ref: "#/components/schemas/Identifier"}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Required audit reason; selecting a default only affects future automatic provisioning.
     PoolDeviceInput:
       type: object
       additionalProperties: false
