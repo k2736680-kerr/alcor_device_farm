@@ -102,7 +102,7 @@ try {
     Write-Output "down migration: passed"
 
     foreach ($Migration in $UpFiles) { Invoke-SQLFile $Migration.FullName }
-    Invoke-SQL "DO `$test`$ DECLARE table_count integer; BEGIN SELECT count(*) INTO table_count FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%'; IF table_count <> 14 THEN RAISE EXCEPTION 'expected 14 device tables, got %', table_count; END IF; END `$test`$;"
+    Invoke-SQL "DO `$test`$ DECLARE table_count integer; BEGIN SELECT count(*) INTO table_count FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%'; IF table_count <> 15 THEN RAISE EXCEPTION 'expected 15 device tables, got %', table_count; END IF; END `$test`$;"
     Write-Output "up-down-up migration: passed"
 
     if ($RunRepositoryTests) {
