@@ -916,8 +916,8 @@ func mustRuntimeProfile(values map[string]any) runtimeprofile.Profile {
 
 func validatePoolInput(input PoolInput, totalTarget, minReady int) error {
 	if strings.TrimSpace(input.Name) == "" || input.DefaultLeaseSeconds < 60 ||
-		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 0 || totalTarget < 0 ||
-		minReady < 0 || minReady > totalTarget || input.MaxConcurrency > totalTarget {
+		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 1 || totalTarget < 0 ||
+		minReady < 0 || minReady > totalTarget {
 		return ErrInvalidArgument
 	}
 	return nil
