@@ -186,9 +186,9 @@ func (store *Store) CreatePool(ctx context.Context, meta management.Idempotency,
 	return createIdempotent(ctx, store.db, meta,
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `INSERT INTO device_pools
-				(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,status)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, pool.ID, pool.Name, pool.DefaultLeaseSeconds,
-				pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.Status)
+				(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, pool.ID, pool.Name, pool.DefaultLeaseSeconds,
+				pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.Status)
 			return err
 		},
 		func(query database.Querier, id string) (management.Pool, error) { return getPool(ctx, query, id) },
@@ -230,11 +230,11 @@ func (store *Store) UpdatePool(ctx context.Context, pool management.Pool, expect
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET
 			name=$2,default_lease_seconds=$3,max_lease_seconds=$4,max_concurrency=$5,total_target=$6,
-			min_ready=$7,default_image_id=$8,status=$9,updated_at=clock_timestamp()
-			WHERE id=$1 AND status=$10
+			min_ready=$7,default_image_id=$8,base_device_id=$9,status=$10,updated_at=clock_timestamp()
+			WHERE id=$1 AND status=$11
 			RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
-			default_image_id,status,created_at,updated_at`, pool.ID, pool.Name, pool.DefaultLeaseSeconds,
-			pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.Status, expected))
+			default_image_id,base_device_id,status,created_at,updated_at`, pool.ID, pool.Name, pool.DefaultLeaseSeconds,
+			pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.Status, expected))
 		if err != nil {
 			return err
 		}
@@ -369,6 +369,31 @@ func (store *Store) SelectPoolDefaultImage(
 			'default_image_id',$8::text,'pool_image_enabled',true,'existing_devices_reimaged',false))`,
 			audit.ID, audit.ActorType, audit.ActorID, audit.Action, poolID, audit.RequestID,
 			sensitive.RedactText(audit.Reason), imageID)
+		return err
+	})
+	return value, normalize(err)
+}
+
+func (store *Store) SetPoolBaseDevice(ctx context.Context, poolID, deviceID string, audit management.DeviceAudit) (management.Pool, error) {
+	var value management.Pool
+	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var enabled bool
+		var lifecycle domain.DeviceLifecycleStatus
+		if err := tx.QueryRow(ctx, `SELECT pd.enabled,d.lifecycle_status FROM device_pool_devices pd
+			JOIN devices d ON d.id=pd.device_id WHERE pd.pool_id=$1 AND pd.device_id=$2 FOR UPDATE`, poolID, deviceID).Scan(&enabled, &lifecycle); err != nil {
+			return err
+		}
+		if !enabled || (lifecycle != domain.DeviceReady && lifecycle != domain.DeviceReserved && lifecycle != domain.DeviceBusy) {
+			return management.ErrInvalidArgument
+		}
+		var err error
+		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET base_device_id=$2,updated_at=clock_timestamp()
+			WHERE id=$1 RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at`, poolID, deviceID))
+		if err != nil { return err }
+		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,$2,$3,$4,'device_pool',$5,$6,$7,jsonb_build_object('base_device_id',$8::text))`,
+			audit.ID,audit.ActorType,audit.ActorID,audit.Action,poolID,audit.RequestID,sensitive.RedactText(audit.Reason),deviceID)
 		return err
 	})
 	return value, normalize(err)
@@ -623,6 +648,24 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 				return err
 			}
 		}
+		if operation.ReducePoolTargets {
+			// Deleting a device is an explicit capacity decision. Lower the pool
+			// target in the same transaction so the reconciler never replaces it.
+			if _, err := tx.Exec(ctx, `UPDATE device_pools p SET
+				total_target=GREATEST(0,p.total_target-1),
+				min_ready=LEAST(p.min_ready,GREATEST(0,p.total_target-1)),
+				max_concurrency=LEAST(p.max_concurrency,GREATEST(0,p.total_target-1)),
+				base_device_id=CASE WHEN p.base_device_id=$1 THEN (
+					SELECT pd.device_id FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+					WHERE pd.pool_id=p.id AND pd.enabled AND pd.device_id<>$1
+					AND d.lifecycle_status IN ('ready','quarantined','stopped')
+					ORDER BY d.updated_at DESC,d.id DESC LIMIT 1
+				) ELSE p.base_device_id END,
+				updated_at=clock_timestamp()
+				WHERE EXISTS (SELECT 1 FROM device_pool_devices pd WHERE pd.pool_id=p.id AND pd.device_id=$1)`, operation.Device.ID); err != nil {
+				return err
+			}
+		}
 		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
 			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
 			VALUES($1,$2,$3,$4,'device',$5,$6,$7,jsonb_build_object('command_id',$8::text,'command_type',$9::text))`,
@@ -735,7 +778,7 @@ func maxInt(left, right int) int {
 
 const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
 const hostSelect = `SELECT id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
-const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,status,created_at,updated_at FROM device_pools`
+const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
 const deviceSelect = `SELECT devices.id,devices.host_id,devices.image_id,devices.device_kind,devices.provider_type,devices.provider_ref,
     devices.lifecycle_mode,devices.serial,devices.stf_serial,devices.adb_endpoint,devices.appium_endpoint,devices.capabilities,
@@ -780,7 +823,7 @@ func scanHost(row rowScanner) (management.Host, error) {
 func scanPool(row rowScanner) (management.Pool, error) {
 	var v management.Pool
 	err := row.Scan(&v.ID, &v.Name, &v.DefaultLeaseSeconds, &v.MaxLeaseSeconds, &v.MaxConcurrency,
-		&v.TotalTarget, &v.MinReady, &v.DefaultImageID, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+		&v.TotalTarget, &v.MinReady, &v.DefaultImageID, &v.BaseDeviceID, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	return v, err
 }
 func scanPoolImage(row rowScanner) (management.PoolImage, error) {

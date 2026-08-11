@@ -150,7 +150,8 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE device_pools SET total_target=total_target+1,updated_at=clock_timestamp() WHERE id=$1`, input.PoolID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE device_pools SET total_target=total_target+1,
+			base_device_id=COALESCE(base_device_id,$2),updated_at=clock_timestamp() WHERE id=$1`, input.PoolID, deviceID); err != nil {
 			return err
 		}
 		result.DeviceID, result.CommandID, result.HostID = deviceID, commandID, hostID
@@ -180,10 +181,11 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	result.ValidationsQueued += validations.ValidationsQueued
 	result.ValidationsCompleted += validations.ValidationsCompleted
 	result.ValidationsFailed += validations.ValidationsFailed
-	rows, err := controller.db.Pool().Query(ctx, `SELECT p.id,p.default_image_id
+	rows, err := controller.db.Pool().Query(ctx, `SELECT p.id,COALESCE(b.image_id,p.default_image_id)
 		FROM device_pools p
-		JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=p.default_image_id AND pi.enabled
-		JOIN device_images i ON i.id=p.default_image_id AND i.status='ready'
+		LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
+		JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=COALESCE(b.image_id,p.default_image_id) AND pi.enabled
+		JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id) AND i.status='ready'
 		WHERE p.status='active' ORDER BY p.id`)
 	if err != nil {
 		return Result{}, err
@@ -852,24 +854,28 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		var minReady, totalTarget int
 		var apiLevel int
 		var runtimeImage, digest, abi, resolution string
-		var resourceConfig []byte
-		if err := tx.QueryRow(ctx, `SELECT p.min_ready,p.total_target,i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,i.resource_config
-			FROM device_pools p JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=p.default_image_id
-			JOIN device_images i ON i.id=p.default_image_id
-			WHERE p.id=$1 AND p.default_image_id=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
-			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &resourceConfig); err != nil {
+		var baseCapabilities, baseRuntimeProfile []byte
+		if err := tx.QueryRow(ctx, `SELECT p.min_ready,p.total_target,i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,
+			COALESCE(b.capabilities,jsonb_build_object('platformName','Android','apiLevel',i.api_level,'abi',i.abi,'resolution',i.resolution)),
+			COALESCE(b.runtime_profile_override,i.resource_config,'{}'::jsonb)
+			FROM device_pools p LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
+			JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=COALESCE(b.image_id,p.default_image_id)
+			JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id)
+			WHERE p.id=$1 AND COALESCE(b.image_id,p.default_image_id)=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
+			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &baseCapabilities, &baseRuntimeProfile); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
 			return err
 		}
-		capabilities := map[string]any{"platformName": "Android", "apiLevel": apiLevel, "abi": abi, "resolution": resolution}
-		var resources map[string]any
-		if err := json.Unmarshal(resourceConfig, &resources); err != nil {
-			return fmt.Errorf("invalid image resource config: %w", err)
+		capabilities := map[string]any{}
+		if err := json.Unmarshal(baseCapabilities, &capabilities); err != nil {
+			return fmt.Errorf("invalid base device capabilities: %w", err)
 		}
-		for key, value := range resources {
-			capabilities[key] = value
+		for key, value := range map[string]any{"platformName": "Android", "apiLevel": apiLevel, "abi": abi, "resolution": resolution} {
+			if _, exists := capabilities[key]; !exists {
+				capabilities[key] = value
+			}
 		}
 		capabilitiesJSON, err := json.Marshal(capabilities)
 		if err != nil {
@@ -924,7 +930,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			result.BackoffSkips++
 			return nil
 		}
-		profile, err := runtimeprofile.Parse(resources)
+		profile, err := runtimeprofile.Parse(baseRuntimeProfile)
 		if err != nil {
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}
@@ -1072,7 +1078,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO devices
 		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status)
-		VALUES($1,$2,$3,'emulator','docker_emulator',$4,'rebuild',$5,$6::jsonb,'provisioning','unknown')`,
+		VALUES($1,$2,$3,'emulator','docker_emulator',$4,'clean',$5,$6::jsonb,'provisioning','unknown')`,
 		deviceID, hostID, imageID, providerRef, serial, encodedCapabilities); err != nil {
 		return "", "", err
 	}

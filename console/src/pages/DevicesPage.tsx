@@ -1,7 +1,7 @@
 import { Alert, App as AntApp, Button, Card, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
@@ -12,6 +12,7 @@ import {
   useListDeviceHosts,
   useListDeviceImages,
   useListDevicePools,
+	usePrepareAndroidSystemImage,
   useListDevices,
   useQuarantineDevice,
   useRebuildDevice,
@@ -104,7 +105,7 @@ function actionable(device: Device, action: DeviceAction): boolean {
     case 'unquarantine':
       return device.lifecycle_status === 'quarantined'
     case 'delete':
-      return device.lifecycle_status === 'quarantined' || device.lifecycle_status === 'stopped'
+      return device.lifecycle_status === 'ready' || device.lifecycle_status === 'quarantined' || device.lifecycle_status === 'stopped'
     default:
       return true
   }
@@ -120,6 +121,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [reimageForm] = Form.useForm<ReimageValues>()
   const [createDevice, setCreateDevice] = useState(false)
   const [createForm] = Form.useForm<CreateDeviceValues>()
+	const [pendingCreate, setPendingCreate] = useState<CreateDeviceValues | null>(null)
   const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
 
@@ -127,6 +129,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const rebuild = useRebuildDevice()
   const reimage = useReimageDevice()
   const provision = useCreateDeviceProvisioning()
+	const prepareImage = usePrepareAndroidSystemImage()
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
@@ -135,7 +138,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
   const hosts = unwrapPage<DeviceHost>(hostsQuery.data)?.items ?? []
   const hardwareQuery = useListAndroidHardwareProfiles()
-  const catalogQuery = useListAndroidSystemImages()
+  const catalogQuery = useListAndroidSystemImages({ query: { refetchInterval: pendingCreate ? 5_000 : false } })
   const poolsQuery = useListDevicePools({ page: 1, page_size: 200 })
   const hardwareProfiles = unwrapData<AndroidHardwareProfile[]>(hardwareQuery.data) ?? []
   const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
@@ -184,7 +187,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     }
     modal.confirm({
       title: '确认删除这台设备？',
-      content: '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史。设备池目标数量不变时，系统可能自动补建一台。',
+      content: '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史，同时把所属设备池的目标数量减少一台，不会自动补建。',
       okText: '确认删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -246,13 +249,14 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     setCreateDevice(true)
   }
 
-  const submitCreateDevice = (values: CreateDeviceValues) => {
-    const { pool_id, image_id, hardware_profile_id, ...runtime_profile } = values
-    provision.mutate({ data: { pool_id, image_id, hardware_profile_id, runtime_profile } }, {
+  const provisionSelectedDevice = (values: CreateDeviceValues, resolvedImageID: string) => {
+    const { pool_id, hardware_profile_id, ...runtime_profile } = values
+		provision.mutate({ data: { pool_id, image_id: resolvedImageID, hardware_profile_id, runtime_profile } }, {
       onSuccess: (data) => {
         const requestID = (data as { data?: { request_id?: string } } | undefined)?.data?.request_id ?? '-'
         message.success(`创建设备已受理，正在等待 ADB、STF、Appium 健康检查（request_id: ${requestID}）`)
         setCreateDevice(false)
+		setPendingCreate(null)
         invalidate()
       },
       onError: (error) => {
@@ -261,6 +265,31 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       },
     })
   }
+
+	const submitCreateDevice = (values: CreateDeviceValues) => {
+		const selected = catalog.find((item) => item.id === values.image_id)
+		if (!selected) { message.error('所选 Android 版本已变化，请重新选择'); return }
+		if (selected.status === 'cached' && selected.image_id) {
+			provisionSelectedDevice(values, selected.image_id)
+			return
+		}
+		const { pool_id, image_id: _catalogID, hardware_profile_id, ...runtime_profile } = values
+		void pool_id
+		void _catalogID
+		void hardware_profile_id
+		setPendingCreate(values)
+		prepareImage.mutate({ data: { catalog_id: selected.id, runtime_profile } }, {
+			onSuccess: () => message.info('已开始准备所选 Android 版本；验证完成后会自动继续创建设备。'),
+			onError: (error) => { setPendingCreate(null); message.error(`镜像准备被拒绝：${(error as { message?: string }).message ?? ''}`) },
+		})
+	}
+
+	useEffect(() => {
+		if (!pendingCreate || provision.isPending) return
+		const selected = catalog.find((item) => item.id === pendingCreate.image_id)
+		if (selected?.status === 'cached' && selected.image_id) provisionSelectedDevice(pendingCreate, selected.image_id)
+		if (selected?.status === 'failed') { setPendingCreate(null); message.error('所选 Android 版本准备失败，请选择其他版本或稍后重试') }
+	}, [catalog, pendingCreate, provision.isPending])
 
   const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
@@ -351,7 +380,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
         <Card size="small" title="Phone 模拟器" extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>创建设备</Button> : undefined}>
-          <Typography.Text type="secondary">选择 Phone 硬件模板、官方系统镜像和高级运行规格。只有已验证的系统镜像可提交创建；其他目录项会保留为待准备状态。</Typography.Text>
+          <Typography.Text type="secondary">这是你自己管理的长期设备：预约结束后不会清空 APK、应用数据或文件；只有“编辑配置/更换镜像”或删除才会恢复/清理。</Typography.Text>
         </Card>
         <Alert
           type="info"
@@ -401,7 +430,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         width={820}
         destroyOnHidden
       >
-        <Alert type="info" showIcon message="仅支持 Phone" description="当前不提供 Tablet、Wear、TV、Automotive、Desktop 或 XR。提交后由宿主 Agent 创建，设备通过 ADB、STF、Appium 检查前不会显示为可用。" style={{ marginBottom: 16 }} />
+        <Alert type="info" showIcon message="创建步骤：选择 Phone 模板 → 选择 Android 版本 → 设置高级规格 → 创建" description="当前只提供 Phone。提交后由宿主 Agent 创建，设备通过 ADB、STF、Appium 检查前不会显示为可用；创建完成后它会成为此设备池后续扩容的基础设备。" style={{ marginBottom: 16 }} />
         <Form<CreateDeviceValues> form={createForm} layout="vertical" onFinish={submitCreateDevice}>
           <Form.Item name="hardware_profile_id" label="1. Phone 硬件模板" rules={[{ required: true, message: '请选择 Phone 模板' }]}>
             <Select showSearch optionFilterProp="label" loading={hardwareQuery.isFetching} options={hardwareProfiles.map((profile) => ({
@@ -411,10 +440,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
               if (profile) createForm.setFieldsValue({ width: profile.width, height: profile.height, density_dpi: profile.density_dpi })
             }} />
           </Form.Item>
-          <Form.Item name="image_id" label="2. Android 系统镜像" rules={[{ required: true, message: '请选择已验证系统镜像' }]} extra="目录中的未准备镜像会显示状态但不可直接创建；请先在“设备镜像”页准备并验证。">
+          <Form.Item name="image_id" label="2. Android 版本" rules={[{ required: true, message: '请选择已验证系统镜像' }]} extra="目录列出可用 Android 版本；首次使用尚未准备的版本需要先由平台完成镜像准备和验证。">
             <Select showSearch optionFilterProp="label" loading={catalogQuery.isFetching} options={catalog.map((image) => ({
-              value: image.image_id ?? image.id,
-              disabled: image.status !== 'cached' || !image.image_id,
+              value: image.id,
               label: `Android API ${image.api_level} · ${image.image_type} · ${image.abi} · ${image.status === 'cached' ? '已验证可用' : `待准备（${image.status}）`}`,
             }))} />
           </Form.Item>
@@ -451,7 +479,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           {actionState?.action === 'unquarantine' && '解除隔离后设备可重新进入调度池。'}
           {actionState?.action === 'rebuild' && '重建会销毁并重新拉起设备运行实例，属于危险操作。'}
           {actionState?.action === 'restart' && '重启会中断当前设备上的会话。'}
-          {actionState?.action === 'delete' && '删除只允许隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史；目标数量不变时系统可能自动补建。'}
+          {actionState?.action === 'delete' && '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史，同时把设备池目标数量减少一台，不会自动补建。'}
         </Typography.Paragraph>
         <Form<ReasonValues> form={form} layout="vertical" onFinish={submitAction}>
           <Form.Item name="reason" label="操作原因（必填，将写入审计）" rules={[

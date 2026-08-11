@@ -36,7 +36,6 @@ import { RemoteControlProvider, useRemoteControl } from './remote/RemoteControlP
 
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
-  { key: '/images', icon: <CameraOutlined />, label: <NavLink to="/images">设备镜像</NavLink> },
   { key: '/hosts', icon: <DesktopOutlined />, label: <NavLink to="/hosts">宿主机</NavLink> },
   { key: '/pools', icon: <DatabaseOutlined />, label: <NavLink to="/pools">设备池</NavLink> },
   { key: '/devices', icon: <CloudServerOutlined />, label: <NavLink to="/devices">设备</NavLink> },

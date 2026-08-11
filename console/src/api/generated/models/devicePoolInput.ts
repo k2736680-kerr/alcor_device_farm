@@ -17,11 +17,11 @@ export interface DevicePoolInput {
   default_lease_seconds: number;
   /** @minimum 60 */
   max_lease_seconds: number;
-  /** @minimum 1 */
+  /** @minimum 0 */
   max_concurrency: number;
   /**
    * Must be greater than or equal to max_concurrency.
-   * @minimum 1
+   * @minimum 0
    */
   total_target?: number;
   /**

@@ -18,9 +18,9 @@
 | Device Farm Adapter | 提供北向 OpenAPI 和 Mock | 由新版 Worker 在第六阶段实现 | 不直接依赖旧 `eval_tasks` 或共享数据库 |
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
 | Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
-| 动态容量扩缩容 | Console 设置 Pool 总目标和设备规格；Server 按 Host 实际 CPU、内存、磁盘与在途预留计算可创建数量；Controller 通过 Host Command 自动创建或删除 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录 |
+| 动态容量扩缩容 | Console 设置 Pool 总目标和基础设备；Server 按基础设备当前已生效的 Phone、Image 与 runtime profile，结合 Host 实际 CPU、内存、磁盘与在途预留创建干净新实例 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或数据卷 |
 | Android 官方目录、Phone 硬件模板与受控创建 | Console 读取 Server 同步的官方稳定 System Image 目录；DF-037 仅展示 Android SDK 可识别的 Phone 硬件模板，并在一个向导中选择模板、已验证或待准备的 System Image、Pool 和 runtime profile；Server 在事务中登记 `create` Host Command，Agent 创建后沿既有健康链路收敛 | 新版 Alcor 只选择已可用 Image，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；未验证、无 digest 的候选项不得写入 `device_images`；品牌不是官方系统属性；首期不暴露 TV、Wear、Automotive、Desktop、XR |
-| 隔离设备人工删除 | Console 仅允许管理员对 `quarantined/stopped` Device 提交带原因和幂等键的删除；Server 原子检查活动预约并退出 Pool，Agent 通过既有 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作；目标容量不变时 Warm Pool 可正常补建 | 不允许删除 ready/reserved/busy/recycling；不物理删库；不新增 Docker 直连 |
+| 长期设备与人工删除 | Reservation release 只归还 STF 占用并把 Device 直接恢复为 ready，保留 APK、账号、缓存和数据卷；管理员可删除无活动预约的 ready/quarantined/stopped Device，Server 原子退出 Pool 并降低该 Pool 目标，Agent 复用 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作 | 不允许删除 reserved/busy/recycling；不物理删库；不新增 Docker 直连；只有显式 rebuild/reimage 才恢复出厂 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Device Image 生命周期与默认选择 | Console 只展示可用 Image 作为默认选择；管理员可将未被活动设备或 Pool 默认引用的旧 Image 受控停用并查看归档 | 新版 Alcor 只会获得当前可用 Image；历史 Run/Artifact 不由本项目处理 | 不物理删除 Device/Image 审计链；不从 Server/浏览器删除 Registry 或 Docker 数据；切换默认值不重装已有设备 |
@@ -43,6 +43,8 @@
 - Host 实际 CPU/内存/磁盘心跳、设备有效运行规格、Server/Agent 双重资源预检和可解释容量结果；
 - 官方稳定 Android System Image 目录同步、后台按需准备、内部缓存、不可变 digest 验证，以及空闲 Emulator 受控重装；
 - Phone 硬件模板搜索、系统镜像选择、完整 runtime profile 与加入 Pool 的受控 Emulator 创建；
+- Android Studio 式创建向导、自动镜像准备、每 Pool 基础设备和基于其配置的干净扩容；
+- Reservation 释放后的数据保留，以及不经缩容配置的管理员直接删除；
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；

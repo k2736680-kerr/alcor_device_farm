@@ -59,6 +59,7 @@ type DeviceOperation struct {
 	RequireNoActiveReservation bool
 	RequireNoActiveCommand     bool
 	DisableMemberships         bool
+	ReducePoolTargets          bool
 	Reimage                    bool
 	PendingImageID             string
 	PendingRuntimeProfile      map[string]any
@@ -103,6 +104,7 @@ type Pool struct {
 	TotalTarget         int               `json:"total_target"`
 	MinReady            int               `json:"min_ready"`
 	DefaultImageID      *string           `json:"default_image_id,omitempty"`
+	BaseDeviceID        *string           `json:"base_device_id,omitempty"`
 	Status              domain.PoolStatus `json:"status"`
 	CreatedAt           time.Time         `json:"created_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`
@@ -231,6 +233,7 @@ type Store interface {
 	SetPoolImage(context.Context, PoolImage, DeviceAudit) (PoolImage, error)
 	DisablePoolImage(context.Context, string, string) (PoolImage, error)
 	SelectPoolDefaultImage(context.Context, string, string, DeviceAudit) (Pool, error)
+	SetPoolBaseDevice(context.Context, string, string, DeviceAudit) (Pool, error)
 	AddDeviceToPool(context.Context, string, string) error
 	RemoveDeviceFromPool(context.Context, string, string) error
 

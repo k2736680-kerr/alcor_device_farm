@@ -336,6 +336,21 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/device-pools/{id}/base-device:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    put:
+      tags: [Pools]
+      operationId: selectDevicePoolBaseDevice
+      description: Selects a long-lived member Device as the source configuration for future scale-out; application data is never cloned.
+      requestBody: {$ref: "#/components/requestBodies/PoolBaseDeviceSelection"}
+      responses:
+        "200": {$ref: "#/components/responses/PoolSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools/{id}/devices:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -906,6 +921,11 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/PoolDefaultImageSelection"}
+    PoolBaseDeviceSelection:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/PoolBaseDeviceSelection"}
     PoolDeviceInput:
       required: true
       content:
@@ -1283,6 +1303,10 @@ components:
           allOf: [{$ref: "#/components/schemas/Identifier"}]
           nullable: true
           description: Image used for future automatic additions; changing it does not reimage existing Devices.
+        base_device_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          nullable: true
+          description: Long-lived Device whose effective configuration is used for future scale-out.
         status: {type: string, enum: [active, disabled]}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
@@ -1602,8 +1626,8 @@ components:
         name: {type: string, minLength: 1, maxLength: 128}
         default_lease_seconds: {type: integer, minimum: 60}
         max_lease_seconds: {type: integer, minimum: 60}
-        max_concurrency: {type: integer, minimum: 1}
-        total_target: {type: integer, minimum: 1, description: Must be greater than or equal to max_concurrency.}
+        max_concurrency: {type: integer, minimum: 0}
+        total_target: {type: integer, minimum: 0, description: Must be greater than or equal to max_concurrency.}
         min_ready: {type: integer, minimum: 0, description: Must not exceed total_target.}
         default_image_id:
           allOf: [{$ref: "#/components/schemas/Identifier"}]
@@ -1638,6 +1662,13 @@ components:
           minLength: 3
           maxLength: 500
           description: Required audit reason; selecting a default only affects future automatic provisioning.
+    PoolBaseDeviceSelection:
+      type: object
+      additionalProperties: false
+      required: [device_id, reason]
+      properties:
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        reason: {type: string, minLength: 3, maxLength: 500}
     PoolDeviceInput:
       type: object
       additionalProperties: false

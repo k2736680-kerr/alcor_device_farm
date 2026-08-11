@@ -443,6 +443,19 @@ func (service *Service) SelectPoolDefaultImage(
 	return service.store.SelectPoolDefaultImage(ctx, poolID, imageID, event)
 }
 
+// SetPoolBaseDevice selects the long-lived device whose effective image,
+// hardware profile and runtime profile are copied for future scale-out.
+func (service *Service) SetPoolBaseDevice(ctx context.Context, poolID, deviceID, reason string, actor audit.Actor, requestID string) (Pool, error) {
+	if !validReason(reason) || strings.TrimSpace(deviceID) == "" {
+		return Pool{}, ErrInvalidArgument
+	}
+	event, err := service.deviceAudit(actor, requestID, "set_pool_base_device", reason)
+	if err != nil {
+		return Pool{}, err
+	}
+	return service.store.SetPoolBaseDevice(ctx, poolID, strings.TrimSpace(deviceID), event)
+}
+
 func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID string) error {
 	pool, err := service.store.GetPool(ctx, poolID)
 	if err != nil {
@@ -716,7 +729,10 @@ func (service *Service) deleteDevice(ctx context.Context, id, reason, idempotenc
 	} else if found {
 		return replayed, nil
 	}
-	if current.LifecycleStatus != domain.DeviceQuarantined && current.LifecycleStatus != domain.DeviceStopped {
+	// A long-lived device can be removed directly whenever it is not in use.
+	// Busy/reserved/recycling devices remain protected by the state check and by
+	// the transaction's active-reservation check below.
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceQuarantined && current.LifecycleStatus != domain.DeviceStopped {
 		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceDeleted)}
 	}
 	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
@@ -733,7 +749,7 @@ func (service *Service) deleteDevice(ctx context.Context, id, reason, idempotenc
 			"request_hash": requestHash,
 			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
 		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
-		RequireNoActiveReservation: true, RequireNoActiveCommand: true, DisableMemberships: true,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true, DisableMemberships: true, ReducePoolTargets: true,
 	})
 }
 
@@ -895,7 +911,7 @@ func mustRuntimeProfile(values map[string]any) runtimeprofile.Profile {
 
 func validatePoolInput(input PoolInput, totalTarget, minReady int) error {
 	if strings.TrimSpace(input.Name) == "" || input.DefaultLeaseSeconds < 60 ||
-		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 1 || totalTarget < 1 ||
+		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 0 || totalTarget < 0 ||
 		minReady < 0 || minReady > totalTarget || input.MaxConcurrency > totalTarget {
 		return ErrInvalidArgument
 	}

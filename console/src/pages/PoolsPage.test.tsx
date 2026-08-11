@@ -29,7 +29,7 @@ async function openPoolEditor() {
   expect(await screen.findByRole('spinbutton', { name: '总目标数量' })).toHaveValue('2')
   expect(screen.getByRole('spinbutton', { name: '最小预热数量' })).toHaveValue('2')
   expect(screen.getByRole('spinbutton', { name: '最大并发' })).toHaveValue('2')
-  expect(screen.getByText('自动补建默认镜像')).toBeInTheDocument()
+  expect(screen.getByText('兼容默认镜像')).toBeInTheDocument()
   return user
 }
 

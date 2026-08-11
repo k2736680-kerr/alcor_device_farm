@@ -135,7 +135,7 @@ GetConnectionInfo
 设备生命周期：
 
 ```text
-provisioning → booting → ready → reserved → busy → recycling → ready
+provisioning → booting → ready → reserved → busy → ready
                        ↘ stopped
 任一异常状态 → quarantined → rebuild → provisioning
 stopped → deleted
@@ -205,8 +205,8 @@ Reaper：
 - 回收超过 `expires_at + grace_period` 的预约；
 - 释放 STF claim；
 - 关闭 Device Session；
-- 将设备送入 recycling；
-- 由固定目标 Controller 创建持久化 rebuild Host Command，Agent 删除旧数据卷并通过完整健康检查后才回 ready；
+- 释放 STF claim、关闭 Device Session，并将 Device 直接恢复为 ready；
+- 不执行重建、恢复出厂或数据卷清理；只有管理员显式 rebuild/reimage 才执行原有清空链路；
 - 多实例运行时通过数据库锁避免重复回收。
 
 Reconciler：

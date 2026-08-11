@@ -565,11 +565,13 @@ func (ReservationRepository) CloseActive(
 	}
 	result, err := tx.Exec(ctx, `
 		UPDATE devices SET
-			lifecycle_status=CASE WHEN lifecycle_status='quarantined' THEN lifecycle_status ELSE 'recycling' END,
+			-- DF-038: reservations only release access. They must not erase the
+			-- administrator-managed emulator data or queue a factory rebuild.
+			lifecycle_status=CASE WHEN lifecycle_status='quarantined' THEN lifecycle_status ELSE 'ready' END,
 			updated_at=$2::timestamptz
 		WHERE id=$1 AND lifecycle_status IN ('busy','reserved','quarantined')`, deviceID, closedAt)
 	if err != nil {
-		return ReservationRecord{}, fmt.Errorf("recycle released device: %w", err)
+		return ReservationRecord{}, fmt.Errorf("release retained device: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ReservationRecord{}, ErrNotFound

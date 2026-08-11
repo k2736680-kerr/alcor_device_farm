@@ -749,7 +749,7 @@ func (service *Service) closeActiveLocked(
 		return repository.ReservationRecord{}, err
 	}
 	if deviceState.Lifecycle() != domain.DeviceQuarantined {
-		if err := deviceState.Transition(domain.DeviceRecycling, reason, now); err != nil {
+		if err := deviceState.Transition(domain.DeviceReady, "reservation released; device data retained", now); err != nil {
 			return repository.ReservationRecord{}, err
 		}
 	}

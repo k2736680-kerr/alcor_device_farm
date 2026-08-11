@@ -58,6 +58,7 @@
 | DF-035 | Android 13～16 镜像目录和真实多规格验收 | completed | DF-034 |
 | DF-036 | 旧镜像受控停用和可用镜像选择 | completed | DF-035 |
 | DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
+| DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | in_progress | DF-037 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础
@@ -383,6 +384,14 @@
 产出：ADR-0017、Phone Profile 目录接口、受控创建 API、Provider Profile 参数映射、Console 创建向导、单元/集成/契约测试和 `docs/evidence/DF-037/`。
 
 验收：Console 可搜索并从多条 Phone 模板选择；系统镜像目录不再只允许 API 33～36 四项，未准备项不会被误认为可创建；提交后不会由浏览器或 Server 直连 Docker/Google，设备、Pool membership、Host Command 和目标数原子登记；容量不足或非 ready 镜像返回稳定错误且无半条记录；指定 Profile、CPU、内存、分辨率和 GPU 参数进入 Agent/Provider；真实 Linux KVM 创建后通过 ADB、STF、Appium 才进入 ready/healthy。
+
+### DF-038 长期设备、基础设备扩容和 Android Studio 式创建流程
+
+实施：以 Device 页面为唯一日常入口，新增分步创建向导：选择 Phone、Android SDK 版本、Pool 和高级 runtime profile 后创建；未缓存版本由受控 Server/Agent 链路自动准备并继续创建，镜像缓存移出主导航。每个 Pool 可选择一台 ready/healthy Phone Emulator 作为基础设备，后续扩容只复制其已生效 Image、Phone Profile 和 runtime profile，数据卷保持干净。Reservation release 只释放占用并把 Device 从 busy 返回 ready，不再自动 rebuild 或删除数据卷。管理员可删除没有活动预约的 ready/quarantined/stopped Device；删除同时降低所属 Pool 的总目标，避免自动补建。
+
+产出：ADR-0018、Pool 基础设备持久化和迁移、创建准备编排、release 保留数据、直接删除编排、OpenAPI/Console 与 `docs/evidence/DF-038/`。
+
+验收：设备使用后 APK、账号、缓存和文件保持；显式 rebuild/reimage 仍恢复出厂。基础设备修改成功后新扩容实例使用其最新 Phone/Image/runtime profile，但不复制其数据。创建向导允许选择未缓存 Android 版本并在验证后自动完成创建。ready 空闲设备可直接删除且 Pool 目标同步减少；reserved/busy/recycling 或有活动预约设备拒绝删除；真实 Linux KVM 验证创建、release 保留数据、基础设备扩容以及删除不自动补回。
 
 ## 10. 阶段 H：新版 Alcor 接入
 

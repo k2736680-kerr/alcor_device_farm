@@ -77,6 +77,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -官方 Android System Image 目录同步、按需镜像准备、不可变 digest 验证和内部缓存；继续复用 Android SDK `sdkmanager`/`avdmanager`、既有 Image、Host Command 和 Docker Provider；
 -已验证 Device Image 的受控停用、默认隐藏和设备池默认镜像选择；复用既有 Image 状态机、Pool Image 关系、设备域审计和 Console，不物理删除历史 Device/Image，也不新增镜像仓库实现；
 -Phone 硬件模板目录和受控创建向导；硬件模板只描述 Android SDK `avdmanager` 可识别的 Phone Profile，创建仍复用既有 Host Command、Host Agent、Docker Emulator Provider、容量预检和 ADB/STF/Appium 健康链路；
+-长期设备保留、Pool 基础设备和直接删除；复用现有 Reservation/STF release、Device 状态机、Warm Pool、Host Command 与 Docker Provider，不新增业务设备快照、Appium 执行或 Docker 直连；
 -仅用于端到端证明的DaFit Harness。
 
 ## 5. 名称相近但职责不同的能力
@@ -115,5 +116,7 @@ DF-032～DF-035 复用 Docker 的资源限制、镜像缓存、KVM、Android Emu
 DF-036 复用现有 `disabled` Image 状态、Pool 默认镜像、Pool Image 关系和设备域审计。停用只退出可选范围并保留历史外键；选择默认镜像只影响后续自动补建，不隐式重装已有设备，不直接删除 Registry/Docker 内容。
 
 DF-037 复用 Android SDK/`avdmanager` 的 Phone Profile 命名、既有官方 System Image 目录和 Image 准备任务。新增的向导与受控创建接口只保存设备域的 Pool、硬件 Profile、系统镜像和 runtime profile；Server 在事务中登记 `create` Host Command，浏览器、Server 均不直连 Docker、SDK 或 Google。TV、Wear、Automotive、Desktop、XR 等 Profile 不进入首期接口或 Console。
+
+DF-038 复用 Reservation 的 STF release、既有 Device/Pool PostgreSQL 锁、Host Command、Host Agent 和 Docker Provider。release 后不再排队 recycle rebuild，直接回到 ready 并保留数据卷；显式 rebuild/reimage 继续使用既有清空链路。基础设备只复制已登记的 Image、Phone Profile 和 runtime profile 来创建干净新实例，绝不复制 App 数据。直接删除仍由既有 delete Host Command 清理容器/网络/卷，并在同一事务收缩所属 Pool 目标。
 
 无法回答或没有更新本矩阵时，不进入编码。

@@ -293,3 +293,7 @@ docs/evidence/
 # DF-037 Phone 创建向导补充
 
 验收应证明：Phone 模板列表至少可搜索、显示多条 SDK Profile 和屏幕参数，且不出现 Tablet、Wear、TV、Automotive、Desktop、XR；系统镜像选择使用 Server 的官方目录，旧的 API 33～36 固定正则不再限制目录。选择已验证镜像并提交完整 runtime profile 后，Server 在事务中创建 provisioning Device、Pool membership 和 `create` Host Command，并增加 Pool `total_target`；容量不足、镜像未就绪、非法硬件模板均不能留下半条记录。Agent 实际收到的 Docker 环境必须使用选定 Phone Profile；真实 Linux KVM 环境需证明最终 ADB、STF、Appium 全部通过后设备才 ready/healthy。
+
+# DF-038 长期设备和基础设备扩容补充
+
+验收应证明：释放预约只关闭预约/STF 会话并把 healthy Device 返回 `ready`，不发 rebuild、不删除数据卷，已安装 APK、应用数据、帐号和文件仍在；显式 rebuild/reimage 仍清空数据。创建向导可选择目录中的任一 Phone Android 版本，未缓存版本先通过受控准备和验证，完成后自动继续创建。每个 Pool 可在控制台选择基础设备；扩容使用该设备的 Image、Phone 模板和有效 runtime profile，但新实例使用全新数据卷，绝不复制用户数据。空闲 ready Device 可直接删除，删除命令和 Pool `total_target`/`min_ready`/`max_concurrency` 的下调必须原子生效，控制器不得自动补回；reserved、busy、recycling 或带活动预约的 Device 必须拒绝删除。真实 Linux KVM 验收需保存释放前后 APK/数据校验、基础设备扩容命令 payload、删除后 Pool 目标及无补建证据。

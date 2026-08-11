@@ -7,6 +7,7 @@
  */
 import type { Identifier } from './identifier';
 import type { DevicePoolDefaultImageId } from './devicePoolDefaultImageId';
+import type { DevicePoolBaseDeviceId } from './devicePoolBaseDeviceId';
 import type { DevicePoolStatus } from './devicePoolStatus';
 
 export interface DevicePool {
@@ -24,6 +25,11 @@ export interface DevicePool {
    * @nullable
    */
   default_image_id?: DevicePoolDefaultImageId;
+  /**
+   * Long-lived Device whose effective configuration is used for future scale-out.
+   * @nullable
+   */
+  base_device_id?: DevicePoolBaseDeviceId;
   status: DevicePoolStatus;
   created_at: string;
   updated_at: string;

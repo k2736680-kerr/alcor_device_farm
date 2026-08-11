@@ -83,6 +83,10 @@
 
 当前不能安全定稿：新版 Eval Console 如何链接、嵌入或复用 Device Farm Console、Android Case/Template 结构、App/APK Build 正式模型、Worker 内 Android Executor 代码位置、Device Farm Adapter 的具体 Go 接口。它们必须等待新版实际分支或专项接口文档，不能根据旧 master 猜测；这不阻塞 Device Farm Console 独立交付。
 
+## 5.1 DF-038 长期设备和基础设备扩容补充
+
+DF-038 仍只改变 Device、Pool、Reservation、Host Command 与设备域审计：系统镜像继续作为受控基础设施缓存，创建向导可自动触发准备，但不新增 Alcor App、Build、Run 或 Artifact。Pool 的基础设备只提供 Phone Profile、已验证 Image 和 runtime profile 给后续干净 Emulator 创建；不复制业务 APK、账户、缓存或数据卷。Reservation release 仅释放 STF 和数据库占用，设备直接回到 `ready/healthy`，只有显式 rebuild/reimage 或 delete 才清空 Provider 数据。管理员直接删除空闲设备会原子降低 Pool 目标以避免自动补回。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；

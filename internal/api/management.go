@@ -36,6 +36,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("GET /api/v1/device-pools/{id}", handler.getPool)
 	mux.HandleFunc("PUT /api/v1/device-pools/{id}", handler.updatePool)
 	mux.HandleFunc("PUT /api/v1/device-pools/{id}/default-image", handler.selectPoolDefaultImage)
+	mux.HandleFunc("PUT /api/v1/device-pools/{id}/base-device", handler.selectPoolBaseDevice)
 	mux.HandleFunc("GET /api/v1/device-pools/{id}/images", handler.listPoolImages)
 	mux.HandleFunc("PUT /api/v1/device-pools/{id}/images/{image_id}", handler.setPoolImage)
 	mux.HandleFunc("DELETE /api/v1/device-pools/{id}/images/{image_id}", handler.disablePoolImage)
@@ -248,6 +249,14 @@ func (handler *managementHandler) selectPoolDefaultImage(writer http.ResponseWri
 	)
 	handler.write(writer, request, http.StatusOK, value, err)
 }
+func (handler *managementHandler) selectPoolBaseDevice(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) { return }
+	var input poolBaseDeviceInput
+	if !decode(writer, request, &input) { return }
+	value, err := handler.service.SetPoolBaseDevice(request.Context(), request.PathValue("id"), input.DeviceID, input.Reason,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID)
+	handler.write(writer, request, http.StatusOK, value, err)
+}
 func (handler *managementHandler) listPoolImages(writer http.ResponseWriter, request *http.Request) {
 	if !handler.available(writer, request) {
 		return
@@ -426,6 +435,10 @@ type reasonInput struct {
 type poolDefaultImageInput struct {
 	ImageID string `json:"image_id"`
 	Reason  string `json:"reason"`
+}
+type poolBaseDeviceInput struct {
+	DeviceID string `json:"device_id"`
+	Reason string `json:"reason"`
 }
 type poolDeviceInput struct {
 	DeviceID string `json:"device_id"`

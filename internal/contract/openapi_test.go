@@ -31,6 +31,7 @@ var expectedOperations = map[string][]string{
 	"/api/v1/device-pools":                                  {"get", "post"},
 	"/api/v1/device-pools/{id}":                             {"get", "put"},
 	"/api/v1/device-pools/{id}/default-image":               {"put"},
+	"/api/v1/device-pools/{id}/base-device":                 {"put"},
 	"/api/v1/device-pools/{id}/devices":                     {"post", "delete"},
 	"/api/v1/device-pools/{id}/images":                      {"get"},
 	"/api/v1/device-pools/{id}/images/{image_id}":           {"put", "delete"},

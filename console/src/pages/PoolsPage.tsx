@@ -27,6 +27,7 @@ import {
   useListDevicePoolImages,
   useListDevicePools,
   useListDevices,
+  useSelectDevicePoolBaseDevice,
   useUpdateDevicePool,
 } from '../api/generated/device-farm'
 import type { DevicePool, DevicePoolImage, Device, DeviceImage } from '../api/generated/models'
@@ -63,6 +64,7 @@ export function PoolsPage() {
   const updatePool = useUpdateDevicePool()
   const disableTarget = useDisableDevicePoolImageTarget()
   const addDevice = useAddDeviceToPool()
+  const selectBaseDevice = useSelectDevicePoolBaseDevice()
 
   const invalidatePools = () => {
     void queryClient.invalidateQueries({ queryKey: getListDevicePoolsQueryKey() })
@@ -98,7 +100,7 @@ export function PoolsPage() {
     },
   )
   const currentPoolDevices = unwrapPage<Device>(poolDevicesQuery.data)?.total ?? 0
-  const devicesQuery = useListDevices({ page: 1, page_size: 200 }, { query: { enabled: addDeviceOpen } })
+  const devicesQuery = useListDevices({ page: 1, page_size: 200, pool_id: configPool?.id }, { query: { enabled: Boolean(configPool) } })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
 
   const updatePoolConfiguration = (values: PoolFormValues) => {
@@ -190,6 +192,19 @@ export function PoolsPage() {
     )
   }
 
+  const setBaseDevice = (deviceID: string) => {
+    if (!configPool) return
+    selectBaseDevice.mutate({ id: configPool.id, data: { device_id: deviceID, reason: '选择后续扩容的基础设备' } }, {
+      onSuccess: (data) => {
+        const updated = (data as unknown as { data?: DevicePool }).data
+        if (updated) setConfigPool(updated)
+        message.success('基础设备已更新；后续扩容将使用它的镜像和资源配置')
+        invalidatePools()
+      },
+      onError: (error) => message.error(`设置基础设备失败：${errorText(error)}`),
+    })
+  }
+
   const targetColumns: TableColumnsType<DevicePoolImage> = [
     { title: '镜像', dataIndex: 'image_id', width: 230, render: (value: string) => imageByID.get(value)?.name ?? shortID(value) },
     { title: 'Android', dataIndex: 'image_id', width: 90, render: (value: string) => imageByID.get(value) ? `API ${imageByID.get(value)?.api_level}` : '-' },
@@ -220,6 +235,7 @@ export function PoolsPage() {
     { title: '总目标', dataIndex: 'total_target', width: 90 },
     { title: '最小预热', dataIndex: 'min_ready', width: 90 },
     { title: '最大并发', dataIndex: 'max_concurrency', width: 100 },
+    { title: '基础设备', dataIndex: 'base_device_id', width: 150, render: (value?: string) => value ? shortID(value) : <Tag>未选择</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
       title: '操作',
@@ -287,16 +303,16 @@ export function PoolsPage() {
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
             <Form.Item name="total_target" label="总目标数量" rules={[{ required: true }]}>
-              <InputNumber min={1} max={1000} />
+              <InputNumber min={0} max={1000} />
             </Form.Item>
             <Form.Item name="min_ready" label="最小预热数量" rules={[{ required: true }]}>
               <InputNumber min={0} max={1000} />
             </Form.Item>
             <Form.Item name="max_concurrency" label="最大并发" rules={[{ required: true }]}>
-              <InputNumber min={1} max={1000} />
+              <InputNumber min={0} max={1000} />
             </Form.Item>
           </Space>
-          <Form.Item name="default_image_id" label="自动补建默认镜像" rules={[{ required: true, message: '请选择默认镜像' }]}>
+          <Form.Item name="default_image_id" label="兼容默认镜像" rules={[{ required: true, message: '请选择默认镜像' }]}>
             <Select
               loading={poolImagesQuery.isFetching || imagesQuery.isFetching}
               options={poolImages.filter((target) => target.enabled).map((target) => {
@@ -306,7 +322,7 @@ export function PoolsPage() {
             />
           </Form.Item>
           <Typography.Paragraph type="secondary">
-            总目标是该池最多维持的设备总数，不会把 Android 13～16 的镜像数量相加。自动增加设备只使用默认镜像；切换默认镜像不会重装已有设备。最大并发不能超过总目标，最小预热可以设置为 0；此时平常不保留暖机，但出现可由默认镜像满足的待处理预约时仍会按需创建。
+            总目标是该池最多维持的设备总数。选定基础设备后，自动增加设备会复制它当前的镜像、Phone 模板和 CPU/内存等运行配置，但始终使用全新的空数据卷；不会复制 APK、帐号或缓存。基础设备修改配置后，下一次扩容自动生效。
           </Typography.Paragraph>
           {configPool && (
             <Alert
@@ -356,6 +372,17 @@ export function PoolsPage() {
         />
 
         <Typography.Title level={5} style={{ marginTop: 24 }}>设备</Typography.Title>
+        <Typography.Paragraph type="secondary">基础设备决定后续扩容的配置，不会共享或复制这台设备内的数据。</Typography.Paragraph>
+        <Select
+          style={{ width: '100%', marginBottom: 12 }}
+          value={configPool?.base_device_id}
+          placeholder="选择基础设备"
+          loading={devicesQuery.isFetching || selectBaseDevice.isPending}
+          onChange={setBaseDevice}
+          options={devices.filter((device) => ['ready', 'reserved', 'busy'].includes(device.lifecycle_status)).map((device) => ({
+            value: device.id, label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
+          }))}
+        />
         <Button size="small" onClick={() => setAddDeviceOpen(true)}>加入设备</Button>
       </Drawer>
 

@@ -72,6 +72,7 @@ import type {
   ListDeviceReservationsParams,
   ListDevicesParams,
   OperationReasonBody,
+  PoolBaseDeviceSelectionBody,
   PoolCreatedResponse,
   PoolDefaultImageSelectionBody,
   PoolDeviceInputBody,
@@ -3035,6 +3036,120 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getSelectDevicePoolDefaultImageMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Selects a long-lived member Device as the source configuration for future scale-out; application data is never cloned.
+ */
+export type selectDevicePoolBaseDeviceResponse200 = {
+  data: PoolSuccessResponse
+  status: 200
+}
+
+export type selectDevicePoolBaseDeviceResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type selectDevicePoolBaseDeviceResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type selectDevicePoolBaseDeviceResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type selectDevicePoolBaseDeviceResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type selectDevicePoolBaseDeviceResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type selectDevicePoolBaseDeviceResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type selectDevicePoolBaseDeviceResponseSuccess = (selectDevicePoolBaseDeviceResponse200) & {
+  headers: Headers;
+};
+export type selectDevicePoolBaseDeviceResponseError = (selectDevicePoolBaseDeviceResponse400 | selectDevicePoolBaseDeviceResponse401 | selectDevicePoolBaseDeviceResponse403 | selectDevicePoolBaseDeviceResponse404 | selectDevicePoolBaseDeviceResponse409 | selectDevicePoolBaseDeviceResponse500) & {
+  headers: Headers;
+};
+
+export type selectDevicePoolBaseDeviceResponse = (selectDevicePoolBaseDeviceResponseSuccess | selectDevicePoolBaseDeviceResponseError)
+
+export const getSelectDevicePoolBaseDeviceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/device-pools/${id}/base-device`
+}
+
+export const selectDevicePoolBaseDevice = async (id: string,
+    poolBaseDeviceSelectionBody: PoolBaseDeviceSelectionBody, options?: RequestInit): Promise<selectDevicePoolBaseDeviceResponse> => {
+
+  return deviceFarmFetch<selectDevicePoolBaseDeviceResponse>(getSelectDevicePoolBaseDeviceUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      poolBaseDeviceSelectionBody,)
+  }
+);}
+
+
+
+
+export const getSelectDevicePoolBaseDeviceMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof selectDevicePoolBaseDevice>>, TError,{id: string;data: PoolBaseDeviceSelectionBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof selectDevicePoolBaseDevice>>, TError,{id: string;data: PoolBaseDeviceSelectionBody}, TContext> => {
+
+const mutationKey = ['selectDevicePoolBaseDevice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof selectDevicePoolBaseDevice>>, {id: string;data: PoolBaseDeviceSelectionBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  selectDevicePoolBaseDevice(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SelectDevicePoolBaseDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof selectDevicePoolBaseDevice>>>
+    export type SelectDevicePoolBaseDeviceMutationBody = PoolBaseDeviceSelectionBody
+    export type SelectDevicePoolBaseDeviceMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useSelectDevicePoolBaseDevice = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof selectDevicePoolBaseDevice>>, TError,{id: string;data: PoolBaseDeviceSelectionBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof selectDevicePoolBaseDevice>>,
+        TError,
+        {id: string;data: PoolBaseDeviceSelectionBody},
+        TContext
+      > => {
+
+      const mutationOptions = getSelectDevicePoolBaseDeviceMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
