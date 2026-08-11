@@ -80,6 +80,43 @@ func TestProvisionPhoneCreatesOneCommandAndRaisesPoolTarget(t *testing.T) {
 	assertCount(t, db, "SELECT total_target FROM device_pools WHERE id='pool_000000000000001'", 2)
 }
 
+func TestCatalogProvisioningReusesCachedAndroidVersionAcrossRuntimeProfiles(t *testing.T) {
+	db := openTestDatabase(t)
+	if _, err := db.Pool().Exec(context.Background(), `TRUNCATE TABLE device_provisioning_jobs,device_image_preparations,android_system_image_catalog CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	seedWarmPool(t, db, "ready", 1, 1, 2)
+	ctx := context.Background()
+	if _, err := db.Pool().Exec(ctx, `INSERT INTO device_host_commands(id,host_id,command_type,payload,idempotency_key)
+		VALUES('build_0000000000001','host_000000000000001','prepare_android_image','{}','cached-build-command-key');
+		INSERT INTO android_system_image_catalog
+		(id,package_name,api_level,image_type,abi,revision)
+		VALUES('catalog_000000000001','system-images;android-34;google_apis;x86_64',34,'google_apis','x86_64','7');
+		INSERT INTO device_image_preparations(id,catalog_id,host_id,build_command_id,client_id,idempotency_key,catalog_revision,runtime_profile,image_id,status)
+		VALUES('preparation_0000001','catalog_000000000001','host_000000000000001','build_0000000000001','test','cached-image-key','7',
+		'{}','image_00000000000001','cached')`); err != nil {
+		t.Fatal(err)
+	}
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	requested := runtimeprofile.Default()
+	requested.ContainerMemoryMB = 8192
+	requested.GuestMemoryMB = 6144
+	requested.DataDiskMB = 8192
+	job, created, err := controller.CreateCatalogProvisioning(ctx, warmpool.CatalogProvisionInput{
+		ClientID: "test", IdempotencyKey: "catalog-runtime-difference", PoolID: "pool_000000000000001",
+		CatalogID: "catalog_000000000001", HardwareProfileID: "pixel_9", RuntimeProfile: requested,
+	})
+	if err != nil || !created {
+		t.Fatalf("create job=%+v created=%t error=%v", job, created, err)
+	}
+	cached, err := controller.AttachCachedPreparation(ctx, job.ID)
+	if err != nil || !cached {
+		t.Fatalf("attach cached=%t error=%v", cached, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_provisioning_jobs
+		WHERE preparation_id='preparation_0000001'`, 1)
+}
+
 func TestPoolUsesOnlyDefaultImageAndSwitchDoesNotReimageExistingDevice(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 1, 1, 2)

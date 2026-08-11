@@ -77,7 +77,8 @@ func (service *Service) List(ctx context.Context) ([]Entry, error) {
 	rows, err := service.db.Pool().Query(ctx, `SELECT c.id,c.package_name,c.api_level,c.image_type,c.abi,c.revision,c.source_updated_at,c.last_seen_at,
 		COALESCE(p.id,''),COALESCE(p.image_id,''),COALESCE(p.status,''),COALESCE(p.error_code,''),COALESCE(p.catalog_revision,''),COALESCE(i.status,'')
 		FROM android_system_image_catalog c
-		LEFT JOIN LATERAL (SELECT id,image_id,status,error_code,catalog_revision FROM device_image_preparations p WHERE p.catalog_id=c.id ORDER BY p.created_at DESC LIMIT 1) p ON true
+		LEFT JOIN LATERAL (SELECT id,image_id,status,error_code,catalog_revision FROM device_image_preparations p WHERE p.catalog_id=c.id
+			ORDER BY CASE WHEN p.status='cached' AND p.image_id IS NOT NULL THEN 0 ELSE 1 END,p.created_at DESC LIMIT 1) p ON true
 		LEFT JOIN device_images i ON i.id=p.image_id ORDER BY c.api_level DESC,c.image_type,c.abi`)
 	if err != nil {
 		return nil, err

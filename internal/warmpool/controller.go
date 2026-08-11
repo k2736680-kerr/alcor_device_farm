@@ -165,15 +165,17 @@ func (controller *Controller) AttachPreparation(ctx context.Context, jobID, prep
 	return nil
 }
 
-// AttachCachedPreparation reuses a verified Image built for the exact runtime
-// profile. It prevents a new browser request from needlessly downloading the
-// same Android SDK package again.
+// AttachCachedPreparation reuses any verified Image for the selected immutable
+// Android catalog entry. The runtime profile belongs to the Device being
+// created, not to its SDK package: requiring an exact match would download the
+// same Android version whenever an administrator changes CPU, memory, display,
+// or data-disk settings in the creation wizard.
 func (controller *Controller) AttachCachedPreparation(ctx context.Context, jobID string) (bool, error) {
 	result, err := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs j SET preparation_id=(
-		SELECT p.id FROM device_image_preparations p WHERE p.catalog_id=j.catalog_id AND p.runtime_profile=j.runtime_profile
+		SELECT p.id FROM device_image_preparations p WHERE p.catalog_id=j.catalog_id
 		AND p.status='cached' AND p.image_id IS NOT NULL ORDER BY p.updated_at DESC,p.id DESC LIMIT 1),updated_at=clock_timestamp()
 		WHERE j.id=$1 AND j.status='preparing_image' AND j.preparation_id IS NULL AND EXISTS (
-		SELECT 1 FROM device_image_preparations p WHERE p.catalog_id=j.catalog_id AND p.runtime_profile=j.runtime_profile
+		SELECT 1 FROM device_image_preparations p WHERE p.catalog_id=j.catalog_id
 		AND p.status='cached' AND p.image_id IS NOT NULL)`, jobID)
 	if err != nil {
 		return false, err
