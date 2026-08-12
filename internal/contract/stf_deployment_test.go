@@ -19,7 +19,7 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 	for _, required := range []string{
 		"devicefarmer/stf:3.7.9", "rethinkdb:2.4.2", "--adb-host", "stf-adb",
 		"devicefarmer/adb@sha256:a699fafbc63d8a145f816257b1cd366ea3c5f0aff657e3bb135309bf7da45759",
-		"--allow-remote", "7400-7500", "STF_AUTH_SECRET", "internal: true",
+		"--allow-remote", "--no-cleanup", "7400-7500", "STF_AUTH_SECRET", "internal: true",
 	} {
 		if !strings.Contains(raw, required) {
 			t.Fatalf("STF compose is missing %q", required)
@@ -33,6 +33,7 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 
 	var document struct {
 		Services map[string]struct {
+			Command  []string `yaml:"command"`
 			Ports    []string `yaml:"ports"`
 			Expose   []string `yaml:"expose"`
 			Networks []string `yaml:"networks"`
@@ -66,9 +67,22 @@ func TestSTFComposePinsImagesAndKeepsInfrastructurePrivate(t *testing.T) {
 			t.Fatalf("STF port is not private-by-default: %q", port)
 		}
 	}
+	if !containsSTFValue(document.Services["stf"].Command, "--no-cleanup") ||
+		containsSTFValue(document.Services["stf"].Command, "--cleanup") {
+		t.Fatalf("STF must preserve apps and device data between claims: command=%v", document.Services["stf"].Command)
+	}
 }
 
 func containsSTFNetwork(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSTFValue(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
 			return true

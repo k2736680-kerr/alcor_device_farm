@@ -63,6 +63,18 @@ Pool `8b97a9e7-ab6c-41ff-bc1e-bd922b829ab3` 通过公开 API 将 Pixel 9 / API 3
 
 该结果证明预约 release 只释放 Reservation/STF 占用，不再恢复出厂；APK、账号、缓存和文件由使用者自行管理。
 
+### Alcor/DaFit 集成复验（2026-08-12）
+
+Alcor Worker 通过 Device Farm Adapter 在同一基础设备连续执行真实 DaFit APK 后发现，STF 3.7.9 的默认 `cleanup=true` 会在 claim release 后异步卸载 claim 期间新增的 APK；这绕过了 Device Farm 已取消的 rebuild 链路。根因由 STF 容器内官方 `cleanup` plugin 和 Android `PackageManager deletePackageX` 时间线共同确认。
+
+正式 STF Compose 已增加官方 `--no-cleanup`，并由部署契约测试强制校验。该参数只关闭 STF 的卸载 APK、清账号和清缓存行为，不影响 claim、release 或 `using=false`。真实复验结果：
+
+- 连续 RunAttempt 后 DaFit `firstInstallTime` 保持 `2026-08-12 09:27:56 UTC`，`lastUpdateTime` 随 `adb install -r -d` 更新；
+- `pm path com.crrepa.band.dafit` 始终存在；App 私有目录 marker 和 `/sdcard` marker 在下一次 RunAttempt 后均存在；
+- Emulator `StartedAt=2026-08-11T10:28:25.512810981Z`、容器和数据卷名称保持不变；
+- release 异步窗口结束后 Device 为 `ready/healthy`，STF claim 已释放；
+- 只有显式 rebuild/reimage 仍会按设计清空设备。
+
 ## 显式恢复出厂与直接删除
 
 对扩容设备调用公开 rebuild API，健康 `ready` 设备的请求返回 202。rebuild 使用设备当前 `effective_runtime_profile`，保持 4 CPU、5120 MiB 等有效配置；Host Agent 完成删除和干净重建后设备重新收敛为 `ready/healthy`，原 marker 文件被清除，Appium 辅助包由健康门禁重新安装。rebuild 同时拒绝带活动预约或活动命令的设备。

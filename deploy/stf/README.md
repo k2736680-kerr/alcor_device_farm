@@ -73,6 +73,8 @@ DF-031 管理员 Web 远控还要求 Device Farm Server 持有与本目录 `STF_
 
 STF 3.7.9 的 `local` 启动器会在 INFO 日志中打印子进程完整命令行，其中包含 `--auth-secret`。当前 Compose 因此对 `stf` 主容器使用 `logging.driver=none`，禁止 Docker 持久化该 stdout；`stf-adb`、RethinkDB 日志以及 STF 页面内的设备 Logcat/文件能力不受影响。生产环境如需采集 STF 进程日志，必须先接入经真实验收的 Secret 脱敏代理，不能直接恢复 `json-file`。
 
+设备农场中的 Emulator 是由用户长期管理的设备，不是每次借用后恢复的临时测试机。Compose 必须保留 `--no-cleanup`：STF 默认 cleanup 会在 release 时卸载本次 claim 后新增的 APK，并可能清理账号和缓存；关闭它只停止 STF 的自动清理，不影响 claim、release、`using` 状态或 Device Farm 的预约回收。恢复出厂只能通过 Device Farm 明确的 rebuild/reimage 操作完成。
+
 当 Console 使用 HSTS、STF 仍为 HTTP 时，两者不能共用同一个浏览器主机名：HSTS 不区分端口，会把 STF 的 `http://host:7100` 升级为不可用的 HTTPS。第一阶段应给 STF 配置独立的受控 DNS 名，并让 `STF_PUBLIC_IP` 与 Server 的 `DEVICE_FARM_STF_WEB_URL` 使用该名称；当前验收环境使用 `10-0-30-171.nip.io` 映射内网地址。正式内网 DNS 可用后应替换该临时解析名；另一条演进路径是为 STF App、WebSocket 和屏幕端口统一提供受信 TLS。
 
 完整验收：

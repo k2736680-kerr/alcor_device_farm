@@ -77,6 +77,10 @@ services:
       - --provider-max-port
       - "7500"
       - --allow-remote
+      # Device Farm devices are long-lived. Releasing an STF claim must not
+      # uninstall apps, clear accounts, or remove caches; only an explicit
+      # Device Farm rebuild/reimage is allowed to reset device data.
+      - --no-cleanup
     ports:
       - "${STF_BIND_ADDRESS:-127.0.0.1}:7100:7100"
       - "${STF_BIND_ADDRESS:-127.0.0.1}:7110:7110"
