@@ -58,7 +58,7 @@
 | DF-035 | Android 13～16 镜像目录和真实多规格验收 | completed | DF-034 |
 | DF-036 | 旧镜像受控停用和可用镜像选择 | completed | DF-035 |
 | DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
-| DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | in_progress | DF-037 |
+| DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | completed | DF-037 |
 | ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
 
 ## 3. 阶段 A：工程和契约基础

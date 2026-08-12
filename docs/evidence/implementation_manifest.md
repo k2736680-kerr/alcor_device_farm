@@ -39,7 +39,7 @@
 | DF-035 | completed | `本次提交：完成官方镜像按需构建和真实多规格验收` | `docs/evidence/DF-035/acceptance.md` |
 | DF-036 | completed | `本次提交：完成旧镜像受控停用和可用镜像选择` | `docs/evidence/DF-036/acceptance.md` |
 | DF-037 | completed | `本次提交：完成 Phone 硬件模板和受控模拟器创建向导` | `docs/evidence/DF-037/acceptance.md` |
-| DF-038 | in_progress | `待提交：长期设备、基础设备扩容和 Android Studio 式创建流程` | `docs/evidence/DF-038/acceptance.md` |
+| DF-038 | completed | `56b7ae3 完成DF-038设备重建与真实验收` | `docs/evidence/DF-038/acceptance.md` |
 
 ## 当前剩余条件
 
