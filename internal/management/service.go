@@ -773,7 +773,7 @@ func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempoten
 	} else if found {
 		return replayed, nil
 	}
-	if current.LifecycleStatus != domain.DeviceQuarantined {
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped && current.LifecycleStatus != domain.DeviceQuarantined {
 		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceProvisioning)}
 	}
 	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
@@ -809,7 +809,7 @@ func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempoten
 		payload["image_id"] = *current.ImageID
 		payload["docker_image"] = image.DockerImage
 		payload["docker_digest"] = image.DockerDigest
-		profile, profileErr := runtimeprofile.Parse(image.ResourceConfig)
+		profile, profileErr := runtimeprofile.Parse(current.EffectiveRuntimeProfile)
 		if profileErr != nil {
 			return Device{}, ErrInvalidArgument
 		}
@@ -819,6 +819,7 @@ func (service *Service) rebuildDevice(ctx context.Context, id, reason, idempoten
 		CommandID: commandID, CommandType: "rebuild",
 		IdempotencyKey: commandKey, MaxAttempts: 3,
 		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true,
 	})
 }
 

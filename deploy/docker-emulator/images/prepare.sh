@@ -26,7 +26,7 @@ case "$api_level" in
   34) android_version=14.0 ;; 35) android_version=15.0 ;; 36) android_version=16.0 ;;
   *) android_version="api${api_level}" ;;
 esac
-tag="${android_version}.0-api${api_level}-${image_type}-${abi}-sdk${revision}"
+tag="${android_version}-api${api_level}-${image_type}-${abi}-sdk${revision}"
 local_repository="${DEVICE_FARM_ANDROID_REPOSITORY:-alcor-device-farm/android-emulator}"
 : "${DEVICE_FARM_ANDROID_PUBLISH_REPOSITORY:?set the controlled Registry repository}"
 case "$DEVICE_FARM_ANDROID_PUBLISH_REPOSITORY" in http://*|https://*|*:latest|latest) echo "invalid publish repository" >&2; exit 64;; esac

@@ -187,6 +187,24 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-pools/"+pool.ID+"/devices", map[string]any{"device_id": device.ID}, serviceToken, ""), http.StatusOK)
 	assertPageTotal(t, environment.request(t, http.MethodGet,
 		"/api/v1/devices?pool_id="+pool.ID+"&lifecycle_status=ready&health_status=healthy", nil, serviceToken, ""), 1)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET runtime_profile_override=
+		'{"container_cpu_cores":2,"container_memory_mb":3072,"guest_cpu_cores":2,"guest_memory_mb":2048,
+		"data_disk_mb":2048,"image_disk_mb":0,"width":1080,"height":2400,"density_dpi":420,"vm_heap_mb":512,"graphics":"auto"}'
+		WHERE id=$1`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	readyRebuild := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-ready-rebuild-01")
+	assertStatus(t, readyRebuild, http.StatusAccepted)
+	var readyRebuildMemory int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT (payload->'runtime_profile'->>'container_memory_mb')::int
+		FROM device_host_commands WHERE command_type='rebuild' AND payload->>'device_id'=$1 ORDER BY created_at DESC LIMIT 1`, device.ID).
+		Scan(&readyRebuildMemory); err != nil {
+		t.Fatal(err)
+	}
+	if readyRebuildMemory != 3072 {
+		t.Fatalf("ready rebuild memory=%d want 3072", readyRebuildMemory)
+	}
+	completeNextManagementCommand(t, environment, host.ID, "rebuild", true)
 	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines",
 		reasonBody(), serviceToken, "", "token=must-not-be-audit-actor"), http.StatusBadRequest)
 	restartResponse := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-01")
@@ -222,10 +240,10 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatalf("queued rebuild device = %#v", rebuilding)
 	}
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01"), http.StatusAccepted)
-	assertCommandCount(t, environment.db, device.ID, "rebuild", 1)
+	assertCommandCount(t, environment.db, device.ID, "rebuild", 2)
 	var rebuildImage, rebuildDigest string
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT payload->>'docker_image',payload->>'docker_digest'
-		FROM device_host_commands WHERE command_type='rebuild' AND payload->>'device_id'=$1`, device.ID).
+		FROM device_host_commands WHERE command_type='rebuild' AND payload->>'device_id'=$1 ORDER BY created_at DESC LIMIT 1`, device.ID).
 		Scan(&rebuildImage, &rebuildDigest); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +324,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&auditedActions, &missingFields); err != nil {
 		t.Fatal(err)
 	}
-	if auditedActions != 5 || missingFields != 0 {
+	if auditedActions != 6 || missingFields != 0 {
 		t.Fatalf("device audit actions=%d missing fields=%d", auditedActions, missingFields)
 	}
 	var alcorActorActions int
@@ -323,7 +341,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&commandEvents); err != nil {
 		t.Fatal(err)
 	}
-	if commandEvents != 3 {
+	if commandEvents != 4 {
 		t.Fatalf("management command health events=%d", commandEvents)
 	}
 
