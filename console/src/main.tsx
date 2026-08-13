@@ -19,10 +19,14 @@ const queryClient = new QueryClient({
   },
 })
 
+const routerBase = window.location.pathname.startsWith('/api/v2/device-farm/console')
+  ? '/api/v2/device-farm/console'
+  : '/console'
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename="/console">
+      <BrowserRouter basename={routerBase}>
         <ConfigProvider
           locale={zhCN}
           theme={{

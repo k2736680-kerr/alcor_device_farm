@@ -70,6 +70,7 @@ export default function App() {
   })
   const session = unwrapData<ConsoleSession>(data)
   const currentTitle = pageTitles[location.pathname] ?? '设备资源管理'
+  const embedded = window.self !== window.top
 
   if (isPending) {
     return (
@@ -93,6 +94,7 @@ export default function App() {
         logoutPending={logout.isPending}
         onLogout={() => logout.mutate()}
         session={session}
+        embedded={embedded}
       />
     </RemoteControlProvider>
   )
@@ -104,34 +106,36 @@ function AuthenticatedConsole({
   logoutPending,
   onLogout,
   session,
+  embedded,
 }: {
   currentTitle: string
   displayName: string
   logoutPending: boolean
   onLogout(): void
   session: ConsoleSession
+  embedded: boolean
 }) {
   const remote = useRemoteControl()
 
   return (
-    <Layout className="console-shell">
-      <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={72}>
-        <div className="console-brand">
+    <Layout className={embedded ? 'console-shell console-shell-embedded' : 'console-shell'}>
+      <Layout.Sider className="console-sider" theme="dark" width={embedded ? 190 : 232} breakpoint="lg" collapsedWidth={72}>
+        {!embedded && <div className="console-brand">
           <div className="console-brand-mark"><CloudServerOutlined /></div>
           <div className="console-brand-copy">
             <strong>Alcor Farm</strong>
             <span>设备控制</span>
           </div>
-        </div>
-        <div className="console-nav-label">资源与调度</div>
+        </div>}
+        {!embedded && <div className="console-nav-label">资源与调度</div>}
         <Menu className="console-menu" theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
-        <div className="console-sider-footer">
+        {!embedded && <div className="console-sider-footer">
           <SafetyCertificateOutlined />
           <span>设备域安全边界</span>
-        </div>
+        </div>}
       </Layout.Sider>
       <Layout>
-        <Layout.Header className="console-header">
+        {!embedded && <Layout.Header className="console-header">
           <div>
             <Typography.Text type="secondary" className="console-eyebrow">设备农场控制台</Typography.Text>
             <Typography.Title level={4} className="console-page-title">
@@ -146,7 +150,7 @@ function AuthenticatedConsole({
               退出
             </Button>
           </Space>
-        </Layout.Header>
+        </Layout.Header>}
         <Layout.Content className="console-content">
           {remote.device && (
             <Alert

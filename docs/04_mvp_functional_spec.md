@@ -281,6 +281,8 @@ DF-026 将 `openapi/device-farm-v1.yaml` 的契约版本提升为 `1.2.0`；现�
 
 DF-031 只向现有 `1.2.0` 契约增加管理员专用 `/console/api/v1/devices/{id}/remote-control*` 接口；既有 Alcor Adapter 的 Service Bearer、Reservation 和 Device 响应保持兼容，冻结哈希随有意变更更新。
 
+ALCOR-001 将契约版本提升为 `1.9.0`，为 Alcor 受控网关增加 Service Bearer 版本的 `/api/v1/devices/{id}/remote-control*`。它与独立 Console 的管理员接口共同调用唯一 `remotecontrol.Service`、Reservation 和 STF JWT 链路；Alcor 浏览器只访问同源代理，不获得 Device Farm Service Token、独立 Console Cookie 或 STF Token。
+
 DF-034 将契约版本提升为 `1.5.0`，新增 Device 当前/有效/待应用运行规格和 `POST /api/v1/devices/{id}/reimages`。该接口只编排设备域已有的 Host Command、Docker Provider、STF 和 Appium Adapter，不在 Console 重写底层能力。
 
 ### 4.12 其他资源状态

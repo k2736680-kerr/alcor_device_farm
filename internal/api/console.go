@@ -41,6 +41,13 @@ func RegisterConsole(mux *http.ServeMux, authentication *consoleauth.Service, qu
 	mux.HandleFunc("GET /console/api/v1/devices/{id}/remote-control", handler.getRemoteControl)
 	mux.HandleFunc("POST /console/api/v1/devices/{id}/remote-control/heartbeat", handler.heartbeatRemoteControl)
 	mux.HandleFunc("DELETE /console/api/v1/devices/{id}/remote-control", handler.endRemoteControl)
+	// Alcor's authenticated gateway uses the normal service credential and the
+	// audited actor header. These routes deliberately reuse the same remote
+	// control service as the standalone Console.
+	mux.HandleFunc("POST /api/v1/devices/{id}/remote-control", handler.startRemoteControl)
+	mux.HandleFunc("GET /api/v1/devices/{id}/remote-control", handler.getRemoteControl)
+	mux.HandleFunc("POST /api/v1/devices/{id}/remote-control/heartbeat", handler.heartbeatRemoteControl)
+	mux.HandleFunc("DELETE /api/v1/devices/{id}/remote-control", handler.endRemoteControl)
 }
 
 func (handler *consoleHandler) startRemoteControl(writer http.ResponseWriter, request *http.Request) {
@@ -57,10 +64,9 @@ func (handler *consoleHandler) getRemoteControl(writer http.ResponseWriter, requ
 	if !handler.remoteAdmin(writer, request) {
 		return
 	}
-	principal, _ := auth.FromContext(request.Context())
 	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
 	defer cancel()
-	value, err := handler.remote.Get(ctx, principal.SubjectID, request.PathValue("id"))
+	value, err := handler.remote.Get(ctx, requestActor(request).ID, request.PathValue("id"))
 	handler.writeRemote(writer, request, http.StatusOK, value, err)
 }
 
@@ -92,8 +98,10 @@ func (handler *consoleHandler) endRemoteControl(writer http.ResponseWriter, requ
 
 func (handler *consoleHandler) remoteAdmin(writer http.ResponseWriter, request *http.Request) bool {
 	principal, ok := auth.FromContext(request.Context())
-	if !ok || principal.Role != auth.RoleConsole || principal.ConsoleRole != auth.ConsoleAdmin {
-		writeForbidden(writer, request, "only console admins can control devices remotely")
+	allowed := ok && (principal.Role == auth.RoleService ||
+		(principal.Role == auth.RoleConsole && principal.ConsoleRole == auth.ConsoleAdmin))
+	if !allowed {
+		writeForbidden(writer, request, "only trusted platform services or console admins can control devices remotely")
 		return false
 	}
 	if handler.remote == nil {

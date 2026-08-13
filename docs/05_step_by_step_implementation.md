@@ -59,7 +59,7 @@
 | DF-036 | 旧镜像受控停用和可用镜像选择 | completed | DF-035 |
 | DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
 | DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | completed | DF-037 |
-| ALCOR-001 | 新版 Alcor 真实接口联调 | waiting_external | DF-028、新版 Alcor OpenAPI |
+| ALCOR-001 | 新版 Alcor 真实接口联调与统一入口 | completed | DF-028、新版 Alcor 实际 `test` 分支 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -395,15 +395,15 @@
 
 ## 10. 阶段 H：新版 Alcor 接入
 
-### ALCOR-001 新版 Alcor 真实接口联调
+### ALCOR-001 新版 Alcor 真实接口联调与统一入口
 
-该任务必须等待新版 Alcor 实际分支和 OpenAPI，不能提前标记完成。
+本地新版 Alcor `test` 分支已具备 Android 接入实现，本任务进入真实联调；正式分支合并和正式部署不属于本地完成条件。
 
-开工门禁：运行 `scripts/check-alcor-integration-readiness.ps1` 必须输出 `ALCOR_DEVICE_FARM_READY=true`。当前 `origin/feature/refactoring@868de61` 只有 RunAttempt/Worker 主体，Swagger、Device Farm Adapter、配置和 `X-Eval-*` Header 尚未齐备，审计见 `docs/evidence/ALCOR-001/readiness.md`。
+开工门禁已由本地新版 Alcor `test` 分支满足：RunAttempt/Worker、Android Executor、Device Farm 配置、受控操作者 Header、Artifact 和真实 DaFit 链路均已出现并完成阶段性验收，审计见 `docs/evidence/ALCOR-001/readiness.md`。
 
-实施：核对认证、RunAttempt、取消、ArtifactStore 和关联 Header；实现 Worker Device Farm Adapter；执行双方契约和真实 DaFit/Android 冒烟。
+实施：核对认证、RunAttempt、取消、ArtifactStore 和关联 Header；实现 Worker Device Farm Adapter；在 Alcor 一级导航以同源受控代理嵌入既有 Device Farm Console，钉钉登录一次即可管理设备、预约和远控，APK 版本作为同页二级区域继续由 Alcor 管理；执行双方契约和真实 DaFit/Android 冒烟。
 
-验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed；Alcor 设备入口与独立 Device Farm Console 不产生两套设备状态或操作语义。
+验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed；Alcor 设备入口与独立 Device Farm Console 不产生两套设备状态或操作语义；浏览器没有 Service/STF Token，设备操作审计记录钉钉操作者，打开设备入口无需第二次登录。
 
 ## 11. 单任务完成定义
 

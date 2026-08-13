@@ -41,4 +41,24 @@ describe('deviceFarmFetch', () => {
     await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS)
     await rejection
   })
+
+  it('routes an embedded console request through the Alcor gateway', async () => {
+    const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
+    Object.defineProperty(window, 'top', { configurable: true, value: {} })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ request_id: 'req_embedded', data: {}, error: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    try {
+      await deviceFarmFetch('/console/api/v1/devices/device-1/remote-control', { method: 'POST' })
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(url).toBe('/api/v2/device-farm/proxy/api/v1/devices/device-1/remote-control')
+      expect(new Headers(init?.headers).get('X-Alcor-Device-Farm')).toBe('embedded-console')
+    } finally {
+      if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
+    }
+  })
 })

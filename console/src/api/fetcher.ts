@@ -17,6 +17,16 @@ type ErrorEnvelope = {
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
 
+function embeddedURL(url: string): string {
+  if (window.self === window.top) return url
+  if (url.startsWith('/api/v1/')) return `/api/v2/device-farm/proxy${url}`
+  if (url === '/console/api/v1/me') return '/api/v2/device-farm/session'
+  if (url.startsWith('/console/api/v1/devices/')) {
+    return `/api/v2/device-farm/proxy${url.replace('/console/api/v1', '/api/v1')}`
+  }
+  return url
+}
+
 function cookie(name: string): string | undefined {
   const prefix = `${encodeURIComponent(name)}=`
   return document.cookie.split(';').map((value) => value.trim()).find((value) => value.startsWith(prefix))?.slice(prefix.length)
@@ -25,6 +35,7 @@ function cookie(name: string): string | undefined {
 export async function deviceFarmFetch<T>(url: string, options: RequestInit): Promise<T> {
   const headers = new Headers(options.headers)
   const method = (options.method ?? 'GET').toUpperCase()
+  if (window.self !== window.top) headers.set('X-Alcor-Device-Farm', 'embedded-console')
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     if (!headers.has('Idempotency-Key')) {
       const requestKey = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
@@ -49,7 +60,7 @@ export async function deviceFarmFetch<T>(url: string, options: RequestInit): Pro
   }, DEFAULT_REQUEST_TIMEOUT_MS)
 
   try {
-    const response = await fetch(url, { ...options, headers, signal: controller.signal, credentials: 'same-origin' })
+    const response = await fetch(embeddedURL(url), { ...options, headers, signal: controller.signal, credentials: 'same-origin' })
     const payload = (await response.json()) as T & ErrorEnvelope
     if (!response.ok) {
       throw new DeviceFarmAPIError(

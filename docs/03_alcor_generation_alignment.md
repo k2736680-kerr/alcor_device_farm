@@ -81,7 +81,7 @@
 
 在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。Console 可使用独立配置用户和设备域短时会话，并为管理员编排与 Reservation 绑定的 STF 原生 Web 入口，但不得复制 Alcor 钉钉用户、平台 RBAC、业务审计模型或 STF 远控实现。
 
-当前不能安全定稿：新版 Eval Console 如何链接、嵌入或复用 Device Farm Console、Android Case/Template 结构、App/APK Build 正式模型、Worker 内 Android Executor 代码位置、Device Farm Adapter 的具体 Go 接口。它们必须等待新版实际分支或专项接口文档，不能根据旧 master 猜测；这不阻塞 Device Farm Console 独立交付。
+新版 Alcor 实际 `test` 分支已具备钉钉会话、App Build、Android Worker 和 Device Farm Adapter，因此统一入口确定为：Alcor 同源受控代理嵌入既有 Device Farm Console，APK 版本继续属于 Alcor，Device/Reservation/远控继续属于设备农场。浏览器只携带 Alcor 会话；Alcor 服务端持有 Service Token 并透传受控操作者 ID。仍未定稿的范围只剩 Android Case/Template 的进一步产品化和平台 RBAC；不得用当前统一入口复制设备域数据或页面。
 
 ## 5.1 DF-038 长期设备和基础设备扩容补充
 

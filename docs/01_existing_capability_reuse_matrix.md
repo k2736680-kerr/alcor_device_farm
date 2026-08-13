@@ -73,6 +73,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -Device Farm Console，只展示和操作设备域资源；
 -浏览器安全访问、页面权限和设备域操作审计衔接；
 -管理员 STF Web 远控编排：精确设备短租约、短时 JWT 入口、心跳和关闭回收；只链接 STF 原生页面，不实现画面或触控；
+-Alcor 统一设备入口：只允许 Alcor 服务端持有 Device Farm Service Token，钉钉用户经同源代理访问既有 Console；代理透传受控操作者 ID，浏览器不得获得 Service Token、STF Token 或设备内部端口；
 -Host 资源探测、设备运行规格校验和动态容量预检；复用 Docker/KVM/Android Emulator 的限制参数，不另建虚拟化层；
 -官方 Android System Image 目录同步、按需镜像准备、不可变 digest 验证和内部缓存；继续复用 Android SDK `sdkmanager`/`avdmanager`、既有 Image、Host Command 和 Docker Provider；
 -已验证 Device Image 的受控停用、默认隐藏和设备池默认镜像选择；复用既有 Image 状态机、Pool Image 关系、设备域审计和 Console，不物理删除历史 Device/Image，也不新增镜像仓库实现；
@@ -88,7 +89,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 | Appium Adapter健康检查 | DaFit Appium Session | Adapter只确认服务可用、端口隔离和Endpoint，不执行页面步骤；WebDriver仍由DaFit或未来Alcor Executor创建 |
 | PostgreSQL Reservation | STF claim | Reservation是跨进程业务占用真相和租约；STF claim是远控工具的技术占用。顺序固定为数据库预约成功后调用STF claim |
 | Device Session | 新版 Alcor RunAttempt | Device Session只描述一次设备占用与技术连接；RunAttempt负责整个业务执行和结果。两者通过外部 UUID/ULID 关联，不互相替代 |
-| Device Farm Console | 新版 Alcor Eval Console | 前者只控制设备资源并可独立运行；后者负责完整评估业务。未来可以通过链接、嵌入或模块复用统一入口，但当前不复制 Alcor 业务对象 |
+| Device Farm Console | 新版 Alcor Eval Console | 前者只控制设备资源并可独立运行；后者负责完整评估业务。Alcor 通过同源受控代理嵌入现有 Console，复用钉钉会话并以 Service Token 调用同一设备 API；不复制页面、设备状态或 Alcor 业务对象 |
 | STF 原生 Web 远控 | STF 原生 Web 页面 | 按 ADR-0013 由 Console 编排短租约和短时 Web 登录后打开 STF 原生单设备页；不展示 `remoteConnect` TCP 地址，也不实现画面流、触控、日志或文件协议 |
 | 动态容量预检 | Docker/cgroup 与 Host 操作系统资源 | Docker 和操作系统只提供事实；设备农场根据已登记设备、在途命令和每台有效规格做调度预留，不复制容器运行时 |
 | Emulator 运行规格和重装 | Android Emulator/Docker 参数 | Console 只保存、校验并编排 CPU、内存、分辨率、GPU 与镜像选择；实际创建、删除和启动仍由既有 Host Agent/Provider 完成 |

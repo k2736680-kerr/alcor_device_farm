@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 1.8.0
+ * OpenAPI spec version: 1.9.0
  */
 import {
   useMutation,
@@ -6764,6 +6764,484 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getHeartbeatDeviceRemoteControlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Trusted Alcor gateway equivalent of the Console admin operation. The audited actor is supplied by the authenticated service integration.
+ */
+export type startIntegratedDeviceRemoteControlResponse202 = {
+  data: RemoteControlAcceptedResponse
+  status: 202
+}
+
+export type startIntegratedDeviceRemoteControlResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type startIntegratedDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type startIntegratedDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type startIntegratedDeviceRemoteControlResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type startIntegratedDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type startIntegratedDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
+export type startIntegratedDeviceRemoteControlResponseSuccess = (startIntegratedDeviceRemoteControlResponse202) & {
+  headers: Headers;
+};
+export type startIntegratedDeviceRemoteControlResponseError = (startIntegratedDeviceRemoteControlResponse400 | startIntegratedDeviceRemoteControlResponse401 | startIntegratedDeviceRemoteControlResponse403 | startIntegratedDeviceRemoteControlResponse409 | startIntegratedDeviceRemoteControlResponse503 | startIntegratedDeviceRemoteControlResponse504) & {
+  headers: Headers;
+};
+
+export type startIntegratedDeviceRemoteControlResponse = (startIntegratedDeviceRemoteControlResponseSuccess | startIntegratedDeviceRemoteControlResponseError)
+
+export const getStartIntegratedDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/remote-control`
+}
+
+export const startIntegratedDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<startIntegratedDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<startIntegratedDeviceRemoteControlResponse>(getStartIntegratedDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getStartIntegratedDeviceRemoteControlMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['startIntegratedDeviceRemoteControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startIntegratedDeviceRemoteControl>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  startIntegratedDeviceRemoteControl(id,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartIntegratedDeviceRemoteControlMutationResult = NonNullable<Awaited<ReturnType<typeof startIntegratedDeviceRemoteControl>>>
+
+    export type StartIntegratedDeviceRemoteControlMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse
+
+    export const useStartIntegratedDeviceRemoteControl = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startIntegratedDeviceRemoteControl>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getStartIntegratedDeviceRemoteControlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Trusted Alcor gateway lookup for the current audited actor's remote control.
+ */
+export type getIntegratedDeviceRemoteControlResponse200 = {
+  data: RemoteControlSuccessResponse
+  status: 200
+}
+
+export type getIntegratedDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type getIntegratedDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type getIntegratedDeviceRemoteControlResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type getIntegratedDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type getIntegratedDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
+export type getIntegratedDeviceRemoteControlResponseSuccess = (getIntegratedDeviceRemoteControlResponse200) & {
+  headers: Headers;
+};
+export type getIntegratedDeviceRemoteControlResponseError = (getIntegratedDeviceRemoteControlResponse401 | getIntegratedDeviceRemoteControlResponse403 | getIntegratedDeviceRemoteControlResponse404 | getIntegratedDeviceRemoteControlResponse503 | getIntegratedDeviceRemoteControlResponse504) & {
+  headers: Headers;
+};
+
+export type getIntegratedDeviceRemoteControlResponse = (getIntegratedDeviceRemoteControlResponseSuccess | getIntegratedDeviceRemoteControlResponseError)
+
+export const getGetIntegratedDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/remote-control`
+}
+
+export const getIntegratedDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<getIntegratedDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<getIntegratedDeviceRemoteControlResponse>(getGetIntegratedDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIntegratedDeviceRemoteControlQueryKey = (id?: string,) => {
+    return [
+    `/api/v1/devices/${id}/remote-control`
+    ] as const;
+    }
+
+
+export const getGetIntegratedDeviceRemoteControlQueryOptions = <TData = Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIntegratedDeviceRemoteControlQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>> = ({ signal }) => getIntegratedDeviceRemoteControl(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIntegratedDeviceRemoteControlQueryResult = NonNullable<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>>
+export type GetIntegratedDeviceRemoteControlQueryError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse
+
+
+export function useGetIntegratedDeviceRemoteControl<TData = Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>,
+          TError,
+          Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIntegratedDeviceRemoteControl<TData = Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>,
+          TError,
+          Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIntegratedDeviceRemoteControl<TData = Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetIntegratedDeviceRemoteControl<TData = Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError = UnauthorizedResponse | ForbiddenResponse | ErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIntegratedDeviceRemoteControl>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIntegratedDeviceRemoteControlQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Trusted Alcor gateway operation that reuses the existing Reservation/STF release path.
+ */
+export type endIntegratedDeviceRemoteControlResponse200 = {
+  data: RemoteControlSuccessResponse
+  status: 200
+}
+
+export type endIntegratedDeviceRemoteControlResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type endIntegratedDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type endIntegratedDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type endIntegratedDeviceRemoteControlResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type endIntegratedDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type endIntegratedDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
+export type endIntegratedDeviceRemoteControlResponseSuccess = (endIntegratedDeviceRemoteControlResponse200) & {
+  headers: Headers;
+};
+export type endIntegratedDeviceRemoteControlResponseError = (endIntegratedDeviceRemoteControlResponse400 | endIntegratedDeviceRemoteControlResponse401 | endIntegratedDeviceRemoteControlResponse403 | endIntegratedDeviceRemoteControlResponse409 | endIntegratedDeviceRemoteControlResponse503 | endIntegratedDeviceRemoteControlResponse504) & {
+  headers: Headers;
+};
+
+export type endIntegratedDeviceRemoteControlResponse = (endIntegratedDeviceRemoteControlResponseSuccess | endIntegratedDeviceRemoteControlResponseError)
+
+export const getEndIntegratedDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/remote-control`
+}
+
+export const endIntegratedDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<endIntegratedDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<endIntegratedDeviceRemoteControlResponse>(getEndIntegratedDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getEndIntegratedDeviceRemoteControlMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof endIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['endIntegratedDeviceRemoteControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endIntegratedDeviceRemoteControl>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  endIntegratedDeviceRemoteControl(id,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EndIntegratedDeviceRemoteControlMutationResult = NonNullable<Awaited<ReturnType<typeof endIntegratedDeviceRemoteControl>>>
+
+    export type EndIntegratedDeviceRemoteControlMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse
+
+    export const useEndIntegratedDeviceRemoteControl = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof endIntegratedDeviceRemoteControl>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getEndIntegratedDeviceRemoteControlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Trusted Alcor gateway heartbeat for the current audited actor's remote control.
+ */
+export type heartbeatIntegratedDeviceRemoteControlResponse200 = {
+  data: RemoteControlSuccessResponse
+  status: 200
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
+export type heartbeatIntegratedDeviceRemoteControlResponseSuccess = (heartbeatIntegratedDeviceRemoteControlResponse200) & {
+  headers: Headers;
+};
+export type heartbeatIntegratedDeviceRemoteControlResponseError = (heartbeatIntegratedDeviceRemoteControlResponse400 | heartbeatIntegratedDeviceRemoteControlResponse401 | heartbeatIntegratedDeviceRemoteControlResponse403 | heartbeatIntegratedDeviceRemoteControlResponse404 | heartbeatIntegratedDeviceRemoteControlResponse409 | heartbeatIntegratedDeviceRemoteControlResponse503 | heartbeatIntegratedDeviceRemoteControlResponse504) & {
+  headers: Headers;
+};
+
+export type heartbeatIntegratedDeviceRemoteControlResponse = (heartbeatIntegratedDeviceRemoteControlResponseSuccess | heartbeatIntegratedDeviceRemoteControlResponseError)
+
+export const getHeartbeatIntegratedDeviceRemoteControlUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/remote-control/heartbeat`
+}
+
+export const heartbeatIntegratedDeviceRemoteControl = async (id: string, options?: RequestInit): Promise<heartbeatIntegratedDeviceRemoteControlResponse> => {
+
+  return deviceFarmFetch<heartbeatIntegratedDeviceRemoteControlResponse>(getHeartbeatIntegratedDeviceRemoteControlUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getHeartbeatIntegratedDeviceRemoteControlMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof heartbeatIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['heartbeatIntegratedDeviceRemoteControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatIntegratedDeviceRemoteControl>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  heartbeatIntegratedDeviceRemoteControl(id,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type HeartbeatIntegratedDeviceRemoteControlMutationResult = NonNullable<Awaited<ReturnType<typeof heartbeatIntegratedDeviceRemoteControl>>>
+
+    export type HeartbeatIntegratedDeviceRemoteControlMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse
+
+    export const useHeartbeatIntegratedDeviceRemoteControl = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatIntegratedDeviceRemoteControl>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof heartbeatIntegratedDeviceRemoteControl>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getHeartbeatIntegratedDeviceRemoteControlMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

@@ -10,6 +10,9 @@ body { margin: 0; min-width: 320px; background: #f3f6fb; }
 a { color: inherit; }
 
 .console-shell { min-height: 100vh; }
+.console-shell-embedded { min-height: 720px; }
+.console-shell-embedded .console-content { height: auto; min-height: 720px; padding: 0; }
+.console-shell-embedded .console-menu { padding-top: 12px; }
 .console-sider { position: relative; box-shadow: 12px 0 32px rgba(15, 35, 66, .08); }
 .console-brand { height: 82px; display: flex; align-items: center; gap: 12px; padding: 0 22px; color: #fff; }
 .console-brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #fff; font-size: 19px; background: linear-gradient(145deg, #3b82f6, #1d4ed8); box-shadow: 0 8px 18px rgba(37, 99, 235, .35); }

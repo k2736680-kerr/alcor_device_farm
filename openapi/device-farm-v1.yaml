@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.8.0
+  version: 1.9.0
   x-contract-status: frozen
-  x-contract-frozen-at: 2026-08-10
+  x-contract-frozen-at: 2026-08-13
   x-platform-semantics: Case/Run/RunAttempt
   description: >-
     Android 设备农场独立控制面契约。北向接口只接受平台服务身份，
@@ -783,6 +783,65 @@ paths:
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
         - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200": {$ref: "#/components/responses/RemoteControlSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
+  /api/v1/devices/{id}/remote-control:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: startIntegratedDeviceRemoteControl
+      description: Trusted Alcor gateway equivalent of the Console admin operation. The audited actor is supplied by the authenticated service integration.
+      security: [{serviceBearer: []}]
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      responses:
+        "202": {$ref: "#/components/responses/RemoteControlAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [Devices]
+      operationId: getIntegratedDeviceRemoteControl
+      description: Trusted Alcor gateway lookup for the current audited actor's remote control.
+      security: [{serviceBearer: []}]
+      responses:
+        "200": {$ref: "#/components/responses/RemoteControlSuccess"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [Devices]
+      operationId: endIntegratedDeviceRemoteControl
+      description: Trusted Alcor gateway operation that reuses the existing Reservation/STF release path.
+      security: [{serviceBearer: []}]
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      responses:
+        "200": {$ref: "#/components/responses/RemoteControlSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
+  /api/v1/devices/{id}/remote-control/heartbeat:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: heartbeatIntegratedDeviceRemoteControl
+      description: Trusted Alcor gateway heartbeat for the current audited actor's remote control.
+      security: [{serviceBearer: []}]
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       responses:
         "200": {$ref: "#/components/responses/RemoteControlSuccess"}
         "400": {$ref: "#/components/responses/BadRequest"}

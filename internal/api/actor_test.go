@@ -55,6 +55,20 @@ func TestServiceCallerMayNameItsOwnActor(t *testing.T) {
 	}
 }
 
+func TestServiceCallerCanReachIntegratedRemoteControlRoute(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/devices/device_0000000000001/remote-control", nil)
+	request.Header.Set("Authorization", "Bearer service-secret")
+	request.Header.Set("X-Device-Farm-Actor-Id", "ding-user-001")
+
+	actor, status := resolveThroughMiddleware(t, request, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", status)
+	}
+	if actor.Type != audit.ActorService || actor.ID != "ding-user-001" {
+		t.Fatalf("actor = %+v, want service/ding-user-001", actor)
+	}
+}
+
 func TestServiceCallerWithoutActorHeaderFallsBackToServiceIdentity(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
 	request.Header.Set("Authorization", "Bearer service-secret")

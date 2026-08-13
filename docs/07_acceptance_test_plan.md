@@ -186,6 +186,8 @@
 | AT-ALC-003 | P0 | Provider/STF/Appium 故障 | 可稳定映射为基础设施失败信息 |
 | AT-ALC-004 | P0 | Attempt 取消/超时 | release 接口幂等，设备最终回收 |
 | AT-ALC-005 | P1 | OpenAPI 生成客户端对 Mock Server 运行 | 申请、查询、续租、释放全部通过 |
+| AT-ALC-006 | P0 | 钉钉用户从 Alcor 一级导航打开设备农场 | 同源加载既有 Device Farm Console，无第二次登录，不产生第二套 Device/Reservation 数据 |
+| AT-ALC-007 | P0 | 在 Alcor 内预约、操作或远控设备 | Alcor 服务端使用 Service Token，设备域审计记录受控钉钉操作者；浏览器无 Service/STF Token、内部 Endpoint 和独立 Console Cookie |
 
 ### 4.9 Device Farm Console
 

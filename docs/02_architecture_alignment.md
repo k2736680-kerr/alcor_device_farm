@@ -10,9 +10,9 @@
 
 | 组件 | 当前工作区处理 | 新版 Alcor 接入方式 | 禁止跑偏 |
 |---|---|---|---|
-| Device Farm Console | 当前新增可独立使用的设备控制后台；按 ADR-0013 为管理员编排 Reservation 绑定的 STF 原生 Web 远控，仍不展示 STF `remoteConnect` TCP 地址 | 新版 Alcor 可链接、嵌入或复用设备域模块，也可继续通过 Adapter 调用同一 API | 不实现 Alcor 评估业务页面，不复制 STF 远控，不让浏览器接触 STF API Token 或签名 Secret |
+| Device Farm Console | 当前新增可独立使用的设备控制后台；按 ADR-0013 为管理员编排 Reservation 绑定的 STF 原生 Web 远控，仍不展示 STF `remoteConnect` TCP 地址 | Alcor 以同源受控代理嵌入现有 Console；钉钉会话只在 Alcor 校验，Alcor 服务端使用 Service Token 和受控操作者 Header 调用同一设备 API | 不实现 Alcor 评估业务页面，不复制 STF 远控，不让浏览器接触 Service/STF Token 或签名 Secret |
 | Console Gateway 与会话 | 当前在 Device Farm Server 新增 `console` Principal、配置用户和 PostgreSQL 短时会话 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表 |
-| Eval Console 设备入口 | 当前不开发 Alcor 页面 | 新版 Alcor 后续按实际前端架构接入 Device Farm Console 或设备 API | 不把新版 Alcor 完成作为当前设备控制后台的前置条件 |
+| Eval Console 设备入口 | 设备农场保持独立交付；嵌入模式复用同一前端构建和设备 API | Alcor 一级导航提供“设备农场”，通过认证代理加载 `/console/`，APK 版本仍由 Alcor 管理并作为同页二级区域 | 不将 Device/Reservation 数据复制到 Alcor，不把 APK 业务索引写入设备农场 |
 | Case、Dataset、Target、Config | 当前不开发 | 由新版 `/api/v1` 和 PostgreSQL/ClickHouse 管理 | 不建临时替代业务表和 API |
 | Run、RunAttempt、Result、Artifact | 当前不开发正式业务模型 | 由独立 Worker、PostgreSQL、ClickHouse、Supabase Storage 管理 | DaFit 报告只作为联调产物 |
 | Device Farm Adapter | 提供北向 OpenAPI 和 Mock | 由新版 Worker 在第六阶段实现 | 不直接依赖旧 `eval_tasks` 或共享数据库 |
