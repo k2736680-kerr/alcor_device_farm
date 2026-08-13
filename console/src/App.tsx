@@ -15,6 +15,7 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import {
   getGetConsoleSessionQueryKey,
   useDeleteConsoleSession,
@@ -72,6 +73,12 @@ export default function App() {
   const currentTitle = pageTitles[location.pathname] ?? '设备资源管理'
   const embedded = window.self !== window.top
 
+  useEffect(() => {
+    if (embedded) {
+      window.parent.postMessage({ type: 'alcor-device-farm-route', path: location.pathname }, window.location.origin)
+    }
+  }, [embedded, location.pathname])
+
   if (isPending) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
@@ -119,7 +126,7 @@ function AuthenticatedConsole({
 
   return (
     <Layout className={embedded ? 'console-shell console-shell-embedded' : 'console-shell'}>
-      <Layout.Sider className="console-sider" theme="dark" width={embedded ? 190 : 232} breakpoint="lg" collapsedWidth={72}>
+      {!embedded && <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={72}>
         {!embedded && <div className="console-brand">
           <div className="console-brand-mark"><CloudServerOutlined /></div>
           <div className="console-brand-copy">
@@ -133,7 +140,7 @@ function AuthenticatedConsole({
           <SafetyCertificateOutlined />
           <span>设备域安全边界</span>
         </div>}
-      </Layout.Sider>
+      </Layout.Sider>}
       <Layout>
         {!embedded && <Layout.Header className="console-header">
           <div>

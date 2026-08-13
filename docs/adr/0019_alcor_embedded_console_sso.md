@@ -12,7 +12,8 @@
 
 ## 决策
 
-- Alcor 一级导航使用“设备农场”，默认嵌入现有 Device Farm Console；“应用版本（APK）”作为该页面的二级区域，数据仍属于 Alcor。
+- Alcor 一级导航使用“设备农场”，展开运行概览、宿主机、设备池、设备、预约、应用版本、健康事件和操作审计二级菜单；设备域路由嵌入现有 Device Farm Console，“应用版本”使用 Alcor 原生页面，数据仍属于 Alcor。
+- 嵌入模式隐藏 Device Farm Console 自身的侧栏和页头，只保留资源内容区；独立访问 Console 时仍保留完整导航。
 - Alcor API 校验既有钉钉会话，并通过同源受控代理转发设备请求；浏览器不持有 Device Farm Service Token、STF Token 或独立 Console 密码。
 - Alcor 服务端只从已验证会话取得用户 ID，通过 `X-Device-Farm-Actor-Id` 传给设备农场；浏览器提交的同名 Header 不可信且必须被覆盖。
 - 设备农场保留独立 Console 和独立 PostgreSQL；嵌入模式复用同一前端源码、OpenAPI 客户端、Device/Reservation 状态机和设备域审计。
