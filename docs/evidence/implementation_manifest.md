@@ -42,7 +42,7 @@
 | DF-038 | completed | `56b7ae3 完成DF-038设备重建与真实验收` | `docs/evidence/DF-038/acceptance.md` |
 | DF-039 | completed | `dd6a52c 形成DF-039 iOS设备农场设计` | `docs/evidence/DF-039/acceptance.md` |
 | DF-040 | completed | `31fc0a2 完成DF-040平台中立设备域模型` | `docs/evidence/DF-040/acceptance.md` |
-| DF-041 | in_progress | — | `docs/evidence/DF-041/acceptance.md` |
+| DF-041 | completed | `ba25501 完成DF-041 macOS宿主机与iOS只读适配` | `docs/evidence/DF-041/acceptance.md` |
 | DF-042 | pending | — | `docs/evidence/DF-042/acceptance.md` |
 | DF-043 | pending | — | `docs/evidence/DF-043/acceptance.md` |
 | DF-044 | pending | — | `docs/evidence/DF-044/acceptance.md` |

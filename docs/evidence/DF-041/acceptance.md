@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-`in_progress`
+`completed`
 
-代码、真实 E4 验收和脱敏证据已经完成，等待本任务实现提交后回填提交号并改为 `completed`。本状态不提前宣称 DF-042 Session Fence、DF-043 Simulator 生命周期或 DF-044 真机能力完成。
+代码、真实 E4 验收和脱敏证据均已完成，主要实现提交为 `ba25501 完成DF-041 macOS宿主机与iOS只读适配`。本状态不提前宣称 DF-042 Session Fence、DF-043 Simulator 生命周期或 DF-044 真机能力完成。
 
 ## 实现结果
 

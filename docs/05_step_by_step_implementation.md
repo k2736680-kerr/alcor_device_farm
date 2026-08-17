@@ -62,7 +62,7 @@
 | ALCOR-001 | 新版 Alcor 真实接口联调与统一入口 | completed | DF-028、新版 Alcor 实际 `test` 分支 |
 | DF-039 | 第二版多平台宿主机与 iOS 接入设计 | completed | DF-038、ALCOR-001、Android 第一版归档基线 |
 | DF-040 | 平台中立设备域模型与契约 | completed | DF-039 |
-| DF-041 | macOS Host Agent 与 Appium Device Farm Adapter | in_progress | DF-040 |
+| DF-041 | macOS Host Agent 与 Appium Device Farm Adapter | completed | DF-040 |
 | DF-042 | Reservation 绑定的 iOS Session Fence | pending | DF-041 |
 | DF-043 | iOS Simulator 固定库存接入 | pending | DF-042 |
 | DF-044 | iOS 真机、WDA 签名与健康接入 | pending | DF-043 |
