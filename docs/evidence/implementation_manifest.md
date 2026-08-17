@@ -43,8 +43,8 @@
 | DF-039 | completed | `dd6a52c 形成DF-039 iOS设备农场设计` | `docs/evidence/DF-039/acceptance.md` |
 | DF-040 | completed | `31fc0a2 完成DF-040平台中立设备域模型` | `docs/evidence/DF-040/acceptance.md` |
 | DF-041 | completed | `ba25501 完成DF-041 macOS宿主机与iOS只读适配` | `docs/evidence/DF-041/acceptance.md` |
-| DF-042 | pending | — | `docs/evidence/DF-042/acceptance.md` |
-| DF-043 | pending | — | `docs/evidence/DF-043/acceptance.md` |
+| DF-042 | completed | `aea220d 完成DF-042 iOS预约会话围栏`、`d485460 完成DF-042验收归档` | `docs/evidence/DF-042/acceptance.md` |
+| DF-043 | completed | 本提交：`完成DF-043 iOS模拟器固定库存接入` | `docs/evidence/DF-043/acceptance.md` |
 | DF-044 | pending | — | `docs/evidence/DF-044/acceptance.md` |
 | DF-045 | pending | — | `docs/evidence/DF-045/acceptance.md` |
 | DF-046 | pending | — | `docs/evidence/DF-046/acceptance.md` |
@@ -53,5 +53,5 @@
 ## 当前结论
 
 1. Android 第一版 DF-003～DF-038 和本地 ALCOR-001 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
-2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039 设计和 DF-040 平台中立控制面已完成，下一步从 DF-041 开始并按 DF-046 顺序验收；
+2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039～DF-043 已完成，下一步从 DF-044 开始并按 DF-046 顺序验收；
 3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。

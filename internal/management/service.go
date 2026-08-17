@@ -631,6 +631,80 @@ func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason str
 	return service.restartDevice(ctx, id, reason, idempotencyKey, event)
 }
 
+func (service *Service) StartDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "start_ios_simulator", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.iosSimulatorLifecycle(ctx, id, reason, idempotencyKey, "start", event)
+}
+
+func (service *Service) StopDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "stop_ios_simulator", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.iosSimulatorLifecycle(ctx, id, reason, idempotencyKey, "stop", event)
+}
+
+func (service *Service) iosSimulatorLifecycle(ctx context.Context, id, reason, idempotencyKey, operation string, event DeviceAudit) (Device, error) {
+	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 || (operation != "start" && operation != "stop") {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	if current.Platform != "ios" || current.DeviceKind != "simulator" || current.ProviderType != "appium_device_farm_ios" {
+		return Device{}, ErrInvalidArgument
+	}
+	allowlisted, _ := current.Capabilities["allowlisted"].(bool)
+	if !allowlisted {
+		return Device{}, ErrInvalidArgument
+	}
+	wantFrom, target := domain.DeviceStopped, domain.DeviceBooting
+	if operation == "stop" {
+		wantFrom, target = domain.DeviceReady, domain.DeviceStopped
+	}
+	commandKey := operationCommandKey(operation, event.ActorID, idempotencyKey)
+	requestHash := operationRequestHash(operation, current.ID, reason)
+	if replayed, found, replayErr := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, operation, requestHash); replayErr != nil {
+		return Device{}, replayErr
+	} else if found {
+		return replayed, nil
+	}
+	if current.LifecycleStatus != wantFrom {
+		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(target)}
+	}
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
+	if err != nil {
+		return Device{}, err
+	}
+	now := time.Now().UTC()
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
+			return Device{}, err
+		}
+	}
+	if err := aggregate.Transition(target, reason, now); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	current.HealthReason = stringPointer(reason)
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: operation, IdempotencyKey: commandKey, MaxAttempts: 3,
+		Payload: map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
+			"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
+		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true,
+	})
+}
+
 func (service *Service) restartDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
 	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
 		return Device{}, ErrInvalidArgument

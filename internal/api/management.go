@@ -46,6 +46,8 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("GET /api/v1/devices", handler.listDevices)
 	mux.HandleFunc("GET /api/v1/devices/{id}", handler.getDevice)
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", handler.deleteDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/starts", handler.startDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/stops", handler.stopDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/restarts", handler.restartDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/rebuilds", handler.rebuildDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/reimages", handler.reimageDevice)
@@ -371,6 +373,12 @@ func (handler *managementHandler) getDevice(writer http.ResponseWriter, request 
 func (handler *managementHandler) restartDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "restart")
 }
+func (handler *managementHandler) startDevice(writer http.ResponseWriter, request *http.Request) {
+	handler.deviceAction(writer, request, "start")
+}
+func (handler *managementHandler) stopDevice(writer http.ResponseWriter, request *http.Request) {
+	handler.deviceAction(writer, request, "stop")
+}
 func (handler *managementHandler) rebuildDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "rebuild")
 }
@@ -406,7 +414,7 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	if !decode(writer, request, &input) {
 		return
 	}
-	if (action == "restart" || action == "rebuild" || action == "delete") && !requireIdempotencyKey(writer, request) {
+	if (action == "start" || action == "stop" || action == "restart" || action == "rebuild" || action == "delete") && !requireIdempotencyKey(writer, request) {
 		return
 	}
 	var value management.Device
@@ -414,6 +422,10 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	actor := requestActor(request)
 	requestID := correlation.FromContext(request.Context()).RequestID
 	switch action {
+	case "start":
+		value, err = handler.service.StartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
+	case "stop":
+		value, err = handler.service.StopDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "restart":
 		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "rebuild":
@@ -426,7 +438,7 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 		value, err = handler.service.UnquarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID)
 	}
 	status := http.StatusOK
-	if action == "restart" || action == "rebuild" || action == "delete" {
+	if action == "start" || action == "stop" || action == "restart" || action == "rebuild" || action == "delete" {
 		status = http.StatusAccepted
 	}
 	handler.write(writer, request, status, value, err)

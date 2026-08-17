@@ -30,7 +30,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
-| macOS Host Agent + Appium Device Farm / iOS | ADR-0021/0022 批准宿主机侧发现、技术 busy、健康和明确 UDID Session 路由；DF-042 由 Server 签发一次性 Grant，Host Agent 内置 Fence，只代理绑定 Session | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant，Alcor 的业务执行器另行实现 | 不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不把已移除的人工串流当作 STF 替代 |
+| macOS Host Agent + Appium Device Farm / iOS | ADR-0021/0022 批准宿主机侧发现、技术 busy、健康和明确 UDID Session 路由；DF-042 由 Server 签发一次性 Grant，Host Agent 内置 Fence，只代理绑定 Session；DF-043 只允许对固定 allowlist Simulator 通过 Host Command 执行 `simctl boot/shutdown` | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant，Alcor 的业务执行器另行实现 | 不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不创建/克隆/删除/擦除 Simulator，不把已移除的人工串流当作 STF 替代 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
 
@@ -52,7 +52,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；
-- 平台中立 Host/Pool/Device/连接与健康模型、macOS Agent 适配、iOS inventory/health 和 Reservation Session Fence；
+- 平台中立 Host/Pool/Device/连接与健康模型、macOS Agent 适配、iOS inventory/health、固定 allowlist Simulator 的受控 start/stop Host Command 和 Reservation Session Fence；
 - `/api/v1/device-*` 与 `/internal/v1` 契约；
 - UUID/ULID Owner ID、幂等键和统一错误响应；
 - 设备 API 通用幂等记录，只保存请求哈希和设备资源 ID；

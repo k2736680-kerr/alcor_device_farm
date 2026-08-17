@@ -60,6 +60,7 @@ func main() {
 	iosEndpoint := flag.String("ios-appium-endpoint", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_APPIUM_ENDPOINT")), "local Appium Device Farm Node endpoint")
 	iosAllowUDIDs := flag.String("ios-allow-udids", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_ALLOW_UDIDS")), "comma-separated fixed iOS UDID allowlist")
 	iosWDAPackageJSON := flag.String("ios-wda-package-json", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_WDA_PACKAGE_JSON")), "appium-webdriveragent package.json used for pinned WDA readiness")
+	iosXcrunBinary := flag.String("ios-xcrun-binary", envOr("DEVICE_FARM_IOS_XCRUN_BINARY", "xcrun"), "用于受控 Simulator 生命周期的 xcrun 可执行文件")
 	nodeBinary := flag.String("node-binary", envOr("DEVICE_FARM_NODE_BINARY", "node"), "pinned Node.js binary used by the iOS Host")
 	appiumBinary := flag.String("appium-binary", envOr("DEVICE_FARM_APPIUM_BINARY", "appium"), "pinned Appium binary used by the iOS Host")
 	goIOSBinary := flag.String("go-ios-binary", envOr("DEVICE_FARM_GO_IOS_BINARY", "ios"), "pinned go-ios binary used by the iOS Host")
@@ -89,13 +90,13 @@ func main() {
 	agentEnvironment := map[string]any{}
 	if strings.EqualFold(strings.TrimSpace(*providerType), "appium_device_farm_ios") {
 		iosAdapter, err = appiumdevicefarm.New(appiumdevicefarm.Config{Endpoint: *iosEndpoint, Timeout: *appiumHealthTimeout,
-			AllowUDIDs: splitCSV(*iosAllowUDIDs)})
+			AllowUDIDs: splitCSV(*iosAllowUDIDs), XcrunBinary: *iosXcrunBinary})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Appium Device Farm adapter configuration error: %v\n", err)
 			os.Exit(1)
 		}
 		environmentProbe, err = ioshost.New(ioshost.Config{NodeBinary: *nodeBinary, AppiumBinary: *appiumBinary,
-			GoIOSBinary: *goIOSBinary, WDAPackageJSON: *iosWDAPackageJSON, NodeHealth: iosAdapter})
+			GoIOSBinary: *goIOSBinary, XcrunBinary: *iosXcrunBinary, WDAPackageJSON: *iosWDAPackageJSON, NodeHealth: iosAdapter})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "iOS Host readiness configuration error: %v\n", err)
 			os.Exit(1)

@@ -38,6 +38,8 @@ var expectedOperations = map[string][]string{
 	"/api/v1/device-pools/{id}/images/{image_id}":            {"put", "delete"},
 	"/api/v1/devices":                                        {"get"},
 	"/api/v1/devices/{id}":                                   {"get", "delete"},
+	"/api/v1/devices/{id}/starts":                            {"post"},
+	"/api/v1/devices/{id}/stops":                             {"post"},
 	"/api/v1/devices/{id}/restarts":                          {"post"},
 	"/api/v1/devices/{id}/rebuilds":                          {"post"},
 	"/api/v1/devices/{id}/reimages":                          {"post"},
@@ -79,7 +81,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "2.2.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "2.3.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 

@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.2.0
+ * OpenAPI spec version: 2.3.0
  */
 import {
   useMutation,
@@ -4521,6 +4521,234 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getRestartDeviceMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * 只允许启动已登记、固定 allowlist、当前 stopped 且无活动预约的 iOS Simulator。Server 仅排队受控 Host Command，不直接连接 macOS 或执行任意命令。
+ */
+export type startDeviceResponse202 = {
+  data: DeviceAcceptedResponse
+  status: 202
+}
+
+export type startDeviceResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type startDeviceResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type startDeviceResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type startDeviceResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type startDeviceResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type startDeviceResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type startDeviceResponseSuccess = (startDeviceResponse202) & {
+  headers: Headers;
+};
+export type startDeviceResponseError = (startDeviceResponse400 | startDeviceResponse401 | startDeviceResponse403 | startDeviceResponse404 | startDeviceResponse409 | startDeviceResponse500) & {
+  headers: Headers;
+};
+
+export type startDeviceResponse = (startDeviceResponseSuccess | startDeviceResponseError)
+
+export const getStartDeviceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/starts`
+}
+
+export const startDevice = async (id: string,
+    operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<startDeviceResponse> => {
+
+  return deviceFarmFetch<startDeviceResponse>(getStartDeviceUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      operationReasonBody,)
+  }
+);}
+
+
+
+
+export const getStartDeviceMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDevice>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startDevice>>, TError,{id: string;data: OperationReasonBody}, TContext> => {
+
+const mutationKey = ['startDevice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  startDevice(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof startDevice>>>
+    export type StartDeviceMutationBody = OperationReasonBody
+    export type StartDeviceMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useStartDevice = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDevice>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startDevice>>,
+        TError,
+        {id: string;data: OperationReasonBody},
+        TContext
+      > => {
+
+      const mutationOptions = getStartDeviceMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * 只允许停止已登记、固定 allowlist、当前 ready 且无活动预约的 iOS Simulator。Provider busy 或状态漂移时拒绝，不强制中断 Session。
+ */
+export type stopDeviceResponse202 = {
+  data: DeviceAcceptedResponse
+  status: 202
+}
+
+export type stopDeviceResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type stopDeviceResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type stopDeviceResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type stopDeviceResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type stopDeviceResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type stopDeviceResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type stopDeviceResponseSuccess = (stopDeviceResponse202) & {
+  headers: Headers;
+};
+export type stopDeviceResponseError = (stopDeviceResponse400 | stopDeviceResponse401 | stopDeviceResponse403 | stopDeviceResponse404 | stopDeviceResponse409 | stopDeviceResponse500) & {
+  headers: Headers;
+};
+
+export type stopDeviceResponse = (stopDeviceResponseSuccess | stopDeviceResponseError)
+
+export const getStopDeviceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/stops`
+}
+
+export const stopDevice = async (id: string,
+    operationReasonBody: OperationReasonBody, options?: RequestInit): Promise<stopDeviceResponse> => {
+
+  return deviceFarmFetch<stopDeviceResponse>(getStopDeviceUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      operationReasonBody,)
+  }
+);}
+
+
+
+
+export const getStopDeviceMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopDevice>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopDevice>>, TError,{id: string;data: OperationReasonBody}, TContext> => {
+
+const mutationKey = ['stopDevice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopDevice>>, {id: string;data: OperationReasonBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  stopDevice(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StopDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof stopDevice>>>
+    export type StopDeviceMutationBody = OperationReasonBody
+    export type StopDeviceMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useStopDevice = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopDevice>>, TError,{id: string;data: OperationReasonBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof stopDevice>>,
+        TError,
+        {id: string;data: OperationReasonBody},
+        TContext
+      > => {
+
+      const mutationOptions = getStopDeviceMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

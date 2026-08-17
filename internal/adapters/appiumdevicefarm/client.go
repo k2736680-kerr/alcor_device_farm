@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -20,16 +21,32 @@ const (
 )
 
 type Config struct {
-	Endpoint   string
-	Timeout    time.Duration
-	AllowUDIDs []string
-	HTTPClient *http.Client
+	Endpoint              string
+	Timeout               time.Duration
+	AllowUDIDs            []string
+	HTTPClient            *http.Client
+	XcrunBinary           string
+	LifecyclePollInterval time.Duration
+	CommandRunner         CommandRunner
 }
 
 type Client struct {
-	endpoint   *url.URL
-	httpClient *http.Client
-	allowUDIDs map[string]struct{}
+	endpoint              *url.URL
+	httpClient            *http.Client
+	allowUDIDs            map[string]struct{}
+	xcrunBinary           string
+	lifecyclePollInterval time.Duration
+	commandRunner         CommandRunner
+}
+
+type CommandRunner interface {
+	Run(context.Context, string, ...string) ([]byte, error)
+}
+
+type execCommandRunner struct{}
+
+func (execCommandRunner) Run(ctx context.Context, binary string, arguments ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, binary, arguments...).CombinedOutput()
 }
 
 type Device struct {
@@ -85,7 +102,20 @@ func New(config Config) (*Client, error) {
 			allowUDIDs[udid] = struct{}{}
 		}
 	}
-	return &Client{endpoint: parsed, httpClient: httpClient, allowUDIDs: allowUDIDs}, nil
+	xcrunBinary := strings.TrimSpace(config.XcrunBinary)
+	if xcrunBinary == "" {
+		xcrunBinary = "xcrun"
+	}
+	pollInterval := config.LifecyclePollInterval
+	if pollInterval <= 0 {
+		pollInterval = 500 * time.Millisecond
+	}
+	runner := config.CommandRunner
+	if runner == nil {
+		runner = execCommandRunner{}
+	}
+	return &Client{endpoint: parsed, httpClient: httpClient, allowUDIDs: allowUDIDs,
+		xcrunBinary: xcrunBinary, lifecyclePollInterval: pollInterval, commandRunner: runner}, nil
 }
 
 func (client *Client) Inventory(ctx context.Context) ([]Device, error) {
@@ -113,7 +143,7 @@ func (client *Client) Inventory(ctx context.Context) ([]Device, error) {
 			continue
 		}
 		if _, exists := seen[item.UDID]; exists {
-			return nil, fmt.Errorf("duplicate iOS UDID in Appium Device Farm inventory")
+			return nil, fmt.Errorf("Appium Device Farm 的 iOS 设备清单中存在重复 UDID")
 		}
 		seen[item.UDID] = struct{}{}
 		_, allowed := client.allowUDIDs[item.UDID]

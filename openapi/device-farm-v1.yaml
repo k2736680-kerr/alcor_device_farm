@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 2.2.0
+  version: 2.3.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-17
   x-platform-semantics: Case/Run/RunAttempt
@@ -492,6 +492,42 @@ paths:
     post:
       tags: [Devices]
       operationId: restartDevice
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/devices/{id}/starts:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: startDevice
+      description: 只允许启动已登记、固定 allowlist、当前 stopped 且无活动预约的 iOS Simulator。Server 仅排队受控 Host Command，不直接连接 macOS 或执行任意命令。
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/devices/{id}/stops:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: stopDevice
+      description: 只允许停止已登记、固定 allowlist、当前 ready 且无活动预约的 iOS Simulator。Provider busy 或状态漂移时拒绝，不强制中断 Session。
       parameters:
         - {$ref: "#/components/parameters/IdempotencyKey"}
         - {$ref: "#/components/parameters/ActorID"}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,23 @@ func TestInventoryIsReadOnlyAllowlistedAndPreservesBusy(t *testing.T) {
 	}
 }
 
+func TestInventoryRejectsDuplicateUDIDWithChineseMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`[
+			{"udid":"SIM-DUPLICATE","platform":"ios","deviceType":"simulator"},
+			{"udid":"SIM-DUPLICATE","platform":"ios","deviceType":"simulator"}
+		]`))
+	}))
+	defer server.Close()
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-DUPLICATE"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Inventory(context.Background()); err == nil || !strings.Contains(err.Error(), "重复 UDID") {
+		t.Fatalf("重复 UDID 错误=%v", err)
+	}
+}
+
 func TestProviderRequiresAllowlistAndHealthyNode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -49,7 +67,8 @@ func TestProviderRequiresAllowlistAndHealthyNode(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	allowed, _ := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-1"}})
+	allowed, _ := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-1"},
+		CommandRunner: &simulatorRunner{state: "Booted"}})
 	snapshots, err := allowed.Discover(context.Background(), "host_000000000000001")
 	if err != nil || len(snapshots) != 1 || !snapshots[0].Ready() || snapshots[0].Platform != providers.PlatformIOS || snapshots[0].Connection.ADBEndpoint != "" {
 		t.Fatalf("snapshots=%+v error=%v", snapshots, err)
@@ -79,7 +98,8 @@ func TestBusyDeviceRemainsTechnicallyHealthy(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-1"}})
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-1"},
+		CommandRunner: &simulatorRunner{state: "Booted"}})
 	if err != nil {
 		t.Fatal(err)
 	}

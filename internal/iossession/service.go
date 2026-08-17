@@ -24,16 +24,17 @@ import (
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid iOS Session argument")
-	ErrNotFound        = errors.New("iOS Session binding not found")
-	ErrForbidden       = errors.New("iOS Session operation is forbidden")
-	ErrConflict        = errors.New("iOS Session binding conflict")
-	ErrGrantExpired    = errors.New("iOS Session Grant expired")
-	ErrGrantConsumed   = errors.New("iOS Session Grant already consumed")
-	ErrRoutingMismatch = errors.New("iOS Session routing does not match the Reservation")
-	ErrProviderBusy    = errors.New("Appium Device Farm reports the reserved device busy")
-	ErrCleanupFailed   = errors.New("iOS Appium Session cleanup failed")
-	ErrHostUnavailable = errors.New("iOS Session Fence Host is unavailable")
+	ErrInvalidArgument        = errors.New("invalid iOS Session argument")
+	ErrNotFound               = errors.New("iOS Session binding not found")
+	ErrForbidden              = errors.New("iOS Session operation is forbidden")
+	ErrConflict               = errors.New("iOS Session binding conflict")
+	ErrGrantExpired           = errors.New("iOS Session Grant expired")
+	ErrGrantConsumed          = errors.New("iOS Session Grant already consumed")
+	ErrRoutingMismatch        = errors.New("iOS Session routing does not match the Reservation")
+	ErrProviderBusy           = errors.New("Appium Device Farm reports the reserved device busy")
+	ErrProviderBusyConverging = errors.New("Appium Device Farm 正在收敛上一会话的忙碌状态")
+	ErrCleanupFailed          = errors.New("iOS Appium Session cleanup failed")
+	ErrHostUnavailable        = errors.New("iOS Session Fence Host is unavailable")
 )
 
 var (
@@ -149,11 +150,13 @@ func (service *Service) Issue(ctx context.Context, actor audit.Actor, reservatio
 		var reservationExpiry *time.Time
 		var sessionID, sessionStatus, deviceID, hostID, platform, lifecycle, health string
 		var snapshotHostID, appiumEndpoint, appiumUDID, fenceEndpoint, hostStatus string
-		var providerBusy bool
+		var providerBusy, recentCleanup bool
 		var appiumSessionID *string
 		if err := tx.QueryRow(ctx, `SELECT r.client_id,r.owner_type,r.owner_id,r.status,r.expires_at,
 			s.id,s.status,s.appium_session_id,d.id,d.host_id,d.platform,d.lifecycle_status,d.health_status,
 			COALESCE((d.capabilities->>'providerBusy')::boolean,false),h.status,
+			EXISTS(SELECT 1 FROM device_sessions recent WHERE recent.device_id=d.id
+				AND recent.appium_session_ended_at >= clock_timestamp()-interval '30 seconds'),
 			COALESCE(h.capabilities->>'session_fence_endpoint',''),
 			COALESCE(s.connection_metadata->>'host_id',''),COALESCE(s.connection_metadata->>'appium_endpoint',''),
 			COALESCE(s.connection_metadata->>'appium_udid','')
@@ -162,7 +165,7 @@ func (service *Service) Issue(ctx context.Context, actor audit.Actor, reservatio
 			WHERE r.id=$1 FOR UPDATE OF r,s,d,h`, reservationID).Scan(
 			&clientID, &ownerType, &ownerID, &reservationStatus, &reservationExpiry,
 			&sessionID, &sessionStatus, &appiumSessionID, &deviceID, &hostID, &platform, &lifecycle, &health,
-			&providerBusy, &hostStatus, &fenceEndpoint, &snapshotHostID, &appiumEndpoint, &appiumUDID); err != nil {
+			&providerBusy, &hostStatus, &recentCleanup, &fenceEndpoint, &snapshotHostID, &appiumEndpoint, &appiumUDID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -182,6 +185,9 @@ func (service *Service) Issue(ctx context.Context, actor audit.Actor, reservatio
 			return ErrConflict
 		}
 		if providerBusy {
+			if recentCleanup {
+				return ErrProviderBusyConverging
+			}
 			driftDeviceID = deviceID
 			return ErrProviderBusy
 		}
@@ -249,6 +255,9 @@ func (service *Service) Consume(ctx context.Context, input ConsumeInput, request
 			return err
 		}
 		if binding.ProviderBusy {
+			if binding.RecentCleanup {
+				return ErrProviderBusyConverging
+			}
 			driftDeviceID, driftReservationID = binding.DeviceID, binding.ReservationID
 			return ErrProviderBusy
 		}
@@ -416,6 +425,7 @@ type bindingRecord struct {
 	DeviceLifecycle        string
 	DeviceHealth           string
 	ProviderBusy           bool
+	RecentCleanup          bool
 	HostStatus             string
 	SnapshotHostID         string
 	AppiumEndpoint         string
@@ -437,6 +447,8 @@ func (service *Service) getBindingByGrant(ctx context.Context, hash string) (bin
 
 const bindingQuery = `SELECT s.id,r.id,r.status,r.expires_at,d.id,d.host_id,d.platform,d.lifecycle_status,d.health_status,
 	COALESCE((d.capabilities->>'providerBusy')::boolean,false),h.status,
+	EXISTS(SELECT 1 FROM device_sessions recent WHERE recent.device_id=d.id
+		AND recent.appium_session_ended_at >= clock_timestamp()-interval '30 seconds'),
 	COALESCE(s.connection_metadata->>'host_id',''),COALESCE(s.connection_metadata->>'appium_endpoint',''),
 	COALESCE(s.connection_metadata->>'appium_udid',''),s.session_grant_expires_at,s.session_grant_consumed_at,
 	s.appium_session_id,s.appium_session_started_at,s.appium_session_ended_at
@@ -447,7 +459,7 @@ func scanBinding(row pgx.Row) (bindingRecord, error) {
 	var value bindingRecord
 	err := row.Scan(&value.SessionID, &value.ReservationID, &value.ReservationStatus, &value.ReservationExpiresAt,
 		&value.DeviceID, &value.HostID, &value.Platform, &value.DeviceLifecycle, &value.DeviceHealth,
-		&value.ProviderBusy, &value.HostStatus, &value.SnapshotHostID, &value.AppiumEndpoint, &value.AppiumUDID,
+		&value.ProviderBusy, &value.HostStatus, &value.RecentCleanup, &value.SnapshotHostID, &value.AppiumEndpoint, &value.AppiumUDID,
 		&value.GrantExpiresAt, &value.GrantConsumedAt, &value.AppiumSessionID, &value.AppiumSessionStartedAt, &value.AppiumSessionEndedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return bindingRecord{}, ErrNotFound

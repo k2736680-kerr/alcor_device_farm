@@ -108,6 +108,8 @@ DF-039 通过后，iOS 北向关系按 ADR-0021 固定：Alcor 仍先以 RunAtte
 iOS Executor、IPA 元数据提取、安装、Case、结果和 Artifact 是 Alcor/执行器后续任务；本仓库的 DF-040～DF-046 只建设平台中立设备域、macOS Host、iOS inventory/health、Session Fence、Console 设备页和真实基础设施验收。Android DaFit Executor、STF 和长期设备语义必须保持不变。
 
 DF-042 按 ADR-0022 固定具体接入：Alcor 可信 iOS Executor 先用 Service Token 为自己的 active Reservation 申请一次性 Session Grant，再把 Grant 交给对应 macOS Host 的 Fence。Grant 不是 Alcor Run Token，不写入 RunAttempt、日志或 Artifact；Fence 只限制明确 UDID 和转发既有 WebDriver 协议。Alcor 浏览器、Device Farm Console 和普通用户都不能获得 Grant、Fence Endpoint 或 Appium Node Endpoint。现有 Alcor Device Farm Gateway 的服务端持证、固定路径白名单和关联 Header 透传模式可以复用，但 iOS Executor 与 XCUITest 业务实现仍留在 Alcor。
+
+DF-043 的 Simulator 生命周期仍属于设备域基础设施：Server 只能为已登记、固定 allowlist、无活动预约的 iOS Simulator 排队 start/stop/restart Host Command，macOS Agent 仅执行固定参数的 `xcrun simctl boot/shutdown/bootstatus`。不接受任意命令、Runtime 下载、Simulator 创建/克隆/删除/擦除，也不产生 Alcor Run/Result。Appium Device Farm 继续只提供 inventory、技术 busy 和明确 UDID Session 路由，不能自行决定业务分配。
 # DF-035 官方目录与按需准备补充（2026-08-10）
 
 Android System Image 的版本、映像类型和 ABI 由 Android SDK 官方稳定频道提供；CPU、内存、数据盘、分辨率、DPI 和图形模式属于本设备域的 `runtime_profile`。Device Farm Console 只调用 Server 的目录和准备任务 API，既不访问 Google，也不获取下载链接、Registry 凭证、Host 命令或 Docker Socket。Server 仅编排受控 Build Agent；只有 Agent 完成构建、内部 Registry 推送、不可变 digest 获取和现有验证链路后，才创建或更新 `device_images`。这仍是设备域基础设施准备，不形成新版 Alcor 的 Image/Artifact 业务索引或 Run 队列。

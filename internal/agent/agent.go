@@ -761,10 +761,12 @@ func providerHealth(snapshot providers.Snapshot) string {
 func snapshotResult(snapshot providers.Snapshot) map[string]any {
 	return map[string]any{
 		"device_id": snapshot.DeviceID, "host_id": snapshot.HostID, "image_id": snapshot.ImageID,
+		"platform": string(snapshot.Platform), "device_kind": snapshot.DeviceKind,
 		"provider_ref": snapshot.ProviderRef, "state": string(snapshot.State), "generation": snapshot.Generation,
 		"capabilities": snapshot.Capabilities,
 		"connection": map[string]any{
 			"serial": snapshot.Connection.Serial, "adb_endpoint": snapshot.Connection.ADBEndpoint,
+			"device_udid": snapshot.Connection.DeviceUDID, "provider_id": snapshot.Connection.ProviderID,
 			"appium_endpoint": snapshot.Connection.AppiumEndpoint, "appium_udid": snapshot.Connection.AppiumUDID,
 		},
 		"health": healthResult(snapshot.Health),

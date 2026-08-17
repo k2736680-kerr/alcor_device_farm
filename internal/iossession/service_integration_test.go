@@ -126,6 +126,36 @@ func TestGrantExpiryAndProviderBusyDrift(t *testing.T) {
 		AND source='session_fence' AND event_type='ios_provider_busy_on_grant'`, testDeviceID, 1)
 }
 
+func TestRecentSessionCleanupBusyIsRetryableWithoutQuarantine(t *testing.T) {
+	db := openIOSSessionTestDatabase(t)
+	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_reservations
+		(id,client_id,pool_id,device_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,
+		idempotency_key,starts_at,expires_at,released_at)
+		VALUES ('ios_recent_reservation01','service',$1,$2,'test_run','ios_recent_owner_00001','{}',600,
+		'released','ios-recent-reservation-key',clock_timestamp()-interval '2 minutes',
+		clock_timestamp()-interval '1 minute',clock_timestamp());
+		INSERT INTO device_sessions
+		(id,reservation_id,device_id,status,connection_metadata,started_at,ended_at,
+		appium_session_id,appium_session_started_at,appium_session_ended_at)
+		VALUES ('ios_recent_session00001','ios_recent_reservation01',$2,'closed','{}',
+		clock_timestamp()-interval '1 minute',clock_timestamp(),'recent-appium-session',
+		clock_timestamp()-interval '1 minute',clock_timestamp());
+		UPDATE devices SET capabilities=jsonb_set(capabilities,'{providerBusy}','true'::jsonb) WHERE id=$2`,
+		testPoolID, testDeviceID); err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, testAgentToken, fixedGrantGenerator(9))
+	if _, err := service.Issue(context.Background(), audit.Service("ios-integration"), testReservation,
+		"issue_recent_cleanup_0001", GrantInput{OwnerType: "test_run", OwnerID: testOwnerID}); !errors.Is(err, ErrProviderBusyConverging) {
+		t.Fatalf("清理收敛期没有返回可重试错误：%v", err)
+	}
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM devices WHERE id=$1
+		AND lifecycle_status='busy' AND health_status='healthy'`, testDeviceID, 1)
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id=$1
+		AND event_type='ios_provider_busy_on_grant'`, testDeviceID, 0)
+}
+
 func TestReconcilerAuditsUnreservedDriftAsDevice(t *testing.T) {
 	db := openIOSSessionTestDatabase(t)
 	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", true)
@@ -141,6 +171,39 @@ func TestReconcilerAuditsUnreservedDriftAsDevice(t *testing.T) {
 	}
 	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_audit_events WHERE resource_type='device'
 		AND resource_id=$1 AND action='quarantine_ios_session_drift'`, testDeviceID, 1)
+}
+
+func TestReconcilerAllowsColdWDAStartupBeforeBinding(t *testing.T) {
+	db := openIOSSessionTestDatabase(t)
+	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
+	service := New(db, testAgentToken, fixedGrantGenerator(8))
+	grant, err := service.Issue(context.Background(), audit.Service("ios-integration"), testReservation,
+		"issue_cold_wda_grant_0001", GrantInput{OwnerType: "test_run", OwnerID: testOwnerID, TTLSeconds: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Consume(context.Background(), ConsumeInput{HostID: testHostID,
+		SessionGrant: grant.SessionGrant, Request: validSessionRequest(testUDID)}, "consume_cold_wda_0001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET
+		capabilities=jsonb_set(capabilities,'{providerBusy}','true'::jsonb) WHERE id=$1`, testDeviceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReconcileOnce(context.Background()); !errors.Is(err, ErrNothingToReconcile) {
+		t.Fatalf("正常的 WDA 冷启动被过早判定为漂移：%v", err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_sessions SET
+		session_grant_consumed_at=clock_timestamp()-interval '6 minutes' WHERE id=$1`, testDeviceSession); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("超过启动宽限期的未绑定 Session 没有被隔离：%v", err)
+	}
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM devices WHERE id=$1
+		AND lifecycle_status='quarantined' AND health_status='degraded'`, testDeviceID, 1)
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id=$1
+		AND reason='IOS_PROVIDER_BUSY_WITHOUT_BOUND_SESSION'`, testDeviceID, 1)
 }
 
 func TestReservationReleaseClosesIOSSessionBeforeReleasing(t *testing.T) {

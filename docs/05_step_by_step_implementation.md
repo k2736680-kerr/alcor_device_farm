@@ -64,7 +64,7 @@
 | DF-040 | 平台中立设备域模型与契约 | completed | DF-039 |
 | DF-041 | macOS Host Agent 与 Appium Device Farm Adapter | completed | DF-040 |
 | DF-042 | Reservation 绑定的 iOS Session Fence | completed | DF-041 |
-| DF-043 | iOS Simulator 固定库存接入 | pending | DF-042 |
+| DF-043 | iOS Simulator 固定库存接入 | completed | DF-042 |
 | DF-044 | iOS 真机、WDA 签名与健康接入 | pending | DF-043 |
 | DF-045 | Device Farm Console iOS 设备域页面 | pending | DF-044 |
 | DF-046 | iOS 真实验收、运维回滚与 Android 回归 | pending | DF-045 |
@@ -453,7 +453,7 @@
 
 产出：Simulator inventory/health Provider、受控命令、Pool/Reservation 集成、E4 部署和证据。
 
-验收：两台不同 UDID Simulator 可发现、加入单平台 Pool、分别预约并并发建立 XCUITest Session；shutdown、boot timeout、Agent 重启和 UDID 冲突正确收敛；50 次循环无永久 busy、双占或端口/Session 泄漏。
+验收：两台不同 UDID Simulator 可发现、加入单平台 Pool、分别预约并并发建立 XCUITest Session；WDA 冷启动在 300 秒安全窗口内不得被漂移检查误隔离；shutdown、boot timeout、Agent 重启和 UDID 冲突正确收敛；50 次循环无永久 busy、双占或端口/Session 泄漏。
 
 ### DF-044 iOS 真机、WDA 签名与健康接入
 

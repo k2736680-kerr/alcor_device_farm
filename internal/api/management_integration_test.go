@@ -17,6 +17,7 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
@@ -380,6 +381,109 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 }
 
+func TestIOSSimulatorStartAndStopOnlyQueueControlledHostCommands(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	ctx := context.Background()
+	hostID := "ios_host_lifecycle_0001"
+	readyID := "ios_device_ready_000001"
+	stoppedID := "ios_device_stopped_001"
+	unknownID := "ios_device_unknown_001"
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_hosts
+		(id,name,host_type,host_os,host_arch,status,draining,last_heartbeat_at)
+		VALUES($1,'iOS 生命周期宿主机','appium_device_farm_ios','macos','arm64','online',false,clock_timestamp())`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	for _, device := range []struct {
+		id, udid, lifecycle, health string
+		allowlisted                 bool
+	}{
+		{id: readyID, udid: "SIM-READY", lifecycle: "ready", health: "healthy", allowlisted: true},
+		{id: stoppedID, udid: "SIM-STOPPED", lifecycle: "stopped", health: "unknown", allowlisted: true},
+		{id: unknownID, udid: "SIM-UNKNOWN", lifecycle: "stopped", health: "unknown", allowlisted: false},
+	} {
+		capabilities, _ := json.Marshal(map[string]any{"platformName": "iOS", "allowlisted": device.allowlisted, "providerState": "Shutdown"})
+		if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
+			(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+			VALUES($1,$2,'ios','simulator','appium_device_farm_ios',$3,'rebuild',$3,'http://127.0.0.1:4723',$4,$5,$6)`,
+			device.id, hostID, device.udid, capabilities, device.lifecycle, device.health); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stopped := environment.request(t, http.MethodPost, "/api/v1/devices/"+readyID+"/stops",
+		map[string]any{"reason": "管理员停止 Simulator"}, serviceToken, "ios-simulator-stop-key")
+	assertStatus(t, stopped, http.StatusAccepted)
+	var stoppedDevice management.Device
+	decodeData(t, stopped, &stoppedDevice)
+	if stoppedDevice.LifecycleStatus != domain.DeviceStopped || stoppedDevice.HealthStatus != domain.HealthUnknown {
+		t.Fatalf("停止受理后的设备状态=%#v", stoppedDevice)
+	}
+	started := environment.request(t, http.MethodPost, "/api/v1/devices/"+stoppedID+"/starts",
+		map[string]any{"reason": "管理员启动 Simulator"}, serviceToken, "ios-simulator-start-key")
+	assertStatus(t, started, http.StatusAccepted)
+	var startedDevice management.Device
+	decodeData(t, started, &startedDevice)
+	if startedDevice.LifecycleStatus != domain.DeviceBooting || startedDevice.HealthStatus != domain.HealthUnknown {
+		t.Fatalf("启动受理后的设备状态=%#v", startedDevice)
+	}
+	replayed := environment.request(t, http.MethodPost, "/api/v1/devices/"+stoppedID+"/starts",
+		map[string]any{"reason": "管理员启动 Simulator"}, serviceToken, "ios-simulator-start-key")
+	assertStatus(t, replayed, http.StatusAccepted)
+
+	rejected := environment.request(t, http.MethodPost, "/api/v1/devices/"+unknownID+"/starts",
+		map[string]any{"reason": "尝试启动未知 Simulator"}, serviceToken, "ios-simulator-unknown-key")
+	assertStatus(t, rejected, http.StatusBadRequest)
+
+	claimed, err := environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 2})
+	if err != nil || len(claimed) != 2 {
+		t.Fatalf("领取 Simulator 生命周期命令=%#v 错误=%v", claimed, err)
+	}
+	for _, command := range claimed {
+		state, bootCompleted := "running", true
+		osReady := "passed"
+		if command.CommandType == "stop" {
+			state, bootCompleted, osReady = "stopped", false, "failed"
+		}
+		providerRef, _ := command.Payload["provider_ref"].(string)
+		result := map[string]any{
+			"platform": "ios", "device_kind": "simulator", "state": state, "generation": 1,
+			"connection": map[string]any{"serial": providerRef, "device_udid": providerRef, "provider_id": providerRef,
+				"adb_endpoint": "", "appium_endpoint": "http://127.0.0.1:4723", "appium_udid": providerRef},
+			"health": map[string]any{"online": true, "adb_online": false, "boot_completed": bootCompleted, "appium_healthy": true,
+				"components": map[string]string{"transport": "passed", "os_ready": osReady, "automation": "passed", "router": "passed", "remote_control": "unsupported"}},
+		}
+		if command.LeaseToken == nil {
+			t.Fatalf("命令 %s 没有租约", command.ID)
+		}
+		if _, err := environment.hostCommands.Complete(ctx, command.ID, hostcommand.CompletionInput{
+			LeaseToken: *command.LeaseToken, Attempt: command.Attempt, Status: "succeeded", Result: result,
+		}); err != nil {
+			t.Fatalf("完成 %s 命令失败：%v", command.CommandType, err)
+		}
+	}
+	readyAfterStart, err := environment.store.GetDevice(ctx, stoppedID)
+	if err != nil || readyAfterStart.LifecycleStatus != domain.DeviceReady || readyAfterStart.HealthStatus != domain.HealthHealthy {
+		t.Fatalf("启动完成后的设备=%#v 错误=%v", readyAfterStart, err)
+	}
+	stoppedAfterStop, err := environment.store.GetDevice(ctx, readyID)
+	if err != nil || stoppedAfterStop.LifecycleStatus != domain.DeviceStopped || stoppedAfterStop.HealthStatus != domain.HealthUnknown {
+		t.Fatalf("停止完成后的设备=%#v 错误=%v", stoppedAfterStop, err)
+	}
+
+	var commands, audits int
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_host_commands
+		WHERE host_id=$1 AND command_type IN ('start','stop') AND payload->>'operation_source'='management'`, hostID).Scan(&commands); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_audit_events
+		WHERE resource_id IN ($1,$2) AND action IN ('start_ios_simulator','stop_ios_simulator')`, readyID, stoppedID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if commands != 2 || audits != 2 {
+		t.Fatalf("受控命令数=%d 审计数=%d", commands, audits)
+	}
+}
+
 func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	ctx := context.Background()
@@ -559,6 +663,7 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodPut, "/api/v1/device-pools/id/base-device"},
 		{http.MethodGet, "/api/v1/device-pools/id/images"}, {http.MethodPut, "/api/v1/device-pools/id/images/image-id"}, {http.MethodDelete, "/api/v1/device-pools/id/images/image-id"},
 		{http.MethodGet, "/api/v1/devices"}, {http.MethodGet, "/api/v1/devices/id"},
+		{http.MethodPost, "/api/v1/devices/id/starts"}, {http.MethodPost, "/api/v1/devices/id/stops"},
 		{http.MethodPost, "/api/v1/devices/id/restarts"}, {http.MethodPost, "/api/v1/devices/id/rebuilds"},
 		{http.MethodDelete, "/api/v1/devices/id"}, {http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
 		{http.MethodGet, "/api/v1/device-reservations"}, {http.MethodPost, "/api/v1/device-reservations"},

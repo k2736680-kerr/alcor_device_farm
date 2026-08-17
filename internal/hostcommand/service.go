@@ -663,9 +663,11 @@ func (service *Service) RecoverExpiredOnce(ctx context.Context) (Command, error)
 }
 
 type managementOperationResult struct {
-	Generation       int  `json:"generation"`
-	ReimageApplied   bool `json:"reimage_applied"`
-	RollbackRestored bool `json:"rollback_restored"`
+	Platform         string `json:"platform"`
+	State            string `json:"state"`
+	Generation       int    `json:"generation"`
+	ReimageApplied   bool   `json:"reimage_applied"`
+	RollbackRestored bool   `json:"rollback_restored"`
 	Connection       struct {
 		Serial         string `json:"serial"`
 		ADBEndpoint    string `json:"adb_endpoint"`
@@ -673,10 +675,11 @@ type managementOperationResult struct {
 		AppiumUDID     string `json:"appium_udid"`
 	} `json:"connection"`
 	Health struct {
-		Online        bool `json:"online"`
-		ADBOnline     bool `json:"adb_online"`
-		BootCompleted bool `json:"boot_completed"`
-		AppiumHealthy bool `json:"appium_healthy"`
+		Online        bool              `json:"online"`
+		ADBOnline     bool              `json:"adb_online"`
+		BootCompleted bool              `json:"boot_completed"`
+		AppiumHealthy bool              `json:"appium_healthy"`
+		Components    map[string]string `json:"components"`
 	} `json:"health"`
 }
 
@@ -724,7 +727,10 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if commandPayloadString(payload, "operation_kind") == "reimage" {
 		return service.reconcileManagementReimage(ctx, tx, record, payload, deviceID, lifecycle, health, now)
 	}
-	code, reason := "", "management "+record.CommandType+" command completed"
+	if record.CommandType == "stop" {
+		return service.reconcileManagementStop(ctx, tx, record, deviceID, lifecycle, health, now)
+	}
+	code, reason := "", "设备管理命令执行完成："+record.CommandType
 	var result managementOperationResult
 	succeeded := record.Status == domain.CommandSucceeded && json.Unmarshal(record.Result, &result) == nil &&
 		validManagementOperationResult(result)
@@ -735,7 +741,7 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		} else if record.Status == domain.CommandSucceeded {
 			code = "COMMAND_RESULT_INVALID"
 		}
-		reason = code + ": management " + record.CommandType + " command did not produce a healthy device"
+		reason = code + "：设备管理命令未产生健康设备（" + record.CommandType + "）"
 	}
 	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 	if err != nil {
@@ -975,9 +981,86 @@ func (service *Service) reconcileManagementDelete(ctx context.Context, tx pgx.Tx
 }
 
 func validManagementOperationResult(value managementOperationResult) bool {
-	return value.Generation > 0 && value.Connection.Serial != "" && value.Connection.ADBEndpoint != "" &&
-		value.Connection.AppiumEndpoint != "" && value.Connection.AppiumUDID != "" && value.Health.Online &&
-		value.Health.ADBOnline && value.Health.BootCompleted && value.Health.AppiumHealthy
+	baseValid := value.Generation > 0 && value.Connection.Serial != "" && value.Connection.AppiumEndpoint != "" &&
+		value.Connection.AppiumUDID != "" && value.Health.Online && value.Health.BootCompleted && value.Health.AppiumHealthy
+	if strings.EqualFold(value.Platform, "ios") {
+		return baseValid && value.State == string(providers.StateRunning) &&
+			value.Health.Components[providers.ProbeTransport] == string(providers.ProbePassed) &&
+			value.Health.Components[providers.ProbeOSReady] == string(providers.ProbePassed) &&
+			value.Health.Components[providers.ProbeAutomation] == string(providers.ProbePassed) &&
+			value.Health.Components[providers.ProbeRouter] == string(providers.ProbePassed)
+	}
+	return baseValid && value.Connection.ADBEndpoint != "" && value.Health.ADBOnline
+}
+
+func (service *Service) reconcileManagementStop(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
+	deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
+	var result managementOperationResult
+	succeeded := record.Status == domain.CommandSucceeded && json.Unmarshal(record.Result, &result) == nil &&
+		strings.EqualFold(result.Platform, "ios") && result.State == string(providers.StateStopped) &&
+		result.Generation > 0 && result.Connection.Serial != "" && result.Connection.AppiumEndpoint != "" &&
+		result.Connection.AppiumUDID != ""
+	code, reason := "", "Simulator 已停止"
+	if !succeeded {
+		code = "AGENT_COMMAND_FAILED"
+		if record.ErrorCode != nil && *record.ErrorCode != "" {
+			code = *record.ErrorCode
+		} else if record.Status == domain.CommandSucceeded {
+			code = "COMMAND_RESULT_INVALID"
+		}
+		reason = code + "：停止 Simulator 失败"
+	}
+
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if succeeded {
+		if aggregate.Health() != domain.HealthUnknown {
+			if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceStopped {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET health_status=$2,health_reason=$3,
+			consecutive_failures=0,last_seen_at=$4,updated_at=$4 WHERE id=$1 AND lifecycle_status=$5`,
+			deviceID, aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+	} else {
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,
+			deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+	}
+
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	severity, eventType := "info", "device_management_operation_succeeded"
+	if !succeeded {
+		severity, eventType = "error", "device_management_operation_failed"
+	}
+	eventPayload, err := json.Marshal(map[string]any{"command_id": record.ID, "command_type": record.CommandType, "error_code": code})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
+	return err
 }
 
 func commandPayloadString(payload map[string]any, key string) string {

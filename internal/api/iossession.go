@@ -129,6 +129,8 @@ func (handler *iosSessionHandler) write(writer http.ResponseWriter, request *htt
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "IOS_SESSION_ROUTING_MISMATCH", Message: err.Error()}
 	case errors.Is(err, iossession.ErrProviderBusy):
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "IOS_PROVIDER_BUSY_DRIFT", Message: err.Error(), Retryable: false}
+	case errors.Is(err, iossession.ErrProviderBusyConverging):
+		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "IOS_PROVIDER_BUSY_CONVERGING", Message: err.Error(), Retryable: true}
 	case errors.Is(err, iossession.ErrHostUnavailable):
 		httpStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "IOS_SESSION_FENCE_UNAVAILABLE", Message: err.Error(), Retryable: true}
 	case errors.Is(err, iossession.ErrCleanupFailed):
