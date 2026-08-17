@@ -6,7 +6,7 @@
 
 当前单独建仓是因为新版 Alcor 明确把 Device Farm 放在第六阶段，相关 Adapter 尚未开发。设备域可以先行验证，但不得复制新版 Alcor 的评估业务。
 
-Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17` 冻结；本地第二版固定从该基线使用 `codex/device-farm-v2` 开发。分支变化不改变仓库、数据库或部署边界，详见 ADR-0020。DF-039 只设计多平台宿主机与 iOS 接入，不代表当前接口或实现已经支持 iOS。
+Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17` 冻结；本地第二版固定从该基线使用 `codex/device-farm-v2` 开发。分支变化不改变仓库、数据库或部署边界，详见 ADR-0020。DF-039 已完成多平台宿主机与 iOS 接入设计，但当前接口和生产实现仍是 Android；iOS 实现从 DF-040 开始。
 
 ## 2. 组件逐项对齐
 

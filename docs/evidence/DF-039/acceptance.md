@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`in_progress`
+`completed`
 
 DF-039 已进入设计验收。本任务只开展 Appium Device Farm、Appium 3、XCUITest、WebDriverAgent、go-ios、macOS/Xcode、iOS 真机与 Simulator 的复用调查和架构设计；没有修改设备 API、数据库 migration、领域状态机、Host Agent 或 Provider 代码。
 
@@ -25,8 +25,8 @@ DF-039 已进入设计验收。本任务只开展 Appium Device Farm、Appium 3�
 - [x] Alcor、DaFit、STF、Appium 的已有职责没有复制；
 - [x] 后续生产实现拆成 DF-040～DF-046，且每项有独立验收入口；
 - [x] 没有写入真实凭证或修改生产代码/migration；
-- [ ] 保存本次设计提交并回填可达 commit；
-- [ ] 实施证据门禁通过后将 DF-039 标记 completed。
+- [x] 设计主体已保存为 `dd6a52c 形成DF-039 iOS设备农场设计`；
+- [x] 实施证据门禁通过并将 DF-039 标记 completed。
 
 ## 必须保存的证据
 
@@ -37,4 +37,4 @@ DF-039 已进入设计验收。本任务只开展 Appium Device Farm、Appium 3�
 - 我方 Reservation 与宿主机 Session 路由之间的唯一占用时序；
 - Android 回归范围、iOS 真机/Simulator 真实验收矩阵和回滚方案。
 
-以上最后两项完成前，本任务保持 `in_progress`。
+DF-039 设计验收通过。后续从 DF-040 开始；E4/E5 真实 macOS/Simulator/iPhone 环境缺口会阻止对应实现任务完成，但不回退本设计结论。

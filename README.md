@@ -1,6 +1,6 @@
 # Alcor Device Farm
 
-Alcor App 评估体系中的设备农场运行与管理子系统。Android 第一版已经冻结归档；当前本地第二版只进入多平台宿主机与 iOS 接入设计阶段。
+Alcor App 评估体系中的设备农场运行与管理子系统。Android 第一版已经冻结归档；第二版多平台宿主机与 iOS 接入设计已经完成，下一步从平台中立控制面开始实现。
 
 本仓库是设备域的独立开发、验证和使用工作区。它不是第二套评估平台：Case、Dataset、Target、Config、Run、RunAttempt、结果、Artifact 和评估业务前端归新版 Alcor；本仓库提供设备、设备池、预约、宿主机、模拟器、STF、Appium 基础设施能力以及独立可用的 Device Farm Console。本地 ALCOR-001 已完成真实联调和统一入口，双方仍通过稳定设备 API 集成，不共享数据库。
 
@@ -10,7 +10,8 @@ Alcor App 评估体系中的设备农场运行与管理子系统。Android 第�
 
 - Android 第一版：`master@106e9dd`，Tag `archive/android-baseline-2026-08-17`，作为冻结恢复基线；
 - 第二版本地开发：`codex/device-farm-v2`，不设置 upstream、不推送远端；
-- 当前任务：DF-039，正在完成多平台宿主机和 iOS 接入设计；生产实现从 DF-040 开始。
+- 已完成任务：DF-039，多平台宿主机与 iOS 接入设计；
+- 下一任务：DF-040，平台中立设备域模型与契约，当前为 `pending`。
 
 ```text
 alcor_device_farm（当前设备域先行开发工作区）
@@ -56,7 +57,7 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 - 重新实现 Appium WebDriver、页面动作、断言和报告；
 - Alcor Eval Console 的 Case、Dataset、Run、Result、评分、报告和发布门禁页面；
 - 重写 STF 看屏、触控、日志和文件协议；Device Farm Console 只使用受控 STF 入口；
-- Android 第一版不实现 iOS、Kubernetes 和复杂弹性预测；第二版 iOS 在 DF-039 设计验收通过前仍不得编码。
+- Android 第一版不实现 iOS、Kubernetes 和复杂弹性预测；第二版 iOS 只能按已经验收的 DF-040～DF-046 顺序开发。
 
 详细边界见 [项目范围与系统边界](docs/00_scope_and_boundaries.md)，设备方案对应关系见 [确定方案对齐表](docs/02_architecture_alignment.md)，新旧 Alcor 差异见 [三方对齐说明](docs/03_alcor_generation_alignment.md)，开发前必须核对 [现有能力复用矩阵](docs/01_existing_capability_reuse_matrix.md)，实施顺序见 [开发实施计划](docs/06_development_plan.md)。
 
@@ -68,7 +69,7 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 - [第二版 iOS 功能设计](docs/08_ios_device_farm_v2_design.md)：macOS Host、Appium Device Farm、明确 UDID、健康、签名和故障收敛；
 - [第二版 iOS 验收方案](docs/09_ios_device_farm_v2_acceptance.md)：E4/E5/E6、G10～G16、真机/Simulator 与 Android 回归标准。
 
-Android 第一版 DF-000～DF-038 和本地 ALCOR-001 已完成。第二版 DF-039 先固定 ADR、复用、功能、实施和验收设计；设计验收后严格按 DF-040～DF-046 开发，不得跳序直接修改后续模块。
+Android 第一版 DF-000～DF-038、本地 ALCOR-001 和第二版设计任务 DF-039 已完成。后续严格按 DF-040～DF-046 开发，不得跳序直接修改后续模块。
 
 本地构建和测试入口见 [开发说明](docs/development.md)。
 

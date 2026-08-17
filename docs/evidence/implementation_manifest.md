@@ -40,7 +40,7 @@
 | DF-036 | completed | `2c4ab80 完成旧镜像受控停用和可用镜像选择` | `docs/evidence/DF-036/acceptance.md` |
 | DF-037 | completed | `6453034 完成Phone硬件模板和受控创建设备向导` | `docs/evidence/DF-037/acceptance.md` |
 | DF-038 | completed | `56b7ae3 完成DF-038设备重建与真实验收` | `docs/evidence/DF-038/acceptance.md` |
-| DF-039 | in_progress | — | `docs/evidence/DF-039/acceptance.md` |
+| DF-039 | completed | `dd6a52c 形成DF-039 iOS设备农场设计` | `docs/evidence/DF-039/acceptance.md` |
 | DF-040 | pending | — | `docs/evidence/DF-040/acceptance.md` |
 | DF-041 | pending | — | `docs/evidence/DF-041/acceptance.md` |
 | DF-042 | pending | — | `docs/evidence/DF-042/acceptance.md` |
@@ -53,5 +53,5 @@
 ## 当前结论
 
 1. Android 第一版 DF-003～DF-038 和本地 ALCOR-001 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
-2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039 正在固化多平台宿主机和 iOS 接入设计，生产实现只能从 DF-040 开始并按 DF-046 顺序验收；
+2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039 设计已完成，生产实现从 DF-040 开始并按 DF-046 顺序验收；
 3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。
