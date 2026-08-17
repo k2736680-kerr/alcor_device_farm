@@ -23,7 +23,7 @@
 - active Reservation 合法增加 300 秒；
 - 同一幂等键重放不会再次增加 300 秒；
 - 同一幂等键更换参数返回冲突；
-- 总租期超过 Pool `max_lease_seconds` 被拒绝；
+- 按 ADR-0023，单次续约超过 Pool `max_lease_seconds` 被拒绝，累计运行时间不再锁死；任意数据库当前时刻的未来到期窗口仍不超过该值；
 - 已经过期但尚未被 Reaper 处理的 Reservation 不允许续租复活；
 - 到期判断使用数据库时钟，而不是 Server 进程时间。
 
@@ -76,3 +76,5 @@ PASS internal/api
 ## 验收结论
 
 DF-010 已满足续租、主动/强制释放、grace period、并发幂等和多 Reaper 安全回收的完成条件，可以进入 DF-011 Reconciler、健康事件和隔离。
+
+2026-08-17 的长任务滑动续约修正及重新验收记录见 [sliding-lease-fix.md](sliding-lease-fix.md)。

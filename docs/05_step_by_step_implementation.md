@@ -163,11 +163,11 @@
 
 ### DF-010 续租、释放和 Reaper
 
-实施：实现 extension、主动 release、强制 release、grace period 和数据库锁保护的 Reaper。
+实施：实现 extension、主动 release、强制 release、grace period 和数据库锁保护的 Reaper。按 ADR-0023，最大租期表示相对数据库当前时间的有限滑动窗口；运行方周期续约时不得因累计运行超过一小时而强制结束。
 
 产出：租约 service、后台 Reaper、时间可控测试。
 
-验收：合法续租更新 expires_at；超过最大租期被拒绝；过期预约在目标时间内关闭；并发 release 幂等；两台 Reaper 同时运行只回收一次。
+验收：合法续租更新 expires_at；单次续约和任意时刻的未来到期时间不超过设备池最大窗口；累计运行超过四小时仍可续约；过期预约不能复活并在目标时间内关闭；并发 release 幂等；两台 Reaper 同时运行只回收一次。
 
 ### DF-011 Reconciler、健康事件和隔离
 

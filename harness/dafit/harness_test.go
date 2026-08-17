@@ -17,6 +17,7 @@ import (
 type fakeRunner struct {
 	err                error
 	blockUntilCanceled bool
+	delay              time.Duration
 	spec               RunSpec
 }
 
@@ -25,6 +26,13 @@ func (runner *fakeRunner) Run(ctx context.Context, spec RunSpec) error {
 	if runner.blockUntilCanceled {
 		<-ctx.Done()
 		return ctx.Err()
+	}
+	if runner.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(runner.delay):
+		}
 	}
 	if err := os.MkdirAll(spec.ReportDirectory, 0o755); err != nil {
 		return err
@@ -42,6 +50,8 @@ type farmStub struct {
 	mutex        sync.Mutex
 	pending      bool
 	releaseCalls int
+	extendCalls  int
+	extendFails  bool
 }
 
 func newFarmStub(t *testing.T, pending bool) *farmStub {
@@ -73,6 +83,18 @@ func (stub *farmStub) handle(writer http.ResponseWriter, request *http.Request) 
 		stub.releaseCalls++
 		stub.mutex.Unlock()
 		writeData(writer, http.StatusOK, map[string]any{"id": "reservation_00000001", "status": "released"})
+	case "POST /api/v1/device-reservations/reservation_00000001/extensions":
+		stub.mutex.Lock()
+		stub.extendCalls++
+		fails := stub.extendFails
+		stub.mutex.Unlock()
+		if fails {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(writer).Encode(map[string]any{"request_id": "req_test", "data": nil,
+				"error": map[string]any{"code": "LEASE_EXTENSION_FAILED", "message": "预约续约暂时失败", "retryable": true}})
+			return
+		}
+		writeData(writer, http.StatusOK, map[string]any{"id": "reservation_00000001", "status": "active"})
 	default:
 		http.NotFound(writer, request)
 	}
@@ -145,6 +167,40 @@ func TestHarnessRunTimeoutStillReleasesReservation(t *testing.T) {
 	}
 	if stub.releaseCalls != 1 {
 		t.Fatalf("release calls=%d", stub.releaseCalls)
+	}
+}
+
+func TestHarnessKeepsReservationAliveUntilDaFitFinishes(t *testing.T) {
+	stub := newFarmStub(t, false)
+	config := testConfig(stub.server.URL, filepath.Join(t.TempDir(), "long-attempt"))
+	config.LeaseRenewInterval = 5 * time.Millisecond
+	config.RunTimeout = 0
+	result, err := New(stub.server.Client(), &fakeRunner{delay: 35 * time.Millisecond}).Run(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.mutex.Lock()
+	extensions, releases := stub.extendCalls, stub.releaseCalls
+	stub.mutex.Unlock()
+	if extensions < 2 || releases != 1 || result.ExitError != "" {
+		t.Fatalf("续约次数=%d 释放次数=%d 结果=%#v", extensions, releases, result)
+	}
+}
+
+func TestHarnessStopsDaFitAndReleasesWhenLeaseRenewalFails(t *testing.T) {
+	stub := newFarmStub(t, false)
+	stub.extendFails = true
+	config := testConfig(stub.server.URL, filepath.Join(t.TempDir(), "renewal-failed-attempt"))
+	config.LeaseRenewInterval = 5 * time.Millisecond
+	result, err := New(stub.server.Client(), &fakeRunner{blockUntilCanceled: true}).Run(context.Background(), config)
+	if err == nil || !strings.Contains(err.Error(), "预约自动续约失败") {
+		t.Fatalf("结果=%#v 错误=%v", result, err)
+	}
+	stub.mutex.Lock()
+	extensions, releases := stub.extendCalls, stub.releaseCalls
+	stub.mutex.Unlock()
+	if extensions != 1 || releases != 1 {
+		t.Fatalf("续约次数=%d 释放次数=%d", extensions, releases)
 	}
 }
 

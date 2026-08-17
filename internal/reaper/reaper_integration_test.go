@@ -41,7 +41,7 @@ func TestExtensionUsesDatabaseLeaseAndIsIdempotent(t *testing.T) {
 	if _, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0001", active.ID, reservation.ExtensionInput{AdditionalSeconds: 301}); !errors.Is(err, reservation.ErrConflict) {
 		t.Fatalf("changed idempotent extension error=%v", err)
 	}
-	if _, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0002", active.ID, reservation.ExtensionInput{AdditionalSeconds: 600}); !errors.Is(err, reservation.ErrInvalidArgument) {
+	if _, err := service.Extend(context.Background(), audit.Service("service"), "extension-key-0002", active.ID, reservation.ExtensionInput{AdditionalSeconds: 1201}); !errors.Is(err, reservation.ErrInvalidArgument) {
 		t.Fatalf("over maximum extension error=%v", err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations

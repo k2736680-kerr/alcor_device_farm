@@ -23,17 +23,17 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("invalid reservation argument")
-	ErrNotFound            = errors.New("reservation not found")
-	ErrConflict            = errors.New("reservation conflict")
-	ErrPoolUnavailable     = errors.New("device pool is unavailable")
-	ErrCapacityUnavailable = errors.New("matching device capacity is unavailable")
-	ErrNothingToReap       = errors.New("no expired reservation to reap")
-	ErrNothingToReapRemote = errors.New("no expired STF remote session to reap")
-	ErrForbidden           = errors.New("reservation access is forbidden")
-	ErrSTFReleaseFailed    = errors.New("STF device release failed")
-	ErrSTFRemoteFailed     = errors.New("STF remote connection failed")
-	ErrIOSSessionCleanup   = errors.New("iOS Appium Session cleanup failed")
+	ErrInvalidArgument     = errors.New("预约参数无效")
+	ErrNotFound            = errors.New("预约不存在")
+	ErrConflict            = errors.New("预约状态冲突")
+	ErrPoolUnavailable     = errors.New("设备池当前不可用")
+	ErrCapacityUnavailable = errors.New("暂无满足条件的设备容量")
+	ErrNothingToReap       = errors.New("没有需要回收的过期预约")
+	ErrNothingToReapRemote = errors.New("没有需要回收的过期 STF 远控会话")
+	ErrForbidden           = errors.New("无权访问该预约")
+	ErrSTFReleaseFailed    = errors.New("STF 设备释放失败")
+	ErrSTFRemoteFailed     = errors.New("STF 远程连接失败")
+	ErrIOSSessionCleanup   = errors.New("iOS Appium 会话清理失败")
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
@@ -149,7 +149,7 @@ func (service *Service) CreateForDevice(
 	leaseSeconds int,
 ) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	if !actor.Valid() || len(key) < 8 || len(key) > 128 || !validOwnerID("manual", actor.ID) ||
 		!identifierPattern.MatchString(deviceID) || leaseSeconds < 60 {
@@ -172,7 +172,7 @@ func (service *Service) CreateForDevice(
 
 func (service *Service) create(ctx context.Context, actor audit.Actor, key string, input CreateInput, targetDeviceID string) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	normalizedCapabilities, err := normalizeRequestedCapabilities(input.RequestedCapabilities)
 	if err != nil {
@@ -192,10 +192,10 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 	}
 	if platformName, exists := input.RequestedCapabilities["platformName"]; exists &&
 		strings.ToLower(platformName.(string)) != policy.Platform {
-		return View{}, fmt.Errorf("%w: platformName does not match the device pool", ErrInvalidArgument)
+		return View{}, fmt.Errorf("%w：platformName 与设备池平台不匹配", ErrInvalidArgument)
 	}
 	if input.LeaseSeconds > policy.MaxLeaseSeconds {
-		return View{}, fmt.Errorf("%w: lease_seconds exceeds pool maximum", ErrInvalidArgument)
+		return View{}, fmt.Errorf("%w：lease_seconds 超过设备池最大续约窗口", ErrInvalidArgument)
 	}
 	if input.RequestedCapabilities == nil {
 		input.RequestedCapabilities = map[string]any{}
@@ -273,7 +273,7 @@ func (service *Service) KeepAliveForDevice(
 
 func (service *Service) Get(ctx context.Context, id string) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	if !identifierPattern.MatchString(id) {
 		return View{}, ErrInvalidArgument
@@ -287,7 +287,7 @@ func (service *Service) Get(ctx context.Context, id string) (View, error) {
 
 func (service *Service) List(ctx context.Context, filter Filter, page paging.Page) (paging.Result[View], error) {
 	if service == nil || service.db == nil {
-		return paging.Result[View]{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return paging.Result[View]{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	if filter.OwnerType != "" && !validOwnerType(filter.OwnerType) {
 		return paging.Result[View]{}, ErrInvalidArgument
@@ -314,7 +314,7 @@ func (service *Service) List(ctx context.Context, filter Filter, page paging.Pag
 
 func (service *Service) Extend(ctx context.Context, actor audit.Actor, key, id string, input ExtensionInput) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	clientID := actor.ClientID
 	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
@@ -350,18 +350,25 @@ func (service *Service) Extend(ctx context.Context, actor audit.Actor, key, id s
 			return err
 		}
 		if !current.ExpiresAt.After(now) {
-			return fmt.Errorf("%w: expired reservation cannot be extended", ErrConflict)
+			return fmt.Errorf("%w：预约已经过期，不能续约", ErrConflict)
 		}
 		policy, err := service.repo.GetPoolPolicy(ctx, tx, current.PoolID)
 		if err != nil {
 			return err
 		}
-		maximumExpiry := current.StartsAt.Add(time.Duration(policy.MaxLeaseSeconds) * time.Second)
-		remainingSeconds := int64(maximumExpiry.Sub(*current.ExpiresAt) / time.Second)
-		if int64(input.AdditionalSeconds) > remainingSeconds {
-			return fmt.Errorf("%w: extension exceeds pool maximum lease", ErrInvalidArgument)
+		if input.AdditionalSeconds > policy.MaxLeaseSeconds {
+			return fmt.Errorf("%w：单次续约秒数不能超过设备池最大续约窗口 %d 秒", ErrInvalidArgument, policy.MaxLeaseSeconds)
 		}
-		result, err = service.repo.Extend(ctx, tx, id, current.ExpiresAt.Add(time.Duration(input.AdditionalSeconds)*time.Second))
+		// max_lease_seconds is a rolling safety window, not a reservation lifetime
+		// limit. A healthy worker may therefore keep a long-running reservation
+		// alive indefinitely, while a crashed worker still stops extending it and
+		// is collected by the Reaper after this bounded future window.
+		maximumExpiry := now.Add(time.Duration(policy.MaxLeaseSeconds) * time.Second)
+		nextExpiry := current.ExpiresAt.Add(time.Duration(input.AdditionalSeconds) * time.Second)
+		if nextExpiry.After(maximumExpiry) {
+			nextExpiry = maximumExpiry
+		}
+		result, err = service.repo.Extend(ctx, tx, id, nextExpiry)
 		return err
 	})
 	if err != nil {
@@ -377,7 +384,7 @@ func (service *Service) Release(
 	input ReleaseInput,
 ) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	clientID := actor.ClientID
 	input.Reason = strings.TrimSpace(input.Reason)
@@ -429,7 +436,7 @@ func (service *Service) Release(
 		}
 		if current.Status == domain.ReservationPending {
 			if current.DeviceID != nil {
-				return fmt.Errorf("%w: reservation claim is in progress", ErrConflict)
+				return fmt.Errorf("%w：预约设备仍在领取中", ErrConflict)
 			}
 			now, err := database.ClockNow(ctx, tx)
 			if err != nil {
@@ -539,7 +546,7 @@ func (service *Service) CreateRemoteSession(
 	input RemoteSessionInput,
 ) (RemoteSessionView, error) {
 	if service == nil || service.db == nil || service.stf == nil {
-		return RemoteSessionView{}, fmt.Errorf("%w: STF is not configured", ErrSTFRemoteFailed)
+		return RemoteSessionView{}, fmt.Errorf("%w：STF 尚未配置", ErrSTFRemoteFailed)
 	}
 	clientID := actor.ClientID
 	if input.TTLSeconds == 0 {
@@ -821,11 +828,11 @@ func validateCreate(actor audit.Actor, key string, input CreateInput) error {
 	}
 	for key := range input.RequestedCapabilities {
 		if strings.HasPrefix(key, "_device_farm_") {
-			return fmt.Errorf("%w: requested_capabilities contains a reserved key", ErrInvalidArgument)
+			return fmt.Errorf("%w：requested_capabilities 包含系统保留字段", ErrInvalidArgument)
 		}
 	}
 	if _, err := json.Marshal(input.RequestedCapabilities); err != nil {
-		return fmt.Errorf("%w: requested_capabilities is not valid JSON", ErrInvalidArgument)
+		return fmt.Errorf("%w：requested_capabilities 不是有效的 JSON", ErrInvalidArgument)
 	}
 	return nil
 }
@@ -841,7 +848,7 @@ func normalizeRequestedCapabilities(source map[string]any) (map[string]any, erro
 	}
 	platformName, ok := value.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: platformName must be Android or iOS", ErrInvalidArgument)
+		return nil, fmt.Errorf("%w：platformName 必须是 Android 或 iOS", ErrInvalidArgument)
 	}
 	switch strings.ToLower(strings.TrimSpace(platformName)) {
 	case "android":
@@ -849,7 +856,7 @@ func normalizeRequestedCapabilities(source map[string]any) (map[string]any, erro
 	case "ios":
 		result["platformName"] = "iOS"
 	default:
-		return nil, fmt.Errorf("%w: platformName must be Android or iOS", ErrInvalidArgument)
+		return nil, fmt.Errorf("%w：platformName 必须是 Android 或 iOS", ErrInvalidArgument)
 	}
 	return result, nil
 }

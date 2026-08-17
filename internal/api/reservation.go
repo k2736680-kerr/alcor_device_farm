@@ -69,7 +69,7 @@ func (handler *reservationHandler) release(writer http.ResponseWriter, request *
 		return
 	}
 	if principal, ok := auth.FromContext(request.Context()); ok && principal.Role == auth.RoleConsole && input.Force && principal.ConsoleRole != auth.ConsoleAdmin {
-		writeForbidden(writer, request, "only console admins can force release reservations")
+		writeForbidden(writer, request, "只有控制台管理员可以强制释放预约")
 		return
 	}
 	value, err := handler.service.Release(
@@ -100,7 +100,7 @@ func (handler *reservationHandler) list(writer http.ResponseWriter, request *htt
 	}
 	page, ok := pagination(request)
 	if !ok {
-		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		writeInvalid(writer, request, "页码必须为正数，每页数量必须在 1 到 200 之间")
 		return
 	}
 	filter := reservation.Filter{
@@ -120,7 +120,7 @@ func (handler *reservationHandler) get(writer http.ResponseWriter, request *http
 	}
 	value, err := handler.service.Get(request.Context(), request.PathValue("id"))
 	if err == nil && !reservationVisible(request, value) {
-		writeForbidden(writer, request, "reservation owner does not match")
+		writeForbidden(writer, request, "预约所有者不匹配")
 		return
 	}
 	handler.write(writer, request, http.StatusOK, value, err)
@@ -132,7 +132,7 @@ func (handler *reservationHandler) enforceOwnerInput(writer http.ResponseWriter,
 		return true
 	}
 	if (*ownerType != "" && *ownerType != "manual") || (*ownerID != "" && *ownerID != principal.SubjectID) {
-		writeForbidden(writer, request, "console reservation owner is determined by the authenticated session")
+		writeForbidden(writer, request, "控制台预约所有者由当前登录会话确定")
 		return false
 	}
 	*ownerType, *ownerID = "manual", principal.SubjectID
@@ -150,7 +150,7 @@ func (handler *reservationHandler) authorizeReservation(writer http.ResponseWrit
 		return false
 	}
 	if !reservationVisible(request, value) {
-		writeForbidden(writer, request, "reservation owner does not match")
+		writeForbidden(writer, request, "预约所有者不匹配")
 		return false
 	}
 	return true
@@ -173,7 +173,7 @@ func (handler *reservationHandler) available(writer http.ResponseWriter, request
 		return true
 	}
 	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{
-		Code: "SERVICE_UNAVAILABLE", Message: "reservation service is not configured", Retryable: true,
+		Code: "SERVICE_UNAVAILABLE", Message: "预约服务尚未配置", Retryable: true,
 	})
 	return false
 }
@@ -183,13 +183,13 @@ func (handler *reservationHandler) write(writer http.ResponseWriter, request *ht
 		httpx.WriteData(writer, request, status, data)
 		return
 	}
-	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error"}
+	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误"}
 	httpStatus := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, reservation.ErrInvalidArgument):
 		httpStatus, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: err.Error()}
 	case errors.Is(err, reservation.ErrNotFound):
-		httpStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "reservation not found"}
+		httpStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "预约不存在"}
 	case errors.Is(err, reservation.ErrConflict):
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()}
 	case errors.Is(err, reservation.ErrPoolUnavailable):
@@ -197,13 +197,13 @@ func (handler *reservationHandler) write(writer http.ResponseWriter, request *ht
 	case errors.Is(err, reservation.ErrCapacityUnavailable):
 		httpStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "DEVICE_CAPACITY_UNAVAILABLE", Message: err.Error(), Retryable: true}
 	case errors.Is(err, reservation.ErrForbidden):
-		httpStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "reservation owner does not match"}
+		httpStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "预约所有者不匹配"}
 	case errors.Is(err, reservation.ErrSTFReleaseFailed):
-		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_RELEASE_FAILED", Message: "STF release failed; reservation remains active", Retryable: isRetryable(err)}
+		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_RELEASE_FAILED", Message: "STF 释放失败，预约仍保持激活状态", Retryable: isRetryable(err)}
 	case errors.Is(err, reservation.ErrSTFRemoteFailed):
-		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_REMOTE_CONNECT_FAILED", Message: "STF remote connection is unavailable", Retryable: isRetryable(err)}
+		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_REMOTE_CONNECT_FAILED", Message: "STF 远程连接当前不可用", Retryable: isRetryable(err)}
 	case errors.Is(err, reservation.ErrIOSSessionCleanup):
-		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "IOS_SESSION_CLEANUP_FAILED", Message: "iOS Appium Session cleanup failed; reservation remains active", Retryable: true}
+		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "IOS_SESSION_CLEANUP_FAILED", Message: "iOS Appium 会话清理失败，预约仍保持激活状态", Retryable: true}
 	}
 	httpx.WriteError(writer, request, httpStatus, apiError)
 }

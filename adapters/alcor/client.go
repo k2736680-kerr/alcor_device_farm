@@ -36,10 +36,10 @@ func New(config Config) (*Client, error) {
 	baseURL, err := url.Parse(strings.TrimSpace(config.BaseURL))
 	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" ||
 		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
-		return nil, errors.New("device farm base URL must be an HTTP(S) origin without credentials, query, or fragment")
+		return nil, errors.New("设备农场地址必须是无凭据、查询参数和片段的 HTTP(S) 地址")
 	}
 	if strings.TrimSpace(config.Token) == "" {
-		return nil, errors.New("device farm service token is required")
+		return nil, errors.New("必须提供设备农场服务令牌")
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
 	client := config.HTTPClient
@@ -56,7 +56,7 @@ func New(config Config) (*Client, error) {
 func (client *Client) Reserve(ctx context.Context, input ReserveRequest) (Reservation, error) {
 	if !identifierPattern.MatchString(input.PoolID) || !validRunContext(input.Run) ||
 		input.LeaseSeconds < 60 || len(input.IdempotencyKey) < 8 || len(input.IdempotencyKey) > 128 {
-		return Reservation{}, errors.New("invalid RunAttempt reservation request")
+		return Reservation{}, errors.New("RunAttempt 预约请求无效")
 	}
 	capabilities := input.RequestedCapabilities
 	if capabilities == nil {
@@ -74,7 +74,7 @@ func (client *Client) Reserve(ctx context.Context, input ReserveRequest) (Reserv
 
 func (client *Client) GetReservation(ctx context.Context, id string, run RunContext) (Reservation, error) {
 	if !identifierPattern.MatchString(id) || !validRunContext(run) {
-		return Reservation{}, errors.New("invalid reservation lookup")
+		return Reservation{}, errors.New("预约查询参数无效")
 	}
 	var result Reservation
 	err := client.do(ctx, http.MethodGet, "/api/v1/device-reservations/"+url.PathEscape(id), nil, "", run, &result)
@@ -88,14 +88,14 @@ func (client *Client) WaitActive(ctx context.Context, id string, run RunContext)
 		reservation, err := client.GetReservation(ctx, id, run)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return Lease{}, &APIError{Code: CodeDeviceCapacityUnavailable, Message: "reservation did not become active before the wait deadline", Retryable: true}
+				return Lease{}, &APIError{Code: CodeDeviceCapacityUnavailable, Message: "预约未能在等待期限内激活", Retryable: true}
 			}
 			return Lease{}, err
 		}
 		switch reservation.Status {
 		case "active":
 			if reservation.DeviceID == nil {
-				return Lease{}, errors.New("active reservation is missing device_id")
+				return Lease{}, errors.New("已激活预约缺少设备 ID")
 			}
 			device, err := client.getDevice(ctx, *reservation.DeviceID, run)
 			if err != nil {
@@ -107,13 +107,13 @@ func (client *Client) WaitActive(ctx context.Context, id string, run RunContext)
 			if reservation.FailureCode != nil && *reservation.FailureCode != "" {
 				code = *reservation.FailureCode
 			}
-			return Lease{}, &APIError{Code: code, Message: "reservation reached terminal state " + reservation.Status}
+			return Lease{}, &APIError{Code: code, Message: "预约已进入终态：" + reservation.Status}
 		}
 
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return Lease{}, &APIError{Code: CodeDeviceCapacityUnavailable, Message: "reservation did not become active before the wait deadline", Retryable: true}
+				return Lease{}, &APIError{Code: CodeDeviceCapacityUnavailable, Message: "预约未能在等待期限内激活", Retryable: true}
 			}
 			return Lease{}, ctx.Err()
 		case <-ticker.C:
@@ -123,7 +123,7 @@ func (client *Client) WaitActive(ctx context.Context, id string, run RunContext)
 
 func (client *Client) Extend(ctx context.Context, id string, additionalSeconds int, idempotencyKey string, run RunContext) (Reservation, error) {
 	if !identifierPattern.MatchString(id) || additionalSeconds < 60 || len(idempotencyKey) < 8 || len(idempotencyKey) > 128 || !validRunContext(run) {
-		return Reservation{}, errors.New("invalid reservation extension")
+		return Reservation{}, errors.New("预约续约参数无效")
 	}
 	var result Reservation
 	err := client.do(ctx, http.MethodPost, "/api/v1/device-reservations/"+url.PathEscape(id)+"/extensions",
@@ -134,7 +134,7 @@ func (client *Client) Extend(ctx context.Context, id string, additionalSeconds i
 func (client *Client) Release(ctx context.Context, id, reason, idempotencyKey string, run RunContext) (Reservation, error) {
 	if !identifierPattern.MatchString(id) || len(strings.TrimSpace(reason)) < 3 || len(strings.TrimSpace(reason)) > 500 ||
 		len(idempotencyKey) < 8 || len(idempotencyKey) > 128 || !validRunContext(run) {
-		return Reservation{}, errors.New("invalid reservation release")
+		return Reservation{}, errors.New("预约释放参数无效")
 	}
 	var result Reservation
 	err := client.do(ctx, http.MethodPost, "/api/v1/device-reservations/"+url.PathEscape(id)+"/releases",
@@ -153,7 +153,7 @@ func (client *Client) do(ctx context.Context, method, path string, payload any, 
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("encode device farm request: %w", err)
+			return fmt.Errorf("编码设备农场请求失败：%w", err)
 		}
 		body = bytes.NewReader(encoded)
 	}
@@ -161,7 +161,7 @@ func (client *Client) do(ctx context.Context, method, path string, payload any, 
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + path
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
-		return fmt.Errorf("create device farm request: %w", err)
+		return fmt.Errorf("创建设备农场请求失败：%w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+client.token)
 	request.Header.Set("Accept", "application/json")
@@ -178,7 +178,7 @@ func (client *Client) do(ctx context.Context, method, path string, payload any, 
 	}
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("call device farm: %w", err)
+		return fmt.Errorf("调用设备农场失败：%w", err)
 	}
 	defer response.Body.Close()
 	var envelope struct {
@@ -188,12 +188,12 @@ func (client *Client) do(ctx context.Context, method, path string, payload any, 
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes))
 	if err := decoder.Decode(&envelope); err != nil {
-		return fmt.Errorf("decode device farm response: %w", err)
+		return fmt.Errorf("解析设备农场响应失败：%w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || envelope.Error != nil {
 		apiError := envelope.Error
 		if apiError == nil {
-			apiError = &APIError{Code: "INTERNAL_ERROR", Message: "device farm returned an unsuccessful response"}
+			apiError = &APIError{Code: "INTERNAL_ERROR", Message: "设备农场返回了失败响应"}
 		}
 		apiError.HTTPStatus = response.StatusCode
 		apiError.RequestID = envelope.RequestID
@@ -203,7 +203,7 @@ func (client *Client) do(ctx context.Context, method, path string, payload any, 
 		return nil
 	}
 	if err := json.Unmarshal(envelope.Data, target); err != nil {
-		return fmt.Errorf("decode device farm data: %w", err)
+		return fmt.Errorf("解析设备农场数据失败：%w", err)
 	}
 	return nil
 }
@@ -215,7 +215,7 @@ func validRunContext(run RunContext) bool {
 
 func buildLease(reservation Reservation, device Device) (Lease, error) {
 	if device.Serial == "" || device.AppiumEndpoint == nil || *device.AppiumEndpoint == "" {
-		return Lease{}, errors.New("active device is missing serial or Appium endpoint")
+		return Lease{}, errors.New("已激活设备缺少序列号或 Appium 端点")
 	}
 	appiumUDID := device.Serial
 	for _, key := range []string{"appiumUdid", "appium_udid"} {

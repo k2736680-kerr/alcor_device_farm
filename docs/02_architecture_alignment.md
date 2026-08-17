@@ -83,7 +83,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `migrations` | 设备域表和约束 | 不并入新版 Run/Case migration，不跨库外键 |
 | `deploy` | STF、Agent、模拟器和设备服务部署 | 独立部署细节对 Alcor Adapter 不可见 |
 | `console` | Device Farm Console 源码、页面测试和构建配置 | 后续可由 Eval Console 链接、嵌入或复用设备域模块；继续调用稳定设备 API |
-| `harness/dafit` | Alcor 接入前真实联调 | 不进入 Eval Console 或 Run 业务模型 |
+| `harness/dafit` | Alcor 接入前真实联调；运行期间按 ADR-0023 周期续约、结束后立即释放 | 不进入 Eval Console 或 Run 业务模型，不复制 DaFit Runner |
 
 新版方案未确定设备农场最终是否与 Alcor 合仓，因此当前目录不预设迁入旧 `eval_server/internal/devicefarm`，也不预设永远不能合仓。第六阶段只以稳定 API 契约作为必需边界。
 

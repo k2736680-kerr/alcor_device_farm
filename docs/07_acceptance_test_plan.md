@@ -102,7 +102,7 @@
 | AT-SCH-001 | P0 | 100 个并发预约竞争 2 台 ready 设备 | 任意时刻最多 2 个 active，无双占 |
 | AT-SCH-002 | P0 | 要求 API/ABI/分辨率能力 | 只分配完全满足的设备 |
 | AT-SCH-003 | P0 | 无满足能力设备 | pending 或明确容量失败，不错配设备 |
-| AT-SCH-004 | P0 | 合法续租 | expires_at 延长且不超过最大租期 |
+| AT-SCH-004 | P0 | 运行方持续续租且逻辑运行时间超过 4 小时 | expires_at 按数据库当前时间滑动延长；总运行时间不锁死，任意时刻的未来窗口不超过 Pool `max_lease_seconds` |
 | AT-SCH-005 | P0 | 过期后续租 | 被拒绝，不复活旧预约 |
 | AT-SCH-006 | P0 | 同时调用两次 release | 幂等成功，只执行一次底层释放 |
 | AT-SCH-007 | P0 | 两个 Scheduler 实例同时领取 | 一个 pending reservation 只被处理一次 |

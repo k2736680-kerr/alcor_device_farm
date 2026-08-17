@@ -794,10 +794,11 @@ func (ReservationRepository) KeepAliveTargeted(
 		UPDATE device_reservations r
 		SET expires_at=LEAST(
 			clock_timestamp()+make_interval(secs=>$4),
-			r.starts_at+make_interval(secs=>p.max_lease_seconds)
+			clock_timestamp()+make_interval(secs=>p.max_lease_seconds)
 		), updated_at=clock_timestamp()
 		FROM device_pools p
 		WHERE r.id=$1 AND r.pool_id=p.id AND r.status='active'
+		  AND r.expires_at>clock_timestamp()
 		  AND r.owner_type='manual' AND r.owner_id=$2
 		  AND r.requested_capabilities->>'`+TargetDeviceCapability+`'=$3
 		RETURNING r.id,r.client_id,r.pool_id,r.device_id,r.owner_type,r.owner_id,
