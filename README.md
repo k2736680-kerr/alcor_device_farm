@@ -10,7 +10,7 @@ Alcor App 评估体系中的设备农场运行与管理子系统。Android 第�
 
 - Android 第一版：`master@106e9dd`，Tag `archive/android-baseline-2026-08-17`，作为冻结恢复基线；
 - 第二版本地开发：`codex/device-farm-v2`，不设置 upstream、不推送远端；
-- 当前任务：DF-039，只完成多平台宿主机和 iOS 接入设计，尚未开始 iOS 实现。
+- 当前任务：DF-039，正在完成多平台宿主机和 iOS 接入设计；生产实现从 DF-040 开始。
 
 ```text
 alcor_device_farm（当前设备域先行开发工作区）
@@ -65,8 +65,10 @@ Device Scheduler / Host Agent / STF / Docker Emulator / Appium
 - [MVP 功能方案](docs/04_mvp_functional_spec.md)：明确要建设的功能、模块、接口、数据模型和安全边界；
 - [逐步实施清单](docs/05_step_by_step_implementation.md)：Android 第一版 DF-000～DF-038、ALCOR-001 和第二版起始任务 DF-039 均有前置条件、产出和完成判定；
 - [MVP 验收方案](docs/07_acceptance_test_plan.md)：阶段 Gate、验收用例、性能/稳定性标准和最终签收条件。
+- [第二版 iOS 功能设计](docs/08_ios_device_farm_v2_design.md)：macOS Host、Appium Device Farm、明确 UDID、健康、签名和故障收敛；
+- [第二版 iOS 验收方案](docs/09_ios_device_farm_v2_acceptance.md)：E4/E5/E6、G10～G16、真机/Simulator 与 Android 回归标准。
 
-Android 第一版 DF-000～DF-038 和本地 ALCOR-001 已完成。后续从 DF-039 开始，先完成第二版多平台宿主机与 iOS 接入设计；不得跳过设计任务直接修改 API、表、状态机或 Provider。
+Android 第一版 DF-000～DF-038 和本地 ALCOR-001 已完成。第二版 DF-039 先固定 ADR、复用、功能、实施和验收设计；设计验收后严格按 DF-040～DF-046 开发，不得跳序直接修改后续模块。
 
 本地构建和测试入口见 [开发说明](docs/development.md)。
 
@@ -96,4 +98,4 @@ Server 已提供 `/healthz`、数据库感知的 `/readyz` 和 Prometheus `/metr
 
 独立开发和回归可继续使用 [Adapter 契约包](docs/alcor_adapter_contract.md)。包内包含冻结的 Device Farm OpenAPI、RunAttempt 示例客户端、可运行 Mock Server、错误映射和契约测试；Mock 不需要 PostgreSQL、Docker 或真实设备。本地 ALCOR-001 已证明真实 Worker 可以沿同一边界接入且不改变设备农场内部架构。
 
-DF-003～DF-039 与 ALCOR-001 的提交、状态和证据总表见 [实施与证据清单](docs/evidence/implementation_manifest.md)，第一版归档见 [Android 第一版归档记录](docs/evidence/android_v1_archive.md)。`scripts/dev.ps1 -Task check` 会同时检查 Go 门禁、任务状态和证据目录。
+DF-003～DF-046 与 ALCOR-001 的提交、状态和证据总表见 [实施与证据清单](docs/evidence/implementation_manifest.md)，第一版归档见 [Android 第一版归档记录](docs/evidence/android_v1_archive.md)。`scripts/dev.ps1 -Task check` 会同时检查 Go 门禁、任务状态和证据目录。

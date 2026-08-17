@@ -2,6 +2,8 @@
 
 > 本文件记录 Android 第一版 MVP 的验收基线。DF-028、DF-029～DF-038 和本地 ALCOR-001 的后续完成情况分别以各任务证据和实施清单为准；第二版 iOS 验收环境与用例必须由 DF-039 设计后再追加，不能用本文件的 Android Mock 或 Linux KVM 结果替代。
 
+第二版 iOS 的 E4/E5/E6 环境、G10～G16、P0/P1 用例和证据要求已经独立定义在 [第二版 iOS 设备农场验收方案](09_ios_device_farm_v2_acceptance.md)。Android 本文件继续作为强制回归基线，不能被新方案覆盖或降级。
+
 ## 1. 验收原则
 
 - `P0`：核心正确性和安全项，必须全部通过；
@@ -301,3 +303,7 @@ docs/evidence/
 # DF-038 长期设备和基础设备扩容补充
 
 验收应证明：释放预约只关闭预约/STF 会话并把 healthy Device 返回 `ready`，不发 rebuild、不删除数据卷，已安装 APK、应用数据、帐号和文件仍在；显式 rebuild/reimage 仍清空数据。创建向导可选择目录中的任一 Phone Android 版本，提交 `catalog_id` 后由持久化 provisioning job 完成已缓存直接创建或未缓存受控准备、验证与自动继续；刷新和同一幂等键重试只能看到同一 job，不能重复下载、创建或增加 Pool 目标，失败必须显示明确阶段。每个 Pool 可在控制台选择基础设备；扩容使用该设备的 Image、Phone 模板和有效 runtime profile，但新实例使用全新数据卷，绝不复制用户数据；非 healthy Phone、非本 Pool 设备及未先切换替代基础设备时均不得设置/删除。空闲 ready Device 可直接删除，删除命令和 Pool `total_target`/`min_ready`/`max_concurrency` 的下调必须原子生效，控制器不得自动补回；reserved、busy、recycling 或带活动预约的 Device 必须拒绝删除。真实 Linux KVM 验收需保存释放前后 APK/数据校验、基础设备扩容命令 payload、删除后 Pool 目标及无补建证据。
+
+# DF-039～DF-046 第二版 iOS 补充
+
+DF-039 只签收设计和真实环境缺口盘点，不用本机 Windows Appium 或 Mock 冒充 iOS 可运行。DF-040～DF-046 必须逐项使用 `docs/09_ios_device_farm_v2_acceptance.md`；只有 E4 Simulator、E5 真机、E6 发布回归对应 Gate 通过后，才能分别宣称控制面、Simulator、真机和第二版整体完成。

@@ -60,7 +60,14 @@
 | DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
 | DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | completed | DF-037 |
 | ALCOR-001 | 新版 Alcor 真实接口联调与统一入口 | completed | DF-028、新版 Alcor 实际 `test` 分支 |
-| DF-039 | 第二版多平台宿主机与 iOS 接入设计 | pending | DF-038、ALCOR-001、Android 第一版归档基线 |
+| DF-039 | 第二版多平台宿主机与 iOS 接入设计 | in_progress | DF-038、ALCOR-001、Android 第一版归档基线 |
+| DF-040 | 平台中立设备域模型与契约 | pending | DF-039 |
+| DF-041 | macOS Host Agent 与 Appium Device Farm Adapter | pending | DF-040 |
+| DF-042 | Reservation 绑定的 iOS Session Fence | pending | DF-041 |
+| DF-043 | iOS Simulator 固定库存接入 | pending | DF-042 |
+| DF-044 | iOS 真机、WDA 签名与健康接入 | pending | DF-043 |
+| DF-045 | Device Farm Console iOS 设备域页面 | pending | DF-044 |
+| DF-046 | iOS 真实验收、运维回滚与 Android 回归 | pending | DF-045 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -415,6 +422,62 @@
 产出：第二版专项 ADR、更新后的复用矩阵、架构对齐表、功能方案、分步实施任务、验收环境和 `docs/evidence/DF-039/` 证据。后续实现任务只有在这些文档明确允许后才能新增。
 
 验收：可以明确回答 macOS Host、iOS 真机和 Simulator 分别如何发现、签名、健康检查、预约、建立 XCUITest Session、释放和故障收敛；证明不会让 Appium Device Farm 与 PostgreSQL 各自独立分配同一设备；明确 Appium Device Farm 12.x 不提供当前版本的人工串流，因此不把它描述为 STF 的跨平台远控替代；Alcor/DaFit/STF/Appium 的既有职责没有被复制；没有写入任何生产代码、migration 或真实凭证。
+
+### DF-040 平台中立设备域模型与契约
+
+实施：按 ADR-0021 为 Host、Pool、Device、Connection 和健康模型增加明确平台语义；migration 将现有数据回填为 Android，Pool 禁止混合平台，Device 支持 `simulator/physical` 和 iOS Provider；允许同 Host 多台 iOS Device 共享 Appium Endpoint，同时保持 UDID/serial、Provider identity 和 active Reservation 唯一。更新 OpenAPI、领域状态机、Scheduler 能力匹配、Mock 与契约测试，不接入真实 Appium Device Farm。
+
+产出：可回滚 migration、平台中立领域模型、OpenAPI、Repository/Scheduler 适配、Mock 测试和证据。
+
+验收：migration up/down/up；Android 旧数据和全部第一版测试无回归；iOS Pool 不能加入 Android Device；共享 Endpoint 合法但重复 UDID 被拒绝；100 个并发请求竞争一台 Mock iOS Device 仍只有一个 active Reservation。
+
+### DF-041 macOS Host Agent 与 Appium Device Farm Adapter
+
+实施：让现有 Host Agent 在 macOS 运行并上报 host_os、架构、Xcode/Runtime、Node、Appium、Device Farm、XCUITest、WDA/go-ios 版本与脱敏 readiness；新增固定 12.0.1 的 Appium Device Farm Adapter，只读取本机 inventory、busy 和 Node 健康。首期每台 Host 独立 Node，不启用跨 Host Hub 分配，不把插件数据库同步为业务表。
+
+产出：macOS 构建/部署入口、版本锁、Adapter 契约、Host 心跳扩展、故障分类和 E4 环境部署说明。
+
+验收：版本不匹配、Xcode license、Appium doctor、Node 离线均阻止新预约；未知设备只登记 unknown/quarantined；插件凭证和 Apple Secret 不进入心跳、日志或 API；Android Linux Agent 回归通过。
+
+### DF-042 Reservation 绑定的 iOS Session Fence
+
+实施：新增基础设施级 Session Fence。它只接受短时单次 Session Grant，校验 active Reservation、Device、Host、Endpoint 和 UDID，强制相同的 `appium:udid` 与单元素 `df:udids` 后透明转发 Appium Session；保存 Appium Session ID 技术绑定并让 Reaper 关闭遗留 Session。禁止 tags、filterByHost、多 UDID 和浏览器直连 Node，不解释或实现 WebDriver 业务命令。
+
+产出：Session Grant/Fence 契约、技术绑定持久化、网络配置、漂移 Reconciler、故障测试和审计。
+
+验收：无 Reservation、错误/多 UDID、重放 Grant、跨 Host Endpoint 均拒绝；插件 busy 与 Reservation 不一致时停止分配并隔离；Session 删除/过期后 busy、Device Session 和 Reservation 收敛；任何时刻同一 Device 最多一个 active Session。
+
+### DF-043 iOS Simulator 固定库存接入
+
+实施：在 E4 只接入管理员 allowlist 中已经创建并 booted 的 Simulator；Agent 报告 UDID、Runtime、机型和健康，Server 通过既有 Pool/Reservation 管理固定库存。首期不下载 Runtime、不自动克隆或删除 Simulator，启动/停止操作必须使用受控 Host Command。
+
+产出：Simulator inventory/health Provider、受控命令、Pool/Reservation 集成、E4 部署和证据。
+
+验收：两台不同 UDID Simulator 可发现、加入单平台 Pool、分别预约并并发建立 XCUITest Session；shutdown、boot timeout、Agent 重启和 UDID 冲突正确收敛；50 次循环无永久 busy、双占或端口/Session 泄漏。
+
+### DF-044 iOS 真机、WDA 签名与健康接入
+
+实施：接入固定 allowlist 真机，检查配对/信任、Developer Mode、UI Automation、iOS/Xcode 兼容和 WDA 签名 readiness；签名只使用 macOS Keychain/Secret 引用，服务端保存非敏感 Team/bundle/到期摘要。复用 XCUITest/WDA/go-ios，不管理 IPA，不启用非 macOS iOS 模式。
+
+产出：真机 inventory/health、签名 readiness、WDA 预装/启动策略、故障分类、轮换和恢复手册、E5 证据。
+
+验收：至少一台实际 iPhone 以明确 UDID 完成 Session、最小 XCUITest 操作和释放；未信任、Developer Mode 关闭、签名过期、WDA 启动失败和版本不兼容都不可调度且原因明确；20 次循环无永久 busy/Reservation，证据无 Apple Secret。
+
+### DF-045 Device Farm Console iOS 设备域页面
+
+实施：在现有 Host、Pool、Device、Reservation 和审计页面增加平台筛选、iOS 机型/版本、真机/Simulator、组件健康和签名到期摘要；操作继续调用设备 API。iOS 页面明确人工远控不支持，不显示 Android STF 操作、Appium Endpoint、Dashboard、WDA 地址或 Session Grant。
+
+产出：Console 页面、OpenAPI client、权限/安全测试和真实浏览器证据。
+
+验收：viewer/operator/admin 权限正确；跨平台操作受服务端校验；浏览器构建、网络和存储无内部 Endpoint/Secret；刷新后与 Server 一致；Android Console 和 STF 原生远控无回归。
+
+### DF-046 iOS 真实验收、运维回滚与 Android 回归
+
+实施：按 `docs/09_ios_device_farm_v2_acceptance.md` 在 E4/E5/E6 执行全量 P0/P1，完成多 Host、过期回收、漂移、稳定性、指标、告警、备份、升级、排空和版本回滚；同时执行 Android 第一版真实链路和 Alcor Device Farm Adapter 契约回归。iOS 业务 Executor 的开发仍由 Alcor 另立任务。
+
+产出：完整脱敏证据、运维/故障/回滚文档、版本清单、已知问题和最终签收记录。
+
+验收：iOS Simulator 50 次、真机至少 20 次循环无双占/串机/永久 busy；Host/Agent/Appium 故障 120 秒内收敛或隔离；回滚后 Android 继续可用；没有把 Mock/Simulator 结果冒充真机通过。
 
 ## 12. 单任务完成定义
 

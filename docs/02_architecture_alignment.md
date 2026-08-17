@@ -30,7 +30,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
-| Appium Device Farm / iOS Host 候选 | DF-039 仅做宿主机侧发现、连接和 Session 路由设计；当前不进入生产实现 | 后续如获批准，仍由现有 Reservation 返回明确 Device/UDID/Endpoint，Alcor 的 iOS 执行器另行接入 | 不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不把已移除的人工串流当作 STF 替代 |
+| macOS Host Agent + Appium Device Farm / iOS | ADR-0021 批准宿主机侧发现、技术 busy、健康和明确 UDID Session 路由；实现按 DF-040～DF-046 推进 | 现有 Reservation 先返回明确 Device/UDID/Host；Alcor 的 iOS Executor 另行接入 | 不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不把已移除的人工串流当作 STF 替代 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
 
@@ -51,6 +51,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；
+- 平台中立 Host/Pool/Device/连接与健康模型、macOS Agent 适配、iOS inventory/health 和 Reservation Session Fence；
 - `/api/v1/device-*` 与 `/internal/v1` 契约；
 - UUID/ULID Owner ID、幂等键和统一错误响应；
 - 设备 API 通用幂等记录，只保存请求哈希和设备资源 ID；
@@ -72,6 +73,8 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `internal/adapters/stf` | STF API 封装 | 由设备农场内部调用 |
 | `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
+| 后续 `internal/adapters/appiumdevicefarm` | 固定 12.0.1 的 iOS inventory、busy 漂移和 Node 健康适配 | 只由 macOS Host Agent/Session Fence 使用，不向浏览器暴露插件 API |
+| 后续 `internal/sessionfence` | 校验 active Reservation 和唯一 UDID，透明限制 Session 创建 | 不解释或实现 WebDriver 业务命令 |
 | `internal/metrics` | 设备域 Prometheus 指标和数据库就绪检查 | 只暴露基础设施聚合状态，不保存或计算 Alcor 业务指标 |
 | `migrations` | 设备域表和约束 | 不并入新版 Run/Case migration，不跨库外键 |
 | `deploy` | STF、Agent、模拟器和设备服务部署 | 独立部署细节对 Alcor Adapter 不可见 |
@@ -89,6 +92,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - RunResult、用例级结果、评分、门禁、对比和复核；
 - Supabase Storage Artifact、LLM 报告和 HyperDX/WeData 观测；
 - Eval Console 的 Case、Dataset、Run、Result、报告页面和 CI/发布门禁入口。
+- iOS Executor、IPA/Build/Case/Run/Result/Artifact、浏览器人工远控、Windows/Linux iOS Host、tvOS 和跨 Host Appium Hub。
 
 这些能力由新版 Alcor 实施。Device Farm Console 只提供设备域操作入口，不建立等待同步的 Alcor 业务对象。
 
@@ -98,10 +102,12 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 2. Alcor 保存 Run/RunAttempt/Result/Artifact 业务真相，设备农场保存 Device/Reservation 技术资源真相；
 3. STF 只负责设备可见性和远程控制；Docker 只负责运行载体；
 4. 上层只依赖统一 Device，模拟器和真机使用相同的池、预约、Session 和 Appium 链路；
-5. Worker 通过 Device Farm Adapter 和 API 申请设备，不共享数据库；
-6. Alcor Reservation Owner 使用 RunAttempt UUID/ULID；人工和 DaFit 可使用 `manual/test_run`，但不得固化旧整数 Task ID；
-7. 业务报告和测试结果由 Alcor 写入 Supabase Storage/ClickHouse，设备农场不留副本；
-8. DaFit 是成熟执行能力的复用来源和首个联调负载，不是设备农场业务模块。
+5. iOS Pool 是单平台 Pool；Appium Device Farm busy 只作技术锁，不能创建、续租或结束 PostgreSQL Reservation；
+6. iOS Session 的 `appium:udid`、单元素 `df:udids`、Device serial 和连接快照必须相同；共享 Appium Endpoint 不能放宽 UDID 唯一约束；
+7. Worker 通过 Device Farm Adapter 和 API 申请设备，不共享数据库；
+8. Alcor Reservation Owner 使用 RunAttempt UUID/ULID；人工和 DaFit 可使用 `manual/test_run`，但不得固化旧整数 Task ID；
+9. 业务报告和测试结果由 Alcor 写入 Supabase Storage/ClickHouse，设备农场不留副本；
+10. DaFit 是成熟执行能力的复用来源和首个联调负载，不是设备农场业务模块。
 
 ## 7. 文档优先级
 

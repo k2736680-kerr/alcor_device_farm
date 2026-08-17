@@ -1,4 +1,4 @@
-# DF-003～DF-039 与 ALCOR-001 实施和证据清单
+# DF-003～DF-046 与 ALCOR-001 实施和证据清单
 
 本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代；`pending` 表示已建立正式任务和验收模板，但尚未开始实现。
 
@@ -40,11 +40,18 @@
 | DF-036 | completed | `2c4ab80 完成旧镜像受控停用和可用镜像选择` | `docs/evidence/DF-036/acceptance.md` |
 | DF-037 | completed | `6453034 完成Phone硬件模板和受控创建设备向导` | `docs/evidence/DF-037/acceptance.md` |
 | DF-038 | completed | `56b7ae3 完成DF-038设备重建与真实验收` | `docs/evidence/DF-038/acceptance.md` |
-| DF-039 | pending | — | `docs/evidence/DF-039/acceptance.md` |
+| DF-039 | in_progress | — | `docs/evidence/DF-039/acceptance.md` |
+| DF-040 | pending | — | `docs/evidence/DF-040/acceptance.md` |
+| DF-041 | pending | — | `docs/evidence/DF-041/acceptance.md` |
+| DF-042 | pending | — | `docs/evidence/DF-042/acceptance.md` |
+| DF-043 | pending | — | `docs/evidence/DF-043/acceptance.md` |
+| DF-044 | pending | — | `docs/evidence/DF-044/acceptance.md` |
+| DF-045 | pending | — | `docs/evidence/DF-045/acceptance.md` |
+| DF-046 | pending | — | `docs/evidence/DF-046/acceptance.md` |
 | ALCOR-001 | completed | `9300fa2 完成Alcor设备农场统一入口`、`106e9dd 优化Alcor嵌入式设备页面` | `docs/evidence/ALCOR-001/readiness.md` |
 
 ## 当前结论
 
 1. Android 第一版 DF-003～DF-038 和本地 ALCOR-001 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
-2. 第二版使用本地 `codex/device-farm-v2` 分支，DF-039 先完成多平台宿主机和 iOS 接入设计，未通过设计验收前不得修改 API、表、状态或 Provider 实现；
+2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039 正在固化多平台宿主机和 iOS 接入设计，生产实现只能从 DF-040 开始并按 DF-046 顺序验收；
 3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。
