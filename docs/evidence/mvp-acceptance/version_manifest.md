@@ -1,5 +1,7 @@
 # 验收版本清单
 
+> 历史快照说明：本清单记录 DF-024 验收时的版本，不是 Android 第一版最终 Head。最终冻结基线为 `106e9dd7c83b8034fbf97baf7bde3979a9afcb10`，Tag `archive/android-baseline-2026-08-17`；完整归档校验见 `docs/evidence/android_v1_archive.md`。
+
 ## Device Farm
 
 - 分支：`master`；

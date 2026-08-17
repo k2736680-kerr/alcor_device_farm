@@ -250,9 +250,13 @@ func (handler *managementHandler) selectPoolDefaultImage(writer http.ResponseWri
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) selectPoolBaseDevice(writer http.ResponseWriter, request *http.Request) {
-	if !handler.available(writer, request) { return }
+	if !handler.available(writer, request) {
+		return
+	}
 	var input poolBaseDeviceInput
-	if !decode(writer, request, &input) { return }
+	if !decode(writer, request, &input) {
+		return
+	}
 	value, err := handler.service.SetPoolBaseDevice(request.Context(), request.PathValue("id"), input.DeviceID, input.Reason,
 		requestActor(request), correlation.FromContext(request.Context()).RequestID)
 	handler.write(writer, request, http.StatusOK, value, err)
@@ -438,7 +442,7 @@ type poolDefaultImageInput struct {
 }
 type poolBaseDeviceInput struct {
 	DeviceID string `json:"device_id"`
-	Reason string `json:"reason"`
+	Reason   string `json:"reason"`
 }
 type poolDeviceInput struct {
 	DeviceID string `json:"device_id"`

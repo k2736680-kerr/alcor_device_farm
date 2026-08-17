@@ -60,6 +60,7 @@
 | DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
 | DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | completed | DF-037 |
 | ALCOR-001 | 新版 Alcor 真实接口联调与统一入口 | completed | DF-028、新版 Alcor 实际 `test` 分支 |
+| DF-039 | 第二版多平台宿主机与 iOS 接入设计 | pending | DF-038、ALCOR-001、Android 第一版归档基线 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -405,7 +406,17 @@
 
 验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed；Alcor 设备入口与独立 Device Farm Console 不产生两套设备状态或操作语义；浏览器没有 Service/STF Token，设备操作审计记录钉钉操作者，打开设备入口无需第二次登录。
 
-## 11. 单任务完成定义
+## 11. 第二版多平台设备农场
+
+### DF-039 第二版多平台宿主机与 iOS 接入设计
+
+实施：只做设计、复用验证和真实环境盘点，不修改 API、数据库、状态机或 Provider 代码。固定 Android 第一版归档基线和本地第二版分支；核对 Appium Device Farm、Appium 3、XCUITest、WebDriverAgent、go-ios、macOS/Xcode 和 iOS 真机/Simulator 的版本与职责；明确现有 PostgreSQL Scheduler、Pool、Reservation、Reaper 和审计继续作为唯一设备占用真相，Appium Device Farm 只能作为宿主机侧发现、连接和 Session 路由候选组件；设计按明确 UDID 使用设备的防双分配约束、平台中立健康模型、连接快照、Android STF 保留策略和 iOS 人工远控边界。
+
+产出：第二版专项 ADR、更新后的复用矩阵、架构对齐表、功能方案、分步实施任务、验收环境和 `docs/evidence/DF-039/` 证据。后续实现任务只有在这些文档明确允许后才能新增。
+
+验收：可以明确回答 macOS Host、iOS 真机和 Simulator 分别如何发现、签名、健康检查、预约、建立 XCUITest Session、释放和故障收敛；证明不会让 Appium Device Farm 与 PostgreSQL 各自独立分配同一设备；明确 Appium Device Farm 12.x 不提供当前版本的人工串流，因此不把它描述为 STF 的跨平台远控替代；Alcor/DaFit/STF/Appium 的既有职责没有被复制；没有写入任何生产代码、migration 或真实凭证。
+
+## 12. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：
 

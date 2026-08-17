@@ -1,4 +1,4 @@
-# DF-003～DF-038 实施与证据清单
+# DF-003～DF-039 与 ALCOR-001 实施和证据清单
 
 本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代；`pending` 表示已建立正式任务和验收模板，但尚未开始实现。
 
@@ -32,17 +32,19 @@
 | DF-028 | completed | `92fa8a8 实现DF-028控制台部署和真实Web验收链路` | `docs/evidence/DF-028/acceptance.md` |
 | DF-029 | completed | `ccf2940 完成后台设备容量自动扩缩容` | `docs/evidence/DF-029/acceptance.md` |
 | DF-030 | completed | `1629edb 完成隔离设备安全删除` | `docs/evidence/DF-030/acceptance.md` |
-| DF-031 | completed | `本次提交：加入管理员设备远程控制` | `docs/evidence/DF-031/acceptance.md` |
+| DF-031 | completed | `c9f09dc 加入管理员设备远程控制`、`8f458fb 修复设备远控连接超时与幂等关闭` | `docs/evidence/DF-031/acceptance.md` |
 | DF-032 | completed | `d8f573d 按实际资源动态计算设备容量` | `docs/evidence/DF-032/acceptance.md` |
-| DF-033 | completed | `本次提交：改为按设备池总目标动态扩缩容` | `docs/evidence/DF-033/acceptance.md` |
-| DF-034 | completed | `本次提交：支持单台模拟器更换镜像和配置` | `docs/evidence/DF-034/acceptance.md` |
-| DF-035 | completed | `本次提交：完成官方镜像按需构建和真实多规格验收` | `docs/evidence/DF-035/acceptance.md` |
-| DF-036 | completed | `本次提交：完成旧镜像受控停用和可用镜像选择` | `docs/evidence/DF-036/acceptance.md` |
-| DF-037 | completed | `本次提交：完成 Phone 硬件模板和受控模拟器创建向导` | `docs/evidence/DF-037/acceptance.md` |
+| DF-033 | completed | `79bff48 改为按设备池总目标动态扩缩容` | `docs/evidence/DF-033/acceptance.md` |
+| DF-034 | completed | `48f2076 支持单台模拟器更换镜像和配置` | `docs/evidence/DF-034/acceptance.md` |
+| DF-035 | completed | `5bbbf31 完成官方镜像按需构建和真实多规格验收` | `docs/evidence/DF-035/acceptance.md` |
+| DF-036 | completed | `2c4ab80 完成旧镜像受控停用和可用镜像选择` | `docs/evidence/DF-036/acceptance.md` |
+| DF-037 | completed | `6453034 完成Phone硬件模板和受控创建设备向导` | `docs/evidence/DF-037/acceptance.md` |
 | DF-038 | completed | `56b7ae3 完成DF-038设备重建与真实验收` | `docs/evidence/DF-038/acceptance.md` |
+| DF-039 | pending | — | `docs/evidence/DF-039/acceptance.md` |
+| ALCOR-001 | completed | `9300fa2 完成Alcor设备农场统一入口`、`106e9dd 优化Alcor嵌入式设备页面` | `docs/evidence/ALCOR-001/readiness.md` |
 
-## 当前剩余条件
+## 当前结论
 
-1. 新版 Alcor 发布真实 Run/RunAttempt OpenAPI 和 Device Farm 扩展输入后完成 ALCOR-001；
-2. KI-005/KI-007 所列跨仓库接口字段由新版 Alcor 正式契约确认后再联调；
+1. Android 第一版 DF-003～DF-038 和本地 ALCOR-001 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
+2. 第二版使用本地 `codex/device-farm-v2` 分支，DF-039 先完成多平台宿主机和 iOS 接入设计，未通过设计验收前不得修改 API、表、状态或 Provider 实现；
 3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。

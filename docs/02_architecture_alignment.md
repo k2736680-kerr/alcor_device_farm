@@ -6,6 +6,8 @@
 
 当前单独建仓是因为新版 Alcor 明确把 Device Farm 放在第六阶段，相关 Adapter 尚未开发。设备域可以先行验证，但不得复制新版 Alcor 的评估业务。
 
+Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17` 冻结；本地第二版固定从该基线使用 `codex/device-farm-v2` 开发。分支变化不改变仓库、数据库或部署边界，详见 ADR-0020。DF-039 只设计多平台宿主机与 iOS 接入，不代表当前接口或实现已经支持 iOS。
+
 ## 2. 组件逐项对齐
 
 | 组件 | 当前工作区处理 | 新版 Alcor 接入方式 | 禁止跑偏 |
@@ -28,6 +30,7 @@
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
+| Appium Device Farm / iOS Host 候选 | DF-039 仅做宿主机侧发现、连接和 Session 路由设计；当前不进入生产实现 | 后续如获批准，仍由现有 Reservation 返回明确 Device/UDID/Endpoint，Alcor 的 iOS 执行器另行接入 | 不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不把已移除的人工串流当作 STF 替代 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
 

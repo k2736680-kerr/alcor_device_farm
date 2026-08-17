@@ -96,6 +96,17 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 
 ## 6. 开发审查规则
 
+### 第二版候选能力的当前限制
+
+DF-039 只允许评估多平台 Host Agent 和 iOS 接入设计，尚未授权实现 iOS Provider、iOS API、数据库字段或 Console 页面。Appium Device Farm 可以作为宿主机侧设备发现、连接与 Appium Session 路由候选，但必须满足以下边界后才能在后续任务中列为“允许新建”：
+
+- PostgreSQL Reservation、Scheduler、Pool、Lease、Reaper 和审计继续是唯一设备占用真相；
+- Appium Device Farm 不得再次自由选择我方已经预约的设备，Session 必须绑定明确 UDID，或通过经过验收的单一占用桥接协议完成；
+- Android 继续复用 STF 原生远控；Appium Device Farm 12.x 已移除人工设备串流，不能把其 Dashboard 描述为 STF 的跨平台远控替代；
+- iOS 自动化继续复用 Appium XCUITest/WebDriverAgent，不在本仓库重写 WebDriver、WDA 或业务用例执行器；
+- iOS App、Build、Case、Run、结果和 Artifact 仍属于 Alcor/对应执行器，不进入设备域；
+- 只有 DF-039 完成专项 ADR、架构对齐和真实验收计划后，才能把明确的宿主机 Adapter/Provider 能力移入第 4 节并开始编码。
+
 每个新增模块必须在代码评审中回答：
 
 1. 新版 Alcor 方案是否已经定义同一业务能力？

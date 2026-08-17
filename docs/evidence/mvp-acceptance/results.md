@@ -1,5 +1,7 @@
 # 设备农场 MVP 验收报告
 
+> 历史快照说明：本报告是 DF-024 完成时的 G0～G6 签收快照，因此正文保留当时 G7 `IN_PROGRESS` 和 ALCOR-001 `WAITING_EXTERNAL` 的原始结论。其后 DF-028 已完成 G7，DF-029～DF-038 已完成容量、镜像、长期设备等扩展，本地 ALCOR-001 也已完成；当前总状态以 `docs/evidence/implementation_manifest.md` 和 `docs/evidence/ALCOR-001/readiness.md` 为准。
+
 ## 结论
 
 E0 控制面、并发、租约、契约和 migration 门禁全部通过；E1/E2 的 Linux KVM、Android 16 Emulator、ADB、Appium、STF、DaFit、故障恢复、数据隔离、50 次稳定性、安全、告警和回滚均真实通过。设备域 G0～G6 结论为 `PASS`，DF-024 可以完成。
@@ -123,3 +125,10 @@ Device Farm Console 的浏览器部署、受控 STF 看屏和 Web 安全属于 G
 - 浏览器交付：`IN_PROGRESS`，待 DF-028 完成 G7；
 - 新版 Alcor 联调：`WAITING_EXTERNAL`，待真实 Run/RunAttempt OpenAPI；
 - DF-024 当前签收结论：`通过`。
+
+## 后续闭环
+
+- G7/DF-028：已完成，证据见 `docs/evidence/DF-028/acceptance.md`；
+- DF-029～DF-038：已完成，证据入口见 `docs/evidence/implementation_manifest.md`；
+- ALCOR-001：本地真实接口联调与统一入口已完成，证据见 `docs/evidence/ALCOR-001/readiness.md`；
+- Android 第一版最终冻结：`106e9dd`，Tag `archive/android-baseline-2026-08-17`。

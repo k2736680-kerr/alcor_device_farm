@@ -33,10 +33,13 @@ function Invoke-Go {
 
 function Invoke-FormatCheck {
     $Unformatted = @()
-    $Files = Get-ChildItem -LiteralPath $ProjectRoot -Recurse -Filter "*.go" -File |
-        Where-Object {
-            $_.FullName -notmatch '[\\/](vendor|node_modules|tmp|\.git|\.workbuddy)[\\/]'
-        }
+    $RelativeFiles = @(& git -C $ProjectRoot ls-files -- "*.go")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to list tracked Go files."
+    }
+    $Files = $RelativeFiles | ForEach-Object {
+        Get-Item -LiteralPath (Join-Path $ProjectRoot $_)
+    }
 
     foreach ($File in $Files) {
         $Result = & $script:GofmtExecutable -l $File.FullName

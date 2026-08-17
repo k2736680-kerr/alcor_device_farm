@@ -8,7 +8,6 @@ $PlanPath = Join-Path $ProjectRoot "docs/05_step_by_step_implementation.md"
 $ManifestPath = Join-Path $ProjectRoot "docs/evidence/implementation_manifest.md"
 $Plan = Get-Content -LiteralPath $PlanPath -Raw -Encoding UTF8
 $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8
-$TaskIDs = 3..30 | ForEach-Object { "DF-{0:D3}" -f $_ }
 $ImplementedStatuses = @("completed", "blocked")
 $PlannedStatuses = @("pending", "in_progress")
 $UnblockHeading = -join ([char[]](0x963B, 0x585E, 0x89E3, 0x9664, 0x6761, 0x4EF6))
@@ -48,11 +47,19 @@ function Assert-CommitIsReachable {
 }
 
 $PlanStatuses = Read-TaskStatuses -Document $Plan `
-    -Pattern '^\|\s*(DF-\d{3})\s*\|[^\r\n]*?\|\s*(completed|blocked|pending|in_progress|waiting_external)\s*\|' `
+    -Pattern '^\|\s*((?:DF|ALCOR)-\d{3})\s*\|[^\r\n]*?\|\s*(completed|blocked|pending|in_progress|waiting_external)\s*\|' `
     -SourceName "docs/05_step_by_step_implementation.md"
 $ManifestStatuses = Read-TaskStatuses -Document $Manifest `
-    -Pattern '^\|\s*(DF-\d{3})\s*\|\s*(completed|blocked|pending|in_progress)\s*\|' `
+    -Pattern '^\|\s*((?:DF|ALCOR)-\d{3})\s*\|\s*(completed|blocked|pending|in_progress|waiting_external)\s*\|' `
     -SourceName "docs/evidence/implementation_manifest.md"
+$TaskIDs = @(
+    $PlanStatuses.Keys |
+        Where-Object {
+            $_ -eq "ALCOR-001" -or
+            ($_ -match '^DF-(\d{3})$' -and [int]$Matches[1] -ge 3)
+        } |
+        Sort-Object
+)
 
 foreach ($TaskID in $TaskIDs) {
     if (-not $PlanStatuses.ContainsKey($TaskID)) {
@@ -69,7 +76,11 @@ foreach ($TaskID in $TaskIDs) {
         throw "$TaskID status mismatch: plan=$Status manifest=$($ManifestStatuses[$TaskID])"
     }
 
-    $EvidenceRelativePath = "docs/evidence/$TaskID/acceptance.md"
+    $EvidenceRelativePath = if ($TaskID -eq "ALCOR-001") {
+        "docs/evidence/ALCOR-001/readiness.md"
+    } else {
+        "docs/evidence/$TaskID/acceptance.md"
+    }
     $EvidencePath = Join-Path $ProjectRoot $EvidenceRelativePath
     if (-not (Test-Path -LiteralPath $EvidencePath -PathType Leaf)) {
         throw "$TaskID acceptance evidence is missing: $EvidencePath"
@@ -80,16 +91,13 @@ foreach ($TaskID in $TaskIDs) {
     }
     $ManifestRow = [regex]::Match(
         $Manifest,
-        "(?m)^\|\s*$([regex]::Escape($TaskID))\s*\|\s*$Status\s*\|([^\r\n]*)$"
+        "(?m)^\|\s*$([regex]::Escape($TaskID))\s*\|\s*$Status\s*\|([^\r\n]*)\r?$"
     )
     if (-not $ManifestRow.Success -or $ManifestRow.Groups[1].Value -notmatch [regex]::Escape($EvidenceRelativePath)) {
         throw "$TaskID manifest row does not point to $EvidenceRelativePath"
     }
     if ($Status -in $PlannedStatuses) {
-        if ($TaskID -notin @('DF-026', 'DF-027', 'DF-028')) {
-            throw "$TaskID cannot remain $Status because it is part of the implemented evidence range"
-        }
-        if ($Evidence -notmatch [regex]::Escape($Status)) {
+        if ($Evidence -notmatch [regex]::Escape("``$Status``")) {
             throw "$TaskID planned evidence must record status $Status"
         }
         Write-Output "$TaskID plan/evidence: passed ($Status)"
@@ -124,7 +132,11 @@ foreach ($TaskID in $TaskIDs) {
     Write-Output "$TaskID evidence/status/commits: passed ($Status, $($Commits.Count) commit(s))"
 }
 
-$UnexpectedPlanTasks = $PlanStatuses.Keys | Where-Object { $_ -like 'DF-*' -and $_ -notin $TaskIDs -and $_ -notin @('DF-000', 'DF-001', 'DF-002') }
+$UnexpectedPlanTasks = $PlanStatuses.Keys | Where-Object {
+    ($_ -like 'DF-*' -or $_ -like 'ALCOR-*') -and
+    $_ -notin $TaskIDs -and
+    $_ -notin @('DF-000', 'DF-001', 'DF-002')
+}
 if ($UnexpectedPlanTasks) {
     throw "unexpected DF task rows in implementation plan: $($UnexpectedPlanTasks -join ', ')"
 }
@@ -137,8 +149,10 @@ $TrackedWorkBuddy = & git -C $ProjectRoot ls-files -- ".workbuddy"
 if ($TrackedWorkBuddy) {
     throw ".workbuddy must remain untracked"
 }
-if ((& git -C $ProjectRoot branch --show-current).Trim() -ne "master") {
-    throw "Device Farm development must stay on master"
+$CurrentBranch = (& git -C $ProjectRoot branch --show-current).Trim()
+$AllowedBranches = @("master", "codex/device-farm-v2")
+if ($CurrentBranch -notin $AllowedBranches) {
+    throw "Device Farm evidence gate only allows the archived master baseline or codex/device-farm-v2; current branch is $CurrentBranch"
 }
 
 Write-Output "implementation evidence gate: passed"

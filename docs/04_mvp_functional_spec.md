@@ -1,5 +1,7 @@
 # Android 设备农场 MVP 功能方案
 
+> 本文件是已经完成并归档的 Android 第一版功能基线。第二版多平台与 iOS 扩展从 DF-039 开始另行设计；在专项 ADR、复用矩阵和验收方案批准前，本文件中的“明确不做 iOS”仍对现有实现有效。
+
 ## 1. 交付目标
 
 在不等待新版 Alcor 的情况下，先交付一套可独立运行、可通过 Web 控制、可自动测试的 Android 设备农场。首期使用 Linux KVM 宿主机上的 Docker Android Emulator；设备申请成功后返回明确的 UDID 和 Appium Endpoint。STF 原生 Web 页面保持独立受控访问，Console 不把 `remoteConnect` TCP 地址展示为浏览器入口。

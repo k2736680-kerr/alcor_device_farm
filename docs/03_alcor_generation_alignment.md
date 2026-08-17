@@ -96,6 +96,12 @@ DF-038 仍只改变 Device、Pool、Reservation、Host Command、持久化 provi
 5. 核对关联 Header 和审计 Actor 的传递方式；
 6. 用双方 OpenAPI 做契约测试后再开始真实接入；
 7. 任何不一致先更新本文件和 ADR，不在 Adapter 中堆临时兼容分支。
+
+## 7. Android 第一版归档与第二版边界
+
+Android 第一版冻结在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17`；本地第二版使用 `codex/device-farm-v2`，详见 ADR-0020。分支切换不改变三方职责：设备农场仍只保存 Device/Host/Pool/Reservation 与技术连接真相，Alcor 仍保存 App/Build/Run/RunAttempt/Result/Artifact 业务真相，DaFit 仍是 Android 业务执行复用来源。
+
+DF-039 对 iOS 只进行设计和复用验证。iOS Device、Host、Pool、Reservation 和技术连接属于设备域；IPA/App Build、iOS Case、执行结果和业务报告属于 Alcor 或对应执行器。Appium Device Farm 即使提供 Hub/Node、设备发现和 Session 路由，也不得覆盖我方 PostgreSQL 预约或独立维护另一套业务设备池；真实 Session 必须与我方已预约的明确 UDID 对齐。
 # DF-035 官方目录与按需准备补充（2026-08-10）
 
 Android System Image 的版本、映像类型和 ABI 由 Android SDK 官方稳定频道提供；CPU、内存、数据盘、分辨率、DPI 和图形模式属于本设备域的 `runtime_profile`。Device Farm Console 只调用 Server 的目录和准备任务 API，既不访问 Google，也不获取下载链接、Registry 凭证、Host 命令或 Docker Socket。Server 仅编排受控 Build Agent；只有 Agent 完成构建、内部 Registry 推送、不可变 digest 获取和现有验证链路后，才创建或更新 `device_images`。这仍是设备域基础设施准备，不形成新版 Alcor 的 Image/Artifact 业务索引或 Run 队列。
