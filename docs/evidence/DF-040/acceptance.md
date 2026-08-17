@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-`in_progress`
+`completed`
 
-DF-040 已完成实现和本地验收，等待独立 Git 提交及清单回填后标记 `completed`。本任务只建立 Android/iOS 共用的设备域数据和调度契约，没有连接真实 Appium Device Farm、macOS Agent 或 iOS Session Fence。
+DF-040 已完成实现、独立提交和本地验收，主要提交为 `31fc0a2 完成DF-040平台中立设备域模型`。本任务只建立 Android/iOS 共用的设备域数据和调度契约，没有连接真实 Appium Device Farm、macOS Agent 或 iOS Session Fence。
 
 ## 实现结果
 
