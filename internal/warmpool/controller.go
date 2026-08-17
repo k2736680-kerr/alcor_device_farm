@@ -20,7 +20,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrNoCapacity = errors.New("no eligible Docker emulator host capacity")
+var ErrNoCapacity = errors.New("没有符合条件且容量充足的 Docker 模拟器宿主机")
+
+type CapacityUnavailableError struct {
+	Result capacity.Result
+}
+
+func (value *CapacityUnavailableError) Error() string { return capacity.ChineseMessage(value.Result) }
+func (value *CapacityUnavailableError) Unwrap() error { return ErrNoCapacity }
 
 // A quarantined emulator still occupies a slot when the latest Agent heartbeat
 // discovered its Provider resource. A later heartbeat that no longer reports
@@ -59,13 +66,14 @@ type ProvisionInput struct {
 }
 
 type Provisioning struct {
-	ID         string `json:"id,omitempty"`
-	DeviceID   string `json:"device_id"`
-	CommandID  string `json:"command_id"`
-	HostID     string `json:"host_id"`
-	Status     string `json:"status"`
-	ErrorStage string `json:"error_stage,omitempty"`
-	ErrorCode  string `json:"error_code,omitempty"`
+	ID             string           `json:"id,omitempty"`
+	DeviceID       string           `json:"device_id"`
+	CommandID      string           `json:"command_id"`
+	HostID         string           `json:"host_id"`
+	Status         string           `json:"status"`
+	ErrorStage     string           `json:"error_stage,omitempty"`
+	ErrorCode      string           `json:"error_code,omitempty"`
+	CapacityResult *capacity.Result `json:"capacity_result,omitempty"`
 }
 
 // CatalogProvisionInput is the durable, browser-independent version of a
@@ -126,9 +134,9 @@ func (controller *Controller) CreateCatalogProvisioning(ctx context.Context, inp
 			return err
 		}
 		var existingHash string
-		err := tx.QueryRow(ctx, `SELECT id,request_hash,status,COALESCE(device_id,''),COALESCE(command_id,''),COALESCE(error_stage,''),COALESCE(error_code,'')
+		err := tx.QueryRow(ctx, `SELECT id,request_hash,status,COALESCE(device_id,''),COALESCE(command_id,''),COALESCE(error_stage,''),COALESCE(error_code,''),capacity_result
 			FROM device_provisioning_jobs WHERE client_id=$1 AND idempotency_key=$2 FOR UPDATE`, input.ClientID, input.IdempotencyKey).
-			Scan(&output.ID, &existingHash, &output.Status, &output.DeviceID, &output.CommandID, &output.ErrorStage, &output.ErrorCode)
+			Scan(&output.ID, &existingHash, &output.Status, &output.DeviceID, &output.CommandID, &output.ErrorStage, &output.ErrorCode, &output.CapacityResult)
 		if err == nil {
 			if existingHash != hash {
 				return errors.New("device provisioning idempotency key conflicts with another request")
@@ -197,8 +205,8 @@ func (controller *Controller) FailCatalogProvisioning(ctx context.Context, jobID
 
 func (controller *Controller) GetCatalogProvisioning(ctx context.Context, id string) (Provisioning, error) {
 	var output Provisioning
-	err := controller.db.Pool().QueryRow(ctx, `SELECT id,COALESCE(device_id,''),COALESCE(command_id,''),status,COALESCE(error_stage,''),COALESCE(error_code,'')
-		FROM device_provisioning_jobs WHERE id=$1`, id).Scan(&output.ID, &output.DeviceID, &output.CommandID, &output.Status, &output.ErrorStage, &output.ErrorCode)
+	err := controller.db.Pool().QueryRow(ctx, `SELECT id,COALESCE(device_id,''),COALESCE(command_id,''),status,COALESCE(error_stage,''),COALESCE(error_code,''),capacity_result
+		FROM device_provisioning_jobs WHERE id=$1`, id).Scan(&output.ID, &output.DeviceID, &output.CommandID, &output.Status, &output.ErrorStage, &output.ErrorCode, &output.CapacityResult)
 	return output, err
 }
 
@@ -212,7 +220,7 @@ func (controller *Controller) ListCatalogProvisionings(ctx context.Context, page
 	if err := controller.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_provisioning_jobs`).Scan(&total); err != nil {
 		return paging.Result[Provisioning]{}, err
 	}
-	rows, err := controller.db.Pool().Query(ctx, `SELECT id,COALESCE(device_id,''),COALESCE(command_id,''),status,COALESCE(error_stage,''),COALESCE(error_code,'')
+	rows, err := controller.db.Pool().Query(ctx, `SELECT id,COALESCE(device_id,''),COALESCE(command_id,''),status,COALESCE(error_stage,''),COALESCE(error_code,''),capacity_result
 		FROM device_provisioning_jobs ORDER BY created_at DESC,id DESC LIMIT $1 OFFSET $2`, page.Limit(), page.Offset())
 	if err != nil {
 		return paging.Result[Provisioning]{}, err
@@ -221,7 +229,7 @@ func (controller *Controller) ListCatalogProvisionings(ctx context.Context, page
 	items := []Provisioning{}
 	for rows.Next() {
 		var item Provisioning
-		if err := rows.Scan(&item.ID, &item.DeviceID, &item.CommandID, &item.Status, &item.ErrorStage, &item.ErrorCode); err != nil {
+		if err := rows.Scan(&item.ID, &item.DeviceID, &item.CommandID, &item.Status, &item.ErrorStage, &item.ErrorCode, &item.CapacityResult); err != nil {
 			return paging.Result[Provisioning]{}, err
 		}
 		items = append(items, item)
@@ -430,9 +438,22 @@ func (controller *Controller) reconcileCatalogProvisioningJobs(ctx context.Conte
 			}
 			created, err := controller.Provision(ctx, ProvisionInput{PoolID: item.pool, ImageID: item.preparedImage, HardwareProfileID: item.hardware, RuntimeProfile: profile, IdempotencyKey: "catalog-provision-" + item.id})
 			if err != nil {
+				var capacityError *CapacityUnavailableError
+				if errors.As(err, &capacityError) {
+					resultJSON, marshalErr := json.Marshal(capacityError.Result)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					_, updateErr := controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs
+						SET status='waiting_capacity',error_stage='host_capacity',error_code='DEVICE_CAPACITY_UNAVAILABLE',capacity_result=$2::jsonb,updated_at=clock_timestamp()
+						WHERE id=$1 AND device_id IS NULL`, item.id, resultJSON)
+					if updateErr != nil {
+						return updateErr
+					}
+				}
 				continue
 			} // Capacity/build-agent recovery is retried by the durable job.
-			_, err = controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET image_id=$2,device_id=$3,command_id=$4,status='creating_emulator',updated_at=clock_timestamp() WHERE id=$1`, item.id, item.preparedImage, created.DeviceID, created.CommandID)
+			_, err = controller.db.Pool().Exec(ctx, `UPDATE device_provisioning_jobs SET image_id=$2,device_id=$3,command_id=$4,status='creating_emulator',error_stage=NULL,error_code=NULL,capacity_result=NULL,updated_at=clock_timestamp() WHERE id=$1`, item.id, item.preparedImage, created.DeviceID, created.CommandID)
 			if err != nil {
 				return err
 			}
@@ -1374,6 +1395,7 @@ func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested 
 		return "", err
 	}
 	defer rows.Close()
+	var bestResult *capacity.Result
 	for rows.Next() {
 		var hostID string
 		var capacityJSON, usedJSON, deviceJSON, pendingJSON []byte
@@ -1399,6 +1421,8 @@ func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested 
 			if limit > used {
 				return hostID, nil
 			}
+			result := capacity.Result{Limiting: "device_slots", Shortfall: map[string]int64{"device_slots": 1}}
+			bestResult = betterCapacityResult(bestResult, result)
 			continue
 		}
 		if lastHeartbeat == nil || time.Since(*lastHeartbeat) > 30*time.Second || host.CollectedAt.IsZero() || time.Since(host.CollectedAt) > 30*time.Second {
@@ -1433,14 +1457,41 @@ func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested 
 			pendingAllocation.DiskMB += profile.DataDiskMB + profile.ImageDiskMB
 			pendingAllocation.Slots++
 		}
-		if valid && capacity.Evaluate(host, existing, pendingAllocation, requested, imageCached).Fits {
-			return hostID, nil
+		if valid {
+			result := capacity.Evaluate(host, existing, pendingAllocation, requested, imageCached)
+			if result.Fits {
+				return hostID, nil
+			}
+			bestResult = betterCapacityResult(bestResult, result)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	return "", ErrNoCapacity
+	if bestResult != nil {
+		return "", &CapacityUnavailableError{Result: *bestResult}
+	}
+	return "", &CapacityUnavailableError{Result: capacity.Result{}}
+}
+
+func betterCapacityResult(current *capacity.Result, candidate capacity.Result) *capacity.Result {
+	if current == nil {
+		value := candidate
+		return &value
+	}
+	currentKinds, candidateKinds := len(current.Shortfall), len(candidate.Shortfall)
+	currentTotal, candidateTotal := int64(0), int64(0)
+	for _, value := range current.Shortfall {
+		currentTotal += value
+	}
+	for _, value := range candidate.Shortfall {
+		candidateTotal += value
+	}
+	if candidateKinds < currentKinds || (candidateKinds == currentKinds && candidateTotal < currentTotal) {
+		value := candidate
+		return &value
+	}
+	return current
 }
 
 func jsonInt(values map[string]any, key string) int {

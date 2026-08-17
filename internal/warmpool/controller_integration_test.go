@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
@@ -115,6 +117,102 @@ func TestCatalogProvisioningReusesCachedAndroidVersionAcrossRuntimeProfiles(t *t
 	}
 	assertCount(t, db, `SELECT count(*) FROM device_provisioning_jobs
 		WHERE preparation_id='preparation_0000001'`, 1)
+}
+
+func TestCatalogProvisioningReportsCapacityShortfallAndResumesAfterRecovery(t *testing.T) {
+	tests := []struct {
+		name          string
+		capacity      map[string]any
+		shortfallKey  string
+		messagePrefix string
+	}{
+		{
+			name: "内存不足",
+			capacity: map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 16, "memory_total_mb": 8192,
+				"memory_available_mb": 8192, "disk_total_mb": 100000, "disk_available_mb": 80000},
+			shortfallKey: "memory_mb", messagePrefix: "宿主机内存不足",
+		},
+		{
+			name: "磁盘不足",
+			capacity: map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 16, "memory_total_mb": 32768,
+				"memory_available_mb": 30000, "disk_total_mb": 100000, "disk_available_mb": 5000},
+			shortfallKey: "disk_mb", messagePrefix: "宿主机磁盘不足",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := openTestDatabase(t)
+			seedWarmPool(t, db, "ready", 0, 2, 2)
+			ctx := context.Background()
+			if _, err := db.Pool().Exec(ctx, `TRUNCATE TABLE device_provisioning_jobs,device_image_preparations,android_system_image_catalog CASCADE`); err != nil {
+				t.Fatal(err)
+			}
+			test.capacity["collected_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+			if _, err := db.Pool().Exec(ctx, `UPDATE device_hosts SET capacity=$1::jsonb,last_heartbeat_at=clock_timestamp()`, test.capacity); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool().Exec(ctx, `INSERT INTO device_host_commands(id,host_id,command_type,payload,idempotency_key)
+				VALUES('build_capacity_test','host_000000000000001','prepare_android_image','{}','build-capacity-test-key');
+				INSERT INTO android_system_image_catalog(id,package_name,api_level,image_type,abi,revision)
+				VALUES('catalog_capacity_01','system-images;android-34;google_apis;x86_64',34,'google_apis','x86_64','7');
+				INSERT INTO device_image_preparations(id,catalog_id,host_id,build_command_id,client_id,idempotency_key,catalog_revision,runtime_profile,image_id,status)
+				VALUES('preparation_capacity_01','catalog_capacity_01','host_000000000000001','build_capacity_test','test','capacity-image-key','7',
+				'{}','image_00000000000001','cached')`); err != nil {
+				t.Fatal(err)
+			}
+			controller := warmpool.New(db, sequentialGenerator(), nil)
+			profile := runtimeprofile.Default()
+			profile.ContainerCPUCores = 2
+			profile.ContainerMemoryMB = 8192
+			profile.GuestMemoryMB = 6144
+			profile.DataDiskMB = 8192
+			profile.ImageDiskMB = 0
+			job, created, err := controller.CreateCatalogProvisioning(ctx, warmpool.CatalogProvisionInput{
+				ClientID: "test", IdempotencyKey: "capacity-feedback-key", PoolID: "pool_000000000000001",
+				CatalogID: "catalog_capacity_01", HardwareProfileID: "pixel_9", RuntimeProfile: profile,
+			})
+			if err != nil || !created {
+				t.Fatalf("create job=%+v created=%t error=%v", job, created, err)
+			}
+			if attached, err := controller.AttachCachedPreparation(ctx, job.ID); err != nil || !attached {
+				t.Fatalf("attach cached=%t error=%v", attached, err)
+			}
+			if _, err := controller.RunOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waiting, err := controller.GetCatalogProvisioning(ctx, job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waiting.Status != "waiting_capacity" || waiting.ErrorCode != "DEVICE_CAPACITY_UNAVAILABLE" || waiting.CapacityResult == nil || waiting.CapacityResult.Shortfall[test.shortfallKey] <= 0 {
+				t.Fatalf("waiting job=%+v", waiting)
+			}
+			if message := capacity.ChineseMessage(*waiting.CapacityResult); !strings.HasPrefix(message, test.messagePrefix) {
+				t.Fatalf("capacity message=%q", message)
+			}
+			assertCount(t, db, "SELECT count(*) FROM devices", 0)
+			assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 0)
+
+			recovered := map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 16, "memory_total_mb": 32768,
+				"memory_available_mb": 30000, "disk_total_mb": 100000, "disk_available_mb": 80000,
+				"collected_at": time.Now().UTC().Format(time.RFC3339Nano)}
+			if _, err := db.Pool().Exec(ctx, `UPDATE device_hosts SET capacity=$1::jsonb,last_heartbeat_at=clock_timestamp()`, recovered); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := controller.RunOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			resumed, err := controller.GetCatalogProvisioning(ctx, job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resumed.Status != "creating_emulator" || resumed.DeviceID == "" || resumed.CapacityResult != nil || resumed.ErrorCode != "" {
+				t.Fatalf("resumed job=%+v", resumed)
+			}
+			assertCount(t, db, "SELECT count(*) FROM devices", 1)
+			assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 1)
+		})
+	}
 }
 
 func TestPoolUsesOnlyDefaultImageAndSwitchDoesNotReimageExistingDevice(t *testing.T) {

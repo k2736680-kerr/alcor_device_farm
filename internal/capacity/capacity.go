@@ -3,6 +3,7 @@ package capacity
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
@@ -115,7 +116,42 @@ func (result Result) Error() error {
 	if result.Fits {
 		return nil
 	}
-	return fmt.Errorf("insufficient %s capacity: shortfall=%v", result.Limiting, result.Shortfall)
+	return fmt.Errorf("%s", ChineseMessage(result))
+}
+
+// ChineseMessage turns a structured capacity result into an operator-facing
+// message. Stable error codes remain English identifiers; all displayed text
+// is Chinese and preserves the exact shortfall reported by the Host heartbeat.
+func ChineseMessage(result Result) string {
+	parts := make([]string, 0, 4)
+	if value := result.Shortfall["memory_mb"]; value > 0 {
+		parts = append(parts, fmt.Sprintf("内存还缺 %d MB", value))
+	}
+	if value := result.Shortfall["disk_mb"]; value > 0 {
+		parts = append(parts, fmt.Sprintf("磁盘还缺 %d MB", value))
+	}
+	if value := result.Shortfall["cpu_millicores"]; value > 0 {
+		parts = append(parts, fmt.Sprintf("CPU 还缺 %.3f 核", float64(value)/1000))
+	}
+	if value := result.Shortfall["device_slots"]; value > 0 {
+		parts = append(parts, fmt.Sprintf("设备名额还缺 %d 个", value))
+	}
+	if len(parts) == 0 {
+		return "没有满足条件且容量充足的宿主机，请检查宿主机在线状态和资源上报"
+	}
+	if len(parts) == 1 {
+		switch result.Limiting {
+		case "memory":
+			return "宿主机内存不足：" + parts[0]
+		case "disk":
+			return "宿主机磁盘不足：" + parts[0]
+		case "cpu":
+			return "宿主机 CPU 不足：" + parts[0]
+		case "device_slots":
+			return "宿主机设备名额不足：" + parts[0]
+		}
+	}
+	return "宿主机资源不足：" + strings.Join(parts, "，")
 }
 
 func min(values ...int) int {

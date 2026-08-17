@@ -49,7 +49,7 @@ func (handler *provisioningHandler) listProfiles(writer http.ResponseWriter, req
 
 func (handler *provisioningHandler) create(writer http.ResponseWriter, request *http.Request) {
 	if handler.controller == nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "device provisioning is not configured", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "设备创建服务尚未配置", Retryable: true})
 		return
 	}
 	if !requireIdempotencyKey(writer, request) {
@@ -61,12 +61,12 @@ func (handler *provisioningHandler) create(writer http.ResponseWriter, request *
 	}
 	profile, err := runtimeprofile.Parse(input.RuntimeProfile)
 	if err != nil {
-		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "invalid runtime profile"})
+		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "设备运行规格无效"})
 		return
 	}
 	if input.CatalogID != "" {
 		if handler.catalog == nil {
-			httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "Android image catalog is not configured", Retryable: true})
+			httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "安卓系统镜像目录尚未配置", Retryable: true})
 			return
 		}
 		actor := requestActor(request)
@@ -105,7 +105,7 @@ func (handler *provisioningHandler) create(writer http.ResponseWriter, request *
 		return
 	}
 	if input.ImageID == "" {
-		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "catalog_id or image_id is required"})
+		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "必须选择系统镜像目录项或已验证镜像"})
 		return
 	}
 	value, err := handler.controller.Provision(request.Context(), warmpool.ProvisionInput{PoolID: input.PoolID, ImageID: input.ImageID, HardwareProfileID: input.HardwareProfileID, RuntimeProfile: profile, IdempotencyKey: request.Header.Get("Idempotency-Key")})
@@ -115,6 +115,10 @@ func (handler *provisioningHandler) create(writer http.ResponseWriter, request *
 	}
 	status, apiError := http.StatusConflict, httpx.APIError{Code: "DEVICE_CAPACITY_UNAVAILABLE", Message: err.Error(), Retryable: true}
 	if errors.Is(err, warmpool.ErrNoCapacity) {
+		var capacityError *warmpool.CapacityUnavailableError
+		if errors.As(err, &capacityError) {
+			apiError.Details = capacityError.Result
+		}
 		httpx.WriteError(writer, request, status, apiError)
 		return
 	}
@@ -126,17 +130,17 @@ func (handler *provisioningHandler) create(writer http.ResponseWriter, request *
 
 func (handler *provisioningHandler) list(writer http.ResponseWriter, request *http.Request) {
 	if handler.controller == nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "device provisioning is not configured", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "设备创建服务尚未配置", Retryable: true})
 		return
 	}
 	page, ok := pagination(request)
 	if !ok {
-		writeInvalid(writer, request, "page must be positive and page_size must be between 1 and 200")
+		writeInvalid(writer, request, "页码必须大于零，每页数量必须在 1 到 200 之间")
 		return
 	}
 	value, err := handler.controller.ListCatalogProvisionings(request.Context(), page)
 	if err != nil {
-		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL", Message: "could not list device provisionings", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL", Message: "暂时无法读取设备创建任务", Retryable: true})
 		return
 	}
 	httpx.WriteData(writer, request, http.StatusOK, value)
@@ -144,7 +148,7 @@ func (handler *provisioningHandler) list(writer http.ResponseWriter, request *ht
 
 func (handler *provisioningHandler) get(writer http.ResponseWriter, request *http.Request) {
 	if handler.controller == nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "device provisioning is not configured", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "设备创建服务尚未配置", Retryable: true})
 		return
 	}
 	value, err := handler.controller.GetCatalogProvisioning(request.Context(), request.PathValue("id"))
@@ -152,5 +156,5 @@ func (handler *provisioningHandler) get(writer http.ResponseWriter, request *htt
 		httpx.WriteData(writer, request, http.StatusOK, value)
 		return
 	}
-	httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "device provisioning was not found"})
+	httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "未找到设备创建任务"})
 }

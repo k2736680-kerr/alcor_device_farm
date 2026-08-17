@@ -43,7 +43,7 @@ interface PoolFormValues {
 
 function errorText(error: unknown): string {
   const err = error as { code?: string; requestId?: string; message?: string }
-  return `${err.code ?? 'ERROR'}（request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`
+  return `${err.code ?? '未知错误'}（请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`
 }
 
 export function PoolsPage() {
@@ -85,7 +85,7 @@ export function PoolsPage() {
       return
     }
     updatePool.mutate(
-      { id: configPool.id, data: values },
+      { id: configPool.id, data: { ...values, platform: configPool.platform } },
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'

@@ -47,6 +47,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - 官方稳定 Android System Image 目录同步、后台按需准备、内部缓存、不可变 digest 验证，以及空闲 Emulator 受控重装；
 - Phone 硬件模板搜索、系统镜像选择、完整 runtime profile 与加入 Pool 的受控 Emulator 创建；
 - Android Studio 式创建向导、自动镜像准备、每 Pool 基础设备和基于其配置的干净扩容；
+- 持久化创建任务在宿主机容量不足时保存结构化 CPU、内存、磁盘或设备名额缺口，保持可重试并在容量恢复后自动继续；Console 必须即时显示中文原因，不得静默等待；
 - Reservation 释放后的数据保留，以及不经缩容配置的管理员直接删除；
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 2.1.0
+  version: 2.2.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-17
   x-platform-semantics: Case/Run/RunAttempt
@@ -1463,9 +1463,27 @@ components:
         host_id:
           allOf: [{$ref: "#/components/schemas/Identifier"}]
           nullable: true
-        status: {type: string, enum: [preparing_image, creating_emulator, adb_check, stf_registration, appium_check, ready, failed, provisioning]}
+        status: {type: string, enum: [preparing_image, waiting_capacity, creating_emulator, adb_check, stf_registration, appium_check, ready, failed, provisioning]}
         error_stage: {type: string, nullable: true}
         error_code: {type: string, nullable: true}
+        capacity_result:
+          allOf: [{$ref: "#/components/schemas/HostCapacityResult"}]
+          nullable: true
+          description: 容量不足时的结构化缺口；任务保持可重试，容量恢复后自动继续。
+    HostCapacityResult:
+      type: object
+      additionalProperties: false
+      required: [fits, additional_devices, available_cpu_cores, available_memory_mb, available_disk_mb]
+      properties:
+        fits: {type: boolean}
+        additional_devices: {type: integer, minimum: 0}
+        limiting_resource: {type: string, enum: [cpu, memory, disk, device_slots]}
+        shortfall:
+          type: object
+          additionalProperties: {type: integer, format: int64, minimum: 0}
+        available_cpu_cores: {type: number, format: double, minimum: 0}
+        available_memory_mb: {type: integer, format: int64, minimum: 0}
+        available_disk_mb: {type: integer, format: int64, minimum: 0}
     DeviceProvisioningEnvelope:
       type: object
       additionalProperties: false

@@ -270,4 +270,47 @@ describe('DevicesPage device categories', () => {
     await waitFor(() => expect(reimageRequests).toBe(1))
     expect(await screen.findByText(/重装任务已受理/)).toBeInTheDocument()
   })
+
+  it('shows exact Chinese memory and disk shortfalls while creation waits for host capacity', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('/api/v1/device-provisionings', () => HttpResponse.json({
+        request_id: 'req_capacity_wait', data: { id: 'provisioning_capacity_wait', status: 'preparing_image' }, error: null,
+      }, { status: 202 })),
+      http.get('/api/v1/device-provisionings/:id', ({ params }) => HttpResponse.json({
+        request_id: 'req_capacity_state',
+        data: {
+          id: params.id,
+          status: 'waiting_capacity',
+          error_stage: 'host_capacity',
+          error_code: 'DEVICE_CAPACITY_UNAVAILABLE',
+          capacity_result: {
+            fits: false,
+            additional_devices: 0,
+            limiting_resource: 'memory',
+            shortfall: { memory_mb: 2048, disk_mb: 8192 },
+            available_cpu_cores: 8,
+            available_memory_mb: 3072,
+            available_disk_mb: 4096,
+          },
+        },
+        error: null,
+      })),
+    )
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+
+    await user.click(await screen.findByRole('button', { name: '新增设备' }))
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    const imageRow = (await screen.findByText('Android API 36')).closest('tr')
+    expect(imageRow).not.toBeNull()
+    const imageRadio = within(imageRow as HTMLElement).getByRole('radio')
+    await user.click(imageRadio.parentElement as HTMLElement)
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    await user.click(screen.getByRole('button', { name: '创建设备' }))
+
+    expect(await screen.findByText('设备创建进度：等待宿主机容量')).toBeInTheDocument()
+    expect(screen.getAllByText('宿主机资源不足：内存还缺 2048 MB，磁盘还缺 8192 MB。容量恢复后会自动继续创建。').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/unknown|ERROR/)).not.toBeInTheDocument()
+  })
 })

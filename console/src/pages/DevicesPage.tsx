@@ -151,7 +151,25 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const provisioningQuery = useGetDeviceProvisioning(provisioningID ?? '', {
     query: { enabled: provisioningID !== null, refetchInterval: provisioningID ? 2_000 : false },
   })
-  const provisioningState = unwrapData<{ id: string; status: string; error_stage?: string; error_code?: string }>(provisioningQuery.data)
+  const provisioningState = unwrapData<{
+    id: string
+    status: string
+    error_stage?: string
+    error_code?: string
+    capacity_result?: { limiting_resource?: string; shortfall?: Record<string, number> }
+  }>(provisioningQuery.data)
+
+  const capacityMessage = useMemo(() => {
+    const result = provisioningState?.capacity_result
+    if (!result) return '当前没有满足条件且容量充足的宿主机，请检查宿主机在线状态和资源上报。'
+    const shortfall = result.shortfall ?? {}
+    const parts: string[] = []
+    if ((shortfall.memory_mb ?? 0) > 0) parts.push(`内存还缺 ${shortfall.memory_mb} MB`)
+    if ((shortfall.disk_mb ?? 0) > 0) parts.push(`磁盘还缺 ${shortfall.disk_mb} MB`)
+    if ((shortfall.cpu_millicores ?? 0) > 0) parts.push(`CPU 还缺 ${(shortfall.cpu_millicores / 1000).toFixed(3)} 核`)
+    if ((shortfall.device_slots ?? 0) > 0) parts.push(`设备名额还缺 ${shortfall.device_slots} 个`)
+    return parts.length > 0 ? `宿主机资源不足：${parts.join('，')}。容量恢复后会自动继续创建。` : '当前没有满足条件且容量充足的宿主机，请检查宿主机在线状态和资源上报。'
+  }, [provisioningState])
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }, [queryClient])
@@ -264,16 +282,16 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     const { pool_id, catalog_id, hardware_profile_id, ...runtime_profile } = values
     provision.mutate({ data: { pool_id, catalog_id, hardware_profile_id, runtime_profile } }, {
       onSuccess: (data) => {
-        const response = data as { data?: { request_id?: string; data?: { id?: string } } }
-        const requestID = response.data?.request_id ?? '-'
-        const jobID = response.data?.data?.id
+        const response = data as { request_id?: string; data?: { id?: string } }
+        const requestID = response.request_id ?? '-'
+        const jobID = response.data?.id
         if (jobID) setProvisioningID(jobID)
-        message.success(`设备创建流程已受理（request_id: ${requestID}）`)
+        message.success(`设备创建流程已受理（请求编号：${requestID}）`)
         setCreateDevice(false)
       },
       onError: (error) => {
         const err = error as { code?: string; requestId?: string; message?: string }
-        message.error(`创建被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+        message.error(`创建被拒绝（${err.code ?? '未知错误'}，请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`)
       },
     })
   }
@@ -282,15 +300,20 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   useEffect(() => {
     if (!provisioningState) return
     if (provisioningState.status === 'ready') {
+	  message.destroy('device-provision-capacity')
       message.success('设备已通过 ADB、STF 和 Appium 检查，可以使用')
       setProvisioningID(null)
       invalidate()
     }
     if (provisioningState.status === 'failed') {
-      message.error(`设备创建失败：${provisioningState.error_stage ?? 'unknown'} ${provisioningState.error_code ?? ''}`)
-      setProvisioningID(null)
+	  message.destroy('device-provision-capacity')
+	  message.error('设备创建失败，请查看创建进度中的失败原因')
+	  setProvisioningID(null)
     }
-  }, [invalidate, message, provisioningState])
+    if (provisioningState.status === 'waiting_capacity') {
+	  message.warning({ key: 'device-provision-capacity', content: capacityMessage, duration: 0 })
+    }
+  }, [capacityMessage, invalidate, message, provisioningState])
 
   const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
@@ -390,8 +413,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         {provisioningState && <Alert
           type={provisioningState.status === 'failed' ? 'error' : provisioningState.status === 'ready' ? 'success' : 'info'}
           showIcon
-          message={`设备创建进度：${({ preparing_image: '准备系统镜像', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? provisioningState.status}`}
-          description={provisioningState.status === 'failed' ? `${provisioningState.error_stage ?? 'unknown'} ${provisioningState.error_code ?? ''}` : '可关闭页面；创建流程由服务端持续执行。'}
+          message={`设备创建进度：${({ preparing_image: '准备系统镜像', waiting_capacity: '等待宿主机容量', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? '未知状态'}`}
+          description={provisioningState.status === 'waiting_capacity' ? capacityMessage : provisioningState.status === 'failed' ? '设备创建没有完成，请联系管理员并提供页面中的请求编号。' : '可关闭页面；创建流程由服务端持续执行。'}
         />}
         <Alert
           type="info"

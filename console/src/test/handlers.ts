@@ -53,7 +53,7 @@ export const sampleAndroidHardwareProfiles: AndroidHardwareProfile[] = [
 
 export const sampleHosts: DeviceHost[] = [
   {
-    id: 'host_000000000000001', name: 'kvm-01', host_type: 'docker_emulator', address: '10.0.0.1',
+    id: 'host_000000000000001', name: 'kvm-01', host_type: 'docker_emulator', host_os: 'linux', host_arch: 'amd64', address: '10.0.0.1',
     capabilities: {}, capacity: {}, used_capacity: {}, status: 'online', draining: false,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
@@ -61,7 +61,7 @@ export const sampleHosts: DeviceHost[] = [
 
 export const samplePools: DevicePool[] = [
   {
-    id: 'pool_000000000000001', name: 'default-android', default_lease_seconds: 1800, max_lease_seconds: 7200,
+    id: 'pool_000000000000001', name: 'default-android', platform: 'android', default_lease_seconds: 1800, max_lease_seconds: 7200,
     total_target: 2, min_ready: 2, max_concurrency: 2, default_image_id: 'image_00000000000001',
     status: 'active', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
@@ -76,28 +76,28 @@ export const samplePoolImages: DevicePoolImage[] = [
 
 export const sampleDevices: Device[] = [
   {
-    id: 'device_00000000000001', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000001', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: {},
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
   {
-    id: 'device_00000000000002', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000002', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5556', lifecycle_mode: 'rebuild', serial: 'emulator-5556', capabilities: {},
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'busy', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:01:00Z', updated_at: '2026-08-06T00:01:00Z',
   },
   {
-    id: 'device_00000000000003', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000003', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5558', lifecycle_mode: 'rebuild', serial: 'emulator-5558', capabilities: {},
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'quarantined', health_status: 'unhealthy', health_reason: 'health check failed', consecutive_failures: 3,
     created_at: '2026-08-06T00:02:00Z', updated_at: '2026-08-06T00:02:00Z',
   },
   {
-    id: 'device_00000000000004', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000004', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5560', lifecycle_mode: 'rebuild', serial: 'emulator-5560', capabilities: {},
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'deleted', health_status: 'unhealthy', consecutive_failures: 0,

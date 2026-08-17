@@ -119,3 +119,5 @@ Android System Image 的版本、映像类型和 ABI 由 Android SDK 官方稳�
 # DF-037 Phone 硬件模板和受控创建补充（2026-08-11）
 
 DF-037 只扩展 Device Farm 的基础设施创建入口：管理员在 Device Farm Console 选择 Phone 硬件模板、官方 System Image、Pool 和运行规格，Server 以持久化 `create` Host Command 编排已有 Agent/Provider 链路。设备创建状态、Pool membership、Host 容量、镜像准备和健康检查仍是设备域真相；不新增 Alcor App、Build、Case、Run、RunAttempt、Result 或 Artifact 模型。首期不实现 Phone 以外的 Android form factor，未来扩展必须另行更新复用矩阵与验收项。
+
+DF-037 容量反馈补充：持久化创建任务允许使用 `waiting_capacity` 技术状态和结构化 `capacity_result` 保存宿主机实时容量缺口。该状态不创建 Alcor Run/Result，不把等待任务误标为失败；Server 继续按现有 Reconciler 重试，容量恢复后清除缺口并进入既有 Host Command 创建链路。Device Farm Console 只显示中文资源原因和缺口数值。
