@@ -41,7 +41,7 @@
 | DF-037 | completed | `6453034 完成Phone硬件模板和受控创建设备向导` | `docs/evidence/DF-037/acceptance.md` |
 | DF-038 | completed | `56b7ae3 完成DF-038设备重建与真实验收` | `docs/evidence/DF-038/acceptance.md` |
 | DF-039 | completed | `dd6a52c 形成DF-039 iOS设备农场设计` | `docs/evidence/DF-039/acceptance.md` |
-| DF-040 | pending | — | `docs/evidence/DF-040/acceptance.md` |
+| DF-040 | in_progress | — | `docs/evidence/DF-040/acceptance.md` |
 | DF-041 | pending | — | `docs/evidence/DF-041/acceptance.md` |
 | DF-042 | pending | — | `docs/evidence/DF-042/acceptance.md` |
 | DF-043 | pending | — | `docs/evidence/DF-043/acceptance.md` |

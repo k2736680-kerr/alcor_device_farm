@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.9.0
+  version: 2.0.0
   x-contract-status: frozen
-  x-contract-frozen-at: 2026-08-13
+  x-contract-frozen-at: 2026-08-17
   x-platform-semantics: Case/Run/RunAttempt
   description: >-
-    Android 设备农场独立控制面契约。北向接口只接受平台服务身份，
+    Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份，
     internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
 servers:
   - url: http://127.0.0.1:8080
@@ -983,13 +983,13 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceHostInput"}
-          example: {name: kvm-host-01, host_type: docker_emulator, capacity: {cpu: 16, memory_mb: 32768, device_slots: 8}}
+          example: {name: kvm-host-01, host_type: docker_emulator, host_os: linux, host_arch: x86_64, capacity: {cpu: 16, memory_mb: 32768, device_slots: 8}}
     DevicePoolInput:
       required: true
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DevicePoolInput"}
-          example: {name: android-smoke, default_lease_seconds: 1800, max_lease_seconds: 7200, total_target: 2, min_ready: 1, max_concurrency: 2, default_image_id: "01JDEVICEIMAGE000000000000", enabled: true}
+          example: {name: android-smoke, platform: android, default_lease_seconds: 1800, max_lease_seconds: 7200, total_target: 2, min_ready: 1, max_concurrency: 2, default_image_id: "01JDEVICEIMAGE000000000000", enabled: true}
     DevicePoolImageInput:
       required: true
       content:
@@ -1384,11 +1384,13 @@ components:
     DeviceHost:
       type: object
       additionalProperties: false
-      required: [id, name, host_type, capabilities, capacity, used_capacity, status, draining, created_at, updated_at]
+      required: [id, name, host_type, host_os, host_arch, capabilities, capacity, used_capacity, status, draining, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string}
-        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
+        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid, appium_device_farm_ios]}
+        host_os: {type: string, enum: [linux, macos, windows]}
+        host_arch: {type: string, minLength: 1, maxLength: 32, pattern: "^[A-Za-z0-9_.-]+$"}
         address: {type: string}
         capabilities: {type: object, additionalProperties: true}
         capacity: {$ref: "#/components/schemas/HostCapacity"}
@@ -1401,10 +1403,11 @@ components:
     DevicePool:
       type: object
       additionalProperties: false
-      required: [id, name, default_lease_seconds, max_lease_seconds, max_concurrency, total_target, min_ready, status, created_at, updated_at]
+      required: [id, name, platform, default_lease_seconds, max_lease_seconds, max_concurrency, total_target, min_ready, status, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string}
+        platform: {type: string, enum: [android, ios]}
         default_lease_seconds: {type: integer}
         max_lease_seconds: {type: integer}
         max_concurrency: {type: integer}
@@ -1694,10 +1697,12 @@ components:
     DeviceHostInput:
       type: object
       additionalProperties: false
-      required: [name, host_type, capacity]
+      required: [name, host_type, host_os, host_arch, capacity]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
-        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
+        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid, appium_device_farm_ios]}
+        host_os: {type: string, enum: [linux, macos, windows]}
+        host_arch: {type: string, minLength: 1, maxLength: 32, pattern: "^[A-Za-z0-9_.-]+$"}
         address: {type: string, maxLength: 255}
         capabilities: {type: object, additionalProperties: true}
         capacity: {$ref: "#/components/schemas/HostCapacity"}
@@ -1736,9 +1741,10 @@ components:
     DevicePoolInput:
       type: object
       additionalProperties: false
-      required: [name, default_lease_seconds, max_lease_seconds, max_concurrency]
+      required: [name, platform, default_lease_seconds, max_lease_seconds, max_concurrency]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
+        platform: {type: string, enum: [android, ios]}
         default_lease_seconds: {type: integer, minimum: 60}
         max_lease_seconds: {type: integer, minimum: 60}
         max_concurrency: {type: integer, minimum: 0}
@@ -1823,22 +1829,23 @@ components:
     Device:
       type: object
       additionalProperties: false
-      required: [id, host_id, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, effective_runtime_profile, reimage_status, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
+      required: [id, host_id, platform, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, effective_runtime_profile, reimage_status, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         host_id: {$ref: "#/components/schemas/Identifier"}
+        platform: {type: string, enum: [android, ios]}
         image_id: {$ref: "#/components/schemas/Identifier"}
         pool_id: {$ref: "#/components/schemas/Identifier"}
         pool_name: {type: string}
         is_pool_base: {type: boolean, description: Whether this Device is the selected configuration source for its Pool.}
-        device_kind: {type: string, enum: [emulator, physical]}
-        provider_type: {type: string, enum: [docker_emulator, usb_android, mock]}
+        device_kind: {type: string, enum: [emulator, simulator, physical]}
+        provider_type: {type: string, enum: [docker_emulator, usb_android, appium_device_farm_ios, mock]}
         provider_ref: {type: string}
         lifecycle_mode: {type: string, enum: [rebuild, clean, factory_reset]}
         serial: {type: string, minLength: 1}
         stf_serial: {type: string}
         adb_endpoint: {type: string}
-        appium_endpoint: {type: string, format: uri}
+        appium_endpoint: {type: string, format: uri, description: May be shared by multiple iOS Devices on the same Appium Device Farm Host.}
         capabilities:
           type: object
           additionalProperties: true

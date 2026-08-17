@@ -32,10 +32,36 @@ const (
 	StateStopped State = "stopped"
 )
 
+type Platform string
+
+const (
+	PlatformAndroid Platform = "android"
+	PlatformIOS     Platform = "ios"
+)
+
+type ProbeStatus string
+
+const (
+	ProbePassed      ProbeStatus = "passed"
+	ProbeFailed      ProbeStatus = "failed"
+	ProbeUnknown     ProbeStatus = "unknown"
+	ProbeUnsupported ProbeStatus = "unsupported"
+)
+
+const (
+	ProbeTransport     = "transport"
+	ProbeOSReady       = "os_ready"
+	ProbeAutomation    = "automation"
+	ProbeRouter        = "router"
+	ProbeRemoteControl = "remote_control"
+)
+
 type CreateRequest struct {
 	DeviceID       string
 	HostID         string
 	ImageID        string
+	Platform       Platform
+	DeviceKind     string
 	RuntimeImage   string
 	ProviderRef    string
 	Serial         string
@@ -44,6 +70,8 @@ type CreateRequest struct {
 }
 
 type Health struct {
+	Platform      Platform
+	Components    map[string]ProbeStatus
 	Online        bool
 	ADBOnline     bool
 	BootCompleted bool
@@ -51,11 +79,22 @@ type Health struct {
 }
 
 func (health Health) Ready() bool {
+	if len(health.Components) > 0 {
+		for _, component := range []string{ProbeTransport, ProbeOSReady, ProbeAutomation, ProbeRouter} {
+			if health.Components[component] != ProbePassed {
+				return false
+			}
+		}
+		return true
+	}
 	return health.Online && health.ADBOnline && health.BootCompleted && health.AppiumHealthy
 }
 
 type ConnectionInfo struct {
+	Platform       Platform
 	Serial         string
+	DeviceUDID     string
+	ProviderID     string
 	ADBEndpoint    string
 	AppiumEndpoint string
 	AppiumUDID     string
@@ -65,6 +104,7 @@ type Snapshot struct {
 	DeviceID       string
 	HostID         string
 	ImageID        string
+	Platform       Platform
 	ProviderRef    string
 	State          State
 	Generation     int

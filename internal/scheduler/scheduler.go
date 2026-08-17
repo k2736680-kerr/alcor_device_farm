@@ -115,7 +115,7 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 	if err != nil {
 		return Assignment{}, err
 	}
-	if scheduler.claimer != nil {
+	if scheduler.claimer != nil && selected.device.Platform == "android" {
 		if err := scheduler.claimer.Claim(ctx, selected.device.Serial, time.Duration(selected.reservation.LeaseSeconds)*time.Second); err != nil {
 			terminal := !isRetryable(err)
 			compensateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -155,14 +155,14 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 		if err != nil {
 			return err
 		}
-		if err := reservationState.Transition(domain.ReservationActive, "STF claim succeeded", time.Now().UTC()); err != nil {
+		if err := reservationState.Transition(domain.ReservationActive, "device allocation claim succeeded", time.Now().UTC()); err != nil {
 			return err
 		}
 		deviceState, err := domain.RestoreDevice(device.ID, device.Lifecycle, device.Health)
 		if err != nil {
 			return err
 		}
-		if err := deviceState.Transition(domain.DeviceBusy, "device session started after STF claim", time.Now().UTC()); err != nil {
+		if err := deviceState.Transition(domain.DeviceBusy, "device session started after allocation claim", time.Now().UTC()); err != nil {
 			return err
 		}
 		sessionState, err := domain.NewSession(sessionID)
@@ -189,7 +189,7 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 func (scheduler *Scheduler) releaseAndCompensate(selected claimCandidate, failureCode string, terminal bool) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if scheduler.claimer != nil {
+	if scheduler.claimer != nil && selected.device.Platform == "android" {
 		if err := scheduler.claimer.Release(cleanupCtx, selected.device.Serial); err != nil {
 			scheduler.logger.Error("STF claim cleanup release failed", "reservation_id", selected.reservation.ID, "device_id", selected.device.ID, "error", err)
 		}

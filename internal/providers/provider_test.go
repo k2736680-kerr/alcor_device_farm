@@ -21,3 +21,21 @@ func TestValidRuntimeImageReference(t *testing.T) {
 		}
 	}
 }
+
+func TestPlatformNeutralHealthRequiresCoreProbesButAcceptsUnsupportedRemoteControl(t *testing.T) {
+	health := Health{Platform: PlatformIOS, Components: map[string]ProbeStatus{
+		ProbeTransport: ProbePassed, ProbeOSReady: ProbePassed, ProbeAutomation: ProbePassed,
+		ProbeRouter: ProbePassed, ProbeRemoteControl: ProbeUnsupported,
+	}}
+	if !health.Ready() {
+		t.Fatal("healthy iOS component probes were not ready")
+	}
+	health.Components[ProbeAutomation] = ProbeFailed
+	if health.Ready() {
+		t.Fatal("failed automation probe was accepted as ready")
+	}
+	delete(health.Components, ProbeAutomation)
+	if health.Ready() {
+		t.Fatal("missing required automation probe was accepted as ready")
+	}
+}

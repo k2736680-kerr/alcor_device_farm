@@ -162,6 +162,11 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 	if service == nil || service.db == nil {
 		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
 	}
+	normalizedCapabilities, err := normalizeRequestedCapabilities(input.RequestedCapabilities)
+	if err != nil {
+		return View{}, err
+	}
+	input.RequestedCapabilities = normalizedCapabilities
 	if err := validateCreate(actor, key, input); err != nil {
 		return View{}, err
 	}
@@ -172,6 +177,10 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 	}
 	if policy.Status != "active" {
 		return View{}, ErrPoolUnavailable
+	}
+	if platformName, exists := input.RequestedCapabilities["platformName"]; exists &&
+		strings.ToLower(platformName.(string)) != policy.Platform {
+		return View{}, fmt.Errorf("%w: platformName does not match the device pool", ErrInvalidArgument)
 	}
 	if input.LeaseSeconds > policy.MaxLeaseSeconds {
 		return View{}, fmt.Errorf("%w: lease_seconds exceeds pool maximum", ErrInvalidArgument)
@@ -788,6 +797,30 @@ func validateCreate(actor audit.Actor, key string, input CreateInput) error {
 		return fmt.Errorf("%w: requested_capabilities is not valid JSON", ErrInvalidArgument)
 	}
 	return nil
+}
+
+func normalizeRequestedCapabilities(source map[string]any) (map[string]any, error) {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	value, exists := result["platformName"]
+	if !exists {
+		return result, nil
+	}
+	platformName, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("%w: platformName must be Android or iOS", ErrInvalidArgument)
+	}
+	switch strings.ToLower(strings.TrimSpace(platformName)) {
+	case "android":
+		result["platformName"] = "Android"
+	case "ios":
+		result["platformName"] = "iOS"
+	default:
+		return nil, fmt.Errorf("%w: platformName must be Android or iOS", ErrInvalidArgument)
+	}
+	return result, nil
 }
 
 func validOwnerType(value string) bool {

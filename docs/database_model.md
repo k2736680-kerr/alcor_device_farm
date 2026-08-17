@@ -32,11 +32,13 @@ erDiagram
 
 ## 核心数据库保证
 
-- `devices.serial` 和 `(provider_type, provider_ref)` 唯一；已分配的 STF serial、ADB Endpoint、Appium Endpoint 也分别唯一；
+- Host 使用 `host_os=linux|macos|windows` 和 `host_arch` 明确运行平台；现有 Host 迁移时回填 `linux/unknown`；
+- Pool 和 Device 都保存标准小写 `platform=android|ios`，数据库 Trigger 拒绝跨平台 membership；现有数据统一回填 `android`；
+- `devices.serial`（iOS 对应 UDID）和 `(provider_type, provider_ref)` 保持活动身份唯一；STF serial 与 ADB Endpoint 继续保持 Android 活动设备唯一；
 - `device_reservations(client_id, idempotency_key)` 唯一，同一调用方重复提交不会重复占用；
 - 部分唯一索引保证同一设备最多存在一个 `active` 预约；
 - Pool 默认租期不得超过最大租期；`min_ready` 不得超过 `max_instances`。当前测试环境使用 `min_ready=1/max_instances=1`，Controller 必须锁定配置行后原子登记 provisioning Device、Pool membership 和 Host Command，避免并发超建；
-- `provider_type + provider_ref` 始终全局唯一；Docker Emulator 的 serial、STF serial、ADB Endpoint 和 Appium Endpoint 是可复用的运行时连接身份，只对非 `quarantined/deleted` 设备保持唯一。退出 Pool 的隔离审计记录可以保留旧连接值，但不得阻塞新实例复用宿主机动态端口；
+- `provider_type + provider_ref` 始终全局唯一；Docker Emulator 的 serial、STF serial、ADB Endpoint 和 Appium Endpoint 是可复用的运行时连接身份，只对非 `quarantined/deleted` Android 设备保持唯一。iOS 允许同一 Host 的多台 Device 共享 Appium Device Farm Node Endpoint，但 UDID、Provider identity 和 active Reservation 不放宽；
 - Host Command 的 leased 状态必须同时拥有 lease token 和到期时间，完成状态必须有完成时间；
 - `validate_image` Host Command 由后台 Controller 分配给 Docker/Hybrid Host；Server 不接触 Docker Socket。只有 Agent 同时验证本机固定镜像 digest、ADB、启动完成和 Appium 健康，Image 才能进入 `ready`；
 - active Reservation 和 Session 必须具有完整的设备、开始与到期信息；
@@ -58,5 +60,8 @@ erDiagram
 - `migrations/000004_device_image_runtime_reference.down.sql`
 - `migrations/000005_console_sessions.up.sql`
 - `migrations/000005_console_sessions.down.sql`
+- `migrations/000006`～`000013`：Android 第一版后续连接身份、容量、镜像、长期设备和持久化创建任务演进；
+- `migrations/000014_platform_neutral_device_domain.up.sql`
+- `migrations/000014_platform_neutral_device_domain.down.sql`
 
-执行必须使用单事务和 `ON_ERROR_STOP`。生产回滚前先停止 Server、Agent、Scheduler、Reaper 和 Reconciler；down migration 会删除全部设备域数据，只用于空环境演练或已确认恢复点的回滚。
+执行必须使用单事务和 `ON_ERROR_STOP`。`000014` 的 down migration 在存在 iOS、非默认 Host 元数据或共享活动 Appium Endpoint 时会安全拒绝，禁止静默丢失平台信息。生产回滚前先停止 Server、Agent、Scheduler、Reaper 和 Reconciler；完整 down 链会删除全部设备域数据，只用于空环境演练或已确认恢复点的回滚。

@@ -93,7 +93,29 @@ try {
     $DownFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "migrations") -Filter "*.down.sql" -File | Sort-Object Name -Descending
     $Constraints = Join-Path $ProjectRoot "migrations/test/constraints.sql"
 
-    foreach ($Migration in $UpFiles) { Invoke-SQLFile $Migration.FullName }
+    $PlatformMigration = $UpFiles | Where-Object Name -EQ "000014_platform_neutral_device_domain.up.sql" | Select-Object -First 1
+    if (-not $PlatformMigration) {
+        throw "Platform-neutral migration is missing."
+    }
+    foreach ($Migration in $UpFiles | Where-Object Name -LT $PlatformMigration.Name) { Invoke-SQLFile $Migration.FullName }
+    Invoke-SQL @"
+INSERT INTO device_images(id,name,docker_image,docker_digest,api_level,abi,resolution,status)
+VALUES('legacy_image_00000001','legacy-android-image','registry.example/alcor/android-emulator:legacy',
+'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x2400','ready');
+INSERT INTO device_hosts(id,name,host_type,status)
+VALUES('legacy_host_000000001','legacy-android-host','docker_emulator','online');
+INSERT INTO device_pools(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready)
+VALUES('legacy_pool_000000001','legacy-android-pool',600,3600,1,1,1);
+INSERT INTO devices(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,lifecycle_status,health_status)
+VALUES('legacy_device_000001','legacy_host_000000001','legacy_image_00000001','emulator','mock','legacy-provider','rebuild','legacy-serial','ready','healthy');
+INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+VALUES('legacy_pool_000000001','legacy_device_000001',true);
+"@
+    Invoke-SQLFile $PlatformMigration.FullName
+    Invoke-SQL "DO `$test`$ BEGIN IF EXISTS (SELECT 1 FROM device_hosts WHERE id='legacy_host_000000001' AND (host_os<>'linux' OR host_arch<>'unknown')) OR EXISTS (SELECT 1 FROM device_pools WHERE id='legacy_pool_000000001' AND platform<>'android') OR EXISTS (SELECT 1 FROM devices WHERE id='legacy_device_000001' AND platform<>'android') THEN RAISE EXCEPTION 'legacy Android backfill failed'; END IF; END `$test`$;"
+    Write-Output "legacy Android backfill: passed"
+    Invoke-SQL "DELETE FROM device_pool_devices WHERE device_id='legacy_device_000001'; DELETE FROM devices WHERE id='legacy_device_000001'; DELETE FROM device_pools WHERE id='legacy_pool_000000001'; DELETE FROM device_hosts WHERE id='legacy_host_000000001'; DELETE FROM device_images WHERE id='legacy_image_00000001';"
+    foreach ($Migration in $UpFiles | Where-Object Name -GT $PlatformMigration.Name) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQLFile $Constraints
     Write-Output "constraint checks: passed"
 

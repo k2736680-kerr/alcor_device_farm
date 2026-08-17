@@ -75,6 +75,27 @@ func TestVerifiedImagePreparationCompatibilityMigrationContract(t *testing.T) {
 	assertSQLContains(t, down, `DROP\s+COLUMN\s+IF\s+EXISTS\s+validation_command_id`)
 }
 
+func TestPlatformNeutralDeviceDomainMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000014_platform_neutral_device_domain.up.sql"))
+	down := readFile(t, filepath.Join(root, "000014_platform_neutral_device_domain.down.sql"))
+
+	for _, expected := range []string{
+		`ADD\s+COLUMN\s+host_os`, `ADD\s+COLUMN\s+host_arch`,
+		`ADD\s+COLUMN\s+platform`, `appium_device_farm_ios`, `simulator`,
+		`CREATE\s+TRIGGER\s+trg_device_pool_devices_platform`,
+		`DROP\s+INDEX\s+uq_devices_active_appium_endpoint`,
+		`CREATE\s+UNIQUE\s+INDEX\s+uq_devices_active_android_appium_endpoint`,
+		`CREATE\s+INDEX\s+ix_devices_appium_endpoint`,
+		`CREATE\s+OR\s+REPLACE\s+FUNCTION\s+device_schedulable_capabilities`,
+	} {
+		assertSQLContains(t, up, expected)
+	}
+	assertSQLContains(t, down, `cannot\s+downgrade\s+platform-neutral\s+device\s+domain`)
+	assertSQLContains(t, down, `CREATE\s+UNIQUE\s+INDEX\s+uq_devices_active_appium_endpoint`)
+	assertSQLContains(t, down, `DROP\s+COLUMN\s+platform`)
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

@@ -172,7 +172,11 @@ func (service *Service) StartImageValidation(ctx context.Context, id string) (Im
 }
 
 func (service *Service) CreateHost(ctx context.Context, clientID, key string, input HostInput) (Host, error) {
+	input.HostOS = normalizedHostOS(input.HostOS)
+	input.HostArch = normalizedHostArch(input.HostArch)
 	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" ||
+		!validHostType(input.HostType) || input.HostOS == "" || input.HostArch == "" ||
+		(input.HostType == "appium_device_farm_ios" && input.HostOS != "macos") ||
 		sensitive.ContainsMap(input.Capabilities) || sensitive.ContainsMap(input.Capacity) {
 		return Host{}, ErrInvalidArgument
 	}
@@ -180,7 +184,7 @@ func (service *Service) CreateHost(ctx context.Context, clientID, key string, in
 	if err != nil {
 		return Host{}, err
 	}
-	host := Host{ID: id, Name: input.Name, HostType: input.HostType, Address: input.Address,
+	host := Host{ID: id, Name: input.Name, HostType: input.HostType, HostOS: input.HostOS, HostArch: input.HostArch, Address: input.Address,
 		Capabilities: cloneMap(input.Capabilities), Capacity: cloneMap(input.Capacity), UsedCapacity: map[string]any{}, Status: domain.HostOffline}
 	meta, err := idempotency(clientID, "create_device_host", key, "device_host", id, input, 201)
 	if err != nil {
@@ -202,6 +206,7 @@ func (service *Service) GetHost(ctx context.Context, id string) (Host, error) {
 
 func (service *Service) UpdateHost(ctx context.Context, id string, input HostInput) (Host, error) {
 	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" ||
+		!validHostType(input.HostType) ||
 		sensitive.ContainsMap(input.Capabilities) || sensitive.ContainsMap(input.Capacity) {
 		return Host{}, ErrInvalidArgument
 	}
@@ -209,7 +214,21 @@ func (service *Service) UpdateHost(ctx context.Context, id string, input HostInp
 	if err != nil {
 		return Host{}, err
 	}
-	current.Name, current.HostType, current.Address = input.Name, input.HostType, input.Address
+	if strings.TrimSpace(input.HostOS) == "" {
+		input.HostOS = current.HostOS
+	} else {
+		input.HostOS = normalizedHostOS(input.HostOS)
+	}
+	if strings.TrimSpace(input.HostArch) == "" {
+		input.HostArch = current.HostArch
+	} else {
+		input.HostArch = normalizedHostArch(input.HostArch)
+	}
+	if input.HostOS == "" || input.HostArch == "" ||
+		(input.HostType == "appium_device_farm_ios" && input.HostOS != "macos") {
+		return Host{}, ErrInvalidArgument
+	}
+	current.Name, current.HostType, current.HostOS, current.HostArch, current.Address = input.Name, input.HostType, input.HostOS, input.HostArch, input.Address
 	current.Capabilities, current.Capacity = cloneMap(input.Capabilities), cloneMap(input.Capacity)
 	return service.store.UpdateHost(ctx, current, current.Status)
 }
@@ -239,6 +258,11 @@ func (service *Service) SetHostDraining(ctx context.Context, id string, draining
 }
 
 func (service *Service) CreatePool(ctx context.Context, clientID, key string, input PoolInput) (Pool, error) {
+	if strings.TrimSpace(input.Platform) == "" {
+		input.Platform = "android"
+	} else {
+		input.Platform = normalizedPlatform(input.Platform)
+	}
 	totalTarget, minReady := input.MaxConcurrency, input.MaxConcurrency
 	if input.TotalTarget != nil {
 		totalTarget = *input.TotalTarget
@@ -251,6 +275,9 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 	}
 	var defaultImageID *string
 	if input.DefaultImageID != nil && strings.TrimSpace(*input.DefaultImageID) != "" {
+		if input.Platform != "android" {
+			return Pool{}, ErrInvalidArgument
+		}
 		imageID := strings.TrimSpace(*input.DefaultImageID)
 		image, err := service.store.GetImage(ctx, imageID)
 		if err != nil || image.Status != domain.ImageReady {
@@ -266,7 +293,7 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 	if input.Enabled != nil && !*input.Enabled {
 		status = domain.PoolDisabled
 	}
-	pool := Pool{ID: id, Name: input.Name, DefaultLeaseSeconds: input.DefaultLeaseSeconds,
+	pool := Pool{ID: id, Name: input.Name, Platform: input.Platform, DefaultLeaseSeconds: input.DefaultLeaseSeconds,
 		MaxLeaseSeconds: input.MaxLeaseSeconds, MaxConcurrency: input.MaxConcurrency,
 		TotalTarget: totalTarget, MinReady: minReady, DefaultImageID: defaultImageID, Status: status}
 	meta, err := idempotency(clientID, "create_device_pool", key, "device_pool", id, input, 201)
@@ -293,6 +320,11 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 		return Pool{}, err
 	}
 	oldTotalTarget := current.TotalTarget
+	if strings.TrimSpace(input.Platform) == "" {
+		input.Platform = current.Platform
+	} else {
+		input.Platform = normalizedPlatform(input.Platform)
+	}
 	totalTarget, minReady := current.TotalTarget, current.MinReady
 	if input.TotalTarget != nil {
 		totalTarget = *input.TotalTarget
@@ -308,6 +340,9 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 	}
 	defaultImageID := current.DefaultImageID
 	if input.DefaultImageID != nil {
+		if input.Platform != "android" {
+			return Pool{}, ErrInvalidArgument
+		}
 		imageID := strings.TrimSpace(*input.DefaultImageID)
 		if imageID == "" {
 			return Pool{}, ErrInvalidArgument
@@ -340,6 +375,7 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 		}
 	}
 	current.Name, current.DefaultLeaseSeconds = input.Name, input.DefaultLeaseSeconds
+	current.Platform = input.Platform
 	current.MaxLeaseSeconds, current.MaxConcurrency = input.MaxLeaseSeconds, input.MaxConcurrency
 	current.TotalTarget, current.MinReady, current.DefaultImageID = totalTarget, minReady, defaultImageID
 	reason := strings.TrimSpace(input.Reason)
@@ -464,8 +500,12 @@ func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID st
 	if pool.Status != domain.PoolActive {
 		return ErrConflict
 	}
-	if _, err := service.store.GetDevice(ctx, deviceID); err != nil {
+	device, err := service.store.GetDevice(ctx, deviceID)
+	if err != nil {
 		return err
+	}
+	if pool.Platform != device.Platform {
+		return ErrInvalidArgument
 	}
 	return service.store.AddDeviceToPool(ctx, poolID, deviceID)
 }
@@ -494,17 +534,46 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 	if host.Status != domain.HostOnline || host.Draining {
 		return Device{}, ErrHostUnavailable
 	}
-	image, err := service.store.GetImage(ctx, input.ImageID)
-	if err != nil {
-		return Device{}, err
+	if strings.TrimSpace(input.Platform) == "" {
+		input.Platform = "android"
+	} else {
+		input.Platform = normalizedPlatform(input.Platform)
 	}
-	if image.Status != domain.ImageReady {
-		return Device{}, ErrImageUnavailable
+	if input.Platform == "" {
+		return Device{}, ErrInvalidArgument
+	}
+	if input.DeviceKind == "" {
+		input.DeviceKind = "emulator"
+		if input.Platform == "ios" {
+			input.DeviceKind = "simulator"
+		}
+	}
+	var image *Image
+	if input.Platform == "android" {
+		value, imageErr := service.store.GetImage(ctx, input.ImageID)
+		if imageErr != nil {
+			return Device{}, imageErr
+		}
+		if value.Status != domain.ImageReady {
+			return Device{}, ErrImageUnavailable
+		}
+		image = &value
+	} else if input.ImageID != "" || (input.DeviceKind != "simulator" && input.DeviceKind != "physical") {
+		return Device{}, ErrInvalidArgument
+	}
+	capabilities := cloneMap(input.Capabilities)
+	capabilities["platformName"] = canonicalPlatformName(input.Platform)
+	request := providers.CreateRequest{
+		DeviceID: input.ID, HostID: input.HostID, ImageID: input.ImageID, Platform: providers.Platform(input.Platform), DeviceKind: input.DeviceKind,
+		ProviderRef: input.ProviderRef, Capabilities: capabilities,
+	}
+	if image != nil {
+		request.RuntimeImage = image.DockerImage
+		request.RuntimeProfile = mustRuntimeProfile(image.ResourceConfig)
 	}
 	snapshot, err := service.provider.Create(ctx, providers.CreateRequest{
-		DeviceID: input.ID, HostID: input.HostID, ImageID: input.ImageID,
-		RuntimeImage: image.DockerImage, ProviderRef: input.ProviderRef, Capabilities: cloneMap(input.Capabilities),
-		RuntimeProfile: mustRuntimeProfile(image.ResourceConfig),
+		DeviceID: request.DeviceID, HostID: request.HostID, ImageID: request.ImageID, Platform: request.Platform, DeviceKind: request.DeviceKind,
+		RuntimeImage: request.RuntimeImage, ProviderRef: request.ProviderRef, Capabilities: request.Capabilities, RuntimeProfile: request.RuntimeProfile,
 	})
 	if err != nil {
 		return Device{}, err
@@ -522,11 +591,14 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 		}
 		return Device{}, ErrConflict
 	}
-	imageID := input.ImageID
-	adb, appium := snapshot.Connection.ADBEndpoint, snapshot.Connection.AppiumEndpoint
-	device := Device{ID: input.ID, HostID: input.HostID, ImageID: &imageID, DeviceKind: "emulator",
+	var imageID *string
+	if input.ImageID != "" {
+		value := input.ImageID
+		imageID = &value
+	}
+	device := Device{ID: input.ID, HostID: input.HostID, Platform: input.Platform, ImageID: imageID, DeviceKind: input.DeviceKind,
 		ProviderType: "mock", ProviderRef: input.ProviderRef, LifecycleMode: "rebuild", Serial: snapshot.Connection.Serial,
-		ADBEndpoint: &adb, AppiumEndpoint: &appium, Capabilities: cloneMap(input.Capabilities),
+		ADBEndpoint: stringPointer(snapshot.Connection.ADBEndpoint), AppiumEndpoint: stringPointer(snapshot.Connection.AppiumEndpoint), Capabilities: capabilities,
 		LifecycleStatus: domain.DeviceReady, HealthStatus: domain.HealthHealthy}
 	created, err := service.store.CreateDevice(ctx, device)
 	if err != nil {
@@ -918,10 +990,75 @@ func mustRuntimeProfile(values map[string]any) runtimeprofile.Profile {
 func validatePoolInput(input PoolInput, totalTarget, minReady int) error {
 	if strings.TrimSpace(input.Name) == "" || input.DefaultLeaseSeconds < 60 ||
 		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 1 || totalTarget < 0 ||
-		minReady < 0 || minReady > totalTarget {
+		minReady < 0 || minReady > totalTarget || normalizedPlatform(input.Platform) == "" {
 		return ErrInvalidArgument
 	}
 	return nil
+}
+
+func normalizedPlatform(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "android":
+		return "android"
+	case "ios":
+		return "ios"
+	default:
+		return ""
+	}
+}
+
+func canonicalPlatformName(value string) string {
+	if value == "ios" {
+		return "iOS"
+	}
+	return "Android"
+}
+
+func normalizedHostOS(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "linux"
+	}
+	switch value {
+	case "linux", "macos", "windows":
+		return value
+	default:
+		return ""
+	}
+}
+
+func normalizedHostArch(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("_.-", character) {
+			continue
+		}
+		return ""
+	}
+	if len(value) > 32 {
+		return ""
+	}
+	return value
+}
+
+func validHostType(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "docker_emulator", "usb_android", "hybrid", "appium_device_farm_ios":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringPointer(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
 }
 
 func idempotency(clientID, scope, key, resourceType, resourceID string, request any, status int) (Idempotency, error) {

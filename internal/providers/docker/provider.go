@@ -350,7 +350,7 @@ func (provider *Provider) find(ctx context.Context, operation providers.Operatio
 }
 
 func (provider *Provider) inspectContainerHealth(ctx context.Context, value container) (providers.Health, error) {
-	health := providers.Health{Online: value.State == "running"}
+	health := providers.Health{Platform: providers.PlatformAndroid, Online: value.State == "running"}
 	if !health.Online {
 		return health, providerError(providers.OperationInspectHealth, "DEVICE_NOT_RUNNING", "emulator container is not running", true, nil)
 	}
@@ -418,14 +418,15 @@ func (provider *Provider) snapshot(value container) (providers.Snapshot, error) 
 	}
 	return providers.Snapshot{
 		DeviceID: value.Labels[labelDeviceID], HostID: value.Labels[labelHostID], ImageID: value.Labels[labelImageID],
+		Platform:    providers.PlatformAndroid,
 		ProviderRef: value.Labels[labelProviderRef], State: state, Generation: generation,
 		Capabilities: capabilities, RuntimeProfile: runtimeProfile,
-		Health: providers.Health{Online: state == providers.StateRunning}, Connection: connection,
+		Health: providers.Health{Platform: providers.PlatformAndroid, Online: state == providers.StateRunning}, Connection: connection,
 	}, nil
 }
 
 func (provider *Provider) connection(value container) (providers.ConnectionInfo, error) {
-	connection := providers.ConnectionInfo{}
+	connection := providers.ConnectionInfo{Platform: providers.PlatformAndroid, ProviderID: value.Labels[labelProviderRef]}
 	adbHostPort := value.Ports[provider.config.ContainerADBPort]
 	if adbHostPort == 0 {
 		return connection, errors.New("ADB host port is missing")
@@ -438,6 +439,7 @@ func (provider *Provider) connection(value container) (providers.ConnectionInfo,
 	}
 	connection.AppiumEndpoint = "http://" + net.JoinHostPort(provider.config.AdvertiseHost, strconv.Itoa(appiumHostPort))
 	connection.AppiumUDID = provider.config.ContainerADBSerial
+	connection.DeviceUDID = connection.AppiumUDID
 	return connection, nil
 }
 

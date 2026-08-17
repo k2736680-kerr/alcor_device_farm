@@ -73,7 +73,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "1.9.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "2.0.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 
@@ -126,8 +126,37 @@ func TestOpenAPIContract(t *testing.T) {
 	validateLocalReferences(t, document, document, "#")
 	validateRequestExamples(t, components)
 	validateAlcorAdapterContract(t, paths, components)
+	validatePlatformNeutralContract(t, components)
 	validateConsoleResponseTypes(t, document, paths)
 	validateFrozenHash(t, raw)
+}
+
+func validatePlatformNeutralContract(t *testing.T, components map[string]any) {
+	t.Helper()
+	schemas := object(t, components, "schemas")
+	checks := []struct {
+		schema   string
+		property string
+		values   string
+	}{
+		{"DeviceHost", "host_os", "linux,macos,windows"},
+		{"DeviceHostInput", "host_os", "linux,macos,windows"},
+		{"DevicePool", "platform", "android,ios"},
+		{"DevicePoolInput", "platform", "android,ios"},
+		{"Device", "platform", "android,ios"},
+		{"Device", "device_kind", "emulator,simulator,physical"},
+		{"Device", "provider_type", "docker_emulator,usb_android,appium_device_farm_ios,mock"},
+	}
+	for _, check := range checks {
+		schema := object(t, schemas, check.schema)
+		property := object(t, object(t, schema, "properties"), check.property)
+		if got := strings.Join(stringValues(t, property["enum"]), ","); got != check.values {
+			t.Fatalf("%s.%s enum=%s, want %s", check.schema, check.property, got, check.values)
+		}
+		if !containsString(stringValues(t, schema["required"]), check.property) {
+			t.Fatalf("%s must require %s", check.schema, check.property)
+		}
+	}
 }
 
 func validateConsoleResponseTypes(t *testing.T, document, paths map[string]any) {

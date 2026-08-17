@@ -198,6 +198,36 @@ func TestMockProviderCreatesNoBackgroundGoroutines(t *testing.T) {
 	}
 }
 
+func TestMockProviderSupportsIOSComponentHealthAndSharedAppiumEndpoint(t *testing.T) {
+	provider := New(Config{SharedAppiumEndpoint: "http://mac-host.test:4723"})
+	create := func(id, ref string) providers.Snapshot {
+		snapshot, err := provider.Create(context.Background(), providers.CreateRequest{
+			DeviceID: id, HostID: "mac_host_000000000001", Platform: providers.PlatformIOS,
+			DeviceKind: "simulator", ProviderRef: ref, Serial: "UDID-" + ref,
+			Capabilities: map[string]any{"platformName": "iOS", "deviceClass": "phone"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err = provider.Start(context.Background(), ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	first := create("ios_device_000000001", "ios-1")
+	second := create("ios_device_000000002", "ios-2")
+	if !first.Ready() || !second.Ready() {
+		t.Fatalf("iOS snapshots are not ready: first=%#v second=%#v", first, second)
+	}
+	if first.Connection.ADBEndpoint != "" || first.Connection.AppiumEndpoint != second.Connection.AppiumEndpoint {
+		t.Fatalf("unexpected iOS connections: first=%#v second=%#v", first.Connection, second.Connection)
+	}
+	if first.Health.Components[providers.ProbeRemoteControl] != providers.ProbeUnsupported {
+		t.Fatalf("remote control probe=%q", first.Health.Components[providers.ProbeRemoteControl])
+	}
+}
+
 func testCreateRequest(deviceID, providerRef string) providers.CreateRequest {
 	return providers.CreateRequest{
 		DeviceID: deviceID, HostID: "host_000000000000001", ImageID: "image_00000000000001",

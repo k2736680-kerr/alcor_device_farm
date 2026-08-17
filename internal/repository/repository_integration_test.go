@@ -39,6 +39,40 @@ func TestReservationIdempotencyReturnsSameResource(t *testing.T) {
 	}
 }
 
+func TestPlatformConstraintsAllowSharedIOSAppiumEndpointAndRejectMixedPool(t *testing.T) {
+	db := openTestDatabase(t)
+	resetDatabase(t, db)
+	statements := []string{
+		`INSERT INTO device_hosts (id,name,host_type,host_os,host_arch,status)
+		 VALUES ('ios_host_000000000001','repository-macos-host','appium_device_farm_ios','macos','arm64','online')`,
+		`INSERT INTO device_pools (id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready)
+		 VALUES ('ios_pool_000000000001','repository-ios-pool','ios',600,3600,2,2,1)`,
+		`INSERT INTO device_pools (id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready)
+		 VALUES ('android_pool_00000001','repository-android-pool','android',600,3600,1,1,1)`,
+		`INSERT INTO devices (id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		 VALUES
+		 ('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','simulator-node-1','rebuild','IOS-UDID-0001','http://mac-host.test:4723','{"platformName":"iOS"}','ready','healthy'),
+		 ('ios_device_000000002','ios_host_000000000001','ios','physical','appium_device_farm_ios','physical-node-2','rebuild','IOS-UDID-0002','http://mac-host.test:4723','{"platformName":"iOS"}','ready','healthy')`,
+		`INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		 VALUES ('ios_pool_000000000001','ios_device_000000001',true)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Pool().Exec(context.Background(), statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES ('android_pool_00000001','ios_device_000000002',true)`); err == nil {
+		t.Fatal("mixed Android/iOS pool membership was accepted")
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+		(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,lifecycle_status,health_status)
+		VALUES ('ios_device_000000003','ios_host_000000000001','ios','simulator','appium_device_farm_ios','simulator-node-3','rebuild',
+		'IOS-UDID-0001','http://mac-host.test:4723','ready','healthy')`); err == nil {
+		t.Fatal("duplicate active iOS UDID was accepted")
+	}
+}
+
 func TestConcurrentReservationIdempotencyReturnsOneResource(t *testing.T) {
 	db := openTestDatabase(t)
 	resetDatabase(t, db)

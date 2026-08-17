@@ -84,6 +84,8 @@ type Host struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
 	HostType        string            `json:"host_type"`
+	HostOS          string            `json:"host_os"`
+	HostArch        string            `json:"host_arch"`
 	Address         string            `json:"address,omitempty"`
 	Capabilities    map[string]any    `json:"capabilities"`
 	Capacity        map[string]any    `json:"capacity"`
@@ -98,6 +100,7 @@ type Host struct {
 type Pool struct {
 	ID                  string            `json:"id"`
 	Name                string            `json:"name"`
+	Platform            string            `json:"platform"`
 	DefaultLeaseSeconds int               `json:"default_lease_seconds"`
 	MaxLeaseSeconds     int               `json:"max_lease_seconds"`
 	MaxConcurrency      int               `json:"max_concurrency"`
@@ -123,6 +126,7 @@ type PoolImage struct {
 type Device struct {
 	ID                      string                       `json:"id"`
 	HostID                  string                       `json:"host_id"`
+	Platform                string                       `json:"platform"`
 	ImageID                 *string                      `json:"image_id,omitempty"`
 	PoolID                  *string                      `json:"pool_id,omitempty"`
 	PoolName                *string                      `json:"pool_name,omitempty"`
@@ -177,6 +181,8 @@ type ImageInput struct {
 type HostInput struct {
 	Name         string         `json:"name"`
 	HostType     string         `json:"host_type"`
+	HostOS       string         `json:"host_os"`
+	HostArch     string         `json:"host_arch"`
 	Address      string         `json:"address"`
 	Capabilities map[string]any `json:"capabilities"`
 	Capacity     map[string]any `json:"capacity"`
@@ -184,6 +190,7 @@ type HostInput struct {
 
 type PoolInput struct {
 	Name                string  `json:"name"`
+	Platform            string  `json:"platform"`
 	DefaultLeaseSeconds int     `json:"default_lease_seconds"`
 	MaxLeaseSeconds     int     `json:"max_lease_seconds"`
 	MaxConcurrency      int     `json:"max_concurrency"`
@@ -205,6 +212,8 @@ type ProvisionMockDeviceInput struct {
 	ID           string
 	HostID       string
 	ImageID      string
+	Platform     string
+	DeviceKind   string
 	ProviderRef  string
 	Capabilities map[string]any
 }

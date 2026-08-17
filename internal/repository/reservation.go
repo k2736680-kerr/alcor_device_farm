@@ -51,6 +51,7 @@ type ReservationFilter struct {
 
 type PoolPolicy struct {
 	Status             string
+	Platform           string
 	MaxLeaseSeconds    int
 	MaxConcurrency     int
 	ActiveReservations int
@@ -58,6 +59,8 @@ type PoolPolicy struct {
 
 type DeviceAssignment struct {
 	ID             string
+	HostID         string
+	Platform       string
 	Lifecycle      domain.DeviceLifecycleStatus
 	Health         domain.HealthStatus
 	Serial         string
@@ -163,11 +166,14 @@ func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx 
               JOIN device_hosts h ON h.id = d.host_id
               JOIN device_pools p ON p.id = pd.pool_id
               WHERE pd.pool_id = r.pool_id AND pd.enabled AND p.status = 'active'
+				AND p.platform = d.platform
                 AND h.status = 'online' AND NOT h.draining
                 AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
                 AND (NOT r.requested_capabilities ? '`+TargetDeviceCapability+`'
                      OR d.id = r.requested_capabilities->>'`+TargetDeviceCapability+`')
-                AND d.capabilities @> (r.requested_capabilities - '`+TargetDeviceCapability+`')
+				AND (NOT r.requested_capabilities ? 'platformName'
+				     OR lower(r.requested_capabilities->>'platformName') = p.platform)
+				AND d.capabilities @> device_schedulable_capabilities(r.requested_capabilities)
           )
         ORDER BY r.created_at, r.id
         FOR UPDATE OF r SKIP LOCKED
@@ -451,10 +457,10 @@ func (ReservationRepository) GetSession(ctx context.Context, querier database.Qu
 func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-		SELECT id,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		SELECT id,host_id,platform,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
 		       COALESCE(capabilities->>'appiumUdid',serial)
 		FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(
-		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -469,10 +475,10 @@ func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id strin
 func (ReservationRepository) GetDevice(ctx context.Context, querier database.Querier, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := querier.QueryRow(ctx, `
-		SELECT id,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		SELECT id,host_id,platform,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
 		       COALESCE(capabilities->>'appiumUdid',serial)
 		FROM devices WHERE id=$1`, id).Scan(
-		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -655,10 +661,10 @@ func (ReservationRepository) List(
 func (ReservationRepository) GetPoolPolicy(ctx context.Context, querier database.Querier, poolID string) (PoolPolicy, error) {
 	var policy PoolPolicy
 	err := querier.QueryRow(ctx, `
-        SELECT status, max_lease_seconds, max_concurrency,
+		SELECT status, platform, max_lease_seconds, max_concurrency,
                (SELECT count(*) FROM device_reservations WHERE pool_id = $1 AND status = 'active')
         FROM device_pools WHERE id = $1`, poolID).Scan(
-		&policy.Status, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.ActiveReservations,
+		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.ActiveReservations,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PoolPolicy{}, ErrNotFound
@@ -672,9 +678,9 @@ func (ReservationRepository) GetPoolPolicy(ctx context.Context, querier database
 func (ReservationRepository) LockPoolPolicy(ctx context.Context, tx pgx.Tx, poolID string) (PoolPolicy, error) {
 	var policy PoolPolicy
 	err := tx.QueryRow(ctx, `
-		SELECT status, max_lease_seconds, max_concurrency
+		SELECT status, platform, max_lease_seconds, max_concurrency
 		FROM device_pools WHERE id = $1 FOR UPDATE`, poolID).Scan(
-		&policy.Status, &policy.MaxLeaseSeconds, &policy.MaxConcurrency,
+		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PoolPolicy{}, ErrNotFound
@@ -696,21 +702,24 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 	}
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-		SELECT d.id, d.lifecycle_status, d.health_status, d.serial,
+		SELECT d.id, d.host_id, d.platform, d.lifecycle_status, d.health_status, d.serial,
 		       d.adb_endpoint, d.appium_endpoint, COALESCE(d.capabilities->>'appiumUdid',d.serial)
         FROM devices d
         JOIN device_pool_devices pd ON pd.device_id = d.id
         JOIN device_hosts h ON h.id = d.host_id
+        JOIN device_pools p ON p.id = pd.pool_id
         WHERE pd.pool_id = $1 AND pd.enabled
+          AND p.platform = d.platform
           AND h.status = 'online' AND NOT h.draining
           AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
           AND (NOT $2::jsonb ? '`+TargetDeviceCapability+`'
                OR d.id = $2::jsonb->>'`+TargetDeviceCapability+`')
-          AND d.capabilities @> ($2::jsonb - '`+TargetDeviceCapability+`')
+		  AND (NOT $2::jsonb ? 'platformName' OR lower($2::jsonb->>'platformName') = p.platform)
+		  AND d.capabilities @> device_schedulable_capabilities($2::jsonb)
         ORDER BY d.created_at, d.id
         FOR UPDATE OF d SKIP LOCKED
         LIMIT 1`, poolID, capabilities).Scan(
-		&device.ID, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -731,6 +740,7 @@ func (ReservationRepository) FindActivePoolForDevice(ctx context.Context, querie
 		JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
 		JOIN device_pools p ON p.id=pd.pool_id AND p.status='active'
 		WHERE d.id=$1 AND d.lifecycle_status='ready' AND d.health_status='healthy'
+		  AND p.platform=d.platform
 		  AND h.status='online' AND NOT h.draining
 		ORDER BY p.created_at,p.id
 		LIMIT 1`, deviceID).Scan(&poolID)
@@ -841,7 +851,8 @@ func (ReservationRepository) ActivateClaimed(
 		return ReservationRecord{}, SessionRecord{}, fmt.Errorf("activate reservation: %w", err)
 	}
 	metadata, err := json.Marshal(map[string]any{
-		"serial": device.Serial, "adb_endpoint": device.ADBEndpoint, "appium_endpoint": device.AppiumEndpoint,
+		"host_id": device.HostID, "platform": device.Platform, "serial": device.Serial,
+		"adb_endpoint": device.ADBEndpoint, "appium_endpoint": device.AppiumEndpoint,
 		"appium_udid": device.AppiumUDID,
 	})
 	if err != nil {

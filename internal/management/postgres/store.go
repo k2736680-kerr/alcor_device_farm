@@ -133,9 +133,9 @@ func (store *Store) CreateHost(ctx context.Context, meta management.Idempotency,
 	return createIdempotent(ctx, store.db, meta,
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `INSERT INTO device_hosts
-                (id,name,host_type,address,capabilities,capacity,used_capacity,status,draining)
-                VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9)`, host.ID, host.Name, host.HostType,
-				host.Address, mustJSON(host.Capabilities), mustJSON(host.Capacity), mustJSON(host.UsedCapacity), host.Status, host.Draining)
+				(id,name,host_type,host_os,host_arch,address,capabilities,capacity,used_capacity,status,draining)
+				VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11)`, host.ID, host.Name, host.HostType,
+				host.HostOS, host.HostArch, host.Address, mustJSON(host.Capabilities), mustJSON(host.Capacity), mustJSON(host.UsedCapacity), host.Status, host.Draining)
 			return err
 		},
 		func(query database.Querier, id string) (management.Host, error) { return getHost(ctx, query, id) },
@@ -173,11 +173,11 @@ func (store *Store) GetHost(ctx context.Context, id string) (management.Host, er
 
 func (store *Store) UpdateHost(ctx context.Context, host management.Host, expected domain.HostStatus) (management.Host, error) {
 	value, err := scanHost(store.db.Pool().QueryRow(ctx, `UPDATE device_hosts SET
-        name=$2,host_type=$3,address=NULLIF($4,''),capabilities=$5,capacity=$6,used_capacity=$7,
-        status=$8,draining=$9,updated_at=clock_timestamp()
-        WHERE id=$1 AND status=$10
-        RETURNING id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at`,
-		host.ID, host.Name, host.HostType, host.Address, mustJSON(host.Capabilities), mustJSON(host.Capacity),
+		name=$2,host_type=$3,host_os=$4,host_arch=$5,address=NULLIF($6,''),capabilities=$7,capacity=$8,used_capacity=$9,
+		status=$10,draining=$11,updated_at=clock_timestamp()
+		WHERE id=$1 AND status=$12
+		RETURNING id,name,host_type,host_os,host_arch,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at`,
+		host.ID, host.Name, host.HostType, host.HostOS, host.HostArch, host.Address, mustJSON(host.Capabilities), mustJSON(host.Capacity),
 		mustJSON(host.UsedCapacity), host.Status, host.Draining, expected))
 	return value, rowError(err)
 }
@@ -186,8 +186,8 @@ func (store *Store) CreatePool(ctx context.Context, meta management.Idempotency,
 	return createIdempotent(ctx, store.db, meta,
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `INSERT INTO device_pools
-				(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, pool.ID, pool.Name, pool.DefaultLeaseSeconds,
+				(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, pool.ID, pool.Name, pool.Platform, pool.DefaultLeaseSeconds,
 				pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.Status)
 			return err
 		},
@@ -229,11 +229,11 @@ func (store *Store) UpdatePool(ctx context.Context, pool management.Pool, expect
 	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET
-			name=$2,default_lease_seconds=$3,max_lease_seconds=$4,max_concurrency=$5,total_target=$6,
-			min_ready=$7,default_image_id=$8,base_device_id=$9,status=$10,updated_at=clock_timestamp()
-			WHERE id=$1 AND status=$11
-			RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
-			default_image_id,base_device_id,status,created_at,updated_at`, pool.ID, pool.Name, pool.DefaultLeaseSeconds,
+			name=$2,platform=$3,default_lease_seconds=$4,max_lease_seconds=$5,max_concurrency=$6,total_target=$7,
+			min_ready=$8,default_image_id=$9,base_device_id=$10,status=$11,updated_at=clock_timestamp()
+			WHERE id=$1 AND status=$12
+			RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
+			default_image_id,base_device_id,status,created_at,updated_at`, pool.ID, pool.Name, pool.Platform, pool.DefaultLeaseSeconds,
 			pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.Status, expected))
 		if err != nil {
 			return err
@@ -358,7 +358,7 @@ func (store *Store) SelectPoolDefaultImage(
 		}
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET default_image_id=$2,updated_at=clock_timestamp()
-			WHERE id=$1 RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
+			WHERE id=$1 RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
 			default_image_id,base_device_id,status,created_at,updated_at`, poolID, imageID))
 		if err != nil {
 			return err
@@ -389,7 +389,7 @@ func (store *Store) SetPoolBaseDevice(ctx context.Context, poolID, deviceID stri
 		}
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET base_device_id=$2,updated_at=clock_timestamp()
-			WHERE id=$1 RETURNING id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at`, poolID, deviceID))
+			WHERE id=$1 RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at`, poolID, deviceID))
 		if err != nil {
 			return err
 		}
@@ -422,11 +422,11 @@ func (store *Store) RemoveDeviceFromPool(ctx context.Context, poolID, deviceID s
 
 func (store *Store) CreateDevice(ctx context.Context, device management.Device) (management.Device, error) {
 	_, err := store.db.Pool().Exec(ctx, `INSERT INTO devices
-        (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
-         adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		(id,host_id,platform,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
+		 adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		`,
-		device.ID, device.HostID, device.ImageID, device.DeviceKind, device.ProviderType, device.ProviderRef,
+		device.ID, device.HostID, device.Platform, device.ImageID, device.DeviceKind, device.ProviderType, device.ProviderRef,
 		device.LifecycleMode, device.Serial, device.STFSerial, device.ADBEndpoint, device.AppiumEndpoint,
 		mustJSON(device.Capabilities), device.LifecycleStatus, device.HealthStatus, device.HealthReason, device.ConsecutiveFailures)
 	if err != nil {
@@ -780,10 +780,10 @@ func maxInt(left, right int) int {
 }
 
 const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
-const hostSelect = `SELECT id,name,host_type,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
-const poolSelect = `SELECT id,name,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at FROM device_pools`
+const hostSelect = `SELECT id,name,host_type,host_os,host_arch,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
+const poolSelect = `SELECT id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
-const deviceSelect = `SELECT devices.id,devices.host_id,devices.image_id,
+const deviceSelect = `SELECT devices.id,devices.host_id,devices.platform,devices.image_id,
     (SELECT pool.id FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
         WHERE membership.device_id=devices.id AND membership.enabled ORDER BY pool.created_at,pool.id LIMIT 1),
     (SELECT pool.name FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
@@ -823,7 +823,7 @@ func scanImage(row rowScanner) (management.Image, error) {
 func scanHost(row rowScanner) (management.Host, error) {
 	var v management.Host
 	var a, b, c []byte
-	err := row.Scan(&v.ID, &v.Name, &v.HostType, &v.Address, &a, &b, &c, &v.Status, &v.Draining, &v.LastHeartbeatAt, &v.CreatedAt, &v.UpdatedAt)
+	err := row.Scan(&v.ID, &v.Name, &v.HostType, &v.HostOS, &v.HostArch, &v.Address, &a, &b, &c, &v.Status, &v.Draining, &v.LastHeartbeatAt, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {
 		err = unmarshalMaps([][]byte{a, b, c}, []*map[string]any{&v.Capabilities, &v.Capacity, &v.UsedCapacity})
 	}
@@ -831,7 +831,7 @@ func scanHost(row rowScanner) (management.Host, error) {
 }
 func scanPool(row rowScanner) (management.Pool, error) {
 	var v management.Pool
-	err := row.Scan(&v.ID, &v.Name, &v.DefaultLeaseSeconds, &v.MaxLeaseSeconds, &v.MaxConcurrency,
+	err := row.Scan(&v.ID, &v.Name, &v.Platform, &v.DefaultLeaseSeconds, &v.MaxLeaseSeconds, &v.MaxConcurrency,
 		&v.TotalTarget, &v.MinReady, &v.DefaultImageID, &v.BaseDeviceID, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	return v, err
 }
@@ -843,7 +843,7 @@ func scanPoolImage(row rowScanner) (management.PoolImage, error) {
 func scanDevice(row rowScanner) (management.Device, error) {
 	var v management.Device
 	var capabilities, override, effective, pending []byte
-	err := row.Scan(&v.ID, &v.HostID, &v.ImageID, &v.PoolID, &v.PoolName, &v.IsPoolBase, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
+	err := row.Scan(&v.ID, &v.HostID, &v.Platform, &v.ImageID, &v.PoolID, &v.PoolName, &v.IsPoolBase, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
 		&capabilities, &override, &effective, &v.PendingImageID, &pending, &v.ReimageStatus, &v.ReimageError,
 		&v.LifecycleStatus, &v.HealthStatus, &v.HealthReason, &v.ConsecutiveFailures, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {

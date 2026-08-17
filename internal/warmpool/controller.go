@@ -116,7 +116,7 @@ func (controller *Controller) CreateCatalogProvisioning(ctx context.Context, inp
 	created := false
 	err = controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var poolStatus domain.PoolStatus
-		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 FOR UPDATE`, input.PoolID).Scan(&poolStatus); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 AND platform='android' FOR UPDATE`, input.PoolID).Scan(&poolStatus); err != nil {
 			return err
 		}
 		if poolStatus != domain.PoolActive {
@@ -260,7 +260,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			return err
 		}
 		var status domain.PoolStatus
-		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 FOR UPDATE`, input.PoolID).Scan(&status); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 AND platform='android' FOR UPDATE`, input.PoolID).Scan(&status); err != nil {
 			return err
 		}
 		// The Pool row serializes concurrent create submissions. Recheck after
@@ -341,7 +341,7 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 		LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
 		JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=COALESCE(b.image_id,p.default_image_id) AND pi.enabled
 		JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id) AND i.status='ready'
-		WHERE p.status='active' ORDER BY p.id`)
+		WHERE p.status='active' AND p.platform='android' ORDER BY p.id`)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1106,7 +1106,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			FROM device_pools p LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
 			JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=COALESCE(b.image_id,p.default_image_id)
 			JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id)
-			WHERE p.id=$1 AND COALESCE(b.image_id,p.default_image_id)=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
+			WHERE p.id=$1 AND p.platform='android' AND COALESCE(b.image_id,p.default_image_id)=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
 			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &baseCapabilities, &baseRuntimeProfile); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
@@ -1164,7 +1164,8 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_reservations
 			WHERE pool_id=$1 AND status='pending'
 			AND NOT requested_capabilities ? '_device_farm_target_device_id'
-			AND $2::jsonb @> requested_capabilities`, poolID, capabilitiesJSON).Scan(&pendingDemand); err != nil {
+			AND $2::jsonb @> device_schedulable_capabilities(requested_capabilities)
+			AND (NOT requested_capabilities ? 'platformName' OR lower(requested_capabilities->>'platformName')='android')`, poolID, capabilitiesJSON).Scan(&pendingDemand); err != nil {
 			return err
 		}
 		missing := min(max(minReady-readyOrCreating, pendingDemand-defaultReadyOrCreating), totalTarget-activeInstances)
