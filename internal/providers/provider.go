@@ -105,6 +105,7 @@ type Snapshot struct {
 	HostID         string
 	ImageID        string
 	Platform       Platform
+	DeviceKind     string
 	ProviderRef    string
 	State          State
 	Generation     int

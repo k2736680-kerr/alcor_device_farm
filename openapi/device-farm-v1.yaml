@@ -1946,12 +1946,20 @@ components:
         devices: {type: array, items: {$ref: "#/components/schemas/DiscoveredDevice"}}
     DiscoveredDevice:
       type: object
+      additionalProperties: false
       required: [provider_ref, serial, lifecycle_status, health_status]
       properties:
         provider_ref: {type: string}
         serial: {type: string}
+        platform: {type: string, enum: [android, ios]}
+        device_kind: {type: string, enum: [emulator, simulator, physical]}
+        provider_type: {type: string, enum: [mock, docker_emulator, usb_android, appium_device_farm_ios]}
         lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
         health_status: {$ref: "#/components/schemas/HealthStatus"}
+        capabilities: {type: object, additionalProperties: true}
+        components:
+          type: object
+          additionalProperties: {type: string, enum: [passed, failed, unknown, unsupported]}
         runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         connection:
           type: object

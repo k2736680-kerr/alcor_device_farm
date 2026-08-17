@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,10 @@ type CapacityProbe interface {
 	Snapshot(context.Context) (map[string]any, map[string]any, error)
 }
 
+type EnvironmentProbe interface {
+	Snapshot(context.Context) (map[string]any, error)
+}
+
 type Config struct {
 	HostID              string
 	ProviderType        string
@@ -43,6 +48,7 @@ type Config struct {
 	ShutdownTimeout     time.Duration
 	Capacity            map[string]any
 	CapacityProbe       CapacityProbe
+	EnvironmentProbe    EnvironmentProbe
 	STFADBRegistrar     EndpointRegistrar
 	ImagePreparer       imageprepare.Preparer
 }
@@ -150,25 +156,44 @@ func (agent *Agent) heartbeatLoop(ctx context.Context, errorsChannel chan<- erro
 
 func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	snapshots, err := agent.provider.Discover(ctx, agent.config.HostID)
-	if err != nil {
+	if err != nil && agent.config.EnvironmentProbe == nil {
 		return err
 	}
 	devices := make([]hostcommand.DiscoveredDevice, 0, len(snapshots))
 	for _, snapshot := range snapshots {
-		if snapshot.Ready() && agent.registrar != nil {
+		if snapshot.Platform == providers.PlatformAndroid && snapshot.Ready() && agent.registrar != nil {
 			if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
 				agent.logger.Warn("STF ADB endpoint registration failed", "provider_ref", snapshot.ProviderRef, "error", err)
 			}
 		}
+		connection := map[string]any{"appium_endpoint": snapshot.Connection.AppiumEndpoint,
+			"appium_udid": snapshot.Connection.AppiumUDID}
+		if snapshot.Connection.ADBEndpoint != "" {
+			connection["adb_endpoint"] = snapshot.Connection.ADBEndpoint
+		}
+		var runtimeProfile map[string]any
+		if snapshot.RuntimeProfile != (runtimeprofile.Profile{}) {
+			runtimeProfile = snapshot.RuntimeProfile.Map()
+		}
+		components := make(map[string]string, len(snapshot.Health.Components))
+		for name, status := range snapshot.Health.Components {
+			components[name] = string(status)
+		}
 		devices = append(devices, hostcommand.DiscoveredDevice{
 			ProviderRef: snapshot.ProviderRef, Serial: snapshot.Connection.Serial,
+			Platform: string(snapshot.Platform), DeviceKind: snapshot.DeviceKind, ProviderType: agent.config.ProviderType,
 			LifecycleStatus: providerLifecycle(snapshot), HealthStatus: providerHealth(snapshot),
-			Connection: map[string]any{"adb_endpoint": snapshot.Connection.ADBEndpoint, "appium_endpoint": snapshot.Connection.AppiumEndpoint,
-				"appium_udid": snapshot.Connection.AppiumUDID},
-			RuntimeProfile: snapshot.RuntimeProfile.Map(),
+			Connection: connection, Capabilities: snapshot.Capabilities, Components: components,
+			RuntimeProfile: runtimeProfile,
 		})
 	}
-	capacity, environment := agent.config.Capacity, map[string]any{"provider": agent.config.ProviderType}
+	hostOS := runtime.GOOS
+	if hostOS == "darwin" {
+		hostOS = "macos"
+	}
+	capacity, environment := agent.config.Capacity, map[string]any{
+		"provider": agent.config.ProviderType, "host_os": hostOS, "host_arch": runtime.GOARCH,
+	}
 	if agent.preparer != nil {
 		environment["image_build_agent"] = true
 	}
@@ -181,6 +206,21 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 		for key, value := range capabilities {
 			environment[key] = value
 		}
+	}
+	if agent.config.EnvironmentProbe != nil {
+		values, probeErr := agent.config.EnvironmentProbe.Snapshot(ctx)
+		if probeErr != nil {
+			agent.logger.Warn("host environment readiness probe failed", "error", probeErr)
+			environment["host_readiness"] = map[string]any{"ready": false, "reasons": []any{"environment_probe_failed"}}
+		} else {
+			for key, value := range values {
+				environment[key] = value
+			}
+		}
+	}
+	if err != nil {
+		agent.logger.Warn("provider inventory failed; reporting Host as not ready", "error", err)
+		environment["host_readiness"] = map[string]any{"ready": false, "reasons": []any{"provider_inventory_failed"}}
 	}
 	return agent.client.Heartbeat(ctx, agent.config.HostID, hostcommand.HeartbeatInput{
 		AgentTime: time.Now().UTC(), Capacity: capacity,
@@ -464,7 +504,7 @@ func minInt64(left, right int64) int64 {
 }
 
 func (agent *Agent) registerSTF(ctx context.Context, snapshot providers.Snapshot) error {
-	if agent.registrar == nil {
+	if agent.registrar == nil || snapshot.Platform == providers.PlatformIOS {
 		return nil
 	}
 	if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
@@ -700,6 +740,14 @@ func providerHealth(snapshot providers.Snapshot) string {
 	if snapshot.Ready() {
 		return "healthy"
 	}
+	if len(snapshot.Health.Components) > 0 {
+		for _, status := range snapshot.Health.Components {
+			if status == providers.ProbeFailed {
+				return "degraded"
+			}
+		}
+		return "unknown"
+	}
 	if snapshot.State != providers.StateRunning || snapshot.Health.Online {
 		return "unknown"
 	}
@@ -720,8 +768,16 @@ func snapshotResult(snapshot providers.Snapshot) map[string]any {
 }
 
 func healthResult(health providers.Health) map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"online": health.Online, "adb_online": health.ADBOnline,
 		"boot_completed": health.BootCompleted, "appium_healthy": health.AppiumHealthy,
 	}
+	if len(health.Components) > 0 {
+		components := make(map[string]string, len(health.Components))
+		for name, status := range health.Components {
+			components[name] = string(status)
+		}
+		result["components"] = components
+	}
+	return result
 }

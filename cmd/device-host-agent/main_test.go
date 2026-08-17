@@ -35,23 +35,30 @@ func TestAgentLeaseAndCommandTimeoutSupportEnvironmentConfiguration(t *testing.T
 }
 
 func TestBuildProviderRequiresExplicitProvider(t *testing.T) {
-	provider, err := buildProvider(" ", providerdocker.Config{})
+	provider, err := buildProvider(" ", providerdocker.Config{}, nil)
 	if err == nil || provider != nil || !strings.Contains(err.Error(), "required") {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }
 
 func TestBuildProviderAcceptsExplicitMock(t *testing.T) {
-	provider, err := buildProvider(" MOCK ", providerdocker.Config{})
+	provider, err := buildProvider(" MOCK ", providerdocker.Config{}, nil)
 	if err != nil || provider == nil {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }
 
 func TestBuildProviderRejectsUnknownProvider(t *testing.T) {
-	provider, err := buildProvider("unknown", providerdocker.Config{})
+	provider, err := buildProvider("unknown", providerdocker.Config{}, nil)
 	if err == nil || provider != nil || !strings.Contains(err.Error(), "unsupported provider") {
 		t.Fatalf("provider=%T error=%v", provider, err)
+	}
+}
+
+func TestSplitCSVRemovesEmptyUDIDs(t *testing.T) {
+	values := splitCSV(" SIM-1, ,SIM-2 ")
+	if len(values) != 2 || values[0] != "SIM-1" || values[1] != "SIM-2" {
+		t.Fatalf("values=%#v", values)
 	}
 }
 

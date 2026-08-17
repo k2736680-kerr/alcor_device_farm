@@ -14,11 +14,13 @@ import (
 	"time"
 
 	appiumadapter "github.com/Ad-Quanta/alcor-device-farm/internal/adapters/appium"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/appiumdevicefarm"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stfadb"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/agent"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/buildinfo"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcapacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imageprepare"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/ioshost"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	providerdocker "github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
@@ -34,7 +36,7 @@ func main() {
 	leaseSeconds := flag.Int("lease-seconds", envInt("DEVICE_FARM_AGENT_LEASE_SECONDS", 300), "host command lease duration in seconds")
 	commandTimeout := flag.Duration("command-timeout", envDuration("DEVICE_FARM_AGENT_COMMAND_TIMEOUT", 270*time.Second), "provider command execution timeout")
 	imagePrepareTimeout := flag.Duration("image-prepare-timeout", envDuration("DEVICE_FARM_IMAGE_PREPARE_TIMEOUT", 2*time.Hour), "Android catalogue synchronization and image build timeout")
-	providerType := flag.String("provider", strings.TrimSpace(os.Getenv("DEVICE_FARM_AGENT_PROVIDER")), "device provider: mock or docker; required")
+	providerType := flag.String("provider", strings.TrimSpace(os.Getenv("DEVICE_FARM_AGENT_PROVIDER")), "device provider: mock, docker, or appium_device_farm_ios; required")
 	dockerBinary := flag.String("docker-binary", envOr("DEVICE_FARM_DOCKER_BINARY", "docker"), "Docker CLI path")
 	dockerImage := flag.String("docker-image", os.Getenv("DEVICE_FARM_DOCKER_IMAGE"), "optional fixed fallback image for direct provider tests; production commands select the Device Image runtime reference")
 	dockerAdvertiseHost := flag.String("docker-advertise-host", os.Getenv("DEVICE_FARM_DOCKER_ADVERTISE_HOST"), "host advertised for published ADB ports")
@@ -54,6 +56,12 @@ func main() {
 	dockerDataRoot := flag.String("docker-data-root", envOr("DEVICE_FARM_DOCKER_DATA_ROOT", "/var/lib/docker"), "Docker data filesystem used for capacity measurement")
 	dockerRenderDevice := flag.String("docker-render-device", envOr("DEVICE_FARM_DOCKER_RENDER_DEVICE", "/dev/dri/renderD128"), "optional GPU render node detected by the agent")
 	imagePrepareScript := flag.String("image-prepare-script", strings.TrimSpace(os.Getenv("DEVICE_FARM_IMAGE_PREPARE_SCRIPT")), "trusted local Android image preparation script; empty disables Build Agent commands")
+	iosEndpoint := flag.String("ios-appium-endpoint", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_APPIUM_ENDPOINT")), "local Appium Device Farm Node endpoint")
+	iosAllowUDIDs := flag.String("ios-allow-udids", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_ALLOW_UDIDS")), "comma-separated fixed iOS UDID allowlist")
+	iosWDAPackageJSON := flag.String("ios-wda-package-json", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_WDA_PACKAGE_JSON")), "appium-webdriveragent package.json used for pinned WDA readiness")
+	nodeBinary := flag.String("node-binary", envOr("DEVICE_FARM_NODE_BINARY", "node"), "pinned Node.js binary used by the iOS Host")
+	appiumBinary := flag.String("appium-binary", envOr("DEVICE_FARM_APPIUM_BINARY", "appium"), "pinned Appium binary used by the iOS Host")
+	goIOSBinary := flag.String("go-ios-binary", envOr("DEVICE_FARM_GO_IOS_BINARY", "ios"), "pinned go-ios binary used by the iOS Host")
 	flag.Parse()
 
 	if *version {
@@ -72,6 +80,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Appium probe configuration error: %v\n", err)
 		os.Exit(1)
 	}
+	var iosAdapter *appiumdevicefarm.Client
+	var environmentProbe agent.EnvironmentProbe
+	if strings.EqualFold(strings.TrimSpace(*providerType), "appium_device_farm_ios") {
+		iosAdapter, err = appiumdevicefarm.New(appiumdevicefarm.Config{Endpoint: *iosEndpoint, Timeout: *appiumHealthTimeout,
+			AllowUDIDs: splitCSV(*iosAllowUDIDs)})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Appium Device Farm adapter configuration error: %v\n", err)
+			os.Exit(1)
+		}
+		environmentProbe, err = ioshost.New(ioshost.Config{NodeBinary: *nodeBinary, AppiumBinary: *appiumBinary,
+			GoIOSBinary: *goIOSBinary, WDAPackageJSON: *iosWDAPackageJSON, NodeHealth: iosAdapter})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "iOS Host readiness configuration error: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	deviceProvider, err := buildProvider(*providerType, providerdocker.Config{
 		Binary: *dockerBinary, Image: *dockerImage, AdvertiseHost: *dockerAdvertiseHost,
 		BindAddress: *dockerBindAddress, KVMDevice: *dockerKVMDevice, RenderDevice: *dockerRenderDevice,
@@ -79,7 +103,7 @@ func main() {
 		DataMountPath: *dockerDataMountPath,
 		CPUs:          *dockerCPUs, Memory: *dockerMemory, PidsLimit: *dockerPidsLimit,
 		Environment: dockerEnvironment(*dockerEmulatorDevice), AppiumProbe: appiumProbe,
-	})
+	}, iosAdapter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent provider configuration error: %v\n", err)
 		os.Exit(1)
@@ -111,7 +135,7 @@ func main() {
 		ImagePrepareTimeout: *imagePrepareTimeout,
 		ShutdownTimeout:     30 * time.Second,
 		Capacity:            map[string]any{"device_slots": *concurrency}, CapacityProbe: capacityProbe, STFADBRegistrar: stfRegistrar,
-		ImagePreparer: imagePreparer,
+		ImagePreparer: imagePreparer, EnvironmentProbe: environmentProbe,
 	}, client, deviceProvider, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent configuration error: %v\n", err)
@@ -125,7 +149,7 @@ func main() {
 	}
 }
 
-func buildProvider(providerType string, dockerConfig providerdocker.Config) (providers.Provider, error) {
+func buildProvider(providerType string, dockerConfig providerdocker.Config, iosProvider providers.Provider) (providers.Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(providerType)) {
 	case "":
 		return nil, errors.New("device provider is required; set DEVICE_FARM_AGENT_PROVIDER or --provider")
@@ -135,9 +159,24 @@ func buildProvider(providerType string, dockerConfig providerdocker.Config) (pro
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return providerdocker.New(ctx, dockerConfig)
+	case "appium_device_farm_ios":
+		if iosProvider == nil {
+			return nil, errors.New("Appium Device Farm iOS provider is required")
+		}
+		return iosProvider, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", providerType)
 	}
+}
+
+func splitCSV(value string) []string {
+	result := make([]string, 0)
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func envOr(name, fallback string) string {

@@ -33,6 +33,15 @@ func (client *fakeClient) Heartbeat(_ context.Context, _ string, input hostcomma
 
 type fakeCapacityProbe struct{}
 
+type fakeEnvironmentProbe struct {
+	values map[string]any
+	err    error
+}
+
+func (probe fakeEnvironmentProbe) Snapshot(context.Context) (map[string]any, error) {
+	return probe.values, probe.err
+}
+
 func (fakeCapacityProbe) Snapshot(context.Context) (map[string]any, map[string]any, error) {
 	return map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 8, "memory_total_mb": 16000,
 			"memory_available_mb": 9000, "disk_total_mb": 100000, "disk_available_mb": 30000},
@@ -114,6 +123,70 @@ func TestAgentHeartbeatUsesMeasuredCapacityInsteadOfCommandConcurrency(t *testin
 	defer client.mu.Unlock()
 	if client.lastHeartbeat.Capacity["resource_model"] != "dynamic_v1" || client.lastHeartbeat.Capacity["device_slots"] != nil ||
 		client.lastHeartbeat.Environment["gpu_render"] != true {
+		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
+	}
+}
+
+func TestAgentHeartbeatIncludesHostReadinessAndDoesNotChargeIOSAsAndroidEmulator(t *testing.T) {
+	provider := providermock.New(providermock.Config{SharedAppiumEndpoint: "http://127.0.0.1:4723"})
+	if _, err := provider.Create(context.Background(), providers.CreateRequest{DeviceID: "device_0000000000001", HostID: "host_000000000000001",
+		Platform: providers.PlatformIOS, DeviceKind: "simulator", ProviderRef: "IOS-UDID-1", Serial: "IOS-UDID-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), "IOS-UDID-1"); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{}
+	runtime, err := agent.New(agent.Config{HostID: "host_000000000000001", ProviderType: "appium_device_farm_ios",
+		HeartbeatInterval: 10 * time.Millisecond, LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		EnvironmentProbe: fakeEnvironmentProbe{values: map[string]any{"host_os": "macos", "host_arch": "arm64",
+			"host_readiness": map[string]any{"ready": true, "reasons": []any{}}}},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(15 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.lastHeartbeat.Environment["host_os"] != "macos" || client.lastHeartbeat.Environment["host_arch"] != "arm64" ||
+		len(client.lastHeartbeat.Devices) != 1 || len(client.lastHeartbeat.Devices[0].RuntimeProfile) != 0 ||
+		client.lastHeartbeat.Devices[0].Platform != "ios" || client.lastHeartbeat.Devices[0].Connection["adb_endpoint"] != nil {
+		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
+	}
+}
+
+func TestAgentReportsMaintenanceReadinessWhenIOSInventoryFails(t *testing.T) {
+	client := &fakeClient{}
+	provider := providermock.New(providermock.Config{Scenario: providermock.Scenario{Offline: true}})
+	runtime, err := agent.New(agent.Config{HostID: "host_000000000000001", ProviderType: "appium_device_farm_ios",
+		HeartbeatInterval: 10 * time.Millisecond, LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		EnvironmentProbe: fakeEnvironmentProbe{values: map[string]any{"host_os": "macos", "host_arch": "arm64",
+			"host_readiness": map[string]any{"ready": true, "reasons": []any{}}}},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(15 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	readiness, _ := client.lastHeartbeat.Environment["host_readiness"].(map[string]any)
+	if readiness["ready"] != false || len(client.lastHeartbeat.Devices) != 0 {
 		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
 	}
 }
