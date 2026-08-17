@@ -66,6 +66,7 @@
 |---|---|---|---|
 | AT-IOS-HOST-001 | P0 | Agent 上报 macOS/Xcode/Appium/插件/XCUITest/go-ios | 版本和能力完整；Secret 不进入心跳 |
 | AT-IOS-HOST-002 | P0 | Xcode license、Appium doctor 或插件版本失败 | Host 不接收新预约并给出稳定原因 |
+| AT-IOS-HOST-003 | P0 | 已结束 Session 的 WDA 端口仍存活，doctor 可选 Remote XPC 探测不返回 | 15 秒后继续心跳；仅三项 doctor 必需检查已明确通过时生效，Host 不误离线 |
 | AT-IOS-DISC-001 | P0 | allowlist 中 booted Simulator 出现/消失 | Device 唯一映射，状态在时限内收敛 |
 | AT-IOS-DISC-002 | P0 | 新未知 Simulator/USB 真机接入 | 只登记 unknown/quarantined，不自动进入 Pool |
 | AT-IOS-DISC-003 | P0 | 同一 UDID 从另一 Host 上报 | 不静默迁移；两台 Host 停止相关新分配并产生冲突审计 |
@@ -78,11 +79,12 @@
 | AT-IOS-RES-001 | P0 | 100 个并发请求竞争一台 iPhone | PostgreSQL 只有一个 active Reservation，零双占 |
 | AT-IOS-RES-002 | P0 | 无 Reservation 直接创建 Session | 网络/Session Fence 拒绝，插件不产生 Session |
 | AT-IOS-RES-003 | P0 | `appium:udid` 与 `df:udids` 不同 | 请求拒绝并审计，不转发 Appium |
-| AT-IOS-RES-004 | P0 | `df:udids` 包含多个设备或使用 tags/filterByHost | 请求拒绝，不允许插件再次自由选机 |
+| AT-IOS-RES-004 | P0 | `df:udids` 包含逗号分隔的多个设备、使用数组或使用 tags/filterByHost | 请求拒绝，不允许插件再次自由选机 |
 | AT-IOS-RES-005 | P0 | 重放已消费或已过期 Session Grant | 请求拒绝，不能创建第二 Session |
 | AT-IOS-RES-006 | P0 | 插件 busy 与 Reservation 不一致 | 不返回可用；设备 degraded/quarantined，产生漂移事件 |
 | AT-IOS-RES-007 | P0 | Reservation 过期时 Appium Session 未关闭 | Reaper 关闭 Session；失败时保持隔离且不重新分配 |
 | AT-IOS-RES-008 | P1 | 两台 Simulator 并发 | Session/UDID/Host/结果互不串联，两个插件 busy 与两个 Reservation 一一对应 |
+| AT-IOS-RES-009 | P0 | 正常删除 Session 后 Agent 尚未刷新插件 busy | 30 秒清理宽限内不误隔离；随后收敛为 ready/healthy，超时仍 busy 才隔离 |
 
 ### 4.4 Simulator 与真机自动化
 

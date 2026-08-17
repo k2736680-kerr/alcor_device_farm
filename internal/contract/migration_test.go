@@ -96,6 +96,29 @@ func TestPlatformNeutralDeviceDomainMigrationContract(t *testing.T) {
 	assertSQLContains(t, down, `DROP\s+COLUMN\s+platform`)
 }
 
+func TestIOSSessionFenceMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000015_ios_session_fence.up.sql"))
+	down := readFile(t, filepath.Join(root, "000015_ios_session_fence.down.sql"))
+
+	for _, expected := range []string{
+		`ADD\s+COLUMN\s+session_grant_hash`, `ADD\s+COLUMN\s+session_grant_expires_at`,
+		`ADD\s+COLUMN\s+session_grant_consumed_at`, `ADD\s+COLUMN\s+appium_session_id`,
+		`CREATE\s+UNIQUE\s+INDEX\s+uq_device_sessions_grant_hash`,
+		`CREATE\s+UNIQUE\s+INDEX\s+uq_device_sessions_active_appium_device`,
+		`session_fence`,
+	} {
+		assertSQLContains(t, up, expected)
+	}
+	for _, expected := range []string{
+		`DROP\s+INDEX\s+IF\s+EXISTS\s+uq_device_sessions_active_appium_device`,
+		`DROP\s+COLUMN\s+IF\s+EXISTS\s+session_grant_hash`,
+		`DROP\s+COLUMN\s+IF\s+EXISTS\s+appium_session_id`,
+	} {
+		assertSQLContains(t, down, expected)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

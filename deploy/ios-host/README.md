@@ -1,6 +1,6 @@
-# DF-041 macOS iOS Host 部署与验证
+# DF-041/DF-042 macOS iOS Host 部署与验证
 
-本目录只部署 DF-041 的专用 macOS Host：固定工具链、Appium Device Farm 本机 Node、只读 inventory/health Adapter 和现有 Device Host Agent。它不创建 iOS Session、不安装 IPA、不启用跨 Host Hub、不开放 Dashboard，也不管理真机签名。
+本目录部署专用 macOS Host：DF-041 提供固定工具链、Appium Device Farm 本机 Node、只读 inventory/health Adapter；DF-042 在同一个 Host Agent 进程内增加 Reservation 绑定的 Session Fence。它不安装 IPA、不实现 DaFit 业务步骤、不启用跨 Host Hub、不开放 Dashboard，也不管理真机签名。
 
 ## 1. 固定版本
 
@@ -85,7 +85,19 @@ export APPIUM_HOME="$IOS_HOST_ROOT/appium-home"
 
 readiness 失败、inventory 读取失败或版本漂移时，心跳把 Host 置为 `maintenance`，Scheduler 不会给该 Host 新预约；恢复后下一次健康心跳回到 `online`。Android Agent 没有 `host_readiness` 时继续保持原行为。
 
-## 6. 验收入口
+## 6. Session Fence 网络边界
+
+Host Agent 启动 DF-042 Session Fence，并通过心跳上报 `session_fence_endpoint`。Appium 仍只能监听 `127.0.0.1:4723`，客户端不得直接连接 Appium 或 Device Farm Dashboard。Fence 只接受一次性 `Session-Grant`，只转发 `POST /session` 和 Grant 已绑定的精确 `/session/{id}/...` 路径。
+
+- `DEVICE_FARM_IOS_SESSION_FENCE_LISTEN` 是本机监听地址，默认 `127.0.0.1:4810`；
+- `DEVICE_FARM_IOS_SESSION_FENCE_ADVERTISE_URL` 是 Server 返回给可信 Worker 的入口；
+- advertise URL 为非 loopback 地址时必须使用 HTTPS，可由内网反向代理完成 TLS，并把固定前缀转发到 Fence；
+- 本机验收可通过 SSH 端口转发继续使用 loopback URL，不得为了测试把 Appium 改成对外监听；
+- Service Token、Agent Token 和 Session Grant 均不得写入 URL、日志、证据或插件数据库。
+
+Reservation release 和 Reaper 会先通过 Fence 删除上游 Appium Session；清理失败时 Reservation 保持 active，Device 进入 quarantine，禁止静默释放后把残留 Session 留在 macOS Host。
+
+## 7. 验收入口
 
 在 macOS 上设置下面的临时环境变量后运行版本化集成测试；测试只输出数量和结论，不输出完整 UDID：
 
@@ -97,11 +109,11 @@ export DEVICE_FARM_APPIUM_BINARY="$IOS_HOST_ROOT/runtime/node_modules/.bin/appiu
 export DEVICE_FARM_GO_IOS_BINARY="$IOS_HOST_ROOT/runtime/node_modules/go-ios/dist/go-ios-darwin-arm64_darwin_arm64/ios"
 export DEVICE_FARM_IOS_WDA_PACKAGE_JSON="$IOS_HOST_ROOT/appium-home/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent/package.json"
 
-go test -count=1 -v ./internal/adapters/appiumdevicefarm ./internal/ioshost
+go test -count=1 -v ./internal/adapters/appiumdevicefarm ./internal/ioshost ./internal/iossessionfence
 ```
 
 故障验收至少包含：关闭 Simulator 后 allowlist 设备不再 ready；停止本项目 Node 后 readiness 失败；重新启动 Node 和 Simulator 后在目标时间内恢复；未知设备不自动创建；证据中隐藏 Host 地址、完整 UDID、硬件序列号和所有 Secret。
 
-## 7. 回滚
+## 8. 回滚
 
 先 drain Host 或禁用 iOS Pool，再停止 Host Agent 和本机 Appium Node。隔离目录可整体保留以便复盘，也可在确认没有活动 Reservation/Session 后移走；不要修改 PostgreSQL Reservation 伪造释放，不要删除其他全局 Node/npm/Xcode 工具。Android Host、STF 和 Android Appium Endpoint 不受该回滚影响。

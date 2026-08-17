@@ -139,6 +139,7 @@ VALUES('legacy_pool_000000001','legacy_device_000001',true);
         $PreviousDatabaseURL = $env:DEVICE_FARM_TEST_DATABASE_URL
         try {
             $env:DEVICE_FARM_TEST_DATABASE_URL = "postgres://postgres@127.0.0.1:$Port/$DatabaseName`?sslmode=disable"
+            Invoke-GoTest $GoExecutable "./internal/iossession" "iOS Session Fence integration tests failed."
             Invoke-GoTest $GoExecutable "./internal/repository" "Repository integration tests failed."
             Invoke-GoTest $GoExecutable "./internal/scheduler" "Scheduler integration tests failed."
             Invoke-GoTest $GoExecutable "./internal/reaper" "Reservation lease and Reaper integration tests failed."

@@ -21,6 +21,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcapacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imageprepare"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/ioshost"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossessionfence"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	providerdocker "github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
@@ -62,6 +63,8 @@ func main() {
 	nodeBinary := flag.String("node-binary", envOr("DEVICE_FARM_NODE_BINARY", "node"), "pinned Node.js binary used by the iOS Host")
 	appiumBinary := flag.String("appium-binary", envOr("DEVICE_FARM_APPIUM_BINARY", "appium"), "pinned Appium binary used by the iOS Host")
 	goIOSBinary := flag.String("go-ios-binary", envOr("DEVICE_FARM_GO_IOS_BINARY", "ios"), "pinned go-ios binary used by the iOS Host")
+	iosFenceListen := flag.String("ios-session-fence-listen", envOr("DEVICE_FARM_IOS_SESSION_FENCE_LISTEN", "127.0.0.1:4810"), "trusted iOS Session Fence listen address")
+	iosFenceAdvertiseURL := flag.String("ios-session-fence-advertise-url", envOr("DEVICE_FARM_IOS_SESSION_FENCE_ADVERTISE_URL", "http://127.0.0.1:4810"), "iOS Session Fence URL returned only to trusted Session Grant clients")
 	flag.Parse()
 
 	if *version {
@@ -82,6 +85,8 @@ func main() {
 	}
 	var iosAdapter *appiumdevicefarm.Client
 	var environmentProbe agent.EnvironmentProbe
+	var sessionFence *iossessionfence.Server
+	agentEnvironment := map[string]any{}
 	if strings.EqualFold(strings.TrimSpace(*providerType), "appium_device_farm_ios") {
 		iosAdapter, err = appiumdevicefarm.New(appiumdevicefarm.Config{Endpoint: *iosEndpoint, Timeout: *appiumHealthTimeout,
 			AllowUDIDs: splitCSV(*iosAllowUDIDs)})
@@ -95,6 +100,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "iOS Host readiness configuration error: %v\n", err)
 			os.Exit(1)
 		}
+		sessionFence, err = iossessionfence.New(iossessionfence.Config{
+			ListenAddress: *iosFenceListen, AdvertiseURL: *iosFenceAdvertiseURL,
+			ControlServerURL: *serverURL, AgentToken: *token, HostID: *hostID,
+			UpstreamEndpoint: *iosEndpoint, Timeout: *commandTimeout, ShutdownTimeout: 30 * time.Second, Logger: logger,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "iOS Session Fence configuration error: %v\n", err)
+			os.Exit(1)
+		}
+		agentEnvironment["session_fence_endpoint"] = sessionFence.AdvertiseURL()
 	}
 	deviceProvider, err := buildProvider(*providerType, providerdocker.Config{
 		Binary: *dockerBinary, Image: *dockerImage, AdvertiseHost: *dockerAdvertiseHost,
@@ -134,7 +149,8 @@ func main() {
 		WaitSeconds: 5, Concurrency: *concurrency, CommandTimeout: *commandTimeout,
 		ImagePrepareTimeout: *imagePrepareTimeout,
 		ShutdownTimeout:     30 * time.Second,
-		Capacity:            map[string]any{"device_slots": *concurrency}, CapacityProbe: capacityProbe, STFADBRegistrar: stfRegistrar,
+		Capacity:            map[string]any{"device_slots": *concurrency}, Environment: agentEnvironment,
+		CapacityProbe: capacityProbe, STFADBRegistrar: stfRegistrar,
 		ImagePreparer: imagePreparer, EnvironmentProbe: environmentProbe,
 	}, client, deviceProvider, logger)
 	if err != nil {
@@ -143,10 +159,27 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runtime.Run(ctx); err != nil {
+	if err := runComponents(ctx, runtime, sessionFence); err != nil {
 		logger.Error("device host agent stopped with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+type componentRunner interface{ Run(context.Context) error }
+
+func runComponents(ctx context.Context, runtime componentRunner, fence componentRunner) error {
+	if fence == nil {
+		return runtime.Run(ctx)
+	}
+	componentContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errorsChannel := make(chan error, 2)
+	go func() { errorsChannel <- runtime.Run(componentContext) }()
+	go func() { errorsChannel <- fence.Run(componentContext) }()
+	first := <-errorsChannel
+	cancel()
+	second := <-errorsChannel
+	return errors.Join(first, second)
 }
 
 func buildProvider(providerType string, dockerConfig providerdocker.Config, iosProvider providers.Provider) (providers.Provider, error) {

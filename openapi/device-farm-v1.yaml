@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 2.0.0
+  version: 2.1.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-17
   x-platform-semantics: Case/Run/RunAttempt
@@ -791,6 +791,27 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "503": {$ref: "#/components/responses/Error"}
+  /api/v1/device-reservations/{id}/session-grants:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Reservations]
+      operationId: createIOSSessionGrant
+      description: Issues a short-lived, one-time Grant for the exact iOS Device and Host already bound to an active Reservation. The Grant must never be logged or persisted by the caller.
+      security: [{serviceBearer: []}]
+      parameters:
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionGrantCreate"}
+      responses:
+        "201": {$ref: "#/components/responses/IOSSessionGrantCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
         "504": {$ref: "#/components/responses/Error"}
   /api/v1/devices/{id}/remote-control:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
@@ -906,6 +927,55 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "500": {$ref: "#/components/responses/ServerError"}
+  /internal/v1/ios-session-fence/grants/consumptions:
+    post:
+      tags: [Agent]
+      operationId: consumeIOSSessionGrant
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionGrantConsumption"}
+      responses:
+        "200": {$ref: "#/components/responses/IOSSessionConsumptionSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /internal/v1/ios-session-fence/sessions/bindings:
+    post:
+      tags: [Agent]
+      operationId: bindIOSAppiumSession
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionBinding"}
+      responses: *standardResponses
+  /internal/v1/ios-session-fence/sessions/authorizations:
+    post:
+      tags: [Agent]
+      operationId: authorizeIOSAppiumSession
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionAuthorization"}
+      responses:
+        "200": {$ref: "#/components/responses/IOSSessionAuthorizationSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /internal/v1/ios-session-fence/sessions/closures:
+    post:
+      tags: [Agent]
+      operationId: closeIOSAppiumSessionBinding
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionBinding"}
+      responses: *standardResponses
+  /internal/v1/ios-session-fence/sessions/failures:
+    post:
+      tags: [Agent]
+      operationId: recordIOSAppiumSessionFailure
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionFailure"}
+      responses: *standardResponses
 components:
   securitySchemes:
     serviceBearer:
@@ -1032,6 +1102,31 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/RemoteSessionCreate"}
+    IOSSessionGrantCreate:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionGrantCreate"}
+    IOSSessionGrantConsumption:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionGrantConsumption"}
+    IOSSessionBinding:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionBinding"}
+    IOSSessionAuthorization:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionAuthorization"}
+    IOSSessionFailure:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionFailure"}
     OperationReason:
       required: true
       content:
@@ -1142,6 +1237,15 @@ components:
     RemoteSessionCreated:
       description: STF 短时入口已创建
       content: {application/json: {schema: {$ref: "#/components/schemas/RemoteSessionEnvelope"}}}
+    IOSSessionGrantCreated:
+      description: Reservation 绑定的一次性 iOS Session Grant 已签发；响应禁止缓存和持久化
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSessionGrantEnvelope"}}}
+    IOSSessionConsumptionSuccess:
+      description: Grant 已原子消费，返回只含固定 UDID 的 Appium New Session 请求
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSessionConsumptionEnvelope"}}}
+    IOSSessionAuthorizationSuccess:
+      description: 后续 WebDriver 请求与已绑定 Appium Session 一致
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSessionAuthorizationEnvelope"}}}
     AuditEventListSuccess:
       description: 设备域审计分页列表
       content: {application/json: {schema: {$ref: "#/components/schemas/AuditEventListEnvelope"}}}
@@ -1246,7 +1350,7 @@ components:
         code:
           type: string
           pattern: "^[A-Z][A-Z0-9_]{2,63}$"
-          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, INSUFFICIENT_HOST_RESOURCES, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
+          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, INSUFFICIENT_HOST_RESOURCES, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, IOS_SESSION_NOT_FOUND, IOS_SESSION_GRANT_EXPIRED, IOS_SESSION_GRANT_CONSUMED, IOS_SESSION_ROUTING_MISMATCH, IOS_PROVIDER_BUSY_DRIFT, IOS_SESSION_FENCE_UNAVAILABLE, IOS_SESSION_CLEANUP_FAILED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
         message: {type: string}
         details: {type: object, additionalProperties: true}
         retryable: {type: boolean}
@@ -1467,7 +1571,7 @@ components:
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         device_id: {$ref: "#/components/schemas/Identifier"}
-        source: {type: string, enum: [agent, provider, adb, appium, stf, reconciler]}
+        source: {type: string, enum: [agent, provider, adb, appium, stf, reconciler, session_fence]}
         event_type: {type: string}
         severity: {type: string, enum: [info, warning, error, critical]}
         reason: {type: string}
@@ -1483,6 +1587,39 @@ components:
         reservation_id: {$ref: "#/components/schemas/Identifier"}
         remote_connect_url: {type: string, format: uri}
         expires_at: {type: string, format: date-time}
+    IOSSessionGrant:
+      type: object
+      additionalProperties: false
+      required: [reservation_id, device_id, host_id, platform, udid, fence_endpoint, session_grant, expires_at]
+      properties:
+        reservation_id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        platform: {type: string, enum: [ios]}
+        udid: {type: string, minLength: 1, maxLength: 255}
+        fence_endpoint: {type: string, format: uri}
+        session_grant:
+          type: string
+          minLength: 43
+          maxLength: 43
+          readOnly: true
+          description: 256-bit one-time bearer secret. Never log or persist it.
+        expires_at: {type: string, format: date-time}
+    IOSSessionConsumptionResult:
+      type: object
+      additionalProperties: false
+      required: [reservation_id, device_id, upstream_endpoint, request]
+      properties:
+        reservation_id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        upstream_endpoint: {type: string, format: uri}
+        request: {type: object, additionalProperties: true}
+    IOSSessionAuthorizationResult:
+      type: object
+      additionalProperties: false
+      required: [upstream_endpoint]
+      properties:
+        upstream_endpoint: {type: string, format: uri}
     ConsoleRole:
       type: string
       enum: [viewer, operator, admin]
@@ -1645,6 +1782,21 @@ components:
       additionalProperties: false
       required: [request_id, data, error]
       properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/RemoteSession"}, error: {nullable: true}}
+    IOSSessionGrantEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/IOSSessionGrant"}, error: {nullable: true}}
+    IOSSessionConsumptionEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/IOSSessionConsumptionResult"}, error: {nullable: true}}
+    IOSSessionAuthorizationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/IOSSessionAuthorizationResult"}, error: {nullable: true}}
     AuditEventListEnvelope:
       type: object
       additionalProperties: false
@@ -1913,6 +2065,46 @@ components:
         owner_type: {$ref: "#/components/schemas/OwnerType"}
         owner_id: {$ref: "#/components/schemas/OwnerID"}
         ttl_seconds: {type: integer, minimum: 30, maximum: 3600, default: 300}
+    IOSSessionGrantCreate:
+      type: object
+      additionalProperties: false
+      required: [owner_type, owner_id]
+      properties:
+        owner_type: {$ref: "#/components/schemas/OwnerType"}
+        owner_id: {$ref: "#/components/schemas/OwnerID"}
+        ttl_seconds: {type: integer, minimum: 15, maximum: 120, default: 60}
+    IOSSessionGrantConsumption:
+      type: object
+      additionalProperties: false
+      required: [host_id, session_grant, request]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        session_grant: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        request:
+          type: object
+          additionalProperties: false
+          required: [capabilities]
+          description: W3C New Session payload. JSONWP desiredCapabilities is rejected.
+          properties:
+            capabilities: {type: object, additionalProperties: true}
+    IOSSessionBinding:
+      type: object
+      additionalProperties: false
+      required: [host_id, session_grant, appium_session_id]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        session_grant: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        appium_session_id: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$"}
+    IOSSessionAuthorization:
+      allOf: [{$ref: "#/components/schemas/IOSSessionBinding"}]
+    IOSSessionFailure:
+      type: object
+      additionalProperties: false
+      required: [host_id, session_grant, error_code]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        session_grant: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        error_code: {type: string, minLength: 3, maxLength: 64, pattern: "^[A-Z][A-Z0-9_]+$"}
     OperationReason:
       type: object
       additionalProperties: false

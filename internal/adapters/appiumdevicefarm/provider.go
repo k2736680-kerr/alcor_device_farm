@@ -93,7 +93,7 @@ func (client *Client) snapshot(hostID string, device Device, node NodeHealth, no
 		automation = providers.ProbeFailed
 	}
 	router := providers.ProbePassed
-	if nodeErr != nil || !node.PluginReady || device.Busy || device.UserBlocked {
+	if nodeErr != nil || !node.PluginReady || device.UserBlocked {
 		router = providers.ProbeFailed
 	}
 	if !device.Allowed {

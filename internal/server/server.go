@@ -20,6 +20,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -42,6 +43,7 @@ type Services struct {
 	ConsoleQuery  *consolequery.Service
 	RemoteControl *remotecontrol.Service
 	ImageCatalog  *imagecatalog.Service
+	IOSSessions   *iossession.Service
 	WarmPool      *warmpool.Controller
 }
 
@@ -71,6 +73,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterImageCatalog(mux, services.ImageCatalog)
 	api.RegisterProvisioning(mux, services.WarmPool, services.ImageCatalog)
 	api.RegisterReservations(mux, services.Reservations)
+	api.RegisterIOSSessions(mux, services.IOSSessions)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
 	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery, services.RemoteControl)
@@ -112,6 +115,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			services.Reservations = reservation.NewService(db, nil)
 			services.Scheduler = scheduler.New(db, nil, logger)
 		}
+		services.IOSSessions = iossession.New(db, cfg.Security.AgentToken)
+		services.Reservations.SetIOSSessionController(services.IOSSessions)
+		go services.IOSSessions.RunReconcile(ctx, cfg.Reconcile.Interval, logger)
 		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
 		reservationReaper := reaper.New(services.Reservations, cfg.Lease.GracePeriod, logger)
 		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)

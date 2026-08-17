@@ -13,54 +13,60 @@ import (
 )
 
 var expectedOperations = map[string][]string{
-	"/healthz":                                              {"get"},
-	"/readyz":                                               {"get"},
-	"/metrics":                                              {"get"},
-	"/api/v1/device-images":                                 {"get", "post"},
-	"/api/v1/device-images/{id}":                            {"get", "put"},
-	"/api/v1/device-images/{id}/validations":                {"post"},
-	"/api/v1/device-images/{id}/retirements":                {"post"},
-	"/api/v1/android-system-images":                         {"get"},
-	"/api/v1/android-system-images/synchronizations":        {"post"},
-	"/api/v1/android-system-images/preparations":            {"post"},
-	"/api/v1/android-hardware-profiles":                     {"get"},
-	"/api/v1/device-provisionings":                          {"get", "post"},
-	"/api/v1/device-provisionings/{id}":                     {"get"},
-	"/api/v1/device-hosts":                                  {"get", "post"},
-	"/api/v1/device-hosts/{id}":                             {"get", "put"},
-	"/api/v1/device-hosts/{id}/drains":                      {"post", "delete"},
-	"/api/v1/device-pools":                                  {"get", "post"},
-	"/api/v1/device-pools/{id}":                             {"get", "put"},
-	"/api/v1/device-pools/{id}/default-image":               {"put"},
-	"/api/v1/device-pools/{id}/base-device":                 {"put"},
-	"/api/v1/device-pools/{id}/devices":                     {"post", "delete"},
-	"/api/v1/device-pools/{id}/images":                      {"get"},
-	"/api/v1/device-pools/{id}/images/{image_id}":           {"put", "delete"},
-	"/api/v1/devices":                                       {"get"},
-	"/api/v1/devices/{id}":                                  {"get", "delete"},
-	"/api/v1/devices/{id}/restarts":                         {"post"},
-	"/api/v1/devices/{id}/rebuilds":                         {"post"},
-	"/api/v1/devices/{id}/reimages":                         {"post"},
-	"/api/v1/devices/{id}/quarantines":                      {"post", "delete"},
-	"/api/v1/devices/{id}/health-events":                    {"get"},
-	"/api/v1/devices/{id}/remote-control":                   {"get", "post", "delete"},
-	"/api/v1/devices/{id}/remote-control/heartbeat":         {"post"},
-	"/api/v1/device-reservations":                           {"get", "post"},
-	"/api/v1/device-reservations/{id}":                      {"get"},
-	"/api/v1/device-reservations/{id}/extensions":           {"post"},
-	"/api/v1/device-reservations/{id}/releases":             {"post"},
-	"/api/v1/device-reservations/{id}/remote-sessions":      {"post"},
-	"/api/v1/device-audit-events":                           {"get"},
-	"/console/api/v1/sessions":                              {"post"},
-	"/console/api/v1/me":                                    {"get"},
-	"/console/api/v1/sessions/current":                      {"delete"},
-	"/console/api/v1/devices/{id}/remote-control":           {"get", "post", "delete"},
-	"/console/api/v1/devices/{id}/remote-control/heartbeat": {"post"},
-	"/internal/v1/device-hosts/{id}/heartbeats":             {"post"},
-	"/internal/v1/device-hosts/{id}/commands/claims":        {"post"},
-	"/internal/v1/device-host-commands/{id}/completions":    {"post"},
-	"/internal/v1/device-host-commands/{id}/extensions":     {"post"},
-	"/internal/v1/devices/{id}/health-events":               {"post"},
+	"/healthz":                                               {"get"},
+	"/readyz":                                                {"get"},
+	"/metrics":                                               {"get"},
+	"/api/v1/device-images":                                  {"get", "post"},
+	"/api/v1/device-images/{id}":                             {"get", "put"},
+	"/api/v1/device-images/{id}/validations":                 {"post"},
+	"/api/v1/device-images/{id}/retirements":                 {"post"},
+	"/api/v1/android-system-images":                          {"get"},
+	"/api/v1/android-system-images/synchronizations":         {"post"},
+	"/api/v1/android-system-images/preparations":             {"post"},
+	"/api/v1/android-hardware-profiles":                      {"get"},
+	"/api/v1/device-provisionings":                           {"get", "post"},
+	"/api/v1/device-provisionings/{id}":                      {"get"},
+	"/api/v1/device-hosts":                                   {"get", "post"},
+	"/api/v1/device-hosts/{id}":                              {"get", "put"},
+	"/api/v1/device-hosts/{id}/drains":                       {"post", "delete"},
+	"/api/v1/device-pools":                                   {"get", "post"},
+	"/api/v1/device-pools/{id}":                              {"get", "put"},
+	"/api/v1/device-pools/{id}/default-image":                {"put"},
+	"/api/v1/device-pools/{id}/base-device":                  {"put"},
+	"/api/v1/device-pools/{id}/devices":                      {"post", "delete"},
+	"/api/v1/device-pools/{id}/images":                       {"get"},
+	"/api/v1/device-pools/{id}/images/{image_id}":            {"put", "delete"},
+	"/api/v1/devices":                                        {"get"},
+	"/api/v1/devices/{id}":                                   {"get", "delete"},
+	"/api/v1/devices/{id}/restarts":                          {"post"},
+	"/api/v1/devices/{id}/rebuilds":                          {"post"},
+	"/api/v1/devices/{id}/reimages":                          {"post"},
+	"/api/v1/devices/{id}/quarantines":                       {"post", "delete"},
+	"/api/v1/devices/{id}/health-events":                     {"get"},
+	"/api/v1/devices/{id}/remote-control":                    {"get", "post", "delete"},
+	"/api/v1/devices/{id}/remote-control/heartbeat":          {"post"},
+	"/api/v1/device-reservations":                            {"get", "post"},
+	"/api/v1/device-reservations/{id}":                       {"get"},
+	"/api/v1/device-reservations/{id}/extensions":            {"post"},
+	"/api/v1/device-reservations/{id}/releases":              {"post"},
+	"/api/v1/device-reservations/{id}/remote-sessions":       {"post"},
+	"/api/v1/device-reservations/{id}/session-grants":        {"post"},
+	"/api/v1/device-audit-events":                            {"get"},
+	"/console/api/v1/sessions":                               {"post"},
+	"/console/api/v1/me":                                     {"get"},
+	"/console/api/v1/sessions/current":                       {"delete"},
+	"/console/api/v1/devices/{id}/remote-control":            {"get", "post", "delete"},
+	"/console/api/v1/devices/{id}/remote-control/heartbeat":  {"post"},
+	"/internal/v1/device-hosts/{id}/heartbeats":              {"post"},
+	"/internal/v1/device-hosts/{id}/commands/claims":         {"post"},
+	"/internal/v1/device-host-commands/{id}/completions":     {"post"},
+	"/internal/v1/device-host-commands/{id}/extensions":      {"post"},
+	"/internal/v1/devices/{id}/health-events":                {"post"},
+	"/internal/v1/ios-session-fence/grants/consumptions":     {"post"},
+	"/internal/v1/ios-session-fence/sessions/bindings":       {"post"},
+	"/internal/v1/ios-session-fence/sessions/authorizations": {"post"},
+	"/internal/v1/ios-session-fence/sessions/closures":       {"post"},
+	"/internal/v1/ios-session-fence/sessions/failures":       {"post"},
 }
 
 func TestOpenAPIContract(t *testing.T) {
@@ -73,7 +79,7 @@ func TestOpenAPIContract(t *testing.T) {
 		t.Fatal("contract must not depend on legacy eval-tasks")
 	}
 	info := object(t, document, "info")
-	if info["version"] != "2.0.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
+	if info["version"] != "2.1.0" || info["x-contract-status"] != "frozen" || info["x-platform-semantics"] != "Case/Run/RunAttempt" {
 		t.Fatalf("frozen adapter contract metadata=%#v", info)
 	}
 
@@ -216,6 +222,7 @@ func validateAlcorAdapterContract(t *testing.T, paths, components map[string]any
 		{"/api/v1/device-reservations/{id}", "get", "200", "#/components/responses/ReservationSuccess"},
 		{"/api/v1/device-reservations/{id}/extensions", "post", "200", "#/components/responses/ReservationSuccess"},
 		{"/api/v1/device-reservations/{id}/releases", "post", "200", "#/components/responses/ReservationSuccess"},
+		{"/api/v1/device-reservations/{id}/session-grants", "post", "201", "#/components/responses/IOSSessionGrantCreated"},
 		{"/api/v1/devices/{id}", "get", "200", "#/components/responses/DeviceSuccess"},
 	}
 	for _, expected := range operations {
@@ -243,7 +250,8 @@ func validateAlcorAdapterContract(t *testing.T, paths, components map[string]any
 	apiError := object(t, schemas, "APIError")
 	code := object(t, object(t, apiError, "properties"), "code")
 	codes := stringValues(t, code["x-adapter-stable-codes"])
-	for _, required := range []string{"DEVICE_CAPACITY_UNAVAILABLE", "DEVICE_POOL_UNAVAILABLE", "KVM_UNAVAILABLE", "SERVICE_UNAVAILABLE"} {
+	for _, required := range []string{"DEVICE_CAPACITY_UNAVAILABLE", "DEVICE_POOL_UNAVAILABLE", "KVM_UNAVAILABLE",
+		"IOS_SESSION_GRANT_EXPIRED", "IOS_SESSION_ROUTING_MISMATCH", "IOS_SESSION_CLEANUP_FAILED", "SERVICE_UNAVAILABLE"} {
 		if !containsString(codes, required) {
 			t.Fatalf("APIError stable code list is missing %s", required)
 		}

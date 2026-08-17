@@ -202,6 +202,8 @@ func (handler *reservationHandler) write(writer http.ResponseWriter, request *ht
 		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_RELEASE_FAILED", Message: "STF release failed; reservation remains active", Retryable: isRetryable(err)}
 	case errors.Is(err, reservation.ErrSTFRemoteFailed):
 		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "STF_REMOTE_CONNECT_FAILED", Message: "STF remote connection is unavailable", Retryable: isRetryable(err)}
+	case errors.Is(err, reservation.ErrIOSSessionCleanup):
+		httpStatus, apiError = http.StatusBadGateway, httpx.APIError{Code: "IOS_SESSION_CLEANUP_FAILED", Message: "iOS Appium Session cleanup failed; reservation remains active", Retryable: true}
 	}
 	httpx.WriteError(writer, request, httpStatus, apiError)
 }

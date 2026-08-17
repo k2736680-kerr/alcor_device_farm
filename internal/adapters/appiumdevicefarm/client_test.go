@@ -35,7 +35,7 @@ func TestInventoryIsReadOnlyAllowlistedAndPreservesBusy(t *testing.T) {
 	}
 }
 
-func TestProviderRequiresAllowlistHealthyNodeAndNotBusy(t *testing.T) {
+func TestProviderRequiresAllowlistAndHealthyNode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/device-farm/api/device/ios":
@@ -61,6 +61,35 @@ func TestProviderRequiresAllowlistHealthyNodeAndNotBusy(t *testing.T) {
 	}
 	if _, err := unknown.Create(context.Background(), providers.CreateRequest{}); providers.ErrorCode(err) != "IOS_FIXED_INVENTORY_OPERATION_UNSUPPORTED" {
 		t.Fatalf("unexpected mutation error: %v", err)
+	}
+}
+
+func TestBusyDeviceRemainsTechnicallyHealthy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/device-farm/api/device/ios":
+			_, _ = writer.Write([]byte(`[{"udid":"SIM-1","name":"iPhone","state":"Booted","sdk":"26.3","platform":"ios","deviceType":"simulator","busy":true,"realDevice":false}]`))
+		case "/status":
+			_, _ = writer.Write([]byte(`{"value":{"ready":true}}`))
+		case "/device-farm/api/status":
+			_, _ = writer.Write([]byte(`{"status":"ok","version":"12.0.1"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := client.Discover(context.Background(), "host_000000000000001")
+	if err != nil || len(snapshots) != 1 || !snapshots[0].Ready() {
+		t.Fatalf("snapshots=%+v error=%v", snapshots, err)
+	}
+	providerBusy, ok := snapshots[0].Capabilities["providerBusy"].(bool)
+	if !ok || !providerBusy {
+		t.Fatalf("providerBusy capability=%v, want true", snapshots[0].Capabilities["providerBusy"])
 	}
 }
 

@@ -107,7 +107,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 DF-039 已按 ADR-0021 完成职责和验收设计。后续只能按 DF-040～DF-046 的顺序实现上面列出的设备域能力，不得把“允许新建”解释为可以直接建设 iOS 业务执行器：
 
 - PostgreSQL Reservation、Scheduler、Pool、Lease、Reaper 和审计继续是唯一设备占用真相；
-- Appium Device Farm 不得再次自由选择我方已经预约的设备，Session 必须同时使用与 active Reservation 相同的单元素 `df:udids` 和 `appium:udid`，并经过 Session Fence；
+- Appium Device Farm 不得再次自由选择我方已经预约的设备，Session 必须同时使用与 active Reservation 相同的单值字符串 `df:udids=<reserved_udid>` 和 `appium:udid=<reserved_udid>`，并经过 Session Fence；
 - Android 继续复用 STF 原生远控；Appium Device Farm 12.x 已移除人工设备串流，不能把其 Dashboard 描述为 STF 的跨平台远控替代；
 - iOS 自动化继续复用 Appium XCUITest/WebDriverAgent，不在本仓库重写 WebDriver、WDA 或业务用例执行器；
 - iOS App、Build、Case、Run、结果和 Artifact 仍属于 Alcor/对应执行器，不进入设备域；

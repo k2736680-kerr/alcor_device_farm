@@ -30,7 +30,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
-| macOS Host Agent + Appium Device Farm / iOS | ADR-0021 批准宿主机侧发现、技术 busy、健康和明确 UDID Session 路由；实现按 DF-040～DF-046 推进 | 现有 Reservation 先返回明确 Device/UDID/Host；Alcor 的 iOS Executor 另行接入 | 不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不把已移除的人工串流当作 STF 替代 |
+| macOS Host Agent + Appium Device Farm / iOS | ADR-0021/0022 批准宿主机侧发现、技术 busy、健康和明确 UDID Session 路由；DF-042 由 Server 签发一次性 Grant，Host Agent 内置 Fence，只代理绑定 Session | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant，Alcor 的业务执行器另行实现 | 不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不形成第二套设备占用真相，不把已移除的人工串流当作 STF 替代 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
 
@@ -74,7 +74,10 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
 | 后续 `internal/adapters/appiumdevicefarm` | 固定 12.0.1 的 iOS inventory、busy 漂移和 Node 健康适配 | 只由 macOS Host Agent/Session Fence 使用，不向浏览器暴露插件 API |
-| 后续 `internal/sessionfence` | 校验 active Reservation 和唯一 UDID，透明限制 Session 创建 | 不解释或实现 WebDriver 业务命令 |
+| `internal/iossession` | 签发/消费一次性 Grant、保存 Appium Session ID、释放前清理和 busy 漂移收敛 | 复用现有 Reservation、Device Session、Reaper 和审计；不保存业务用例或 Apple Secret |
+| `internal/iossessionfence` | macOS Agent 内置的受控反向代理；只允许 `POST /session` 和精确绑定 Session 路径 | 每次向 Server 校验 Grant/Reservation，透明转发其余 WebDriver 请求，不解释或执行页面步骤 |
+| `POST /api/v1/device-reservations/{id}/session-grants` | Service Principal 为 active iOS Reservation 申请 15～120 秒单次 Grant | Console/浏览器禁止；明文只返回一次，数据库只保存摘要 |
+| `/internal/v1/ios-session-fence/*` | Host Fence 消费 Grant、绑定/校验/关闭 Session | 只接受 Agent Principal；Host、UDID、Endpoint 和 Session ID 必须与快照一致 |
 | `internal/metrics` | 设备域 Prometheus 指标和数据库就绪检查 | 只暴露基础设施聚合状态，不保存或计算 Alcor 业务指标 |
 | `migrations` | 设备域表和约束 | 不并入新版 Run/Case migration，不跨库外键 |
 | `deploy` | STF、Agent、模拟器和设备服务部署 | 独立部署细节对 Alcor Adapter 不可见 |
@@ -103,7 +106,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 3. STF 只负责设备可见性和远程控制；Docker 只负责运行载体；
 4. 上层只依赖统一 Device，模拟器和真机使用相同的池、预约、Session 和 Appium 链路；
 5. iOS Pool 是单平台 Pool；Appium Device Farm busy 只作技术锁，不能创建、续租或结束 PostgreSQL Reservation；
-6. iOS Session 的 `appium:udid`、单元素 `df:udids`、Device serial 和连接快照必须相同；共享 Appium Endpoint 不能放宽 UDID 唯一约束；
+6. iOS Session 的 `appium:udid`、单值字符串 `df:udids`、Device serial 和连接快照必须相同；共享 Appium Endpoint 不能放宽 UDID 唯一约束；
 7. Worker 通过 Device Farm Adapter 和 API 申请设备，不共享数据库；
 8. Alcor Reservation Owner 使用 RunAttempt UUID/ULID；人工和 DaFit 可使用 `manual/test_run`，但不得固化旧整数 Task ID；
 9. 业务报告和测试结果由 Alcor 写入 Supabase Storage/ClickHouse，设备农场不留副本；

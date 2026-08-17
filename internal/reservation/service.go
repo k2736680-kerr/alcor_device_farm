@@ -33,6 +33,7 @@ var (
 	ErrForbidden           = errors.New("reservation access is forbidden")
 	ErrSTFReleaseFailed    = errors.New("STF device release failed")
 	ErrSTFRemoteFailed     = errors.New("STF remote connection failed")
+	ErrIOSSessionCleanup   = errors.New("iOS Appium Session cleanup failed")
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
@@ -91,6 +92,10 @@ type STFController interface {
 	RemoteDisconnect(context.Context, string) error
 }
 
+type IOSSessionController interface {
+	CloseForReservation(context.Context, string) error
+}
+
 type View struct {
 	ID                    string                   `json:"id"`
 	PoolID                string                   `json:"pool_id"`
@@ -113,6 +118,13 @@ type Service struct {
 	repo  repository.ReservationRepository
 	newID IDGenerator
 	stf   STFController
+	ios   IOSSessionController
+}
+
+func (service *Service) SetIOSSessionController(controller IOSSessionController) {
+	if service != nil {
+		service.ios = controller
+	}
 }
 
 func NewService(db *database.DB, generator IDGenerator, controllers ...STFController) *Service {
@@ -392,6 +404,9 @@ func (service *Service) Release(
 		return View{}, ErrForbidden
 	}
 	if current.Status == domain.ReservationActive {
+		if err := service.closeIOSSession(ctx, current); err != nil {
+			return View{}, err
+		}
 		if err := service.releaseSTF(ctx, current); err != nil {
 			auditErr := service.recordSTFFailure(context.Background(), current, actor, requestID,
 				"stf_release_failed", "STF release failed; reservation remains active")
@@ -481,6 +496,9 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 		return View{}, translateRepositoryError(err)
 	}
 	requestID := "reaper_" + selected.ID
+	if err := service.closeIOSSession(ctx, selected); err != nil {
+		return View{}, err
+	}
 	if err := service.releaseSTF(ctx, selected); err != nil {
 		auditErr := service.recordSTFFailure(context.Background(), selected, reaperActor(), requestID,
 			"stf_release_failed", "STF release failed during expiry; reservation remains active")
@@ -652,8 +670,21 @@ func (service *Service) releaseSTF(ctx context.Context, current repository.Reser
 	if err != nil {
 		return translateRepositoryError(err)
 	}
+	if device.Platform != "android" {
+		return nil
+	}
 	if err := service.stf.Release(ctx, device.Serial); err != nil {
 		return fmt.Errorf("%w: %w", ErrSTFReleaseFailed, err)
+	}
+	return nil
+}
+
+func (service *Service) closeIOSSession(ctx context.Context, current repository.ReservationRecord) error {
+	if service.ios == nil || current.DeviceID == nil {
+		return nil
+	}
+	if err := service.ios.CloseForReservation(ctx, current.ID); err != nil {
+		return fmt.Errorf("%w: %w", ErrIOSSessionCleanup, err)
 	}
 	return nil
 }

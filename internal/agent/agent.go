@@ -47,6 +47,7 @@ type Config struct {
 	ImagePrepareTimeout time.Duration
 	ShutdownTimeout     time.Duration
 	Capacity            map[string]any
+	Environment         map[string]any
 	CapacityProbe       CapacityProbe
 	EnvironmentProbe    EnvironmentProbe
 	STFADBRegistrar     EndpointRegistrar
@@ -193,6 +194,9 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	}
 	capacity, environment := agent.config.Capacity, map[string]any{
 		"provider": agent.config.ProviderType, "host_os": hostOS, "host_arch": runtime.GOARCH,
+	}
+	for key, value := range agent.config.Environment {
+		environment[key] = value
 	}
 	if agent.preparer != nil {
 		environment["image_build_agent"] = true

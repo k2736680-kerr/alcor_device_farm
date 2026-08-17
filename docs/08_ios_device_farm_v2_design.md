@@ -21,7 +21,7 @@ Scheduler / Pool / Reservation / Lease / Reaper / Audit
 macOS Host Agent
 Inventory Adapter / Health Probe / Session Fence
         |
-        | 单元素 df:udids + appium:udid
+        | 单值字符串 df:udids + appium:udid
         v
 Appium 3 + Device Farm 12 + XCUITest + WDA
         |
@@ -125,7 +125,7 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 | `router` | 独立 Endpoint healthy | Appium DF Node healthy、UDID inventory 一致 | 同左，必要 tunnel 就绪 |
 | `remote_control` | STF 可见性 | `unsupported` | `unsupported` |
 
-只有必需探针全部通过才能 `ready/healthy`。`unsupported` 不是失败；签名临近过期为 degraded，过期或 UDID 漂移为 unhealthy/quarantined。
+只有必需探针全部通过才能 `ready/healthy`。`unsupported` 不是失败；签名临近过期为 degraded，过期或 UDID 漂移为 unhealthy/quarantined。插件 `providerBusy` 只表示技术占用，不降低 Router 健康：Reservation 和 Appium Session 一致时 Device 为 `busy/healthy`。固定版 XCUITest doctor 的必需结果必须通过；可选 Remote XPC 探测命中常驻 WDA 端口时以 15 秒为上限，只有输出已证明 HOME、Xcode 和 Xcode Command Line Tools 三项必需检查通过才允许继续心跳。
 
 ## 9. 预约与 Session 防双分配
 
@@ -136,7 +136,7 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 3. Device Session 固化 Host、UDID、平台、Appium Endpoint 和插件 Node identity；
 4. 服务端签发短时、单次、只绑定该 Reservation/Device/UDID/Endpoint 的 Session Grant；
 5. 可信 Session Fence 校验 Reservation 仍 active，拒绝调用方自选设备；
-6. 发送给 Appium Device Farm 的 capabilities 必须同时包含完全相同的 `appium:udid` 和单元素 `df:udids`；
+6. 发送给 Appium Device Farm 的 capabilities 必须同时包含完全相同的 `appium:udid` 和单值字符串 `df:udids=<reserved_udid>`；
 7. 插件把目标设备标为 busy，XCUITest 创建 WDA Session；成功后记录 Appium Session ID，Device 从 reserved 进入 busy；
 8. WebDriver 后续请求只能沿已绑定 Session 路由；Session 删除后清除技术 busy；
 9. Executor 释放 Reservation；Reaper 负责异常超时，健康设备回到 ready。
@@ -156,7 +156,7 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 | 漂移 | 处理 |
 |---|---|
 | Reservation active，插件报告目标 busy 且 Session 不匹配 | 创建失败，Device degraded；查询绑定后隔离或等待旧 Session 清理 |
-| 插件存在 Session，PostgreSQL 无 active Reservation | 终止技术 Session、记录高优先级审计、Device quarantined |
+| 插件存在 Session，PostgreSQL 无 active Reservation | 正常 Session 结束后留 30 秒等待 Agent 刷新 busy；超时仍 busy 时终止技术 Session、记录高优先级审计、Device quarantined |
 | Reservation 过期但 Session 仍存在 | Reaper 先关闭 Session，再关闭 Reservation；失败保持 quarantined |
 | UDID 或 Host Node identity 变化 | 不更新活动连接快照；停止调度并要求重新发现/人工确认 |
 | Appium/Agent/Host 离线 | 停止新预约；现有租约到期后按未知状态隔离，不假设 Session 已关闭 |

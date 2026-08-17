@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -179,6 +181,13 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	hostOS, hostArch, err := reportedHostIdentity(input.Environment)
 	if err != nil {
 		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	sessionFenceEndpoint, err := reportedSessionFenceEndpoint(input.Environment, hostOS)
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	if sessionFenceEndpoint != nil {
+		input.Environment["session_fence_endpoint"] = *sessionFenceEndpoint
 	}
 	capacity, err := json.Marshal(sensitive.RedactMap(input.Capacity))
 	if err != nil {
@@ -402,6 +411,32 @@ func reportedHostIdentity(environment map[string]any) (*string, *string, error) 
 		hostArch = &value
 	}
 	return hostOS, hostArch, nil
+}
+
+func reportedSessionFenceEndpoint(environment map[string]any, hostOS *string) (*string, error) {
+	raw, exists := environment["session_fence_endpoint"]
+	if !exists {
+		return nil, nil
+	}
+	value, ok := raw.(string)
+	if !ok || strings.TrimSpace(value) == "" || hostOS == nil || *hostOS != "macos" {
+		return nil, ErrInvalidArgument
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, ErrInvalidArgument
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	ip := net.ParseIP(hostname)
+	loopback := hostname == "localhost" || (ip != nil && ip.IsLoopback())
+	if parsed.Scheme != "https" && !loopback {
+		return nil, ErrInvalidArgument
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	normalized := strings.TrimRight(parsed.String(), "/")
+	return &normalized, nil
 }
 
 func validComponents(components map[string]string) bool {

@@ -63,7 +63,7 @@
 | DF-039 | 第二版多平台宿主机与 iOS 接入设计 | completed | DF-038、ALCOR-001、Android 第一版归档基线 |
 | DF-040 | 平台中立设备域模型与契约 | completed | DF-039 |
 | DF-041 | macOS Host Agent 与 Appium Device Farm Adapter | completed | DF-040 |
-| DF-042 | Reservation 绑定的 iOS Session Fence | pending | DF-041 |
+| DF-042 | Reservation 绑定的 iOS Session Fence | completed | DF-041 |
 | DF-043 | iOS Simulator 固定库存接入 | pending | DF-042 |
 | DF-044 | iOS 真机、WDA 签名与健康接入 | pending | DF-043 |
 | DF-045 | Device Farm Console iOS 设备域页面 | pending | DF-044 |
@@ -441,11 +441,11 @@
 
 ### DF-042 Reservation 绑定的 iOS Session Fence
 
-实施：新增基础设施级 Session Fence。它只接受短时单次 Session Grant，校验 active Reservation、Device、Host、Endpoint 和 UDID，强制相同的 `appium:udid` 与单元素 `df:udids` 后透明转发 Appium Session；保存 Appium Session ID 技术绑定并让 Reaper 关闭遗留 Session。禁止 tags、filterByHost、多 UDID 和浏览器直连 Node，不解释或实现 WebDriver 业务命令。
+实施：新增基础设施级 Session Fence。它只接受短时单次 Session Grant，校验 active Reservation、Device、Host、Endpoint 和 UDID，强制相同的 `appium:udid` 与单值字符串 `df:udids=<reserved_udid>` 后透明转发 Appium Session；保存 Appium Session ID 技术绑定并让 Reaper 关闭遗留 Session。`providerBusy` 作为占用事实继续上报，不把正常活动 Session 误判为 Router 故障；正常清理后留 30 秒等待心跳刷新 busy。禁止 tags、filterByHost、多 UDID 和浏览器直连 Node，不解释或实现 WebDriver 业务命令。
 
 产出：Session Grant/Fence 契约、技术绑定持久化、网络配置、漂移 Reconciler、故障测试和审计。
 
-验收：无 Reservation、错误/多 UDID、重放 Grant、跨 Host Endpoint 均拒绝；插件 busy 与 Reservation 不一致时停止分配并隔离；Session 删除/过期后 busy、Device Session 和 Reservation 收敛；任何时刻同一 Device 最多一个 active Session。
+验收：无 Reservation、错误/多 UDID、重放 Grant、跨 Host Endpoint 均拒绝；插件 busy 与 Reservation 不一致时停止分配并隔离；活动 Session 期间 Host 保持 online、Device 保持 busy/healthy；Session 删除/过期后 busy、Device Session 和 Reservation 收敛且不会在清理心跳宽限内误隔离；任何时刻同一 Device 最多一个 active Session。
 
 ### DF-043 iOS Simulator 固定库存接入
 

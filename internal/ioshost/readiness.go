@@ -24,6 +24,7 @@ const (
 	ExpectedWDAVersion      = "16.2.0"
 	ExpectedGoIOSVersion    = "1.3.2"
 	defaultCacheTTL         = 30 * time.Second
+	defaultDoctorTimeout    = 15 * time.Second
 )
 
 var versionPattern = regexp.MustCompile(`\d+\.\d+\.\d+`)
@@ -46,6 +47,7 @@ type Config struct {
 	GoIOSBinary      string
 	WDAPackageJSON   string
 	CacheTTL         time.Duration
+	DoctorTimeout    time.Duration
 	Runner           Runner
 	ReadFile         func(string) ([]byte, error)
 	NodeHealth       NodeHealthProbe
@@ -85,6 +87,9 @@ func New(config Config) (*Probe, error) {
 	}
 	if config.CacheTTL <= 0 {
 		config.CacheTTL = defaultCacheTTL
+	}
+	if config.DoctorTimeout <= 0 {
+		config.DoctorTimeout = defaultDoctorTimeout
 	}
 	return &Probe{config: config}, nil
 }
@@ -166,7 +171,7 @@ func (probe *Probe) collect(ctx context.Context) map[string]any {
 	record("wda", wdaVersion, ExpectedWDAVersion, wdaErr)
 	goIOSVersion, goIOSErr := probe.versionCommand(ctx, probe.config.GoIOSBinary, "version")
 	record("go_ios", goIOSVersion, ExpectedGoIOSVersion, goIOSErr)
-	doctorErr := probe.commandOnly(ctx, probe.config.AppiumBinary, "driver", "doctor", "xcuitest")
+	doctorErr := probe.doctor(ctx)
 	record("appium_doctor", "", "", doctorErr)
 
 	nodeHealth, healthErr := probe.config.NodeHealth.Health(ctx)
@@ -181,6 +186,33 @@ func (probe *Probe) collect(ctx context.Context) map[string]any {
 		"ios_runtimes": stringsToAny(runtimes), "toolchain_components": components,
 		"host_readiness": map[string]any{"ready": ready, "reasons": reasons}, "host_arch": arch, "host_os": "macos",
 	}
+}
+
+func (probe *Probe) doctor(ctx context.Context) error {
+	doctorContext, cancel := context.WithTimeout(ctx, probe.config.DoctorTimeout)
+	defer cancel()
+	output, err := probe.config.Runner.Run(doctorContext, probe.config.AppiumBinary, "driver", "doctor", "xcuitest")
+	if err == nil {
+		return nil
+	}
+	if errors.Is(doctorContext.Err(), context.DeadlineExceeded) && requiredDoctorChecksPassed(string(output)) {
+		return nil
+	}
+	return err
+}
+
+func requiredDoctorChecksPassed(output string) bool {
+	required := []string{
+		"HOME is set to:",
+		"Xcode is installed at",
+		"Xcode Command Line Tools are installed and work properly",
+	}
+	for _, marker := range required {
+		if !strings.Contains(output, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func (probe *Probe) commandText(ctx context.Context, binary string, arguments ...string) (string, error) {
