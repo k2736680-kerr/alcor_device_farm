@@ -8,7 +8,7 @@ import {
   useListDeviceHosts,
   useUndrainDeviceHost,
 } from '../api/generated/device-farm'
-import type { DeviceHost } from '../api/generated/models'
+import type { ConsoleRole, DeviceHost } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
@@ -52,7 +52,27 @@ function capacityPolicy(host: DeviceHost) {
   return slots ? `按规格动态计算，另设 ${slots} 台安全上限` : '按所选规格和实际剩余资源动态计算'
 }
 
-export function HostsPage() {
+function capabilityObject(host: DeviceHost, key: string): Record<string, unknown> | undefined {
+  const value = (host.capabilities as Record<string, unknown>)[key]
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function iosEnvironment(host: DeviceHost): string {
+  if (host.host_os !== 'macos') return '不适用'
+  const capabilities = host.capabilities as Record<string, unknown>
+  const catalog = capabilityObject(host, 'ios_simulator_catalog')
+  const runtimes = Array.isArray(catalog?.runtimes) ? catalog.runtimes.length : 0
+  const deviceTypes = Array.isArray(catalog?.device_types) ? catalog.device_types.length : 0
+  return `Xcode ${String(capabilities.xcode_version ?? '-')}；${runtimes} 个 Runtime，${deviceTypes} 个机型`
+}
+
+function hostReadiness(host: DeviceHost) {
+  if (host.host_os !== 'macos') return <Tag>安卓宿主机</Tag>
+  const readiness = capabilityObject(host, 'host_readiness')
+  return readiness?.ready === true ? <Tag color="green">iOS 自动化就绪</Tag> : <Tag color="red">iOS 环境未就绪</Tag>
+}
+
+export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [actionState, setActionState] = useState<ActionState | null>(null)
@@ -90,13 +110,16 @@ export function HostsPage() {
   const columns: TableColumnsType<DeviceHost> = [
     { title: '宿主机编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 140 },
+    { title: '平台', dataIndex: 'host_os', width: 100, render: (value: string) => <Tag color={value === 'macos' ? 'blue' : 'green'}>{value === 'macos' ? 'iOS / macOS' : value === 'linux' ? '安卓 / Linux' : value}</Tag> },
     { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
     { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
     { title: 'CPU', key: 'cpu', width: 130, render: (_, host) => resourceText(host, 'cpu') },
     { title: '内存', key: 'memory', width: 260, render: (_, host) => resourceText(host, 'memory') },
-    { title: 'Docker 数据盘', key: 'disk', width: 190, render: (_, host) => resourceText(host, 'disk') },
+    { title: '宿主机数据盘', key: 'disk', width: 190, render: (_, host) => resourceText(host, 'disk') },
     { title: '创建规则', key: 'capacity_policy', width: 260, render: (_, host) => capacityPolicy(host) },
+    { title: 'iOS 运行环境', key: 'ios_environment', width: 300, render: (_, host) => iosEnvironment(host) },
+    { title: '自动化就绪', key: 'readiness', width: 150, render: (_, host) => hostReadiness(host) },
     { title: '地址', dataIndex: 'address', ellipsis: true, render: (value?: string) => value ?? '-' },
     { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 160, render: (value?: string) => formatTime(value) },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
@@ -105,7 +128,7 @@ export function HostsPage() {
       key: 'actions',
       width: 140,
       fixed: 'right',
-      render: (_, host) => (
+      render: (_, host) => role === 'admin' ? (
         <Space size={4}>
           {!host.draining && host.status !== 'maintenance' && (
             <Button size="small" danger onClick={() => setActionState({ host, action: 'drain' })}>排空</Button>
@@ -114,7 +137,7 @@ export function HostsPage() {
             <Button size="small" onClick={() => setActionState({ host, action: 'undrain' })}>解除排空</Button>
           )}
         </Space>
-      ),
+      ) : <Typography.Text type="secondary">只读</Typography.Text>,
     },
   ]
 

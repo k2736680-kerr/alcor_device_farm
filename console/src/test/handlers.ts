@@ -196,9 +196,11 @@ export const handlers = [
     const lifecycle = search.get('lifecycle_status')
     const health = search.get('health_status')
     const poolID = search.get('pool_id')
+    const platform = search.get('platform')
     const filtered = sampleDevices.filter((device) =>
       (!lifecycle || device.lifecycle_status === lifecycle) &&
       (!health || device.health_status === health) &&
+      (!platform || device.platform === platform) &&
       (!poolID || device.pool_id === poolID),
     )
     const start = (page - 1) * size

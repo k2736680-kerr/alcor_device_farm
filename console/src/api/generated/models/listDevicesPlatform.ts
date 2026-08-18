@@ -5,17 +5,12 @@
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
  * OpenAPI spec version: 2.5.0
  */
-import type { PageParameter } from './pageParameter';
-import type { PageSizeParameter } from './pageSizeParameter';
 
-export type ListDeviceAuditEventsParams = {
-/**
- * @minimum 1
- */
-page?: PageParameter;
-/**
- * @minimum 1
- * @maximum 200
- */
-page_size?: PageSizeParameter;
-};
+export type ListDevicesPlatform = typeof ListDevicesPlatform[keyof typeof ListDevicesPlatform];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListDevicesPlatform = {
+  android: 'android',
+  ios: 'ios',
+} as const;

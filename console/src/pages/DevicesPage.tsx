@@ -5,8 +5,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
+  getListDevicePoolsQueryKey,
   useCreateDeviceProvisioning,
+  useCreateIOSSimulator,
   useDeleteDevice,
+  useGetIOSSimulatorCatalog,
   useListAndroidHardwareProfiles,
   useListAndroidSystemImages,
   useGetDeviceProvisioning,
@@ -18,9 +21,11 @@ import {
   useRebuildDevice,
   useReimageDevice,
   useRestartDevice,
+  useStartDevice,
+  useStopDevice,
   useUnquarantineDevice,
 } from '../api/generated/device-farm'
-import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile } from '../api/generated/models'
+import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile, IOSSimulatorCatalog } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, formatTime, shortID } from '../api/format'
@@ -54,13 +59,18 @@ const healthColor: Record<string, string> = {
   unknown: 'default',
 }
 
-type DeviceAction = 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
+type DeviceAction = 'start' | 'stop' | 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
 type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
+type PlatformView = 'all' | 'android' | 'ios'
 
 const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined', 'deleted', 'all']
 
 function deviceViewFromQuery(value: string | null): DeviceView {
   return deviceViews.includes(value as DeviceView) ? value as DeviceView : 'available'
+}
+
+function platformFromQuery(value: string | null): PlatformView {
+  return value === 'android' || value === 'ios' ? value : 'all'
 }
 
 interface ActionState {
@@ -83,11 +93,22 @@ interface CreateDeviceValues extends EmulatorRuntimeProfile {
   hardware_profile_id: string
 }
 
+interface CreateIOSSimulatorValues {
+  host_id: string
+  pool_id: string
+  runtime_id: string
+  device_type_id: string
+  display_name?: string
+  reason: string
+}
+
 interface DevicesPageProps {
   role?: ConsoleRole
 }
 
 const actionTitles: Record<DeviceAction, string> = {
+  start: '启动设备',
+  stop: '停止设备',
   restart: '重启设备',
   rebuild: '重建设备',
   quarantine: '隔离设备',
@@ -100,6 +121,12 @@ function actionable(device: Device, action: DeviceAction): boolean {
     return false
   }
   switch (action) {
+    case 'start':
+      return device.platform === 'ios' && device.lifecycle_status === 'stopped'
+    case 'stop':
+      return device.platform === 'ios' && device.lifecycle_status === 'ready'
+    case 'restart':
+      return device.platform === 'android'
     case 'quarantine':
       return device.lifecycle_status !== 'quarantined'
     case 'unquarantine':
@@ -124,9 +151,17 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [createStep, setCreateStep] = useState(0)
   const [profileSearch, setProfileSearch] = useState('')
   const [provisioningID, setProvisioningID] = useState<string | null>(null)
+  const [createIOS, setCreateIOS] = useState(false)
+  const [iosCreateStep, setIOSCreateStep] = useState(0)
+  const [iosForm] = Form.useForm<CreateIOSSimulatorValues>()
+  // 创建向导切换步骤会卸载第一步的表单项；保留已选 Mac，避免第二步停止读取其目录。
+  const selectedIOSHostID = Form.useWatch('host_id', { form: iosForm, preserve: true })
   const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
+  const platformView = platformFromQuery(searchParams.get('platform'))
 
+  const start = useStartDevice()
+  const stop = useStopDevice()
   const restart = useRestartDevice()
   const rebuild = useRebuildDevice()
   const reimage = useReimageDevice()
@@ -134,6 +169,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
+  const createIOSSimulator = useCreateIOSSimulator()
   const imagesQuery = useListDeviceImages({ page: 1, page_size: 200, status: 'ready' })
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 200 })
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
@@ -144,6 +180,15 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const hardwareProfiles = unwrapData<AndroidHardwareProfile[]>(hardwareQuery.data) ?? []
   const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
+  const iosHosts = hosts.filter((host) => host.host_os === 'macos' && host.status === 'online' && !host.draining)
+  const iosPools = pools.filter((pool) => pool.platform === 'ios' && pool.status === 'active')
+  const iosCatalogQuery = useGetIOSSimulatorCatalog(
+    { host_id: selectedIOSHostID ?? '' },
+    { query: { enabled: Boolean(selectedIOSHostID), retry: false } },
+  )
+  const iosCatalog = unwrapData<IOSSimulatorCatalog>(iosCatalogQuery.data)
+  const defaultIOSHostID = iosHosts[0]?.id
+  const defaultIOSPoolID = iosPools[0]?.id
   const imageByID = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
   const poolByID = useMemo(() => new Map(pools.map((pool) => [pool.id, pool])), [pools])
   const filteredHardwareProfiles = useMemo(() => {
@@ -182,7 +227,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     }
     const { device, action } = actionState
     const mutation =
-      action === 'restart' ? restart
+      action === 'start' ? start
+      : action === 'stop' ? stop
+      : action === 'restart' ? restart
       : action === 'rebuild' ? rebuild
       : action === 'quarantine' ? quarantine
       : action === 'unquarantine' ? unquarantine
@@ -216,7 +263,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     }
     modal.confirm({
       title: '确认删除这台设备？',
-      content: '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史，同时把所属设备池的目标数量减少一台，不会自动补建。',
+      content: actionState.device.platform === 'ios'
+        ? '系统将通过 Mac 宿主代理关闭并删除 CoreSimulator 虚拟 iPhone，同时把设备转入已删除历史并减少设备池目标数量。'
+        : '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史，同时把所属设备池的目标数量减少一台，不会自动补建。',
       okText: '确认删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -298,6 +347,36 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     })
   }
 
+  const openCreateIOS = () => {
+    iosForm.resetFields()
+    setIOSCreateStep(0)
+    setCreateIOS(true)
+  }
+
+  const submitCreateIOS = (values: CreateIOSSimulatorValues) => {
+    createIOSSimulator.mutate({ data: {
+      host_id: values.host_id,
+      pool_id: values.pool_id,
+      runtime_id: values.runtime_id,
+      device_type_id: values.device_type_id,
+      display_name: values.display_name?.trim() || undefined,
+      reason: values.reason.trim(),
+    } }, {
+      onSuccess: (data) => {
+        const response = data as { request_id?: string; data?: { device_id?: string } }
+        message.success(`iOS 模拟器创建任务已受理（请求编号：${response.request_id ?? '-'}）`)
+        setCreateIOS(false)
+        iosForm.resetFields()
+        void queryClient.invalidateQueries({ queryKey: getListDevicePoolsQueryKey() })
+        invalidate()
+      },
+      onError: (error) => {
+        const err = error as { code?: string; requestId?: string; message?: string }
+        message.error(`iOS 模拟器创建被拒绝（${err.code ?? '未知错误'}，请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`)
+      },
+    })
+  }
+
 
   useEffect(() => {
     if (!provisioningState) return
@@ -317,7 +396,22 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     }
   }, [capacityMessage, invalidate, message, provisioningState])
 
-  const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
+  const initializeIOSCreateForm = (open: boolean) => {
+    if (!open) return
+    iosForm.setFieldsValue({
+      host_id: iosForm.getFieldValue('host_id') || defaultIOSHostID,
+      pool_id: iosForm.getFieldValue('pool_id') || defaultIOSPoolID,
+      display_name: iosForm.getFieldValue('display_name') ?? '',
+      reason: iosForm.getFieldValue('reason') ?? '',
+    })
+  }
+
+  useEffect(() => {
+    if (!createIOS || !defaultIOSHostID) return
+    initializeIOSCreateForm(true)
+  }, [createIOS, defaultIOSHostID, defaultIOSPoolID])
+
+  const pending = start.isPending || stop.isPending || restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
   const actionColumn: TableColumnsType<Device>[number] = {
     title: '操作',
@@ -326,7 +420,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     fixed: 'right',
     render: (_, device) => (
       <Space size={4} wrap>
-        {role === 'admin' && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
+        {role === 'viewer' && <Typography.Text type="secondary">只读</Typography.Text>}
+        {role === 'admin' && device.platform === 'android' && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
           <Button
             type="primary"
             size="small"
@@ -335,7 +430,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             onClick={() => remote.start(device)}
           >远程连接</Button>
         )}
-        {role === 'admin' && remote.device?.id === device.id && (
+        {role === 'admin' && device.platform === 'android' && remote.device?.id === device.id && (
           <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
             {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
           </Button>
@@ -344,19 +439,25 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status) && device.reimage_status !== 'pending' && (
           <Button size="small" onClick={() => openReimage(device)}>编辑配置</Button>
         )}
-        {actionable(device, 'restart') && (
+        {role !== 'viewer' && actionable(device, 'start') && (
+          <Button size="small" onClick={() => setActionState({ device, action: 'start' })}>启动</Button>
+        )}
+        {role !== 'viewer' && actionable(device, 'stop') && (
+          <Button size="small" onClick={() => setActionState({ device, action: 'stop' })}>停止</Button>
+        )}
+        {role !== 'viewer' && actionable(device, 'restart') && (
           <Button size="small" onClick={() => setActionState({ device, action: 'restart' })}>重启</Button>
         )}
-        {actionable(device, 'rebuild') && (
+        {role === 'admin' && actionable(device, 'rebuild') && (
           <Button size="small" onClick={() => setActionState({ device, action: 'rebuild' })}>重建</Button>
         )}
-        {actionable(device, 'quarantine') && (
+        {role === 'admin' && actionable(device, 'quarantine') && (
           <Button size="small" danger onClick={() => setActionState({ device, action: 'quarantine' })}>隔离</Button>
         )}
-        {actionable(device, 'unquarantine') && (
+        {role === 'admin' && actionable(device, 'unquarantine') && (
           <Button size="small" onClick={() => setActionState({ device, action: 'unquarantine' })}>解除隔离</Button>
         )}
-        {actionable(device, 'delete') && (
+        {role === 'admin' && actionable(device, 'delete') && (
           <Button size="small" danger onClick={() => setActionState({ device, action: 'delete' })}>删除</Button>
         )}
       </Space>
@@ -365,9 +466,13 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
 
   const columns: TableColumnsType<Device> = [
     { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: 'Phone 型号', width: 160, render: (_, device) => String(device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-') },
+    { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{value === 'ios' ? 'iOS' : '安卓'}</Tag> },
+    { title: '设备型号', width: 170, render: (_, device) => String(device.platform === 'ios' ? (device.capabilities.model ?? device.capabilities.deviceName ?? '-') : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-')) },
     {
-      title: 'Android 版本', width: 180, render: (_, device) => {
+      title: '系统版本', width: 190, render: (_, device) => {
+        if (device.platform === 'ios') {
+          return <Typography.Text>{String(device.capabilities.platformVersion ?? device.capabilities.runtimeId ?? 'iOS')}</Typography.Text>
+        }
         const image = device.image_id ? imageByID.get(device.image_id) : undefined
         return <Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text>
       },
@@ -379,23 +484,23 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         return (
           <Space direction="vertical" size={0}>
             <Typography.Text>{value ?? pool?.name ?? '-'}</Typography.Text>
-            {defaultImage && <Typography.Text type="secondary">默认 {androidVersionLabel(defaultImage.api_level)}</Typography.Text>}
+            {device.platform === 'android' && defaultImage && <Typography.Text type="secondary">默认 {androidVersionLabel(defaultImage.api_level)}</Typography.Text>}
           </Space>
         )
       },
     },
-    { title: '基础设备', dataIndex: 'is_pool_base', width: 100, render: (value?: boolean) => value ? <Tag color="blue">基础设备</Tag> : '-' },
+    { title: '基础设备', dataIndex: 'is_pool_base', width: 100, render: (value: boolean | undefined, device) => device.platform === 'android' && value ? <Tag color="blue">基础设备</Tag> : '-' },
     { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
     { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
     { title: '运行方式', dataIndex: 'provider_type', width: 130, render: (value: string) => providerTypeLabel(value) },
     { title: '设备状态', dataIndex: 'lifecycle_status', width: 110, render: (value: string) => <Tag color={lifecycleColor[value] ?? 'default'}>{lifecycleStatusLabel(value)}</Tag> },
     { title: '健康状态', dataIndex: 'health_status', width: 110, render: (value: string) => <Tag color={healthColor[value] ?? 'default'}>{healthStatusLabel(value)}</Tag> },
-    { title: '配置状态', dataIndex: 'reimage_status', width: 130, render: (value: string, device) => value === 'pending'
+    { title: '配置状态', dataIndex: 'reimage_status', width: 130, render: (value: string, device) => device.platform === 'ios' ? <Tag>CoreSimulator</Tag> : value === 'pending'
       ? <Tag color="processing">正在换镜像</Tag>
       : value === 'failed' ? <Tag color="red" title={device.reimage_error}>上次重装失败</Tag> : <Tag>已生效</Tag> },
     { title: '清理方式', dataIndex: 'lifecycle_mode', width: 110, render: (value: string) => lifecycleModeLabel(value) },
     { title: '所属宿主机', dataIndex: 'host_id', width: 150, render: (value: string) => shortID(value) },
-    { title: 'ADB 地址', dataIndex: 'adb_endpoint', width: 170, ellipsis: true, render: (value?: string) => value ?? '-' },
+    { title: '自动化连接', dataIndex: 'adb_endpoint', width: 180, ellipsis: true, render: (value: string | undefined, device) => device.platform === 'ios' ? '由会话围栏管理' : (value ?? '-') },
     { title: '状态说明', dataIndex: 'health_reason', width: 220, ellipsis: true, render: (value?: string) => healthReasonLabel(value) },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     actionColumn,
@@ -403,11 +508,12 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
 
   const { page, pageSize, onPageChange } = useServerPage()
   const deviceQueryOptions = { query: { refetchInterval: 5_000, refetchOnWindowFocus: true, refetchOnReconnect: true } }
-  const availableCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
-  const busyCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' }, deviceQueryOptions)
-  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' }, deviceQueryOptions)
-  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'deleted' }, deviceQueryOptions)
-  const allCountQuery = useListDevices({ page: 1, page_size: 1 }, deviceQueryOptions)
+  const platformFilter = platformView === 'all' ? {} : { platform: platformView }
+  const availableCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
+  const busyCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'busy' }, deviceQueryOptions)
+  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'quarantined' }, deviceQueryOptions)
+  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'deleted' }, deviceQueryOptions)
+  const allCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter }, deviceQueryOptions)
   const availableCount = unwrapPage<Device>(availableCountQuery.data)?.total ?? 0
   const busyCount = unwrapPage<Device>(busyCountQuery.data)?.total ?? 0
   const quarantinedCount = unwrapPage<Device>(quarantinedCountQuery.data)?.total ?? 0
@@ -419,14 +525,17 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
     : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
     : {}
-  const { data, isLoading } = useListDevices({ page, page_size: pageSize, ...viewFilter }, deviceQueryOptions)
+  const { data, isLoading } = useListDevices({ page, page_size: pageSize, ...platformFilter, ...viewFilter }, deviceQueryOptions)
   const result = unwrapPage<Device>(data)
 
   return (
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
-        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>新增设备</Button> : undefined} title="Phone 设备">
-          <Typography.Text type="secondary">设备数据默认保留；执行“重建”“编辑配置/更换镜像”或“删除设备”时会清空。</Typography.Text>
+        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Space>
+          <Button onClick={openCreateDevice}>新增安卓设备</Button>
+          <Button type="primary" onClick={openCreateIOS}>新增 iOS 模拟器</Button>
+        </Space> : undefined} title="Phone 设备">
+          <Typography.Text type="secondary">安卓 Emulator 与 iOS Simulator 都由宿主机按需创建；重建或删除会清空对应虚拟设备数据。</Typography.Text>
         </Card>
         {provisioningState && <Alert
           type={provisioningState.status === 'failed' ? 'error' : provisioningState.status === 'ready' ? 'success' : 'info'}
@@ -439,6 +548,21 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           showIcon
           message="这里先显示可用设备"
           description="使用中、隔离和已删除设备可通过下方分类查看。"
+        />
+        <Segmented<PlatformView>
+          value={platformView}
+          options={[
+            { label: '全部平台', value: 'all' },
+            { label: '安卓', value: 'android' },
+            { label: 'iOS', value: 'ios' },
+          ]}
+          onChange={(nextPlatform) => {
+            const nextSearchParams = new URLSearchParams(searchParams)
+            if (nextPlatform === 'all') nextSearchParams.delete('platform')
+            else nextSearchParams.set('platform', nextPlatform)
+            setSearchParams(nextSearchParams, { replace: true })
+            onPageChange(1, pageSize)
+          }}
         />
         <Segmented<DeviceView>
           value={view}
@@ -523,6 +647,63 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         </Form>
       </Modal>
       <Modal
+        open={createIOS}
+        title="新增 iOS 模拟器"
+        width={760}
+        destroyOnHidden
+        onCancel={() => setCreateIOS(false)}
+        afterOpenChange={initializeIOSCreateForm}
+        footer={[
+          <Button key="cancel-ios" onClick={() => setCreateIOS(false)}>取消</Button>,
+          iosCreateStep > 0 && <Button key="previous-ios" onClick={() => setIOSCreateStep((step) => step - 1)}>上一步</Button>,
+          iosCreateStep < 2
+            ? <Button key="next-ios" type="primary" onClick={() => {
+              const fields: (keyof CreateIOSSimulatorValues)[] = iosCreateStep === 0 ? ['host_id'] : ['runtime_id', 'device_type_id']
+              void iosForm.validateFields(fields).then(() => setIOSCreateStep((step) => step + 1)).catch(() => undefined)
+            }}>下一步</Button>
+            : <Button key="create-ios" type="primary" loading={createIOSSimulator.isPending} onClick={() => iosForm.submit()}>创建模拟器</Button>,
+        ]}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="iOS 使用 Mac 宿主机内的 Xcode CoreSimulator"
+          description="系统会在后台创建、启动并登记虚拟 iPhone；不安装第二层 macOS 虚拟机，也不向浏览器暴露 Appium、WDA 或会话授权。"
+        />
+        <Steps current={iosCreateStep} size="small" style={{ marginBottom: 20 }} items={[{ title: '选择 Mac' }, { title: '选择系统与机型' }, { title: '设备池与审计' }]} />
+        <Form<CreateIOSSimulatorValues> form={iosForm} layout="vertical" onFinish={() => submitCreateIOS(iosForm.getFieldsValue(true) as CreateIOSSimulatorValues)}>
+          {iosCreateStep === 0 && <Form.Item name="host_id" label="可用 Mac 宿主机" rules={[{ required: true, message: '请选择在线且未排空的 Mac 宿主机' }]}>
+            <Select
+              loading={hostsQuery.isFetching}
+              placeholder={iosHosts.length > 0 ? '选择 Mac 宿主机' : '当前没有可用于创建的 Mac 宿主机'}
+              options={iosHosts.map((host) => ({ value: host.id, label: `${host.name} · ${host.host_arch} · ${shortID(host.id)}` }))}
+              onChange={() => iosForm.setFieldsValue({ runtime_id: undefined, device_type_id: undefined })}
+            />
+          </Form.Item>}
+          {iosCreateStep === 1 && <>
+            {iosCatalogQuery.isError && <Alert type="error" showIcon message="无法读取这台 Mac 的 iOS 目录，请检查宿主机在线状态后重试" style={{ marginBottom: 12 }} />}
+            <Form.Item name="runtime_id" label="iOS Runtime" rules={[{ required: true, message: '请选择 iOS Runtime' }]}>
+              <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS Runtime" options={(iosCatalog?.runtimes ?? []).map((runtime) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}` }))} />
+            </Form.Item>
+            <Form.Item name="device_type_id" label="iPhone 机型" rules={[{ required: true, message: '请选择 iPhone 机型' }]}>
+              <Select loading={iosCatalogQuery.isFetching} showSearch optionFilterProp="label" placeholder="选择宿主机支持的 iPhone 机型" options={(iosCatalog?.device_types ?? []).map((deviceType) => ({ value: deviceType.id, label: deviceType.name }))} />
+            </Form.Item>
+          </>}
+          {iosCreateStep === 2 && <>
+            <Form.Item name="pool_id" label="iOS 设备池" rules={[{ required: true, message: '请选择活动的 iOS 设备池' }]}>
+              <Select placeholder={iosPools.length > 0 ? '选择 iOS 设备池' : '当前没有活动的 iOS 设备池'} options={iosPools.map((pool) => ({ value: pool.id, label: `${pool.name} · 当前目标 ${pool.total_target}` }))} />
+            </Form.Item>
+            <Form.Item name="display_name" label="显示名称（可选）">
+              <Input maxLength={128} placeholder="例如：iOS 26 回归机" />
+            </Form.Item>
+            <Form.Item name="reason" label="创建原因（必填，将写入审计）" rules={[{ required: true, whitespace: true, message: '请填写创建原因' }, { min: 3, message: '创建原因至少填写 3 个字' }]}>
+              <Input.TextArea rows={3} maxLength={200} placeholder="例如：新增 iOS 26 自动化验证设备" />
+            </Form.Item>
+          </>}
+        </Form>
+      </Modal>
+      <Modal
         open={actionState !== null}
         title={actionState ? `${actionTitles[actionState.action]} · ${shortID(actionState.device.id)}` : ''}
         okText={actionState?.action === 'delete' ? '下一步' : '确认执行'}
@@ -535,9 +716,11 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <Typography.Paragraph type="secondary">
           {actionState?.action === 'quarantine' && '隔离后设备将不再接受新预约，已激活会话不受影响。'}
           {actionState?.action === 'unquarantine' && '解除隔离后设备可重新进入调度池。'}
-          {actionState?.action === 'rebuild' && '重建会销毁并重新拉起设备运行实例，属于危险操作。'}
+          {actionState?.action === 'start' && '启动会在 Mac 宿主机中拉起这台 CoreSimulator 虚拟 iPhone。'}
+          {actionState?.action === 'stop' && '停止只关闭空闲的 CoreSimulator，不删除设备和数据。'}
+          {actionState?.action === 'rebuild' && (actionState.device.platform === 'ios' ? '重建会关闭、擦除并重新启动 CoreSimulator，UDID 保持不变但设备数据全部清空。' : '重建会销毁并重新拉起设备运行实例，属于危险操作。')}
           {actionState?.action === 'restart' && '重启会中断当前设备上的会话。'}
-          {actionState?.action === 'delete' && '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史，同时把设备池目标数量减少一台，不会自动补建。'}
+          {actionState?.action === 'delete' && (actionState.device.platform === 'ios' ? '删除只允许没有活动预约或会话的受管 Simulator；成功后 CoreSimulator UDID 将消失并保留审计记录。' : '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史，同时把设备池目标数量减少一台，不会自动补建。')}
         </Typography.Paragraph>
         <Form<ReasonValues> form={form} layout="vertical" onFinish={submitAction}>
           <Form.Item name="reason" label="操作原因（必填，将写入审计）" rules={[

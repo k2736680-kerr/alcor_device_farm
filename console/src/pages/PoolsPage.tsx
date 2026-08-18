@@ -25,7 +25,7 @@ import {
   useSelectDevicePoolBaseDevice,
   useUpdateDevicePool,
 } from '../api/generated/device-farm'
-import type { DevicePool, Device, DeviceImage } from '../api/generated/models'
+import type { ConsoleRole, DevicePool, Device, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, formatTime, shortID } from '../api/format'
@@ -45,7 +45,7 @@ function errorText(error: unknown): string {
   return `${err.code ?? '未知错误'}（请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`
 }
 
-export function PoolsPage() {
+export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const { message, modal } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [configPool, setConfigPool] = useState<DevicePool | null>(null)
@@ -174,13 +174,14 @@ export function PoolsPage() {
   const columns: TableColumnsType<DevicePool> = [
     { title: '设备池编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 180 },
+    { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{value === 'ios' ? 'iOS' : '安卓'}</Tag> },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
     { title: '默认租期（秒）', dataIndex: 'default_lease_seconds', width: 130 },
     { title: '最长租期（秒）', dataIndex: 'max_lease_seconds', width: 130 },
     { title: '设备数量', dataIndex: 'total_target', width: 100 },
     {
       title: '默认系统', dataIndex: 'default_image_id', width: 180,
-      render: (value?: string) => value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-',
+      render: (value: string | undefined, pool) => pool.platform === 'ios' ? '创建时选择 Runtime' : value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-',
     },
     { title: '基础设备', dataIndex: 'base_device_id', width: 150, render: (value?: string) => value ? shortID(value) : <Tag>未选择</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
@@ -189,7 +190,7 @@ export function PoolsPage() {
       key: 'actions',
       width: 100,
       fixed: 'right',
-      render: (_, pool) => (
+      render: (_, pool) => role === 'admin' ? (
         <Button
           size="small"
           onClick={() => {
@@ -205,7 +206,7 @@ export function PoolsPage() {
         >
           配置
         </Button>
-      ),
+      ) : <Typography.Text type="secondary">只读</Typography.Text>,
     },
   ]
 
@@ -236,7 +237,7 @@ export function PoolsPage() {
       >
         <Typography.Title level={5}>基本信息</Typography.Title>
         <Form<PoolFormValues> form={poolForm} layout="vertical" onFinish={savePool}>
-          <Form.Item name="name" label="设备池名称" extra="名称只是管理标识，不代表当前 Android 版本；系统版本以“默认系统”和设备列表为准。" rules={[{ required: true, message: '请输入池名称' }]}>
+          <Form.Item name="name" label="设备池名称" extra={configPool?.platform === 'ios' ? '名称只是管理标识；iOS Runtime 和机型以每台 Simulator 的创建记录为准。' : '名称只是管理标识，不代表当前 Android 版本；系统版本以“默认系统”和设备列表为准。'} rules={[{ required: true, message: '请输入池名称' }]}>
             <Input maxLength={128} />
           </Form.Item>
           <Space size={16} wrap>
@@ -246,12 +247,14 @@ export function PoolsPage() {
             <Form.Item name="max_lease_seconds" label="最长租期（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
-            <Form.Item name="device_count" label="设备数量" extra="调大自动扩容，调小自动缩容。" rules={[{ required: true }]}>
-              <InputNumber min={0} max={1000} />
+            <Form.Item name="device_count" label="设备数量" extra={configPool?.platform === 'ios' ? 'iOS 设备通过设备页按需创建或删除。' : '调大自动扩容，调小自动缩容。'} rules={[{ required: true }]}>
+              <InputNumber min={0} max={1000} disabled={configPool?.platform === 'ios'} />
             </Form.Item>
           </Space>
           <Typography.Paragraph type="secondary">
-            设备数量决定这个池保留多少台可用设备。扩容会沿用基础设备的系统版本和硬件规格创建全新设备；缩容只处理空闲设备，不会中断正在运行的任务。
+            {configPool?.platform === 'ios'
+              ? 'iOS Pool 只管理预约和并发；虚拟 iPhone 在设备页选择 Mac、Runtime 和机型后按需创建，删除时目标数量自动同步。'
+              : '设备数量决定这个池保留多少台可用设备。扩容会沿用基础设备的系统版本和硬件规格创建全新设备；缩容只处理空闲设备，不会中断正在运行的任务。'}
           </Typography.Paragraph>
           {configPool && (
             <Alert
@@ -289,6 +292,7 @@ export function PoolsPage() {
           <Button type="primary" loading={updatePool.isPending} onClick={() => poolForm.submit()}>保存设置</Button>
         </Form>
 
+        {configPool?.platform === 'android' && <>
         <Typography.Title level={5} style={{ marginTop: 24 }}>设备</Typography.Title>
         <Typography.Paragraph type="secondary">基础设备决定后续扩容的配置，不会共享或复制这台设备内的数据。</Typography.Paragraph>
         <Select
@@ -302,6 +306,7 @@ export function PoolsPage() {
           }))}
         />
         <Button size="small" onClick={() => setAddDeviceOpen(true)}>加入设备</Button>
+        </>}
       </Drawer>
 
       <Modal

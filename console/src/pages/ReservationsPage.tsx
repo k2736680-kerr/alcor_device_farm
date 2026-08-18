@@ -12,7 +12,7 @@ import {
 } from 'antd'
 import type { FormInstance, TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   getListDeviceReservationsQueryKey,
   useCreateDeviceReservation,
@@ -21,7 +21,7 @@ import {
   useListDeviceReservations,
   useReleaseDeviceReservation,
 } from '../api/generated/device-farm'
-import type { DevicePool, Reservation } from '../api/generated/models'
+import type { ConsoleRole, DevicePool, Reservation } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
@@ -49,10 +49,10 @@ interface ExtendFormValues {
 
 function errorText(error: unknown): string {
   const err = error as { code?: string; requestId?: string; message?: string }
-  return `${err.code ?? 'ERROR'}（request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`
+  return `错误代码：${err.code ?? '未知错误'}（请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`
 }
 
-export function ReservationsPage() {
+export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
@@ -67,6 +67,7 @@ export function ReservationsPage() {
 
   const poolsQuery = useListDevicePools({ page: 1, page_size: 100 })
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
+  const poolByID = useMemo(() => new Map(pools.map((pool) => [pool.id, pool])), [pools])
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDeviceReservationsQueryKey() })
@@ -129,7 +130,8 @@ export function ReservationsPage() {
     { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor[value] ?? 'default'}>{reservationStatusLabel(value)}</Tag> },
     { title: '预约类型', dataIndex: 'owner_type', width: 110, render: (value: string) => ownerTypeLabel(value) },
     { title: '预约归属', dataIndex: 'owner_id', width: 170, render: (value: string) => shortID(value) },
-    { title: '设备池', dataIndex: 'pool_id', width: 150, render: (value: string) => shortID(value) },
+    { title: '平台', dataIndex: 'pool_id', width: 90, render: (value: string) => <Tag color={poolByID.get(value)?.platform === 'ios' ? 'blue' : 'green'}>{poolByID.get(value)?.platform === 'ios' ? 'iOS' : '安卓'}</Tag> },
+    { title: '设备池', dataIndex: 'pool_id', width: 190, render: (value: string) => poolByID.get(value)?.name ?? shortID(value) },
     { title: '设备', dataIndex: 'device_id', width: 150, render: (value?: string) => (value ? shortID(value) : '-') },
     { title: '租期（秒）', dataIndex: 'lease_seconds', width: 100 },
     { title: '开始', dataIndex: 'starts_at', width: 160, render: (value?: string) => formatTime(value) },
@@ -141,10 +143,10 @@ export function ReservationsPage() {
       fixed: 'right',
       render: (_, reservation) => (
         <Space size={4} wrap>
-          {reservation.status === 'active' && (
+          {role !== 'viewer' && reservation.status === 'active' && (
             <Button size="small" onClick={() => setExtendFor(reservation)}>续租</Button>
           )}
-          {(reservation.status === 'pending' || reservation.status === 'active') && (
+          {role !== 'viewer' && (reservation.status === 'pending' || reservation.status === 'active') && (
             <Button size="small" danger onClick={() => setReleaseFor(reservation)}>
               {reservation.status === 'pending' ? '取消' : '释放'}
             </Button>
@@ -164,7 +166,7 @@ export function ReservationsPage() {
   return (
     <>
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>创建人工预约</Button>
+        {role !== 'viewer' && <Button type="primary" onClick={() => setCreateOpen(true)}>创建人工预约</Button>}
         <Typography.Text type="secondary">列表每 5 秒自动刷新，分配成功后状态会变为“使用中”。</Typography.Text>
       </Space>
       <PageTable<Reservation>
@@ -243,7 +245,7 @@ function FormValues({
 }: {
   form: FormInstance<CreateFormValues>
   onSubmit: (values: CreateFormValues) => void
-  pools: { id: string; name: string; status: string }[]
+  pools: { id: string; name: string; status: string; platform?: string }[]
   poolsLoading: boolean
 }) {
   return (
@@ -252,7 +254,7 @@ function FormValues({
         <Select
           loading={poolsLoading}
           placeholder="选择设备池"
-          options={pools.map((pool) => ({ value: pool.id, label: `${pool.name} · ${poolStatusLabel(pool.status)}` }))}
+          options={pools.map((pool) => ({ value: pool.id, label: `${pool.platform === 'ios' ? 'iOS' : '安卓'} · ${pool.name} · ${poolStatusLabel(pool.status)}` }))}
         />
       </Form.Item>
       <Form.Item label="预约所有者">

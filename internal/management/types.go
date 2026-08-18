@@ -220,6 +220,7 @@ type ProvisionMockDeviceInput struct {
 
 type DeviceFilter struct {
 	PoolID          string
+	Platform        string
 	LifecycleStatus domain.DeviceLifecycleStatus
 	HealthStatus    domain.HealthStatus
 }

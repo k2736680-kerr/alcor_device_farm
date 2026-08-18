@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
@@ -334,7 +335,7 @@ func (handler *managementHandler) listDevices(writer http.ResponseWriter, reques
 	}
 	filter, ok := deviceFilter(request)
 	if !ok {
-		writeInvalid(writer, request, "lifecycle_status or health_status is invalid")
+		writeInvalid(writer, request, "平台、设备状态或健康状态筛选值无效")
 		return
 	}
 	value, err := handler.service.ListDevices(request.Context(), page, filter)
@@ -343,7 +344,10 @@ func (handler *managementHandler) listDevices(writer http.ResponseWriter, reques
 
 func deviceFilter(request *http.Request) (management.DeviceFilter, bool) {
 	query := request.URL.Query()
-	filter := management.DeviceFilter{PoolID: query.Get("pool_id")}
+	filter := management.DeviceFilter{PoolID: query.Get("pool_id"), Platform: strings.ToLower(strings.TrimSpace(query.Get("platform")))}
+	if filter.Platform != "" && filter.Platform != "android" && filter.Platform != "ios" {
+		return management.DeviceFilter{}, false
+	}
 	if value := query.Get("lifecycle_status"); value != "" {
 		filter.LifecycleStatus = domain.DeviceLifecycleStatus(value)
 		switch filter.LifecycleStatus {

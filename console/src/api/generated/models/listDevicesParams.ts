@@ -3,11 +3,12 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.4.0
+ * OpenAPI spec version: 2.5.0
  */
 import type { PageParameter } from './pageParameter';
 import type { PageSizeParameter } from './pageSizeParameter';
 import type { Identifier } from './identifier';
+import type { ListDevicesPlatform } from './listDevicesPlatform';
 import type { DeviceLifecycleStatus } from './deviceLifecycleStatus';
 import type { HealthStatus } from './healthStatus';
 
@@ -22,6 +23,7 @@ page?: PageParameter;
  */
 page_size?: PageSizeParameter;
 pool_id?: Identifier;
+platform?: ListDevicesPlatform;
 lifecycle_status?: DeviceLifecycleStatus;
 health_status?: HealthStatus;
 };

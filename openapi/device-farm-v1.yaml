@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 2.4.0
+  version: 2.5.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-18
   x-platform-semantics: Case/Run/RunAttempt
@@ -479,6 +479,7 @@ paths:
         - {$ref: "#/components/parameters/Page"}
         - {$ref: "#/components/parameters/PageSize"}
         - {name: pool_id, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
+        - {name: platform, in: query, schema: {type: string, enum: [android, ios]}}
         - {name: lifecycle_status, in: query, schema: {$ref: "#/components/schemas/DeviceLifecycleStatus"}}
         - {name: health_status, in: query, schema: {$ref: "#/components/schemas/HealthStatus"}}
       responses:

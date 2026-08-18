@@ -307,7 +307,7 @@ describe('DevicesPage device categories', () => {
     )
     renderWithProviders(<DevicesPageWithRemoteControl />)
 
-    await user.click(await screen.findByRole('button', { name: '新增设备' }))
+    await user.click(await screen.findByRole('button', { name: '新增安卓设备' }))
     await user.click(screen.getByRole('button', { name: '下一步' }))
     const imageRow = (await screen.findByText('Android API 36')).closest('tr')
     expect(imageRow).not.toBeNull()
@@ -320,5 +320,117 @@ describe('DevicesPage device categories', () => {
     expect(await screen.findByText('设备创建进度：等待宿主机容量')).toBeInTheDocument()
     expect(screen.getAllByText('宿主机资源不足：内存还缺 2048 MB，磁盘还缺 8192 MB。容量恢复后会自动继续创建。').length).toBeGreaterThan(0)
     expect(screen.queryByText(/unknown|ERROR/)).not.toBeInTheDocument()
+  })
+
+  it('shows iOS Simulator details and lifecycle actions without exposing Android remote control or Appium internals', async () => {
+    const iosDevice = {
+      ...sampleDevices[0],
+      id: 'device_ios_000000000001',
+      host_id: 'host_ios_000000000001',
+      pool_id: 'pool_ios_000000000001',
+      pool_name: 'iOS 回归池',
+      platform: 'ios',
+      device_kind: 'simulator',
+      provider_type: 'appium_device_farm_ios',
+      provider_ref: 'SIMULATOR-UDID-001',
+      serial: 'SIMULATOR-UDID-001',
+      image_id: undefined,
+      capabilities: { model: 'iPhone 17 Pro', platformVersion: '26.3', runtimeId: '受控 Runtime' },
+    }
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      expect(search.get('platform')).toBe('ios')
+      const lifecycle = search.get('lifecycle_status')
+      const health = search.get('health_status')
+      const items = (!lifecycle || lifecycle === iosDevice.lifecycle_status) && (!health || health === iosDevice.health_status) ? [iosDevice] : []
+      return HttpResponse.json({ request_id: 'req_ios_list', data: { items, total: items.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
+    }))
+
+    renderWithProviders(<DevicesPageWithRemoteControl />, '/devices?platform=ios')
+    const row = (await screen.findByText('SIMULATOR-UDID-001')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('iOS')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText('iPhone 17 Pro')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText('26.3')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText('由会话围栏管理')).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByRole('button', { name: '远程连接' })).not.toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByRole('button', { name: '编辑配置' })).not.toBeInTheDocument()
+    expect(within(row as HTMLElement).getByRole('button', { name: /停\s*止/ })).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByRole('button', { name: /重\s*建/ })).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByRole('button', { name: /删\s*除/ })).toBeInTheDocument()
+    expect(screen.queryByText(/Appium|Dashboard|WDA|Session Grant/)).not.toBeInTheDocument()
+  })
+
+  it('keeps viewer access read-only for iOS lifecycle operations', async () => {
+    const iosDevice = {
+      ...sampleDevices[0], id: 'device_ios_viewer_001', platform: 'ios', device_kind: 'simulator',
+      provider_type: 'appium_device_farm_ios', serial: 'SIMULATOR-VIEWER-001', capabilities: { model: 'iPhone 17' },
+    }
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      const lifecycle = search.get('lifecycle_status')
+      const health = search.get('health_status')
+      const items = (!lifecycle || lifecycle === iosDevice.lifecycle_status) && (!health || health === iosDevice.health_status) ? [iosDevice] : []
+      return HttpResponse.json({ request_id: 'req_ios_viewer', data: { items, total: items.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
+    }))
+
+    renderWithProviders(<DevicesPageWithRemoteControl role="viewer" />, '/devices?platform=ios')
+    const row = (await screen.findByText('SIMULATOR-VIEWER-001')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('只读')).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '新增 iOS 模拟器' })).not.toBeInTheDocument()
+  })
+
+  it('creates an iOS Simulator from the Mac runtime and model catalog', async () => {
+    const user = userEvent.setup()
+    let createdBody: Record<string, unknown> | undefined
+    const macHost = {
+      id: 'host_ios_000000000001', name: 'Mac 宿主机', host_type: 'appium_device_farm_ios', host_os: 'macos', host_arch: 'arm64',
+      capabilities: {}, capacity: {}, used_capacity: {}, status: 'online', draining: false,
+      created_at: '2026-08-18T00:00:00Z', updated_at: '2026-08-18T00:00:00Z',
+    }
+    const iosPool = {
+      id: 'pool_ios_000000000001', name: 'iOS 动态池', platform: 'ios', default_lease_seconds: 3600, max_lease_seconds: 86400,
+      total_target: 0, min_ready: 0, max_concurrency: 1, status: 'active', created_at: '2026-08-18T00:00:00Z', updated_at: '2026-08-18T00:00:00Z',
+    }
+    server.use(
+      http.get('/api/v1/device-hosts', () => HttpResponse.json({ request_id: 'req_hosts', data: { items: [macHost], total: 1, page: 1, page_size: 200 }, error: null })),
+      http.get('/api/v1/device-pools', () => HttpResponse.json({ request_id: 'req_pools', data: { items: [iosPool], total: 1, page: 1, page_size: 200 }, error: null })),
+      http.get('/api/v1/ios-simulator-catalog', ({ request }) => {
+        expect(new URL(request.url).searchParams.get('host_id')).toBe(macHost.id)
+        return HttpResponse.json({ request_id: 'req_catalog', data: {
+          host_id: macHost.id,
+          runtimes: [{ id: 'runtime-ios-26-3', name: 'iOS 26.3', version: '26.3' }],
+          device_types: [{ id: 'iphone-17-pro', name: 'iPhone 17 Pro' }],
+        }, error: null })
+      }),
+      http.post('/api/v1/ios-simulators', async ({ request }) => {
+        createdBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ request_id: 'req_create_ios', data: { device_id: 'device_ios_new', command_id: 'command_ios_new', status: 'queued' }, error: null }, { status: 202 })
+      }),
+    )
+
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+    await user.click(await screen.findByRole('button', { name: '新增 iOS 模拟器' }))
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    await user.click(screen.getByLabelText('iOS Runtime'))
+    await user.click(await screen.findByText('iOS 26.3 · 26.3'))
+    await user.click(screen.getByLabelText('iPhone 机型'))
+    await user.click(await screen.findByText('iPhone 17 Pro'))
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    await user.type(screen.getByLabelText('显示名称（可选）'), 'iOS 26 回归机')
+    await user.type(screen.getByLabelText('创建原因（必填，将写入审计）'), '新增 iOS 自动化验证设备')
+    await user.click(screen.getByRole('button', { name: '创建模拟器' }))
+
+    await waitFor(() => expect(createdBody).toEqual({
+      host_id: macHost.id,
+      pool_id: iosPool.id,
+      runtime_id: 'runtime-ios-26-3',
+      device_type_id: 'iphone-17-pro',
+      display_name: 'iOS 26 回归机',
+      reason: '新增 iOS 自动化验证设备',
+    }))
+    expect(await screen.findByText(/iOS 模拟器创建任务已受理/)).toBeInTheDocument()
   })
 })

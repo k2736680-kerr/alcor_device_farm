@@ -66,7 +66,7 @@
 | DF-042 | Reservation 绑定的 iOS Session Fence | completed | DF-041 |
 | DF-043 | iOS Simulator 固定库存接入 | completed | DF-042 |
 | DF-044 | iOS Simulator 动态创建、重建和删除 | completed | DF-043 |
-| DF-045 | Device Farm Console iOS 设备域页面 | pending | DF-044 |
+| DF-045 | Device Farm Console iOS 设备域页面 | completed | DF-044 |
 | DF-046 | iOS 真实验收、运维回滚与 Android 回归 | pending | DF-045 |
 
 ## 3. 阶段 A：工程和契约基础

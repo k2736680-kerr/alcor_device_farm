@@ -436,12 +436,16 @@ func (store *Store) CreateDevice(ctx context.Context, device management.Device) 
 }
 
 func (store *Store) ListDevices(ctx context.Context, page paging.Page, filter management.DeviceFilter) ([]management.Device, int, error) {
-	conditions := make([]string, 0, 3)
+	conditions := make([]string, 0, 4)
 	arguments := make([]any, 0, 5)
 	if filter.PoolID != "" {
 		arguments = append(arguments, filter.PoolID)
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (SELECT 1 FROM device_pool_devices membership
 			WHERE membership.device_id=devices.id AND membership.pool_id=$%d AND membership.enabled)`, len(arguments)))
+	}
+	if filter.Platform != "" {
+		arguments = append(arguments, filter.Platform)
+		conditions = append(conditions, fmt.Sprintf("devices.platform=$%d", len(arguments)))
 	}
 	if filter.LifecycleStatus != "" {
 		arguments = append(arguments, filter.LifecycleStatus)

@@ -7,12 +7,14 @@ function lookup(labels: Record<string, string>, value?: string | null): string {
 
 const deviceKindLabels: Record<string, string> = {
   emulator: '安卓模拟器',
-  physical: '安卓真机',
+  simulator: 'iOS 模拟器',
+  physical: '真机',
 }
 
 const providerTypeLabels: Record<string, string> = {
   docker_emulator: 'Docker 模拟器',
   usb_android: 'USB 真机',
+  appium_device_farm_ios: 'iOS CoreSimulator',
   mock: '模拟测试设备',
 }
 
@@ -53,6 +55,7 @@ const hostTypeLabels: Record<string, string> = {
   docker_emulator: '模拟器宿主机',
   usb_android: '真机宿主机',
   hybrid: '混合宿主机',
+  appium_device_farm_ios: 'iOS 模拟器宿主机',
 }
 
 const hostStatusLabels: Record<string, string> = {
@@ -131,6 +134,10 @@ const auditActionLabels: Record<string, string> = {
   unquarantine_device: '解除设备隔离',
   restart_device: '重启设备',
   rebuild_device: '重建设备',
+  create_ios_simulator: '创建 iOS 模拟器',
+  start_device: '启动设备',
+  stop_device: '停止设备',
+  delete_device: '删除设备',
   scale_down_device: '自动缩容设备',
   cancel_pending_device_reservation: '取消等待中的预约',
   release_device_reservation: '释放预约',

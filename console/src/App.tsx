@@ -179,10 +179,10 @@ function AuthenticatedConsole({
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/images" element={<ImagesPage role={session.user.role} />} />
-            <Route path="/hosts" element={<HostsPage />} />
-            <Route path="/pools" element={<PoolsPage />} />
+            <Route path="/hosts" element={<HostsPage role={session.user.role} />} />
+            <Route path="/pools" element={<PoolsPage role={session.user.role} />} />
             <Route path="/devices" element={<DevicesPage role={session.user.role} />} />
-            <Route path="/reservations" element={<ReservationsPage />} />
+            <Route path="/reservations" element={<ReservationsPage role={session.user.role} />} />
             <Route path="/health-events" element={<HealthEventsPage />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
