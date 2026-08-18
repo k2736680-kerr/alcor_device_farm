@@ -26,6 +26,14 @@ function DevicesPageWithRemoteControl({
 describe('DevicesPage device categories', () => {
   afterEach(() => focusManager.setFocused(undefined))
 
+  it('shows the selected image version instead of stale device capabilities', async () => {
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('Android 14（API 34）')).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByText('Android 16（API 36）')).not.toBeInTheDocument()
+  })
+
   it('keeps the remote session until explicit hangup when the STF tab closes', async () => {
     const user = userEvent.setup()
     let endRequests = 0

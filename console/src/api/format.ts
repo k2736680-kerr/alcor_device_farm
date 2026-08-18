@@ -17,3 +17,17 @@ export function shortID(value?: string | null): string {
   }
   return value.length > 20 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value
 }
+
+/** Present the Android release together with its API level when known. */
+export function androidVersionLabel(value?: unknown): string {
+  const apiLevel = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(apiLevel) || apiLevel <= 0) {
+    return '-'
+  }
+  const releases: Record<number, string> = {
+    26: '8.0', 27: '8.1', 28: '9', 29: '10', 30: '11', 31: '12', 32: '12L',
+    33: '13', 34: '14', 35: '15', 36: '16',
+  }
+  const release = releases[apiLevel]
+  return release ? `Android ${release}（API ${apiLevel}）` : `API ${apiLevel}`
+}

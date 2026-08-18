@@ -435,7 +435,11 @@ func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[st
 		rollback["device_id"] = stringValue(payload, "device_id")
 		rollback["host_id"] = stringValue(payload, "host_id")
 		rollback["provider_ref"] = stringValue(payload, "provider_ref")
-		rollback["capabilities"] = mapValue(payload, "capabilities")
+		if mapValue(rollback, "capabilities") == nil {
+			// Compatibility for commands queued before rollback capabilities were
+			// recorded separately from the target image capabilities.
+			rollback["capabilities"] = mapValue(payload, "capabilities")
+		}
 		var restored providers.Snapshot
 		restored, err = agent.recreate(rollbackContext, rollback)
 		if err == nil {

@@ -506,7 +506,9 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	}
 	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
 		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status,last_seen_at)
-		VALUES($1,$2,$3,'emulator','docker_emulator','provider-reimage-001','rebuild','serial-reimage-001','{"platformName":"Android"}','ready','healthy',clock_timestamp())`,
+		VALUES($1,$2,$3,'emulator','docker_emulator','provider-reimage-001','rebuild','serial-reimage-001',
+		'{"platformName":"Android","apiLevel":34,"abi":"x86_64","resolution":"720x1280","hardware_profile_id":"pixel_9"}',
+		'ready','healthy',clock_timestamp())`,
 		deviceID, hostID, oldImageID); err != nil {
 		t.Fatal(err)
 	}
@@ -523,6 +525,12 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
 		t.Fatalf("claim=%#v err=%v", commands, err)
 	}
+	targetCapabilities := commands[0].Payload["capabilities"].(map[string]any)
+	rollbackCapabilities := commands[0].Payload["rollback"].(map[string]any)["capabilities"].(map[string]any)
+	if targetCapabilities["apiLevel"] != float64(36) || targetCapabilities["resolution"] != "1080x2400" ||
+		targetCapabilities["hardware_profile_id"] != "pixel_9" || rollbackCapabilities["apiLevel"] != float64(34) {
+		t.Fatalf("target capabilities=%#v rollback capabilities=%#v", targetCapabilities, rollbackCapabilities)
+	}
 	result := map[string]any{"reimage_applied": true, "generation": 2,
 		"connection": map[string]any{"serial": "10.0.0.1:31001", "adb_endpoint": "10.0.0.1:31001", "appium_endpoint": "http://10.0.0.1:32001", "appium_udid": "emulator-5556"},
 		"health":     map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true}}
@@ -531,7 +539,8 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 		t.Fatal(err)
 	}
 	applied, err := environment.store.GetDevice(ctx, deviceID)
-	if err != nil || applied.ImageID == nil || *applied.ImageID != targetImageID || applied.ReimageStatus != "idle" || int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 8192 {
+	if err != nil || applied.ImageID == nil || *applied.ImageID != targetImageID || applied.ReimageStatus != "idle" ||
+		int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 8192 || applied.Capabilities["apiLevel"] != float64(36) {
 		t.Fatalf("applied=%#v err=%v", applied, err)
 	}
 

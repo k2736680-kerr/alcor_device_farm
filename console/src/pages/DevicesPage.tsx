@@ -23,7 +23,7 @@ import {
 import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { formatTime, shortID } from '../api/format'
+import { androidVersionLabel, formatTime, shortID } from '../api/format'
 import {
   deviceKindLabel,
   healthReasonLabel,
@@ -144,6 +144,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const hardwareProfiles = unwrapData<AndroidHardwareProfile[]>(hardwareQuery.data) ?? []
   const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
+  const imageByID = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
+  const poolByID = useMemo(() => new Map(pools.map((pool) => [pool.id, pool])), [pools])
   const filteredHardwareProfiles = useMemo(() => {
     const needle = profileSearch.trim().toLowerCase()
     return needle === '' ? hardwareProfiles : hardwareProfiles.filter((profile) => profile.name.toLowerCase().includes(needle) || profile.id.includes(needle))
@@ -364,8 +366,24 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const columns: TableColumnsType<Device> = [
     { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: 'Phone 型号', width: 160, render: (_, device) => String(device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-') },
-    { title: 'Android 版本', width: 130, render: (_, device) => `API ${String(device.capabilities.apiLevel ?? '-')}` },
-    { title: '设备池', dataIndex: 'pool_name', width: 150, render: (value?: string) => value ?? '-' },
+    {
+      title: 'Android 版本', width: 180, render: (_, device) => {
+        const image = device.image_id ? imageByID.get(device.image_id) : undefined
+        return <Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text>
+      },
+    },
+    {
+      title: '设备池', dataIndex: 'pool_name', width: 210, render: (value: string | undefined, device) => {
+        const pool = device.pool_id ? poolByID.get(device.pool_id) : undefined
+        const defaultImage = pool?.default_image_id ? imageByID.get(pool.default_image_id) : undefined
+        return (
+          <Space direction="vertical" size={0}>
+            <Typography.Text>{value ?? pool?.name ?? '-'}</Typography.Text>
+            {defaultImage && <Typography.Text type="secondary">默认 {androidVersionLabel(defaultImage.api_level)}</Typography.Text>}
+          </Space>
+        )
+      },
+    },
     { title: '基础设备', dataIndex: 'is_pool_base', width: 100, render: (value?: boolean) => value ? <Tag color="blue">基础设备</Tag> : '-' },
     { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
     { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
@@ -407,8 +425,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   return (
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
-        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>新增设备</Button> : undefined} title="我的 Phone 设备">
-          <Typography.Text type="secondary">设备数据会长期保留；只有你明确选择“编辑配置/更换镜像”或删除时才清空。</Typography.Text>
+        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>新增设备</Button> : undefined} title="Phone 设备">
+          <Typography.Text type="secondary">设备数据默认保留；执行“重建”“编辑配置/更换镜像”或“删除设备”时会清空。</Typography.Text>
         </Card>
         {provisioningState && <Alert
           type={provisioningState.status === 'failed' ? 'error' : provisioningState.status === 'ready' ? 'success' : 'info'}
@@ -419,8 +437,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <Alert
           type="info"
           showIcon
-          message="默认只显示当前可以预约的设备"
-          description="隔离设备用于排查故障，已删除设备只保留历史记录；它们都不会计入可用设备数量。"
+          message="这里先显示可用设备"
+          description="使用中、隔离和已删除设备可通过下方分类查看。"
         />
         <Segmented<DeviceView>
           value={view}

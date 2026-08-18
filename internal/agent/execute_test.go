@@ -79,21 +79,26 @@ func TestReimageRollbackGetsFreshDeadlineAfterTargetTimeout(t *testing.T) {
 		"guest_memory_mb": 4096, "data_disk_mb": 4096, "graphics": "host"}
 	result, err := runtime.reimage(targetContext, map[string]any{
 		"device_id": "device_0000000000001", "host_id": "host_000000000000001", "image_id": "target_image_0000001",
-		"provider_ref": "emulator-1", "runtime_profile": profile, "capabilities": map[string]any{},
-		"rollback": map[string]any{"image_id": "previous_image_001", "runtime_profile": profile},
+		"provider_ref": "emulator-1", "runtime_profile": profile, "capabilities": map[string]any{"apiLevel": 36},
+		"rollback": map[string]any{"image_id": "previous_image_001", "runtime_profile": profile,
+			"capabilities": map[string]any{"apiLevel": 35}},
 	})
-	if providers.ErrorCode(err) != "REIMAGE_TARGET_FAILED" || result["rollback_restored"] != true || provider.currentImage != "previous_image_001" {
-		t.Fatalf("result=%#v error=%v current image=%q", result, err, provider.currentImage)
+	if providers.ErrorCode(err) != "REIMAGE_TARGET_FAILED" || result["rollback_restored"] != true ||
+		provider.currentImage != "previous_image_001" || provider.currentCapabilities["apiLevel"] != 35 {
+		t.Fatalf("result=%#v error=%v current image=%q capabilities=%#v", result, err, provider.currentImage, provider.currentCapabilities)
 	}
 }
 
-type rollbackDeadlineProvider struct{ currentImage string }
+type rollbackDeadlineProvider struct {
+	currentImage        string
+	currentCapabilities map[string]any
+}
 
 func (provider *rollbackDeadlineProvider) Discover(context.Context, string) ([]providers.Snapshot, error) {
 	return nil, nil
 }
 func (provider *rollbackDeadlineProvider) Create(_ context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
-	provider.currentImage = request.ImageID
+	provider.currentImage, provider.currentCapabilities = request.ImageID, request.Capabilities
 	return providers.Snapshot{DeviceID: request.DeviceID, HostID: request.HostID, ImageID: request.ImageID,
 		ProviderRef: request.ProviderRef, State: providers.StateCreated, RuntimeProfile: request.RuntimeProfile}, nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -835,13 +836,15 @@ func (service *Service) ReimageDeviceAudited(ctx context.Context, id string, inp
 	if err != nil {
 		return Device{}, err
 	}
+	targetCapabilities := reimageCapabilities(current.Capabilities, targetImage, targetProfile)
 	payload := map[string]any{
 		"operation_source": "management", "operation_kind": "reimage", "operation_state": current.LifecycleStatus,
 		"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
 		"image_id": targetImage.ID, "docker_image": targetImage.DockerImage, "docker_digest": targetImage.DockerDigest,
-		"capabilities": cloneMap(current.Capabilities), "runtime_profile": targetProfile.Map(),
+		"capabilities": targetCapabilities, "runtime_profile": targetProfile.Map(),
 		"rollback": map[string]any{"image_id": oldImage.ID, "docker_image": oldImage.DockerImage,
-			"docker_digest": oldImage.DockerDigest, "runtime_profile": currentProfile.Map()},
+			"docker_digest": oldImage.DockerDigest, "runtime_profile": currentProfile.Map(),
+			"capabilities": cloneMap(current.Capabilities)},
 	}
 	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
 		CommandID: commandID, CommandType: "rebuild", IdempotencyKey: commandKey, MaxAttempts: 1,
@@ -1156,5 +1159,19 @@ func cloneMap(source map[string]any) map[string]any {
 	for key, value := range source {
 		result[key] = value
 	}
+	return result
+}
+
+// reimageCapabilities keeps the selected Phone hardware identity while making
+// image and runtime fields describe the instance that will actually be built.
+func reimageCapabilities(current map[string]any, image Image, profile runtimeprofile.Profile) map[string]any {
+	result := cloneMap(current)
+	for key, value := range profile.Map() {
+		result[key] = value
+	}
+	result["platformName"] = "Android"
+	result["apiLevel"] = image.APILevel
+	result["abi"] = image.ABI
+	result["resolution"] = fmt.Sprintf("%dx%d", profile.Width, profile.Height)
 	return result
 }

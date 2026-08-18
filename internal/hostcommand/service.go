@@ -863,14 +863,22 @@ func (service *Service) reconcileManagementReimage(ctx context.Context, tx pgx.T
 			if marshalErr != nil {
 				return marshalErr
 			}
+			targetCapabilities := mapValue(payload, "capabilities")
+			if targetCapabilities == nil {
+				targetCapabilities = map[string]any{}
+			}
+			targetCapabilitiesJSON, marshalErr := json.Marshal(targetCapabilities)
+			if marshalErr != nil {
+				return marshalErr
+			}
 			if _, err := tx.Exec(ctx, `UPDATE devices SET image_id=$2,runtime_profile_override=$3,
 				pending_image_id=NULL,pending_runtime_profile=NULL,reimage_status='idle',reimage_error=NULL,
 				serial=$4,adb_endpoint=$5,appium_endpoint=$6,
-				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($7::text),true),
+				capabilities=jsonb_set(capabilities || $13::jsonb,'{appiumUdid}',to_jsonb($7::text),true),
 				lifecycle_status=$8,health_status=$9,health_reason=$10,consecutive_failures=0,last_seen_at=$11,updated_at=$11
 				WHERE id=$1 AND lifecycle_status=$12`, deviceID, commandPayloadString(payload, "image_id"), targetProfile,
 				result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
-				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle, targetCapabilitiesJSON); err != nil {
 				return err
 			}
 		} else {

@@ -77,7 +77,8 @@ export const samplePoolImages: DevicePoolImage[] = [
 export const sampleDevices: Device[] = [
   {
     id: 'device_00000000000001', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
-    provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: {},
+    provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: { apiLevel: 36 },
+    pool_id: 'pool_000000000000001', pool_name: 'default-android',
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
@@ -85,6 +86,7 @@ export const sampleDevices: Device[] = [
   {
     id: 'device_00000000000002', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5556', lifecycle_mode: 'rebuild', serial: 'emulator-5556', capabilities: {},
+    pool_id: 'pool_000000000000001', pool_name: 'default-android',
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'busy', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:01:00Z', updated_at: '2026-08-06T00:01:00Z',
@@ -193,8 +195,11 @@ export const handlers = [
     const size = Number(search.get('page_size') ?? 20)
     const lifecycle = search.get('lifecycle_status')
     const health = search.get('health_status')
+    const poolID = search.get('pool_id')
     const filtered = sampleDevices.filter((device) =>
-      (!lifecycle || device.lifecycle_status === lifecycle) && (!health || device.health_status === health),
+      (!lifecycle || device.lifecycle_status === lifecycle) &&
+      (!health || device.health_status === health) &&
+      (!poolID || device.pool_id === poolID),
     )
     const start = (page - 1) * size
     return HttpResponse.json(pageEnvelope(filtered.slice(start, start + size), filtered.length, page, size))

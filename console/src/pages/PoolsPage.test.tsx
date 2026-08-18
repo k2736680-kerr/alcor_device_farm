@@ -26,9 +26,9 @@ async function openPoolEditor() {
   renderWithProviders(<PoolsPage />)
   expect(await screen.findByText('default-android')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /配\s*置/ }))
-  expect(await screen.findByRole('spinbutton', { name: '总目标数量' })).toHaveValue('2')
-  expect(screen.getByRole('spinbutton', { name: '最小预热数量' })).toHaveValue('2')
-  expect(screen.getByRole('spinbutton', { name: '最大并发' })).toHaveValue('2')
+  expect(await screen.findByRole('spinbutton', { name: '设备数量' })).toHaveValue('2')
+  expect(screen.queryByRole('spinbutton', { name: '最小预热数量' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('spinbutton', { name: '最大并发' })).not.toBeInTheDocument()
   return user
 }
 
@@ -40,10 +40,9 @@ describe('PoolsPage pool capacity', () => {
       return poolResponse(submitted)
     }))
     const user = await openPoolEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: '总目标数量' }), { target: { value: '3' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最小预热数量' }), { target: { value: '3' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最大并发' }), { target: { value: '3' } })
-    await user.click(screen.getByRole('button', { name: '保存基本信息' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '设备数量' }), { target: { value: '3' } })
+    expect(screen.getByText('当前 2 台，目标 3 台')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() => expect(submitted).toMatchObject({
       name: 'default-android',
@@ -61,16 +60,15 @@ describe('PoolsPage pool capacity', () => {
       return poolResponse(submitted)
     }))
     const user = await openPoolEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: '总目标数量' }), { target: { value: '1' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最小预热数量' }), { target: { value: '1' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最大并发' }), { target: { value: '1' } })
-    await user.click(screen.getByRole('button', { name: '保存基本信息' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '设备数量' }), { target: { value: '1' } })
+    expect(screen.getByText('当前 2 台，目标 1 台')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
     expect(await screen.findByText('缩容时请填写至少 3 个字的调整原因')).toBeInTheDocument()
     expect(submitted).toBeUndefined()
 
     await user.type(screen.getByRole('textbox', { name: '调整原因（缩容时必填并写入审计）' }), '减少测试资源')
-    await user.click(screen.getByRole('button', { name: '保存基本信息' }))
-    expect((await screen.findAllByText('确认把设备池总目标缩容到 1 台？')).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+    expect((await screen.findAllByText('确认把设备池缩容到 1 台？')).length).toBeGreaterThan(0)
     expect(submitted).toBeUndefined()
     await user.click(screen.getByRole('button', { name: /确认缩容/ }))
 
