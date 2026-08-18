@@ -6793,7 +6793,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
 
 /**
- * Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device and waits for the existing Scheduler/STF claim flow.
+ * Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device, then uses STF for Android or a pinned Appium/XCUITest Session for an iOS Simulator.
  */
 export type startDeviceRemoteControlResponse202 = {
   data: RemoteControlAcceptedResponse
@@ -6905,7 +6905,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
 
 /**
- * Admin only. Returns the current administrator-owned remote control for this Device. The URL is a no-store, short-lived STF Web login entry and is present only after the Reservation is active.
+ * Admin only. Returns the current administrator-owned remote control. Android uses a short-lived STF Web login; iOS uses a same-origin Appium/WDA entry that never exposes internal endpoints.
  */
 export type getDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse
@@ -7042,7 +7042,7 @@ export function useGetDeviceRemoteControl<TData = Awaited<ReturnType<typeof getD
 
 
 /**
- * Admin only. Idempotently ends remote control, releases the Reservation and STF claim, and starts the normal device recycle/rebuild path.
+ * Admin only. Idempotently ends remote control and releases the Reservation plus the platform-specific STF claim or Appium/WDA Session.
  */
 export type endDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse
@@ -7154,7 +7154,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
 
 /**
- * Admin only. Renews the short Reservation while STF still reports the device as claimed; if STF has released it, the Reservation is ended instead.
+ * Admin only. Slides the Reservation lease while the platform-specific STF claim or pinned iOS Appium Session remains healthy; unhealthy control is ended instead.
  */
 export type heartbeatDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse
@@ -7639,7 +7639,7 @@ export function useGetIntegratedDeviceRemoteControl<TData = Awaited<ReturnType<t
 
 
 /**
- * Trusted Alcor gateway operation that reuses the existing Reservation/STF release path.
+ * Trusted Alcor gateway operation that reuses the existing Reservation and platform-specific STF or Appium/WDA release path.
  */
 export type endIntegratedDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse

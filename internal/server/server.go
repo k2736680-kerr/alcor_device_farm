@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -80,6 +82,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
 	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery, services.RemoteControl)
+	remotecontrol.RegisterGateway(mux, services.RemoteControl, logger)
 	mux.Handle("/console/", consoleui.Handler())
 	mux.Handle("/console", consoleui.Handler())
 	mux.HandleFunc("/", notFoundHandler)
@@ -149,9 +152,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				return err
 			}
 			go services.ConsoleAuth.RunCleanup(ctx)
-			if stfClient != nil && cfg.STF.WebConfigured() {
+			if (stfClient != nil && cfg.STF.WebConfigured()) || cfg.IOSRemote.Configured() {
 				services.RemoteControl, err = remotecontrol.New(
-					services.Reservations, services.Management, remotecontrol.ConfigFrom(cfg),
+					services.Reservations, services.Management, remotecontrol.ConfigFrom(cfg), services.IOSSessions,
 				)
 				if err != nil {
 					return err
@@ -288,4 +291,28 @@ func (writer *responseStatusWriter) Write(content []byte) (int, error) {
 		writer.WriteHeader(http.StatusOK)
 	}
 	return writer.ResponseWriter.Write(content)
+}
+
+func (writer *responseStatusWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
+func (writer *responseStatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := writer.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	connection, buffered, err := hijacker.Hijack()
+	if err == nil {
+		writer.status = http.StatusSwitchingProtocols
+		writer.wroteHeader = true
+	}
+	return connection, buffered, err
+}
+
+func (writer *responseStatusWriter) Flush() {
+	if !writer.wroteHeader {
+		writer.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(writer.ResponseWriter).Flush()
 }

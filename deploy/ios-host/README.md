@@ -1,6 +1,6 @@
 # DF-041/DF-042 macOS iOS Host 部署与验证
 
-本目录部署专用 macOS Host：DF-041 提供固定工具链、Appium Device Farm 本机 Hub/Node、只读 inventory/health Adapter；DF-042 在同一个 Host Agent 进程内增加 Reservation 绑定的 Session Fence；DF-044 增加 CoreSimulator 动态创建、重建和删除。它不安装 IPA、不实现 DaFit 业务步骤、不启用跨 Host Hub、不开放 Dashboard，也不管理真机签名。
+本目录部署专用 macOS Host：DF-041 提供固定工具链、Appium Device Farm 本机 Hub/Node、只读 inventory/health Adapter；DF-042 在同一个 Host Agent 进程内增加 Reservation 绑定的 Session Fence；DF-044 增加 CoreSimulator 动态创建、重建和删除；DF-046 在 Session Fence 中复用 Appium/XCUITest/WDA 的 MJPEG 与动作接口，只远控目标 Simulator。它不安装 IPA、不实现 DaFit 业务步骤、不启用跨 Host Hub、不开放 Dashboard、不控制 macOS 桌面，也不管理真机签名。
 
 ## 1. 固定版本
 
@@ -53,7 +53,7 @@ Appium Device Farm 12.0.1 的 `bootedSimulators` 在“没有任何 Booted Simul
 
 ## 4. 启动本机 Appium Hub 与动态发现 Node
 
-先启动本机 Hub。Hub 负责 Session Fence 的唯一上游入口：
+先启动本机 Hub。Hub 只负责 Session Fence 的唯一上游入口，不扫描 Simulator；把设备类型固定为当前环境不存在的 `real` 可避免 Hub 与动态 Node 各登记一份同一 Simulator：
 
 ```bash
 xcrun simctl boot '<ALLOWLISTED_UDID>'
@@ -66,8 +66,9 @@ export APPIUM_HOME="$IOS_HOST_ROOT/appium-home"
   --port=4723 \
   --use-plugins=device-farm \
   --plugin-device-farm-platform=ios \
-  --plugin-device-farm-ios-device-type=simulated \
-  --plugin-device-farm-booted-simulators
+  --plugin-device-farm-ios-device-type=real \
+  --plugin-device-farm-remove-devices-from-database-before-running-the-plugin \
+  --plugin-device-farm-bind-host-or-ip=127.0.0.1
 ```
 
 再启动动态发现 Node。Node 每 5 秒重新发现本机已启动 Simulator，并把 inventory 注册到本机 Hub，因此后台新建 Simulator 后不需要重启 Hub：
@@ -88,6 +89,7 @@ export APPIUM_HOME="$IOS_HOST_ROOT/appium-home"
 首期必须满足：
 
 - Hub 和动态发现 Node 都只监听 loopback；Adapter 会拒绝非 loopback Hub 地址；
+- `4723` Hub 只路由，不能再启用 Simulator 扫描；`4724` Node 是唯一 Simulator inventory 来源，禁止两边重复发现；
 - 每台 macOS Host 的 Node 只注册到本机 Hub，不配置也不允许跨 Host Hub；
 - PostgreSQL Scheduler 先确定 Host、Device 和 UDID，Device Farm 插件不得跨主机或跨设备自由分配；
 - Session Fence 只连接 `127.0.0.1:4723` 的本机 Hub，不连接 `4724` 动态发现 Node；
@@ -114,7 +116,31 @@ Host Agent 启动 DF-042 Session Fence，并通过心跳上报 `session_fence_en
 
 Reservation release 和 Reaper 会先通过 Fence 删除上游 Appium Session；清理失败时 Reservation 保持 active，Device 进入 quarantine，禁止静默释放后把残留 Session 留在 macOS Host。
 
-## 7. 验收入口
+Fence 重启不会结束仍然有效的 Appium/WDA Session。首次重新请求画面时，Fence 从该绑定 Session 的 capabilities 恢复 `mjpegServerPort` 并重新建立内存映射；端口缺失、越界或 Session 已结束时拒绝恢复，不能接受调用方自报端口。
+
+## 7. iOS 人工远控
+
+不需要开启 macOS Remote Management、Screen Sharing 或 VNC，也不安装 noVNC/websockify。人工远控与自动化一样先取得 active Reservation，再由 Server 通过一次性 Grant 请求 Session Fence 创建固定 `df:udids` 和 `appium:udid` 的 XCUITest Session。Fence 为每条 Session 分配独立回环 MJPEG 端口，并只允许 Server 使用 Agent Token 调用以下固定接口：
+
+- `GET /internal/v1/ios-remote/sessions/{session}/stream`：目标 Simulator MJPEG；
+- `GET /internal/v1/ios-remote/sessions/{session}/frame`：目标 Simulator PNG 截图；
+- `GET /internal/v1/ios-remote/sessions/{session}/health`：Session 健康与保活；
+- `POST /internal/v1/ios-remote/sessions/{session}/actions`：仅允许点击、滑动、文本和 Home。
+
+这些接口不接受 Host、端口、UDID、URL、shell、bundle ID、脚本名或原始 WebDriver 路径。浏览器只能访问 Server 同源短时入口，不能直连 Fence、Appium、WDA 或 MJPEG。
+
+同源 URL 中的短时签名只作为首次加载 `control` 页面的入口票据。页面已加载后，JS/CSS、画面和动作继续依赖 Console 会话、操作者和 active Reservation；入口票据到期不会中断健康的长时间远控，但重新打开旧 `control` URL 会被拒绝。
+
+本机检查：
+
+```bash
+curl --fail http://127.0.0.1:4723/status
+lsof -nP -iTCP:4810 -sTCP:LISTEN
+```
+
+本机部署的 4723、4724、4810 和动态 MJPEG 端口必须只监听回环；分离部署时 4810 由受控 HTTPS 内网代理暴露给 Server。人工 Session 必须通过 Console 正常结束或由 Reservation Reaper 清理，不得直接杀 WDA 后伪造数据库释放。
+
+## 8. 验收入口
 
 在 macOS 上设置下面的临时环境变量后运行版本化集成测试；测试只输出数量和结论，不输出完整 UDID：
 
@@ -131,6 +157,6 @@ go test -count=1 -v ./internal/adapters/appiumdevicefarm ./internal/ioshost ./in
 
 故障验收至少包含：关闭 Simulator 后 allowlist 设备不再 ready；停止本机 Hub 或动态发现 Node 后 readiness/inventory 失败；重新启动 Hub、Node 和 Simulator 后在目标时间内恢复；创建后 inventory 故障会直接清理刚创建的 CoreSimulator；未知设备不自动创建；证据中隐藏 Host 地址、完整 UDID、硬件序列号和所有 Secret。
 
-## 8. 回滚
+## 9. 回滚
 
-先 drain Host 或禁用 iOS Pool，再停止 Host Agent、本机动态发现 Node 和 Hub。隔离目录可整体保留以便复盘，也可在确认没有活动 Reservation/Session 后移走；不要修改 PostgreSQL Reservation 伪造释放，不要删除其他全局 Node/npm/Xcode 工具。Android Host、STF 和 Android Appium Endpoint 不受该回滚影响。
+先 drain Host 或禁用 iOS Pool，等待人工和自动化 Appium Session 全部释放，再停止 Host Agent、本机动态发现 Node 和 Hub。关闭 `DEVICE_FARM_IOS_REMOTE_CONTROL_ENABLED` 并删除 Gateway Secret 即可回滚到 DF-045；Session Fence 仍可供自动化使用。不要修改 PostgreSQL Reservation 伪造释放，不要删除其他全局 Node/npm/Xcode 工具。Android Host、STF 和 Android Appium Endpoint 不受该回滚影响。

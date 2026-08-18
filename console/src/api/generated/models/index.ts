@@ -278,6 +278,7 @@ export * from './remoteControlEnvelope';
 export * from './remoteControlEnvelopeError';
 export * from './remoteControlStatus';
 export * from './remoteControlSuccessResponse';
+export * from './remoteControlTransport';
 export * from './remoteSession';
 export * from './remoteSessionCreate';
 export * from './remoteSessionCreateBody';

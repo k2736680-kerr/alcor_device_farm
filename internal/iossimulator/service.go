@@ -164,7 +164,8 @@ func (service *Service) Create(ctx context.Context, actor audit.Actor, requestID
 			return ErrConflict
 		}
 		catalog, err := catalogFromCapabilities(capabilities)
-		if err != nil || !catalogHasRuntime(catalog, input.RuntimeID) || !catalogHasDeviceType(catalog, input.DeviceTypeID) {
+		if err != nil || !catalogHasRuntime(catalog, input.RuntimeID) || !catalogHasDeviceType(catalog, input.DeviceTypeID) ||
+			!catalogSupportsDeviceType(catalog, input.RuntimeID, input.DeviceTypeID) {
 			return ErrInvalidArgument
 		}
 		var poolStatus, platform string
@@ -249,6 +250,21 @@ func catalogHasDeviceType(catalog Catalog, id string) bool {
 		if item.ID == id {
 			return true
 		}
+	}
+	return false
+}
+
+func catalogSupportsDeviceType(catalog Catalog, runtimeID, deviceTypeID string) bool {
+	for _, runtime := range catalog.Runtimes {
+		if runtime.ID != runtimeID {
+			continue
+		}
+		for _, supportedID := range runtime.DeviceTypeIDs {
+			if supportedID == deviceTypeID {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }

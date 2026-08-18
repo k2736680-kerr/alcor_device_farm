@@ -90,6 +90,16 @@ type AuthorizationView struct {
 	UpstreamEndpoint string `json:"upstream_endpoint"`
 }
 
+// RemoteBindingView is the server-side route to an already bound manual iOS
+// Appium Session. It is never returned to a browser or northbound client.
+type RemoteBindingView struct {
+	ReservationID   string
+	DeviceID        string
+	HostID          string
+	FenceEndpoint   string
+	AppiumSessionID string
+}
+
 type FailureInput struct {
 	HostID       string `json:"host_id"`
 	SessionGrant string `json:"session_grant"`
@@ -128,6 +138,21 @@ func (service *Service) Issue(ctx context.Context, actor audit.Actor, reservatio
 		!validIdentifier(reservationID) || strings.TrimSpace(requestID) == "" {
 		return GrantView{}, ErrInvalidArgument
 	}
+	return service.issue(ctx, actor, reservationID, requestID, input)
+}
+
+// IssueManual is reserved for the Device Farm Console remote-control service.
+// It keeps the one-time Grant server-side while applying the same UDID pinning
+// and database binding used by trusted automated executors.
+func (service *Service) IssueManual(ctx context.Context, actor audit.Actor, reservationID, requestID string, input GrantInput) (GrantView, error) {
+	if service == nil || service.db == nil || !actor.Valid() || actor.Type != audit.ActorConsole ||
+		!validIdentifier(reservationID) || strings.TrimSpace(requestID) == "" || input.OwnerType != "manual" || input.OwnerID != actor.ID {
+		return GrantView{}, ErrInvalidArgument
+	}
+	return service.issue(ctx, actor, reservationID, requestID, input)
+}
+
+func (service *Service) issue(ctx context.Context, actor audit.Actor, reservationID, requestID string, input GrantInput) (GrantView, error) {
 	input.OwnerType, input.OwnerID = strings.TrimSpace(input.OwnerType), strings.TrimSpace(input.OwnerID)
 	if input.TTLSeconds == 0 {
 		input.TTLSeconds = 60
@@ -224,6 +249,53 @@ func (service *Service) Issue(ctx context.Context, actor audit.Actor, reservatio
 		}
 	}
 	return result, err
+}
+
+// RemoteBinding returns only an active manual Reservation's bound Session.
+// Callers must already have authenticated the Console owner; Host and Appium
+// routing details remain inside the server process.
+func (service *Service) RemoteBinding(ctx context.Context, ownerID, reservationID, deviceID string) (RemoteBindingView, error) {
+	if service == nil || service.db == nil || strings.TrimSpace(ownerID) == "" ||
+		!validIdentifier(reservationID) || !validIdentifier(deviceID) {
+		return RemoteBindingView{}, ErrInvalidArgument
+	}
+	var result RemoteBindingView
+	var reservationStatus, ownerType, storedOwnerID, sessionStatus, hostStatus string
+	var expiresAt *time.Time
+	var appiumSessionID *string
+	var appiumSessionEndedAt *time.Time
+	err := service.db.Pool().QueryRow(ctx, `SELECT r.id,r.status,r.owner_type,r.owner_id,r.expires_at,
+		s.status,s.appium_session_id,s.appium_session_ended_at,d.id,d.host_id,h.status,
+		COALESCE(h.capabilities->>'session_fence_endpoint','')
+		FROM device_reservations r JOIN device_sessions s ON s.reservation_id=r.id
+		JOIN devices d ON d.id=s.device_id JOIN device_hosts h ON h.id=d.host_id
+		WHERE r.id=$1 AND d.id=$2 AND d.platform='ios'`, reservationID, deviceID).Scan(
+		&result.ReservationID, &reservationStatus, &ownerType, &storedOwnerID, &expiresAt,
+		&sessionStatus, &appiumSessionID, &appiumSessionEndedAt, &result.DeviceID, &result.HostID,
+		&hostStatus, &result.FenceEndpoint)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RemoteBindingView{}, ErrNotFound
+	}
+	if err != nil {
+		return RemoteBindingView{}, err
+	}
+	if ownerType != "manual" || storedOwnerID != ownerID {
+		return RemoteBindingView{}, ErrForbidden
+	}
+	now := time.Now()
+	if reservationStatus != string(domain.ReservationActive) || expiresAt == nil || !expiresAt.After(now) ||
+		sessionStatus != string(domain.SessionActive) || hostStatus != string(domain.HostOnline) {
+		return RemoteBindingView{}, ErrConflict
+	}
+	if appiumSessionID == nil || appiumSessionEndedAt != nil || !appiumSessionIDPattern.MatchString(*appiumSessionID) {
+		return RemoteBindingView{}, ErrNotFound
+	}
+	endpoint, err := validateFenceEndpoint(result.FenceEndpoint)
+	if err != nil {
+		return RemoteBindingView{}, err
+	}
+	result.FenceEndpoint, result.AppiumSessionID = endpoint, *appiumSessionID
+	return result, nil
 }
 
 func (service *Service) Consume(ctx context.Context, input ConsumeInput, requestID string) (ConsumeView, error) {

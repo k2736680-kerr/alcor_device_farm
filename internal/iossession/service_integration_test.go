@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,6 +97,40 @@ func TestGrantLifecycleUsesOneReservationAndOneUDID(t *testing.T) {
 		AND appium_session_id='appium-session-0001' AND appium_session_ended_at IS NOT NULL`, testDeviceSession, 1)
 }
 
+func TestManualRemoteGrantAndBindingStayOwnedByConsoleReservation(t *testing.T) {
+	db := openIOSSessionTestDatabase(t)
+	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations
+		SET client_id='console:admin',owner_type='manual',owner_id='admin' WHERE id=$1`, testReservation); err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, testAgentToken, fixedGrantGenerator(9))
+	actor := audit.Console("admin")
+	grant, err := service.IssueManual(context.Background(), actor, testReservation,
+		"issue_manual_remote_0001", GrantInput{OwnerType: "manual", OwnerID: "admin", TTLSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Consume(context.Background(), ConsumeInput{HostID: testHostID,
+		SessionGrant: grant.SessionGrant, Request: validSessionRequest(testUDID)}, "consume_manual_remote_0001"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Bind(context.Background(), BindingInput{HostID: testHostID,
+		SessionGrant: grant.SessionGrant, AppiumSessionID: "manual-appium-session-1"}, "bind_manual_remote_0001"); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := service.RemoteBinding(context.Background(), "admin", testReservation, testDeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.AppiumSessionID != "manual-appium-session-1" || binding.FenceEndpoint != "http://127.0.0.1:4810" || binding.HostID != testHostID {
+		t.Fatalf("binding=%#v", binding)
+	}
+	if _, err := service.RemoteBinding(context.Background(), "other-admin", testReservation, testDeviceID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-owner binding error=%v", err)
+	}
+}
+
 func TestGrantExpiryAndProviderBusyDrift(t *testing.T) {
 	db := openIOSSessionTestDatabase(t)
 	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
@@ -129,21 +164,28 @@ func TestGrantExpiryAndProviderBusyDrift(t *testing.T) {
 func TestRecentSessionCleanupBusyIsRetryableWithoutQuarantine(t *testing.T) {
 	db := openIOSSessionTestDatabase(t)
 	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
-	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_reservations
-		(id,client_id,pool_id,device_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,
-		idempotency_key,starts_at,expires_at,released_at)
-		VALUES ('ios_recent_reservation01','service',$1,$2,'test_run','ios_recent_owner_00001','{}',600,
-		'released','ios-recent-reservation-key',clock_timestamp()-interval '2 minutes',
-		clock_timestamp()-interval '1 minute',clock_timestamp());
-		INSERT INTO device_sessions
-		(id,reservation_id,device_id,status,connection_metadata,started_at,ended_at,
-		appium_session_id,appium_session_started_at,appium_session_ended_at)
-		VALUES ('ios_recent_session00001','ios_recent_reservation01',$2,'closed','{}',
-		clock_timestamp()-interval '1 minute',clock_timestamp(),'recent-appium-session',
-		clock_timestamp()-interval '1 minute',clock_timestamp());
-		UPDATE devices SET capabilities=jsonb_set(capabilities,'{providerBusy}','true'::jsonb) WHERE id=$2`,
-		testPoolID, testDeviceID); err != nil {
-		t.Fatal(err)
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO device_reservations
+			(id,client_id,pool_id,device_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,
+			idempotency_key,starts_at,expires_at,released_at)
+			VALUES ('ios_recent_reservation01','service',$1,$2,'test_run','ios_recent_owner_00001','{}',600,
+			'released','ios-recent-reservation-key',clock_timestamp()-interval '2 minutes',
+			clock_timestamp()-interval '1 minute',clock_timestamp())`, []any{testPoolID, testDeviceID}},
+		{`INSERT INTO device_sessions
+			(id,reservation_id,device_id,status,connection_metadata,started_at,ended_at,
+			appium_session_id,appium_session_started_at,appium_session_ended_at)
+			VALUES ('ios_recent_session00001','ios_recent_reservation01',$1,'closed','{}',
+			clock_timestamp()-interval '1 minute',clock_timestamp(),'recent-appium-session',
+			clock_timestamp()-interval '1 minute',clock_timestamp())`, []any{testDeviceID}},
+		{`UPDATE devices SET capabilities=jsonb_set(capabilities,'{providerBusy}','true'::jsonb) WHERE id=$1`, []any{testDeviceID}},
+	}
+	for _, statement := range statements {
+		if _, err := db.Pool().Exec(context.Background(), statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
 	}
 	service := New(db, testAgentToken, fixedGrantGenerator(9))
 	if _, err := service.Issue(context.Background(), audit.Service("ios-integration"), testReservation,
@@ -283,6 +325,61 @@ func TestReservationReaperClosesIOSSessionBeforeExpiry(t *testing.T) {
 	}
 	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_sessions WHERE reservation_id=$1
 		AND status='closed' AND appium_session_ended_at IS NOT NULL`, testReservation, 1)
+}
+
+func TestReservationExpiryAndSessionReconcilerConvergeWithoutQuarantine(t *testing.T) {
+	fence := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer fence.Close()
+
+	db := openIOSSessionTestDatabase(t)
+	seedActiveIOSReservation(t, db, fence.URL, false)
+	iosService := New(db, testAgentToken, fixedGrantGenerator(8))
+	bindTestSession(t, iosService, "appium-session-expiry-race")
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_sessions
+		SET appium_session_started_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, testDeviceSession); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations
+		SET starts_at=clock_timestamp()-interval '3 minutes',
+			expires_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, testReservation); err != nil {
+		t.Fatal(err)
+	}
+
+	reservationService := reservation.NewService(db, nil)
+	reservationService.SetIOSSessionController(iosService)
+	start := make(chan struct{})
+	errorsSeen := make(chan error, 2)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		err := iosService.ReconcileOnce(context.Background())
+		if !errors.Is(err, ErrNothingToReconcile) {
+			errorsSeen <- err
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		_, err := reservationService.ReapOnce(context.Background(), 30*time.Second)
+		if err != nil {
+			errorsSeen <- err
+		}
+	}()
+	close(start)
+	workers.Wait()
+	close(errorsSeen)
+	for err := range errorsSeen {
+		t.Fatalf("expiry reconciliation failed: %v", err)
+	}
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_reservations WHERE id=$1 AND status='expired'`, testReservation, 1)
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM devices WHERE id=$1 AND lifecycle_status='ready'
+		AND health_status='healthy'`, testDeviceID, 1)
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id=$1
+		AND reason='IOS_BOUND_SESSION_NOT_BUSY'`, testDeviceID, 0)
 }
 
 func TestCleanupFailureKeepsReservationActiveAndQuarantinesDevice(t *testing.T) {

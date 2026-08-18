@@ -30,7 +30,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
-| macOS Host Agent + CoreSimulator + Appium Device Farm / iOS | ADR-0021/0022 保留发现、技术 busy、健康和明确 UDID Session 路由；ADR-0024 允许复用既有 Host Command/Agent/Provider 对已安装 Runtime 动态执行 `simctl create/boot/shutdown/erase/delete` | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant，Alcor 的业务执行器另行实现 | 不在 Docker 中伪造 iOS，不接受任意命令/Runtime ID/Device Type ID，不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不自动下载 Runtime，不把已移除的人工串流当作 STF 替代 |
+| macOS Host Agent + CoreSimulator + Appium Device Farm / iOS | ADR-0021/0022 保留发现、技术 busy、健康和明确 UDID Session 路由；ADR-0024 管理 CoreSimulator 生命周期；ADR-0025 复用人工 Appium/XCUITest Session、WDA MJPEG/动作与既有远控会话 | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant，人工远控也只走 Reservation 绑定的同源短时入口 | 不在 Docker 中伪造 iOS，不控制或暴露 macOS 桌面，不接受任意命令/Runtime ID/Device Type ID，不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不自动下载 Runtime，不公开 Fence/Appium/WDA/MJPEG 或自研 WebDriver/串流编码 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
 
@@ -96,7 +96,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - RunResult、用例级结果、评分、门禁、对比和复核；
 - Supabase Storage Artifact、LLM 报告和 HyperDX/WeData 观测；
 - Eval Console 的 Case、Dataset、Run、Result、报告页面和 CI/发布门禁入口。
-- iOS Executor、IPA/Build/Case/Run/Result/Artifact、浏览器人工远控、Windows/Linux iOS Host、tvOS 和跨 Host Appium Hub。
+- iOS Executor、IPA/Build/Case/Run/Result/Artifact、Windows/Linux iOS Host、tvOS 和跨 Host Appium Hub。
 
 这些能力由新版 Alcor 实施。Device Farm Console 只提供设备域操作入口，不建立等待同步的 Alcor 业务对象。
 

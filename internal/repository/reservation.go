@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
@@ -756,6 +757,43 @@ func (ReservationRepository) FindActivePoolForDevice(ctx context.Context, querie
 func (ReservationRepository) LockTargetDevice(ctx context.Context, tx pgx.Tx, deviceID string) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, deviceID); err != nil {
 		return fmt.Errorf("lock target device reservation: %w", err)
+	}
+	return nil
+}
+
+// LockIOSRemoteHost serializes manual targeted reservations on one macOS
+// desktop. VNC exposes the Host user's desktop rather than an isolated
+// Simulator framebuffer, so two concurrent iOS remote reservations on the
+// same Host would be able to see and control each other's windows.
+func (ReservationRepository) LockIOSRemoteHost(ctx context.Context, tx pgx.Tx, deviceID string) error {
+	var hostID, platform string
+	err := tx.QueryRow(ctx, `SELECT host_id,platform FROM devices WHERE id=$1`, deviceID).Scan(&hostID, &platform)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load targeted device Host: %w", err)
+	}
+	if !strings.EqualFold(platform, "ios") {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "ios-remote-host:"+hostID); err != nil {
+		return fmt.Errorf("lock iOS remote Host: %w", err)
+	}
+	var occupied bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM device_reservations r
+			JOIN devices d ON d.id=r.requested_capabilities->>'`+TargetDeviceCapability+`'
+			WHERE r.owner_type='manual' AND r.status IN ('pending','active')
+			  AND d.platform='ios' AND d.host_id=$1
+		)`, hostID).Scan(&occupied)
+	if err != nil {
+		return fmt.Errorf("check iOS remote Host occupancy: %w", err)
+	}
+	if occupied {
+		return ErrCapacityUnavailable
 	}
 	return nil
 }

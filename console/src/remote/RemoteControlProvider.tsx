@@ -24,7 +24,7 @@ import { unwrapData } from '../api/unwrap'
 const storedDeviceKey = 'device-farm.remote-control-device'
 const remoteConnectTimeoutMs = 30_000
 
-type RemoteDevice = Pick<Device, 'id' | 'serial'>
+type RemoteDevice = Pick<Device, 'id' | 'serial' | 'platform' | 'device_kind'>
 
 interface RemoteState {
   device: RemoteDevice
@@ -58,7 +58,12 @@ function restoreDevice(): RemoteDevice | null {
     if (!stored) return null
     const parsed = JSON.parse(stored) as Partial<RemoteDevice>
     return typeof parsed.id === 'string' && typeof parsed.serial === 'string'
-      ? { id: parsed.id, serial: parsed.serial }
+      ? {
+          id: parsed.id,
+          serial: parsed.serial,
+          platform: parsed.platform === 'ios' ? 'ios' : 'android',
+          device_kind: typeof parsed.device_kind === 'string' ? parsed.device_kind : 'emulator',
+        }
       : null
   } catch {
     window.sessionStorage.removeItem(storedDeviceKey)
@@ -136,7 +141,7 @@ export function RemoteControlProvider({
       { id: remoteState.device.id },
       {
         onSuccess: () => {
-          if (!silent) message.success('远控已挂断，设备正在清理并重建')
+          if (!silent) message.success('远控已挂断，设备正在释放')
           clearRemote(closePopup)
         },
         onError: (error) => {
@@ -174,7 +179,9 @@ export function RemoteControlProvider({
       return
     }
     popup.document.title = '正在连接设备…'
-    popup.document.body.textContent = '正在预约设备并连接 STF，请稍候…'
+    popup.document.body.textContent = device.platform === 'ios'
+      ? '正在预约设备并连接 iOS 远程画面，请稍候…'
+      : '正在预约设备并连接 STF，请稍候…'
     remotePopup.current = popup
     endingRemote.current = false
     const attempt = ++remoteAttempt.current
@@ -190,8 +197,15 @@ export function RemoteControlProvider({
           const view = unwrapData<RemoteControl>(data)
           window.sessionStorage.setItem(storedDeviceKey, JSON.stringify(device))
           setRemoteState((current) => current?.device.id === device.id ? { ...current, started: true } : current)
-          if (view?.url) navigatePopup(popup, view.url)
-          message.info('设备已预约，正在建立远控连接…')
+          if (view?.url) {
+            navigatePopup(popup, view.url)
+            if (device.platform === 'ios') {
+              message.success('iOS 远控已打开，只会显示当前预约的目标模拟器')
+            }
+          }
+          message.info(device.platform === 'ios'
+            ? 'iOS 设备已预约，正在打开受控远程画面…'
+            : '设备已预约，正在建立 STF 远控连接…')
           invalidate()
         },
         onError: (error) => {
@@ -239,7 +253,9 @@ export function RemoteControlProvider({
   useEffect(() => {
     if (!remoteView?.url || remoteState?.opened || !remoteState?.popup || remoteState.popup.closed) return
     navigatePopup(remoteState.popup, remoteView.url)
-    message.success('远控已连接；点击挂断会释放并清理设备')
+    message.success(remoteState.device.platform === 'ios'
+      ? 'iOS 远控已连接；画面和操作已绑定当前预约的目标模拟器'
+      : '安卓远控已连接；点击挂断会释放设备')
   }, [message, navigatePopup, remoteState, remoteView?.url])
 
   const sendHeartbeat = useCallback(async () => {

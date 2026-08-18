@@ -7,12 +7,14 @@
  */
 import type { Identifier } from './identifier';
 import type { RemoteControlStatus } from './remoteControlStatus';
+import type { RemoteControlTransport } from './remoteControlTransport';
 
 export interface RemoteControl {
   device_id: Identifier;
   reservation_id?: Identifier;
   status: RemoteControlStatus;
-  /** Extremely short-lived STF Web login URL. Never contains the STF API token or signing secret and must not be cached or persisted. */
+  transport: RemoteControlTransport;
+  /** Short-lived controlled remote entry. Android uses STF and iOS uses a same-origin Appium/WDA gateway bound to the target Simulator. It never contains Host/Fence/Appium/WDA/MJPEG endpoints, Session Grants, API tokens or signing secrets and must not be cached or persisted. */
   url?: string;
   expires_at?: string;
   /** @minimum 1 */

@@ -4,7 +4,7 @@
 
 本文是 DF-039 的 iOS 实施基线。它在 Android 第一版之上增加多平台设备域设计，不修改 Alcor/DaFit 业务边界，也不代表当前生产代码已经支持 iOS。
 
-当前目标是让现有设备农场内核把专用 macOS Host 作为动态 iOS 虚拟设备宿主机，按需创建、启动、停止、重建和删除 CoreSimulator 虚拟 iPhone，并向可信 iOS Executor 返回与 active Reservation 唯一绑定的 Appium XCUITest 连接。当前不建设 iOS 业务执行器、不管理 IPA、不提供人工远控、不把 Android 迁入 Appium Device Farm；真实 iPhone 延后独立接入。
+当前目标是让现有设备农场内核把专用 macOS Host 作为动态 iOS 虚拟设备宿主机，按需创建、启动、停止、重建和删除 CoreSimulator 虚拟 iPhone，并向可信 iOS Executor 返回与 active Reservation 唯一绑定的 Appium XCUITest 连接。DF-046 按 ADR-0025 增加只操作目标 Simulator 的受控人工远控；当前仍不建设 iOS 业务执行器、不管理 IPA、不把 Android 迁入 Appium Device Farm，真实 iPhone延后独立接入。
 
 ## 2. 总体结论
 
@@ -42,7 +42,7 @@ Appium Device Farm 12 + XCUITest + WDA
 | Device Farm Server | Host/Device/Pool、预约、租约、唯一占用、审计和北向契约 | Xcode、WDA 构建、IPA、页面动作和结果 |
 | PostgreSQL | active Reservation、Device Session、连接快照和状态收敛真相 | 保存 Apple 私钥或 Appium Device Farm 业务分配 |
 | macOS Host Agent | 心跳、受控命令、inventory、健康、Endpoint 和本机 Secret 引用 | Alcor Run、Case、Result、评分和报告 |
-| Appium Device Farm | 宿主机内 Hub/动态 Node 注册、iOS 发现、技术 busy、明确 UDID 的 Session 路由 | 业务设备池、人工预约、跨 Host 调度、浏览器远控 |
+| Appium Device Farm | 宿主机内 Hub/动态 Node 注册、iOS 发现、技术 busy、明确 UDID 的 Session 路由 | 业务设备池、人工预约、跨 Host 调度或现成浏览器远控页面 |
 | XCUITest Driver/WDA | WebDriver Session、XCTest 通信和设备自动化 | 设备农场预约、业务用例和报告 |
 | go-ios | 保留为未来真机发现/诊断和插件依赖 | 当前 Simulator 创建、独立设备池或业务执行 |
 | Xcode/simctl/devicectl | Simulator 和 Apple 官方设备工具链 | 由 Server 或浏览器直接调用 |
@@ -86,7 +86,7 @@ Appium Device Farm 网站仍存在 Appium 2.4 和 streaming 的旧页面，不�
 - 真实 iPhone、配对、Developer Mode 与 WDA 签名；
 - Windows/Linux Host 运行 iOS 真机 Session；
 - Appium Device Farm Hub/Node 跨主机自动分配；本机 Hub/动态 Node 只用于刷新单台 Host inventory；
-- tvOS、无线 iOS、浏览器人工远控、WDA 视频串流和 Appium Inspector 托管；
+- tvOS、无线 iOS、Appium Inspector 托管、原始 WebDriver/WDA 暴露和宿主机桌面远控；
 - Alcor iOS Case/Runner/Result 页面与执行实现。
 
 ## 6. 平台中立模型
@@ -131,7 +131,7 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 | `os_ready` | boot completed | SpringBoard/Simulator ready |
 | `automation` | UiAutomator2/Appium 冒烟 | XCUITest/WDA 冒烟 |
 | `router` | 独立 Endpoint healthy | 本机 Appium Hub 与动态 Node healthy、UDID inventory 一致 |
-| `remote_control` | STF 可见性 | `unsupported` |
+| `remote_control` | STF 可见性 | DF-046 的 Appium/XCUITest/WDA MJPEG 与动作白名单 |
 
 只有必需探针全部通过才能 `ready/healthy`。`unsupported` 不是失败；Runtime 不可用、UDID 漂移或插件 inventory 冲突为 unhealthy/quarantined。插件 `providerBusy` 只表示技术占用，不降低 Router 健康：Reservation 和 Appium Session 一致时 Device 为 `busy/healthy`。固定版 XCUITest doctor 的必需结果必须通过。
 
@@ -166,6 +166,7 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 | Reservation active，插件报告目标 busy 且 Session 不匹配 | 创建失败，Device degraded；查询绑定后隔离或等待旧 Session 清理 |
 | 插件存在 Session，PostgreSQL 无 active Reservation | 正常 Session 结束后留 30 秒等待 Agent 刷新 busy；超时仍 busy 时终止技术 Session、记录高优先级审计、Device quarantined |
 | Reservation 过期但 Session 仍存在 | Reaper 先关闭 Session，再关闭 Reservation；失败保持 quarantined |
+| Reservation 已到期或距离到期不足 30 秒，插件已先释放 busy | Reconciler 不隔离；由 Reaper 和 Session cleanup 正常关闭并恢复 ready/healthy |
 | UDID 或 Host Node identity 变化 | 不更新活动连接快照；停止调度并要求重新发现/人工确认 |
 | Appium/Agent/Host 离线 | 停止新预约；现有租约到期后按未知状态隔离，不假设 Session 已关闭 |
 
@@ -179,7 +180,9 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 
 ## 11. Console 与人工调试
 
-Console 展示 iOS Host、Runtime/机型目录、动态创建向导、Device、Pool、预约、健康组件和审计。浏览器不获得 Appium Endpoint、Session Grant 或 WDA 内部地址。Appium Device Farm 12.x 没有人工串流，因此 iOS Device 页面明确显示“自动化可用，人工远控暂不支持”，不能复用 Android STF 按钮或伪造远控入口。
+Console 展示 iOS Host、Runtime/机型目录、动态创建向导、Device、Pool、预约、健康组件和审计。DF-045 只交付设备域页面；DF-046 按 ADR-0025 复用目标 Appium Session 的 WDA MJPEG/动作增加独立同源入口。Appium Device Farm 12.x 没有可直接复用的人工远控页面，因此本项目只补预约鉴权代理和动作白名单；浏览器不获得 Host/Fence/Appium/WDA/MJPEG 地址、Agent Token、Session Grant 或原始 WebDriver 能力。
+
+短时同源签名是首次打开控制页的入口票据，不是远控 Session 的固定寿命。已加载页面的资源、画面和动作继续由 Console 会话、操作者与滑动续约的 active Reservation 鉴权；Fence 重启时从绑定 Appium Session capabilities 恢复 MJPEG 端口，不要求重启 Simulator 或暴露端口给浏览器。
 
 ## 12. 安全、可观测性和回滚
 

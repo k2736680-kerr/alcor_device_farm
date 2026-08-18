@@ -134,6 +134,7 @@ export const sampleHealthEvents: HealthEventRecord[] = [
 
 export const sampleRemoteControl: RemoteControl = {
   device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'connected',
+  transport: 'stf',
   url: 'http://stf.example.test/?jwt=short-lived-token#!/control/emulator-5554',
   expires_at: new Date(Date.now() + 60_000).toISOString(), heartbeat_interval_seconds: 15,
 }

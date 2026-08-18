@@ -322,7 +322,7 @@ describe('DevicesPage device categories', () => {
     expect(screen.queryByText(/unknown|ERROR/)).not.toBeInTheDocument()
   })
 
-  it('shows iOS Simulator details and lifecycle actions without exposing Android remote control or Appium internals', async () => {
+  it('shows iOS Simulator details, remote control and lifecycle actions without exposing Appium internals', async () => {
     const iosDevice = {
       ...sampleDevices[0],
       id: 'device_ios_000000000001',
@@ -353,12 +353,55 @@ describe('DevicesPage device categories', () => {
     expect(within(row as HTMLElement).getByText('iPhone 17 Pro')).toBeInTheDocument()
     expect(within(row as HTMLElement).getByText('26.3')).toBeInTheDocument()
     expect(within(row as HTMLElement).getByText('由会话围栏管理')).toBeInTheDocument()
-    expect(within(row as HTMLElement).queryByRole('button', { name: '远程连接' })).not.toBeInTheDocument()
+    expect(within(row as HTMLElement).getByRole('button', { name: '远程连接' })).toBeInTheDocument()
     expect(within(row as HTMLElement).queryByRole('button', { name: '编辑配置' })).not.toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: /停\s*止/ })).toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: /重\s*建/ })).toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: /删\s*除/ })).toBeInTheDocument()
     expect(screen.queryByText(/Appium|Dashboard|WDA|Session Grant/)).not.toBeInTheDocument()
+  })
+
+  it('opens an iOS Simulator through the same-origin Appium/WDA entry with Chinese guidance', async () => {
+    const user = userEvent.setup()
+    const iosDevice = {
+      ...sampleDevices[0], id: 'device_ios_remote_001', platform: 'ios', device_kind: 'simulator',
+      provider_type: 'appium_device_farm_ios', serial: 'SIMULATOR-REMOTE-001', capabilities: { model: 'iPhone 17 Pro' },
+    }
+    const replace = vi.fn()
+    const popup = {
+      closed: false,
+      close: vi.fn(),
+      document: { title: '', body: { textContent: '' } },
+      location: { replace },
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    server.use(
+      http.get('/api/v1/devices', ({ request }) => {
+        const search = new URL(request.url).searchParams
+        const lifecycle = search.get('lifecycle_status')
+        const health = search.get('health_status')
+        const items = (!lifecycle || lifecycle === iosDevice.lifecycle_status) && (!health || health === iosDevice.health_status) ? [iosDevice] : []
+        return HttpResponse.json({ request_id: 'req_ios_remote_list', data: { items, total: items.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
+      }),
+      http.post('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+        request_id: 'req_ios_remote_start',
+        data: {
+          device_id: String(params.id), reservation_id: 'reservation_ios_remote_001', status: 'connected',
+          transport: 'appium', url: '/console/remote/ios/opaque-entry/control',
+          heartbeat_interval_seconds: 15,
+        },
+        error: null,
+      })),
+    )
+
+    renderWithProviders(<DevicesPageWithRemoteControl />, '/devices?platform=ios')
+    const row = (await screen.findByText('SIMULATOR-REMOTE-001')).closest('tr')
+    expect(row).not.toBeNull()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
+
+    expect(popup.document.body.textContent).toBe('正在预约设备并连接 iOS 远程画面，请稍候…')
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringMatching(/^\/console\/remote\/ios\//)))
+    expect(await screen.findByText(/只会显示当前预约的目标模拟器/)).toBeInTheDocument()
   })
 
   it('keeps viewer access read-only for iOS lifecycle operations', async () => {
@@ -401,8 +444,8 @@ describe('DevicesPage device categories', () => {
         expect(new URL(request.url).searchParams.get('host_id')).toBe(macHost.id)
         return HttpResponse.json({ request_id: 'req_catalog', data: {
           host_id: macHost.id,
-          runtimes: [{ id: 'runtime-ios-26-3', name: 'iOS 26.3', version: '26.3' }],
-          device_types: [{ id: 'iphone-17-pro', name: 'iPhone 17 Pro' }],
+          runtimes: [{ id: 'runtime-ios-26-3', name: 'iOS 26.3', version: '26.3', device_type_ids: ['iphone-17-pro'] }],
+          device_types: [{ id: 'iphone-17-pro', name: 'iPhone 17 Pro' }, { id: 'iphone-15-pro', name: 'iPhone 15 Pro' }],
         }, error: null })
       }),
       http.post('/api/v1/ios-simulators', async ({ request }) => {
@@ -417,6 +460,7 @@ describe('DevicesPage device categories', () => {
     await user.click(screen.getByLabelText('iOS Runtime'))
     await user.click(await screen.findByText('iOS 26.3 · 26.3'))
     await user.click(screen.getByLabelText('iPhone 机型'))
+    expect(screen.queryByText('iPhone 15 Pro')).not.toBeInTheDocument()
     await user.click(await screen.findByText('iPhone 17 Pro'))
     await user.click(screen.getByRole('button', { name: '下一步' }))
     await user.type(screen.getByLabelText('显示名称（可选）'), 'iOS 26 回归机')

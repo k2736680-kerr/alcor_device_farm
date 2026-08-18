@@ -69,6 +69,10 @@ stf:
   web_user_name: Device Farm Admin
   web_user_email: admin@example.test
   web_token_ttl: 25s
+ios_remote_control:
+  enabled: true
+  gateway_secret: yaml-ios-gateway-secret-at-least-32-bytes
+  gateway_token_ttl: 25s
 `)
 	t.Setenv("DEVICE_FARM_SERVER_ADDRESS", "127.0.0.1:28080")
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
@@ -87,6 +91,9 @@ stf:
 	t.Setenv("DEVICE_FARM_STF_WEB_USER_NAME", "Environment Admin")
 	t.Setenv("DEVICE_FARM_STF_WEB_USER_EMAIL", "environment-admin@example.test")
 	t.Setenv("DEVICE_FARM_STF_ATTEMPTS", "4")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_ENABLED", "true")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_SECRET", "environment-ios-gateway-secret-at-least-32-bytes")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_TOKEN_TTL", "20s")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -121,6 +128,9 @@ stf:
 		cfg.STF.APIToken != "environment-stf-secret" || cfg.STF.Attempts != 4 ||
 		cfg.STF.WebURL != "http://stf-web-environment.local" || cfg.STF.WebUserEmail != "environment-admin@example.test" {
 		t.Fatalf("STF config = %+v", cfg.STF)
+	}
+	if !cfg.IOSRemote.Enabled || cfg.IOSRemote.GatewayTokenTTL != 20*time.Second {
+		t.Fatalf("iOS remote config = %+v", cfg.IOSRemote)
 	}
 }
 
@@ -194,6 +204,14 @@ func TestValidateRejectsSTFBaseURLWithCredentialsOrQuery(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresIOSRemoteGatewaySecret(t *testing.T) {
+	cfg := Default()
+	cfg.IOSRemote.Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "ios_remote_control.gateway_secret") {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
 func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg := Default()
 	cfg.Security.ServiceToken = "service-token-value"
@@ -203,6 +221,7 @@ func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg.Database.URL = "postgres://database-secret-value"
 	cfg.STF.APIToken = "stf-token-value"
 	cfg.STF.WebAuthSecret = "stf-web-secret-value"
+	cfg.IOSRemote.GatewaySecret = "ios-gateway-secret-value"
 
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
@@ -245,7 +264,7 @@ func clearDeviceFarmEnvironment(t *testing.T) {
 
 func assertNoSecrets(t *testing.T, value string) {
 	t.Helper()
-	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value", "stf-web-secret-value"} {
+	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value", "stf-web-secret-value", "ios-gateway-secret-value"} {
 		if strings.Contains(value, secret) {
 			t.Fatalf("serialized value contains secret %q", secret)
 		}

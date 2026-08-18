@@ -67,7 +67,8 @@
 | DF-043 | iOS Simulator 固定库存接入 | completed | DF-042 |
 | DF-044 | iOS Simulator 动态创建、重建和删除 | completed | DF-043 |
 | DF-045 | Device Farm Console iOS 设备域页面 | completed | DF-044 |
-| DF-046 | iOS 真实验收、运维回滚与 Android 回归 | pending | DF-045 |
+| DF-046 | iOS Simulator 受控远程控制 | completed | DF-045、ADR-0025 |
+| DF-047 | iOS 真实验收、运维回滚与 Android 回归 | pending | DF-046 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -471,7 +472,15 @@
 
 验收：viewer/operator/admin 权限正确；跨平台操作受服务端校验；浏览器构建、网络和存储无内部 Endpoint/Secret；刷新后与 Server 一致；Android Console 和 STF 原生远控无回归。
 
-### DF-046 iOS 真实验收、运维回滚与 Android 回归
+### DF-046 iOS Simulator 受控远程控制
+
+实施：复用 Appium Device Farm 的明确 UDID 路由、Appium XCUITest Session、WDA MJPEG/动作，以及既有 `remotecontrol.Service` 的 Reservation、滑动租约、心跳、释放、Reaper 与审计。Server 通过 Session Fence 为当前管理员独占预约创建人工 Session，只向浏览器签发同源短时入口和固定画面/动作白名单，不返回 Host、Fence、Appium、WDA、MJPEG、Agent Token 或 Session Grant。Android 继续使用 STF，不复制或迁移 STF 协议。
+
+产出：远控传输抽象、Session Fence 受控画面/动作接口、同源 iOS 远控页、Console 入口、部署/回滚说明、权限/双占/泄露测试和真实 Mac 证据。
+
+验收：管理员只能看到和操作已预约的目标 iOS Simulator，画面不含 macOS 桌面；截图/MJPEG、点击、滑动、文本和 Home 有效；远控与自动化 Session、其他操作者、drain、隔离和超时均互斥且正确收敛；浏览器无法直连 Fence/Appium/WDA/MJPEG 或发送任意 WebDriver 命令；Android STF 远控无回归。
+
+### DF-047 iOS 真实验收、运维回滚与 Android 回归
 
 实施：按 `docs/09_ios_device_farm_v2_acceptance.md` 在 E4/E6 执行当前动态 Simulator P0/P1，完成多设备、过期回收、漂移、稳定性、指标、告警、备份、升级、排空和版本回滚；同时执行 Android 第一版真实链路和 Alcor Device Farm Adapter 契约回归。真实 iPhone 与 iOS 业务 Executor 另立后续任务。
 

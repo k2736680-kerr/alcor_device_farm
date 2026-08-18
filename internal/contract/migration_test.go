@@ -119,6 +119,21 @@ func TestIOSSessionFenceMigrationContract(t *testing.T) {
 	}
 }
 
+func TestIOSRemoteControlDoesNotAddHostWindowCommands(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000017_ios_remote_control_fence.up.sql"))
+	down := readFile(t, filepath.Join(root, "000017_ios_remote_control_fence.down.sql"))
+
+	for _, commandType := range []string{"remote_open", "remote_close", "remote_health"} {
+		assertSQLAbsent(t, up, commandType)
+		assertSQLAbsent(t, down, commandType)
+	}
+	for _, existingType := range []string{"validate_image", "sync_android_catalog", "prepare_android_image"} {
+		assertSQLContains(t, up, existingType)
+		assertSQLContains(t, down, existingType)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

@@ -16,6 +16,7 @@ import (
 const (
 	testRuntimeID    = "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
 	testDeviceTypeID = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+	testLegacyTypeID = "com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro"
 	testDynamicUDID  = "11111111-2222-3333-4444-555555555555"
 )
 
@@ -50,9 +51,9 @@ func (runner *dynamicRunner) Run(_ context.Context, binary string, arguments ...
 		}
 		switch arguments[2] {
 		case "runtimes":
-			return []byte(`{"runtimes":[{"identifier":"` + testRuntimeID + `","name":"iOS 26.3","version":"26.3","isAvailable":true}]}`), nil
+			return []byte(`{"runtimes":[{"identifier":"` + testRuntimeID + `","name":"iOS 26.3","version":"26.3","isAvailable":true,"supportedDeviceTypes":[{"identifier":"` + testDeviceTypeID + `"}]}]}`), nil
 		case "devicetypes":
-			return []byte(`{"devicetypes":[{"identifier":"` + testDeviceTypeID + `","name":"iPhone 17 Pro","isAvailable":true}]}`), nil
+			return []byte(`{"devicetypes":[{"identifier":"` + testDeviceTypeID + `","name":"iPhone 17 Pro","isAvailable":true},{"identifier":"` + testLegacyTypeID + `","name":"iPhone 15 Pro","isAvailable":true}]}`), nil
 		case "devices":
 			items := []map[string]any{}
 			if runner.created {
@@ -153,6 +154,28 @@ func TestDynamicSimulatorRejectsCatalogBypassBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestDynamicSimulatorRejectsIncompatibleRuntimeAndDeviceTypeBeforeMutation(t *testing.T) {
+	runner := &dynamicRunner{}
+	server := dynamicServer(t, runner)
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, CommandRunner: runner,
+		AllowedRuntimeIDs: []string{testRuntimeID}, AllowedDeviceTypeIDs: []string{testDeviceTypeID, testLegacyTypeID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Create(context.Background(), providers.CreateRequest{DeviceID: "device_0000000000001", Platform: providers.PlatformIOS,
+		DeviceKind: "simulator", Capabilities: map[string]any{"runtimeId": testRuntimeID, "deviceTypeId": testLegacyTypeID}})
+	if providers.ErrorCode(err) != "IOS_SIMULATOR_COMBINATION_UNSUPPORTED" || !strings.Contains(err.Error(), "不兼容") {
+		t.Fatalf("错误=%v", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	for _, command := range runner.commands {
+		if strings.Contains(command, " simctl create ") {
+			t.Fatalf("不兼容组合触发了创建：%v", runner.commands)
+		}
+	}
+}
+
 func TestDynamicSimulatorCreateFailureCleanupDoesNotDependOnAppiumInventory(t *testing.T) {
 	runner := &dynamicRunner{created: true, state: "Booted", name: "Alcor-DF-device_0000000000001"}
 	client, err := New(Config{Endpoint: "http://127.0.0.1:1", Timeout: time.Millisecond, CommandRunner: runner,
@@ -171,5 +194,25 @@ func TestDynamicSimulatorCreateFailureCleanupDoesNotDependOnAppiumInventory(t *t
 	commands := strings.Join(runner.commands, "\n")
 	if !strings.Contains(commands, "simctl shutdown "+testDynamicUDID) || !strings.Contains(commands, "simctl delete "+testDynamicUDID) {
 		t.Fatalf("失败补偿命令不完整：%s", commands)
+	}
+}
+
+func TestDynamicSimulatorDeleteIsIdempotentWhenCreateNeverAllocatedAProvider(t *testing.T) {
+	runner := &dynamicRunner{}
+	server := dynamicServer(t, runner)
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, CommandRunner: runner,
+		AllowedRuntimeIDs: []string{testRuntimeID}, AllowedDeviceTypeIDs: []string{testDeviceTypeID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Delete(context.Background(), "pending:device_0000000000001"); err != nil {
+		t.Fatalf("删除未创建成功的 Simulator 应幂等完成：%v", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	for _, command := range runner.commands {
+		if strings.Contains(command, " simctl delete ") || strings.Contains(command, " simctl shutdown ") {
+			t.Fatalf("不存在的 Simulator 不应触发变更命令：%v", runner.commands)
+		}
 	}
 }

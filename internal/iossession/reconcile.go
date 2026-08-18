@@ -18,7 +18,10 @@ var ErrNothingToReconcile = errors.New("当前没有需要收敛的 iOS 会话�
 // XCUITest 首次启动 WDA 时可能需要现场编译。Session Grant 只限制开始消费的
 // 时间；消费成功后必须给 Fence 足够时间完成 Appium Session 创建和绑定。
 // Host Fence 默认命令超时为 270 秒，这里额外保留 30 秒的状态收敛余量。
-const iosSessionBindingGraceSeconds = 300
+const (
+	iosSessionBindingGraceSeconds            = 300
+	iosSessionNotBusyReservationGraceSeconds = 30
+)
 
 func (service *Service) ReconcileOnce(ctx context.Context) error {
 	if service == nil || service.db == nil {
@@ -39,6 +42,7 @@ func (service *Service) ReconcileOnce(ctx context.Context) error {
 				THEN 'IOS_PROVIDER_BUSY_WITHOUT_BOUND_SESSION'
 			WHEN NOT COALESCE((d.capabilities->>'providerBusy')::boolean,false) AND s.appium_session_id IS NOT NULL
 				AND s.appium_session_ended_at IS NULL AND s.appium_session_started_at < clock_timestamp()-interval '15 seconds'
+				AND r.expires_at > clock_timestamp()+make_interval(secs => $2)
 				THEN 'IOS_BOUND_SESSION_NOT_BUSY'
 		END AS reason
 		FROM devices d
@@ -47,7 +51,7 @@ func (service *Service) ReconcileOnce(ctx context.Context) error {
 		WHERE d.platform='ios' AND d.lifecycle_status NOT IN ('quarantined','deleted')
 	)
 	SELECT device_id,reservation_id,reason FROM candidates WHERE reason IS NOT NULL ORDER BY device_id LIMIT 1`,
-		iosSessionBindingGraceSeconds,
+		iosSessionBindingGraceSeconds, iosSessionNotBusyReservationGraceSeconds,
 	).Scan(&deviceID, &reservationID, &reason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNothingToReconcile

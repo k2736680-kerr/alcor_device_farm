@@ -16,6 +16,7 @@ const (
 	testIOSPoolID       = "ios_pool_000000000001"
 	testIOSRuntimeID    = "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
 	testIOSDeviceTypeID = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+	testIOSLegacyTypeID = "com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro"
 )
 
 func TestIOSSimulatorCreateAPIRegistersAtomicOperation(t *testing.T) {
@@ -27,7 +28,8 @@ func TestIOSSimulatorCreateAPIRegistersAtomicOperation(t *testing.T) {
 	assertStatus(t, catalogResponse, http.StatusOK)
 	var catalog iossimulator.Catalog
 	decodeData(t, catalogResponse, &catalog)
-	if catalog.HostID != testIOSHostID || len(catalog.Runtimes) != 1 || len(catalog.DeviceTypes) != 1 {
+	if catalog.HostID != testIOSHostID || len(catalog.Runtimes) != 1 || len(catalog.DeviceTypes) != 2 ||
+		len(catalog.Runtimes[0].DeviceTypeIDs) != 1 || catalog.Runtimes[0].DeviceTypeIDs[0] != testIOSDeviceTypeID {
 		t.Fatalf("unexpected simulator catalog: %#v", catalog)
 	}
 
@@ -118,6 +120,19 @@ func TestIOSSimulatorCreateAPIRejectsCatalogBypassAndRollsBack(t *testing.T) {
 	assertIOSCreateRows(t, environment, 0)
 }
 
+func TestIOSSimulatorCreateAPIRejectsIncompatibleRuntimeAndDeviceType(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	seedIOSSimulatorHostAndPool(t, environment, true)
+	input := validIOSSimulatorCreateInput()
+	input["device_type_id"] = testIOSLegacyTypeID
+	response := environment.request(t, http.MethodPost, "/api/v1/ios-simulators", input, serviceToken, "ios-create-key-pair")
+	assertStatus(t, response, http.StatusBadRequest)
+	if response.Error == nil || response.Error.Code != "INVALID_ARGUMENT" || response.Error.Message != "iOS Simulator 创建参数无效" {
+		t.Fatalf("unexpected incompatible pair error: %#v", response.Error)
+	}
+	assertIOSCreateRows(t, environment, 0)
+}
+
 func TestIOSSimulatorCreateAPIRejectsInsufficientCapacityAndRollsBack(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	seedIOSSimulatorHostAndPool(t, environment, false)
@@ -159,8 +174,9 @@ func seedIOSSimulatorHostAndPool(t *testing.T, environment *managementEnvironmen
 		capacity["disk_available_mb"] = 1024
 	}
 	capabilities := map[string]any{"ios_simulator_catalog": map[string]any{
-		"runtimes":     []map[string]any{{"id": testIOSRuntimeID, "name": "iOS 26.3", "version": "26.3"}},
-		"device_types": []map[string]any{{"id": testIOSDeviceTypeID, "name": "iPhone 17 Pro"}},
+		"runtimes": []map[string]any{{"id": testIOSRuntimeID, "name": "iOS 26.3", "version": "26.3",
+			"device_type_ids": []string{testIOSDeviceTypeID}}},
+		"device_types": []map[string]any{{"id": testIOSDeviceTypeID, "name": "iPhone 17 Pro"}, {"id": testIOSLegacyTypeID, "name": "iPhone 15 Pro"}},
 	}}
 	capacityJSON, err := json.Marshal(capacity)
 	if err != nil {

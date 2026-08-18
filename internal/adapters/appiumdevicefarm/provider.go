@@ -49,6 +49,9 @@ func (client *Client) Create(ctx context.Context, request providers.CreateReques
 	if !catalog.hasRuntime(runtimeID) || !catalog.hasDeviceType(deviceTypeID) {
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_SIMULATOR_CATALOG_STALE", "所选 Runtime 或 iPhone 机型在宿主机上不可用，请刷新目录", true, nil)
 	}
+	if !catalog.supports(runtimeID, deviceTypeID) {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_SIMULATOR_COMBINATION_UNSUPPORTED", "所选 iOS Runtime 与 iPhone 机型不兼容，请重新选择", false, nil)
+	}
 	name := client.managedNamePrefix + strings.TrimSpace(request.DeviceID)
 	if existing, found, lookupErr := client.managedSimulatorByName(ctx, name); lookupErr != nil {
 		return providers.Snapshot{}, lookupErr
@@ -143,6 +146,11 @@ func (client *Client) Rebuild(ctx context.Context, providerRef string) (provider
 func (client *Client) Delete(ctx context.Context, providerRef string) error {
 	device, err := client.allowedSimulator(ctx, providerRef, providers.OperationDelete)
 	if err != nil {
+		// 删除是幂等操作。创建在 CoreSimulator 分配 UDID 前失败时，数据库仍会
+		// 保存 pending:<device-id> 占位引用；宿主机确认不存在对应资源即可安全收敛。
+		if providers.ErrorCode(err) == "PROVIDER_DEVICE_NOT_FOUND" {
+			return nil
+		}
 		return err
 	}
 	if !device.Managed {

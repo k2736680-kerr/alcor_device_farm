@@ -9,9 +9,10 @@ import (
 )
 
 type SimulatorRuntime struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Version       string   `json:"version"`
+	DeviceTypeIDs []string `json:"device_type_ids"`
 }
 
 type SimulatorDeviceType struct {
@@ -42,6 +43,24 @@ func (catalog SimulatorCatalog) hasDeviceType(id string) bool {
 	return false
 }
 
+func (catalog SimulatorCatalog) supports(runtimeID, deviceTypeID string) bool {
+	if !catalog.hasDeviceType(deviceTypeID) {
+		return false
+	}
+	for _, runtime := range catalog.Runtimes {
+		if runtime.ID != runtimeID {
+			continue
+		}
+		for _, supportedID := range runtime.DeviceTypeIDs {
+			if supportedID == deviceTypeID {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 func (client *Client) SimulatorCatalog(ctx context.Context) (SimulatorCatalog, error) {
 	var catalog SimulatorCatalog
 	runtimeOutput, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "list", "runtimes", "-j")
@@ -50,23 +69,18 @@ func (client *Client) SimulatorCatalog(ctx context.Context) (SimulatorCatalog, e
 	}
 	var runtimes struct {
 		Items []struct {
-			ID        string `json:"identifier"`
-			Name      string `json:"name"`
-			Version   string `json:"version"`
-			Available *bool  `json:"isAvailable"`
+			ID                   string `json:"identifier"`
+			Name                 string `json:"name"`
+			Version              string `json:"version"`
+			Available            *bool  `json:"isAvailable"`
+			SupportedDeviceTypes []struct {
+				ID string `json:"identifier"`
+			} `json:"supportedDeviceTypes"`
 		} `json:"runtimes"`
 	}
 	if len(runtimeOutput) == 0 || len(runtimeOutput) > maxResponseBytes || json.Unmarshal(runtimeOutput, &runtimes) != nil {
 		return catalog, providerError(providers.OperationDiscover, "IOS_RUNTIME_CATALOG_INVALID", "iOS Runtime 目录响应无效", true, nil)
 	}
-	for _, item := range runtimes.Items {
-		_, allowed := client.allowedRuntimeIDs[strings.TrimSpace(item.ID)]
-		if !allowed || (item.Available != nil && !*item.Available) || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Name)), "ios") {
-			continue
-		}
-		catalog.Runtimes = append(catalog.Runtimes, SimulatorRuntime{ID: strings.TrimSpace(item.ID), Name: strings.TrimSpace(item.Name), Version: strings.TrimSpace(item.Version)})
-	}
-
 	typeOutput, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "list", "devicetypes", "-j")
 	if err != nil {
 		return catalog, providerError(providers.OperationDiscover, "IOS_DEVICE_TYPE_CATALOG_FAILED", "读取 iPhone 机型目录失败", true, err)
@@ -81,12 +95,34 @@ func (client *Client) SimulatorCatalog(ctx context.Context) (SimulatorCatalog, e
 	if len(typeOutput) == 0 || len(typeOutput) > maxResponseBytes || json.Unmarshal(typeOutput, &types) != nil {
 		return catalog, providerError(providers.OperationDiscover, "IOS_DEVICE_TYPE_CATALOG_INVALID", "iPhone 机型目录响应无效", true, nil)
 	}
+	availableDeviceTypes := make(map[string]struct{})
 	for _, item := range types.Items {
 		_, allowed := client.allowedDeviceTypeIDs[strings.TrimSpace(item.ID)]
 		if !allowed || (item.Available != nil && !*item.Available) || !strings.HasPrefix(strings.TrimSpace(item.Name), "iPhone") {
 			continue
 		}
-		catalog.DeviceTypes = append(catalog.DeviceTypes, SimulatorDeviceType{ID: strings.TrimSpace(item.ID), Name: strings.TrimSpace(item.Name)})
+		id := strings.TrimSpace(item.ID)
+		availableDeviceTypes[id] = struct{}{}
+		catalog.DeviceTypes = append(catalog.DeviceTypes, SimulatorDeviceType{ID: id, Name: strings.TrimSpace(item.Name)})
+	}
+	for _, item := range runtimes.Items {
+		id := strings.TrimSpace(item.ID)
+		_, allowed := client.allowedRuntimeIDs[id]
+		if !allowed || (item.Available != nil && !*item.Available) || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Name)), "ios") {
+			continue
+		}
+		supported := make([]string, 0, len(item.SupportedDeviceTypes))
+		for _, deviceType := range item.SupportedDeviceTypes {
+			deviceTypeID := strings.TrimSpace(deviceType.ID)
+			if _, available := availableDeviceTypes[deviceTypeID]; available {
+				supported = append(supported, deviceTypeID)
+			}
+		}
+		if len(supported) == 0 {
+			continue
+		}
+		catalog.Runtimes = append(catalog.Runtimes, SimulatorRuntime{ID: id, Name: strings.TrimSpace(item.Name),
+			Version: strings.TrimSpace(item.Version), DeviceTypeIDs: supported})
 	}
 	return catalog, nil
 }

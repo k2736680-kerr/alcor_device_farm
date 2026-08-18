@@ -101,7 +101,7 @@ func (handler *consoleHandler) remoteAdmin(writer http.ResponseWriter, request *
 	allowed := ok && (principal.Role == auth.RoleService ||
 		(principal.Role == auth.RoleConsole && principal.ConsoleRole == auth.ConsoleAdmin))
 	if !allowed {
-		writeForbidden(writer, request, "only trusted platform services or console admins can control devices remotely")
+		writeForbidden(writer, request, "只有可信平台服务或控制台管理员可以远程控制设备")
 		return false
 	}
 	if handler.remote == nil {

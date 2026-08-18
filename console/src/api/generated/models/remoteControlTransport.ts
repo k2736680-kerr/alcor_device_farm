@@ -6,22 +6,11 @@
  * OpenAPI spec version: 2.5.0
  */
 
-export interface IOSSimulatorRuntime {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  id: string;
-  /**
-   * @minLength 1
-   * @maxLength 128
-   */
-  name: string;
-  /**
-   * @minLength 1
-   * @maxLength 32
-   */
-  version: string;
-  /** @minItems 1 */
-  device_type_ids: string[];
-}
+export type RemoteControlTransport = typeof RemoteControlTransport[keyof typeof RemoteControlTransport];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RemoteControlTransport = {
+  stf: 'stf',
+  appium: 'appium',
+} as const;

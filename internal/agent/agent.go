@@ -77,7 +77,8 @@ func New(config Config, client Client, provider providers.Provider, logger *slog
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Agent{config: config, client: client, provider: provider, registrar: config.STFADBRegistrar, preparer: config.ImagePreparer, logger: logger}, nil
+	return &Agent{config: config, client: client, provider: provider, registrar: config.STFADBRegistrar,
+		preparer: config.ImagePreparer, logger: logger}, nil
 }
 
 func (agent *Agent) Run(ctx context.Context) error {

@@ -156,6 +156,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [iosForm] = Form.useForm<CreateIOSSimulatorValues>()
   // 创建向导切换步骤会卸载第一步的表单项；保留已选 Mac，避免第二步停止读取其目录。
   const selectedIOSHostID = Form.useWatch('host_id', { form: iosForm, preserve: true })
+  const selectedIOSRuntimeID = Form.useWatch('runtime_id', { form: iosForm, preserve: true })
   const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
   const platformView = platformFromQuery(searchParams.get('platform'))
@@ -187,6 +188,10 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     { query: { enabled: Boolean(selectedIOSHostID), retry: false } },
   )
   const iosCatalog = unwrapData<IOSSimulatorCatalog>(iosCatalogQuery.data)
+  const compatibleIOSDeviceTypes = useMemo(() => {
+    const supported = new Set(iosCatalog?.runtimes.find((runtime) => runtime.id === selectedIOSRuntimeID)?.device_type_ids ?? [])
+    return (iosCatalog?.device_types ?? []).filter((deviceType) => supported.has(deviceType.id))
+  }, [iosCatalog, selectedIOSRuntimeID])
   const defaultIOSHostID = iosHosts[0]?.id
   const defaultIOSPoolID = iosPools[0]?.id
   const imageByID = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
@@ -421,7 +426,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     render: (_, device) => (
       <Space size={4} wrap>
         {role === 'viewer' && <Typography.Text type="secondary">只读</Typography.Text>}
-        {role === 'admin' && device.platform === 'android' && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
+        {role === 'admin' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
+          && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
           <Button
             type="primary"
             size="small"
@@ -430,7 +436,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             onClick={() => remote.start(device)}
           >远程连接</Button>
         )}
-        {role === 'admin' && device.platform === 'android' && remote.device?.id === device.id && (
+        {role === 'admin' && remote.device?.id === device.id && (
           <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
             {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
           </Button>
@@ -684,10 +690,10 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           {iosCreateStep === 1 && <>
             {iosCatalogQuery.isError && <Alert type="error" showIcon message="无法读取这台 Mac 的 iOS 目录，请检查宿主机在线状态后重试" style={{ marginBottom: 12 }} />}
             <Form.Item name="runtime_id" label="iOS Runtime" rules={[{ required: true, message: '请选择 iOS Runtime' }]}>
-              <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS Runtime" options={(iosCatalog?.runtimes ?? []).map((runtime) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}` }))} />
+              <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS Runtime" options={(iosCatalog?.runtimes ?? []).map((runtime) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}` }))} onChange={() => iosForm.setFieldValue('device_type_id', undefined)} />
             </Form.Item>
             <Form.Item name="device_type_id" label="iPhone 机型" rules={[{ required: true, message: '请选择 iPhone 机型' }]}>
-              <Select loading={iosCatalogQuery.isFetching} showSearch optionFilterProp="label" placeholder="选择宿主机支持的 iPhone 机型" options={(iosCatalog?.device_types ?? []).map((deviceType) => ({ value: deviceType.id, label: deviceType.name }))} />
+              <Select loading={iosCatalogQuery.isFetching} disabled={!selectedIOSRuntimeID} showSearch optionFilterProp="label" placeholder={selectedIOSRuntimeID ? '选择与当前 Runtime 兼容的 iPhone 机型' : '请先选择 iOS Runtime'} options={compatibleIOSDeviceTypes.map((deviceType) => ({ value: deviceType.id, label: deviceType.name }))} />
             </Form.Item>
           </>}
           {iosCreateStep === 2 && <>

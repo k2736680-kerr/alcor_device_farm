@@ -53,7 +53,7 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 		case request.URL.Path == "/console/api/v1/sessions" && request.Method == http.MethodPost:
 			next.ServeHTTP(writer, request)
 			return
-		case strings.HasPrefix(request.URL.Path, "/console/api/v1/"):
+		case strings.HasPrefix(request.URL.Path, "/console/api/v1/") || strings.HasPrefix(request.URL.Path, "/console/remote/ios/"):
 			required = RoleConsole
 		case strings.HasPrefix(request.URL.Path, "/api/v1/"):
 			required = RoleService
@@ -110,6 +110,9 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 }
 
 func consoleAllowed(request *http.Request, principal Principal) bool {
+	if strings.HasPrefix(request.URL.Path, "/console/remote/ios/") {
+		return principal.ConsoleRole == ConsoleAdmin
+	}
 	if strings.HasPrefix(request.URL.Path, "/console/api/v1/") {
 		return true
 	}
