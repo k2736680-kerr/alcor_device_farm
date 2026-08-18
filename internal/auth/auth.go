@@ -76,7 +76,7 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="device-farm"`)
 			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{
 				Code:      "UNAUTHORIZED",
-				Message:   "valid bearer token required",
+				Message:   "需要有效的访问令牌",
 				Retryable: false,
 			})
 			return
@@ -84,7 +84,7 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 		if principal.Role != required && !(required == RoleService && principal.Role == RoleConsole) {
 			httpx.WriteError(writer, request, http.StatusForbidden, httpx.APIError{
 				Code:      "FORBIDDEN",
-				Message:   "token is not allowed to access this API",
+				Message:   "当前令牌无权访问此接口",
 				Retryable: false,
 			})
 			return
@@ -92,13 +92,13 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 		if principal.Role == RoleConsole {
 			if !consoleAllowed(request, principal) {
 				httpx.WriteError(writer, request, http.StatusForbidden, httpx.APIError{
-					Code: "FORBIDDEN", Message: "console role is not allowed to perform this operation", Retryable: false,
+					Code: "FORBIDDEN", Message: "当前控制台角色无权执行此操作", Retryable: false,
 				})
 				return
 			}
 			if requiresCSRF(request) && consoleAuthenticator.ValidateCSRF(request, principal) != nil {
 				httpx.WriteError(writer, request, http.StatusForbidden, httpx.APIError{
-					Code: "CSRF_VALIDATION_FAILED", Message: "valid CSRF token required", Retryable: false,
+					Code: "CSRF_VALIDATION_FAILED", Message: "请求安全校验失败，请刷新页面后重试", Retryable: false,
 				})
 				return
 			}

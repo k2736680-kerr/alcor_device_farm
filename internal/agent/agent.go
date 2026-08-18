@@ -72,7 +72,7 @@ func New(config Config, client Client, provider providers.Provider, logger *slog
 	if len(config.HostID) < 16 || client == nil || provider == nil || config.HeartbeatInterval <= 0 ||
 		config.LeaseSeconds < 5 || config.LeaseSeconds > 300 || config.Concurrency < 1 ||
 		config.CommandTimeout <= 0 || config.ImagePrepareTimeout <= 0 || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
-		return nil, errors.New("invalid agent configuration")
+		return nil, errors.New("宿主机代理配置无效")
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -247,20 +247,38 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		var snapshot providers.Snapshot
 		created := false
 		ready := false
-		profile, profileErr := profileFromPayload(command.Payload)
-		err = profileErr
-		if err == nil {
-			err = agent.verifyRuntimeImage(ctx, command.Payload)
+		platform := providers.Platform(strings.ToLower(stringValue(command.Payload, "platform")))
+		if platform == "" {
+			platform = providers.PlatformAndroid
+		}
+		deviceKind := stringValue(command.Payload, "device_kind")
+		if deviceKind == "" && platform == providers.PlatformAndroid {
+			deviceKind = "emulator"
+		}
+		var profile runtimeprofile.Profile
+		if platform == providers.PlatformAndroid {
+			profile, err = profileFromPayload(command.Payload)
+			if err == nil {
+				err = agent.verifyRuntimeImage(ctx, command.Payload)
+			}
+		} else if platform != providers.PlatformIOS || deviceKind != "simulator" {
+			err = &providers.Error{Operation: providers.OperationCreate, Code: "INVALID_ARGUMENT", Message: "只支持受控的 Android Emulator 或 iOS Simulator 创建", Retryable: false}
 		}
 		if err == nil {
 			agent.resourceMu.Lock()
-			err = agent.preflightCreate(ctx, profile, stringValue(command.Payload, "image_id"))
+			if platform == providers.PlatformAndroid {
+				err = agent.preflightCreate(ctx, profile, stringValue(command.Payload, "image_id"))
+			}
 			if err == nil {
 				snapshot, err = agent.provider.Create(ctx, providers.CreateRequest{
 					DeviceID: stringValue(command.Payload, "device_id"), HostID: agent.config.HostID,
-					ImageID: stringValue(command.Payload, "image_id"), RuntimeImage: stringValue(command.Payload, "docker_image"), ProviderRef: providerRef,
+					ImageID: stringValue(command.Payload, "image_id"), Platform: platform, DeviceKind: deviceKind,
+					RuntimeImage: stringValue(command.Payload, "docker_image"), ProviderRef: providerRef,
 					Serial: stringValue(command.Payload, "serial"), Capabilities: mapValue(command.Payload, "capabilities"), RuntimeProfile: profile,
 				})
+				if err == nil && snapshot.ProviderRef != "" {
+					providerRef = snapshot.ProviderRef
+				}
 			}
 			agent.resourceMu.Unlock()
 			created = err == nil
@@ -279,7 +297,7 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 			result = snapshotResult(snapshot)
 		} else if created && !ready {
 			if cleanupErr := agent.cleanupProvider(providerRef); cleanupErr != nil {
-				err = errors.Join(err, fmt.Errorf("cleanup failed emulator create: %w", cleanupErr))
+				err = errors.Join(err, fmt.Errorf("创建失败后的模拟器清理也失败：%w", cleanupErr))
 			}
 		}
 	case "start":
@@ -340,18 +358,18 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		result, err = agent.validateImage(ctx, command.Payload)
 	case "sync_android_catalog":
 		if agent.preparer == nil {
-			err = errors.New("image preparation is not enabled on this Agent")
+			err = errors.New("当前宿主机代理未启用镜像准备功能")
 		} else {
 			result, err = agent.preparer.SyncCatalog(ctx)
 		}
 	case "prepare_android_image":
 		if agent.preparer == nil {
-			err = errors.New("image preparation is not enabled on this Agent")
+			err = errors.New("当前宿主机代理未启用镜像准备功能")
 		} else {
 			result, err = agent.preparer.Prepare(ctx, stringValue(command.Payload, "package_name"), stringValue(command.Payload, "revision"))
 		}
 	default:
-		err = fmt.Errorf("unsupported command type %s", command.CommandType)
+		err = fmt.Errorf("不支持的宿主机命令类型：%s", command.CommandType)
 	}
 	if renewalErr := stopRenewal(); err == nil && renewalErr != nil {
 		err = renewalErr
@@ -393,7 +411,7 @@ func (agent *Agent) startLeaseRenewal(ctx context.Context, cancelOperation conte
 				err := agent.client.Extend(renewContext, command.ID, hostcommand.LeaseExtensionInput{LeaseToken: *command.LeaseToken, Attempt: command.Attempt, LeaseSeconds: agent.config.LeaseSeconds})
 				if err != nil {
 					cancelOperation()
-					done <- fmt.Errorf("extend command lease: %w", err)
+					done <- fmt.Errorf("续订宿主机命令租约失败：%w", err)
 					return
 				}
 			}
@@ -451,7 +469,7 @@ func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[st
 			result["rollback_restored"] = true
 			result["target_error_code"] = providerErrorCode(targetErr)
 			return result, &providers.Error{Operation: providers.OperationRebuild, Code: "REIMAGE_TARGET_FAILED",
-				Message: "target image failed; previous image was restored", Retryable: false, Cause: targetErr}
+				Message: "目标镜像启动失败，已恢复原镜像", Retryable: false, Cause: targetErr}
 		}
 		ok = true
 	}
@@ -461,7 +479,7 @@ func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[st
 		result["rollback_error_code"] = providerErrorCode(err)
 	}
 	return result, &providers.Error{Operation: providers.OperationRebuild, Code: "REIMAGE_ROLLBACK_FAILED",
-		Message: "target image and previous image restore both failed", Retryable: false, Cause: errors.Join(targetErr, err)}
+		Message: "目标镜像启动失败，恢复原镜像也失败", Retryable: false, Cause: errors.Join(targetErr, err)}
 }
 
 func (agent *Agent) preflightReplacement(ctx context.Context, providerRef string, requested runtimeprofile.Profile) error {
@@ -517,7 +535,7 @@ func (agent *Agent) registerSTF(ctx context.Context, snapshot providers.Snapshot
 	}
 	if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
 		return &providers.Error{Operation: providers.OperationConnectionInfo, Code: "STF_ADB_CONNECT_FAILED",
-			Message: "cannot register emulator endpoint with STF ADB server", Retryable: true, Cause: err}
+			Message: "无法向 STF ADB 服务登记模拟器连接", Retryable: true, Cause: err}
 	}
 	return nil
 }
@@ -538,7 +556,7 @@ func (agent *Agent) recreate(ctx context.Context, payload map[string]any) (snaps
 	defer func() {
 		if returnErr != nil && created {
 			if cleanupErr := agent.cleanupProvider(providerRef); cleanupErr != nil && providers.ErrorCode(cleanupErr) != "PROVIDER_DEVICE_NOT_FOUND" {
-				returnErr = errors.Join(returnErr, fmt.Errorf("cleanup failed emulator rebuild: %w", cleanupErr))
+				returnErr = errors.Join(returnErr, fmt.Errorf("重建失败后的模拟器清理也失败：%w", cleanupErr))
 			}
 		}
 	}()
@@ -589,6 +607,11 @@ func (agent *Agent) waitReady(ctx context.Context, snapshot providers.Snapshot) 
 func (agent *Agent) cleanupProvider(providerRef string) error {
 	cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if cleaner, ok := agent.provider.(interface {
+		CleanupCreated(context.Context, string) error
+	}); ok {
+		return cleaner.CleanupCreated(cleanupContext, providerRef)
+	}
 	return agent.provider.Delete(cleanupContext, providerRef)
 }
 
@@ -689,16 +712,16 @@ func (agent *Agent) verifyRuntimeImage(ctx context.Context, payload map[string]a
 	}
 	if !providers.ValidRuntimeImageReference(runtimeImage) {
 		return &providers.Error{Operation: providers.OperationValidateImage, Code: "INVALID_IMAGE_REFERENCE",
-			Message: "Docker command must include a fixed runtime image", Retryable: false}
+			Message: "Docker 命令必须包含固定版本的运行镜像", Retryable: false}
 	}
 	if digest == "" {
 		return &providers.Error{Operation: providers.OperationValidateImage, Code: "INVALID_IMAGE_DIGEST",
-			Message: "Docker command must include the registered image digest", Retryable: false}
+			Message: "Docker 命令必须包含已登记的镜像摘要", Retryable: false}
 	}
 	verifier, ok := agent.provider.(providers.ImageDigestVerifier)
 	if !ok {
 		return &providers.Error{Operation: providers.OperationValidateImage, Code: "IMAGE_VALIDATION_UNSUPPORTED",
-			Message: "provider does not support image digest validation", Retryable: false}
+			Message: "当前 Provider 不支持镜像摘要校验", Retryable: false}
 	}
 	return verifier.VerifyImageDigest(ctx, runtimeImage, digest)
 }
@@ -710,7 +733,7 @@ func waitWorkers(workers *sync.WaitGroup, timeout time.Duration) error {
 	case <-done:
 		return nil
 	case <-time.After(timeout):
-		return errors.New("agent shutdown timed out; command leases will be recovered by server")
+		return errors.New("宿主机代理停止超时，服务端将自动回收命令租约")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 func (client *Client) Discover(ctx context.Context, hostID string) ([]providers.Snapshot, error) {
 	devices, err := client.devices(ctx)
 	if err != nil {
-		return nil, providerError(providers.OperationDiscover, "DEVICE_FARM_INVENTORY_FAILED", "cannot read local iOS inventory", true, err)
+		return nil, providerError(providers.OperationDiscover, "DEVICE_FARM_INVENTORY_FAILED", "无法读取本机 iOS 设备清单", true, err)
 	}
 	health, healthErr := client.Health(ctx)
 	result := make([]providers.Snapshot, 0, len(devices))
@@ -24,8 +25,55 @@ func (client *Client) Discover(ctx context.Context, hostID string) ([]providers.
 	return result, nil
 }
 
-func (client *Client) Create(context.Context, providers.CreateRequest) (providers.Snapshot, error) {
-	return providers.Snapshot{}, unsupported(providers.OperationCreate)
+func capabilityString(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func (client *Client) Create(ctx context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
+	if request.Platform != providers.PlatformIOS || request.DeviceKind != "simulator" || strings.TrimSpace(request.DeviceID) == "" {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "动态 iOS 设备必须是带 Device ID 的 Simulator", false, nil)
+	}
+	runtimeID := capabilityString(request.Capabilities, "runtimeId")
+	deviceTypeID := capabilityString(request.Capabilities, "deviceTypeId")
+	if _, allowed := client.allowedRuntimeIDs[runtimeID]; !allowed {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_RUNTIME_NOT_ALLOWED", "所选 iOS Runtime 不在宿主机受控目录中", false, nil)
+	}
+	if _, allowed := client.allowedDeviceTypeIDs[deviceTypeID]; !allowed {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_DEVICE_TYPE_NOT_ALLOWED", "所选 iPhone 机型不在宿主机受控目录中", false, nil)
+	}
+	catalog, err := client.SimulatorCatalog(ctx)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
+	if !catalog.hasRuntime(runtimeID) || !catalog.hasDeviceType(deviceTypeID) {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_SIMULATOR_CATALOG_STALE", "所选 Runtime 或 iPhone 机型在宿主机上不可用，请刷新目录", true, nil)
+	}
+	name := client.managedNamePrefix + strings.TrimSpace(request.DeviceID)
+	if existing, found, lookupErr := client.managedSimulatorByName(ctx, name); lookupErr != nil {
+		return providers.Snapshot{}, lookupErr
+	} else if found {
+		if existing.RuntimeID != runtimeID || existing.DeviceTypeID != deviceTypeID {
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_SIMULATOR_IDEMPOTENCY_CONFLICT", "同一 Device ID 已对应不同的 Runtime 或机型", false, nil)
+		}
+		node, nodeErr := client.Health(ctx)
+		return client.snapshot(request.HostID, existing, node, nodeErr), nil
+	}
+	output, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "create", name, deviceTypeID, runtimeID)
+	if err != nil {
+		return providers.Snapshot{}, client.lifecycleError(providers.OperationCreate, "IOS_SIMULATOR_CREATE_FAILED", "IOS_SIMULATOR_CREATE_TIMEOUT", "创建 Simulator 失败", ctx, err)
+	}
+	udid := strings.TrimSpace(string(output))
+	if udid == "" || len(udid) > 128 || strings.ContainsAny(udid, "\r\n\t /\\") {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_SIMULATOR_CREATE_RESPONSE_INVALID", "CoreSimulator 未返回有效 UDID", true, nil)
+	}
+	device, found, err := client.managedSimulatorByName(ctx, name)
+	if err != nil || !found || device.UDID != udid {
+		_ = client.deleteManagedSimulator(context.WithoutCancel(ctx), udid)
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "IOS_SIMULATOR_CREATE_RESPONSE_INVALID", "新建 Simulator 无法通过受控身份复核", true, err)
+	}
+	node, nodeErr := client.Health(ctx)
+	return client.snapshot(request.HostID, device, node, nodeErr), nil
 }
 func (client *Client) Start(ctx context.Context, providerRef string) (providers.Snapshot, error) {
 	device, err := client.allowedSimulator(ctx, providerRef, providers.OperationStart)
@@ -68,11 +116,66 @@ func (client *Client) Restart(ctx context.Context, providerRef string) (provider
 	}
 	return client.Start(ctx, providerRef)
 }
-func (client *Client) Rebuild(context.Context, string) (providers.Snapshot, error) {
-	return providers.Snapshot{}, unsupported(providers.OperationRebuild)
+func (client *Client) Rebuild(ctx context.Context, providerRef string) (providers.Snapshot, error) {
+	device, err := client.allowedSimulator(ctx, providerRef, providers.OperationRebuild)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
+	if device.Busy {
+		return providers.Snapshot{}, providerError(providers.OperationRebuild, "IOS_SIMULATOR_BUSY", "Simulator 当前仍被 Appium 会话占用，不能重建", true, nil)
+	}
+	if !strings.EqualFold(device.State, "Shutdown") {
+		if _, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "shutdown", device.UDID); err != nil {
+			return providers.Snapshot{}, client.lifecycleError(providers.OperationRebuild, "IOS_SIMULATOR_SHUTDOWN_FAILED", "IOS_SIMULATOR_REBUILD_TIMEOUT", "重建前停止 Simulator 失败", ctx, err)
+		}
+	}
+	if _, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "erase", device.UDID); err != nil {
+		return providers.Snapshot{}, client.lifecycleError(providers.OperationRebuild, "IOS_SIMULATOR_ERASE_FAILED", "IOS_SIMULATOR_REBUILD_TIMEOUT", "擦除 Simulator 数据失败", ctx, err)
+	}
+	if _, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "boot", device.UDID); err != nil {
+		return providers.Snapshot{}, client.lifecycleError(providers.OperationRebuild, "IOS_SIMULATOR_BOOT_FAILED", "IOS_SIMULATOR_REBUILD_TIMEOUT", "重建后启动 Simulator 失败", ctx, err)
+	}
+	if _, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "bootstatus", device.UDID, "-b"); err != nil {
+		return providers.Snapshot{}, client.lifecycleError(providers.OperationRebuild, "IOS_SIMULATOR_BOOT_FAILED", "IOS_SIMULATOR_REBUILD_TIMEOUT", "等待重建后的 Simulator 启动完成失败", ctx, err)
+	}
+	return client.waitSimulator(ctx, device.UDID, providers.OperationRebuild, func(snapshot providers.Snapshot) bool { return snapshot.Ready() })
 }
-func (client *Client) Delete(context.Context, string) error {
-	return unsupported(providers.OperationDelete)
+func (client *Client) Delete(ctx context.Context, providerRef string) error {
+	device, err := client.allowedSimulator(ctx, providerRef, providers.OperationDelete)
+	if err != nil {
+		return err
+	}
+	if !device.Managed {
+		return providerError(providers.OperationDelete, "IOS_SIMULATOR_DELETE_NOT_MANAGED", "只允许删除由设备农场动态创建的 Simulator", false, nil)
+	}
+	if device.Busy {
+		return providerError(providers.OperationDelete, "IOS_SIMULATOR_BUSY", "Simulator 当前仍被 Appium 会话占用，不能删除", true, nil)
+	}
+	if !strings.EqualFold(device.State, "Shutdown") {
+		if _, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "shutdown", device.UDID); err != nil {
+			return client.lifecycleError(providers.OperationDelete, "IOS_SIMULATOR_SHUTDOWN_FAILED", "IOS_SIMULATOR_DELETE_TIMEOUT", "删除前停止 Simulator 失败", ctx, err)
+		}
+	}
+	return client.deleteManagedSimulator(ctx, device.UDID)
+}
+
+// CleanupCreated is the failure-compensation path used only after this Agent
+// has just created a managed Simulator. It deliberately reads CoreSimulator
+// directly so an Appium Device Farm inventory outage cannot leak the new VM.
+func (client *Client) CleanupCreated(ctx context.Context, providerRef string) error {
+	device, found, err := client.managedSimulatorByUDID(ctx, providerRef)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if !strings.EqualFold(device.State, "Shutdown") {
+		if _, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "shutdown", device.UDID); err != nil {
+			return client.lifecycleError(providers.OperationDelete, "IOS_SIMULATOR_SHUTDOWN_FAILED", "IOS_SIMULATOR_DELETE_TIMEOUT", "失败补偿时停止 Simulator 失败", ctx, err)
+		}
+	}
+	return client.deleteManagedSimulator(ctx, device.UDID)
 }
 
 func (client *Client) InspectHealth(ctx context.Context, providerRef string) (providers.Health, error) {
@@ -82,7 +185,7 @@ func (client *Client) InspectHealth(ctx context.Context, providerRef string) (pr
 	}
 	snapshot := client.snapshot("", device, node, nodeErr)
 	if !snapshot.Health.Ready() {
-		return snapshot.Health, providerError(providers.OperationInspectHealth, "IOS_DEVICE_NOT_READY", "iOS device or local Appium node is not ready", true, nodeErr)
+		return snapshot.Health, providerError(providers.OperationInspectHealth, "IOS_DEVICE_NOT_READY", "iOS 设备或本机 Appium Node 尚未就绪", true, nodeErr)
 	}
 	return snapshot.Health, nil
 }
@@ -93,7 +196,7 @@ func (client *Client) GetConnectionInfo(ctx context.Context, providerRef string)
 		return providers.ConnectionInfo{}, err
 	}
 	if !device.Allowed {
-		return providers.ConnectionInfo{}, providerError(providers.OperationConnectionInfo, "IOS_DEVICE_NOT_ALLOWED", "iOS device is not in the Host allowlist", false, nil)
+		return providers.ConnectionInfo{}, providerError(providers.OperationConnectionInfo, "IOS_DEVICE_NOT_ALLOWED", "该 iOS 设备不在宿主机 allowlist 中", false, nil)
 	}
 	return providers.ConnectionInfo{
 		Platform: providers.PlatformIOS, Serial: device.UDID, DeviceUDID: device.UDID,
@@ -157,7 +260,7 @@ func (client *Client) lifecycleError(operation providers.Operation, failureCode,
 func (client *Client) find(ctx context.Context, providerRef string) (Device, NodeHealth, error, error) {
 	devices, err := client.devices(ctx)
 	if err != nil {
-		return Device{}, NodeHealth{}, nil, providerError(providers.OperationInspectHealth, "DEVICE_FARM_INVENTORY_FAILED", "cannot read local iOS inventory", true, err)
+		return Device{}, NodeHealth{}, nil, providerError(providers.OperationInspectHealth, "DEVICE_FARM_INVENTORY_FAILED", "无法读取本机 iOS 设备清单", true, err)
 	}
 	for _, device := range devices {
 		if device.UDID == strings.TrimSpace(providerRef) {
@@ -173,17 +276,36 @@ func (client *Client) devices(ctx context.Context) ([]Device, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(client.allowUDIDs) == 0 && len(client.allowedRuntimeIDs) == 0 && len(client.allowedDeviceTypeIDs) == 0 {
+		return devices, nil
+	}
+	simulators, err := client.simctlDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byUDID := make(map[string]int, len(devices))
 	for index := range devices {
-		device := &devices[index]
-		if !device.Allowed || device.RealDevice || device.DeviceType != "simulator" {
+		byUDID[devices[index].UDID] = index
+	}
+	for _, simulator := range simulators {
+		_, fixed := client.allowUDIDs[simulator.UDID]
+		simulator.Managed = strings.HasPrefix(simulator.Name, client.managedNamePrefix)
+		simulator.Allowed = fixed || simulator.Managed
+		if index, exists := byUDID[simulator.UDID]; exists {
+			devices[index].Name = simulator.Name
+			devices[index].State = simulator.State
+			devices[index].PlatformVersion = simulator.PlatformVersion
+			devices[index].RuntimeID = simulator.RuntimeID
+			devices[index].DeviceTypeID = simulator.DeviceTypeID
+			devices[index].Managed = simulator.Managed
+			devices[index].Allowed = simulator.Allowed
 			continue
 		}
-		state, err := client.simulatorState(ctx, device.UDID)
-		if err != nil {
-			return nil, err
+		if simulator.Allowed {
+			devices = append(devices, simulator)
 		}
-		device.State = state
 	}
+	sort.Slice(devices, func(left, right int) bool { return devices[left].UDID < devices[right].UDID })
 	return devices, nil
 }
 
@@ -236,7 +358,7 @@ func (client *Client) snapshot(hostID string, device Device, node NodeHealth, no
 		automation = providers.ProbeFailed
 	}
 	router := providers.ProbePassed
-	if nodeErr != nil || !node.PluginReady || device.UserBlocked {
+	if nodeErr != nil || !node.PluginReady || device.UserBlocked || !device.RouterPresent {
 		router = providers.ProbeFailed
 	}
 	if !device.Allowed {
@@ -256,6 +378,7 @@ func (client *Client) snapshot(hostID string, device Device, node NodeHealth, no
 		"deviceClass": "phone", "realDevice": device.RealDevice, "model": device.ProductModel,
 		"deviceName": device.Name, "providerBusy": device.Busy, "providerBlocked": device.UserBlocked,
 		"providerState": device.State, "allowlisted": device.Allowed,
+		"managed": device.Managed, "runtimeId": device.RuntimeID, "deviceTypeId": device.DeviceTypeID,
 	}
 	return providers.Snapshot{
 		HostID: hostID, Platform: providers.PlatformIOS, DeviceKind: device.DeviceType,
@@ -265,10 +388,6 @@ func (client *Client) snapshot(hostID string, device Device, node NodeHealth, no
 		Connection: providers.ConnectionInfo{Platform: providers.PlatformIOS, Serial: device.UDID, DeviceUDID: device.UDID,
 			ProviderID: device.UDID, AppiumEndpoint: client.endpoint.String(), AppiumUDID: device.UDID},
 	}
-}
-
-func unsupported(operation providers.Operation) error {
-	return providerError(operation, "IOS_FIXED_INVENTORY_OPERATION_UNSUPPORTED", "固定 iOS 库存不支持该操作", false, nil)
 }
 
 func providerError(operation providers.Operation, code, message string, retryable bool, cause error) error {

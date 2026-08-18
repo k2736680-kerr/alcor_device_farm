@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid health event argument")
-	ErrNotFound        = errors.New("device not found")
+	ErrInvalidArgument = errors.New("健康事件参数无效")
+	ErrNotFound        = errors.New("未找到指定设备")
 )
 
 type Visibility interface {

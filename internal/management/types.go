@@ -12,13 +12,13 @@ import (
 )
 
 var (
-	ErrNotFound                  = errors.New("management resource not found")
-	ErrConflict                  = errors.New("management resource conflict")
-	ErrInvalidArgument           = errors.New("invalid management argument")
-	ErrHostUnavailable           = errors.New("device host is not accepting new devices")
-	ErrImageUnavailable          = errors.New("device image is not ready")
-	ErrProviderUnavailable       = errors.New("device provider is not configured")
-	ErrInsufficientHostResources = errors.New("insufficient host resources")
+	ErrNotFound                  = errors.New("未找到管理资源")
+	ErrConflict                  = errors.New("管理资源状态冲突")
+	ErrInvalidArgument           = errors.New("管理参数无效")
+	ErrHostUnavailable           = errors.New("设备宿主机当前不接收新设备")
+	ErrImageUnavailable          = errors.New("设备镜像尚未就绪")
+	ErrProviderUnavailable       = errors.New("设备 Provider 尚未配置")
+	ErrInsufficientHostResources = errors.New("宿主机资源不足")
 )
 
 type CapacityError struct{ Result capacity.Result }

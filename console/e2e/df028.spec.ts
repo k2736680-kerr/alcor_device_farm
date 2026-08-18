@@ -44,7 +44,7 @@ test.describe('DF-028 Web 安全与部署基线', () => {
     await page.getByLabel('用户 ID').fill(userID)
     await page.getByLabel('密码').fill(`${password}-wrong`)
     await page.getByRole('button', { name: /登\s*录/ }).click()
-    await expect(page.getByText('invalid user ID or password')).toBeVisible()
+    await expect(page.getByText('用户 ID 或密码错误')).toBeVisible()
 
     await login(page)
 

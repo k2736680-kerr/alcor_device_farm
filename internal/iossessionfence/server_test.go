@@ -103,6 +103,26 @@ func TestFenceRejectsDashboardAndProtectsCleanup(t *testing.T) {
 	}
 }
 
+func TestSessionCreateFailureClassificationDoesNotPersistUpstreamBody(t *testing.T) {
+	tests := []struct {
+		name, body, want string
+	}{
+		{name: "开发者模式", body: `{"value":{"message":"Developer Mode is disabled"}}`, want: "IOS_DEVELOPER_MODE_DISABLED"},
+		{name: "未信任", body: `{"value":{"message":"Device is not trusted"}}`, want: "IOS_PHYSICAL_NOT_TRUSTED"},
+		{name: "Xcode 不兼容", body: `{"value":{"message":"Could not locate Device Support files"}}`, want: "IOS_XCODE_INCOMPATIBLE"},
+		{name: "WDA 签名", body: `{"value":{"message":"Signing requires a provisioning profile"}}`, want: "WDA_SIGNING_FAILED"},
+		{name: "WDA 启动", body: `{"value":{"message":"WebDriverAgent did not start"}}`, want: "WDA_START_FAILED"},
+		{name: "其他 Appium 失败", body: `{"value":{"message":"unknown upstream failure"}}`, want: "APPIUM_SESSION_CREATE_REJECTED"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifySessionCreateFailure([]byte(test.body)); got != test.want {
+				t.Fatalf("失败分类=%s，预期=%s", got, test.want)
+			}
+		})
+	}
+}
+
 func writeEnvelope(writer http.ResponseWriter, data any) {
 	writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(writer).Encode(httpx.Envelope{RequestID: "request_0000000001", Data: data})

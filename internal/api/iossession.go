@@ -102,7 +102,7 @@ func (handler *iosSessionHandler) available(writer http.ResponseWriter, request 
 		return true
 	}
 	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{
-		Code: "SERVICE_UNAVAILABLE", Message: "iOS Session service is not configured", Retryable: true,
+		Code: "SERVICE_UNAVAILABLE", Message: "iOS 会话服务尚未配置", Retryable: true,
 	})
 	return false
 }
@@ -113,14 +113,14 @@ func (handler *iosSessionHandler) write(writer http.ResponseWriter, request *htt
 		return
 	}
 	httpStatus := http.StatusInternalServerError
-	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error"}
+	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误"}
 	switch {
 	case errors.Is(err, iossession.ErrInvalidArgument):
 		httpStatus, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: err.Error()}
 	case errors.Is(err, iossession.ErrNotFound):
-		httpStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "IOS_SESSION_NOT_FOUND", Message: "iOS Session binding was not found"}
+		httpStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "IOS_SESSION_NOT_FOUND", Message: "未找到 iOS 会话绑定"}
 	case errors.Is(err, iossession.ErrForbidden):
-		httpStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "Reservation owner does not match"}
+		httpStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "预约所有者不匹配"}
 	case errors.Is(err, iossession.ErrGrantExpired):
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "IOS_SESSION_GRANT_EXPIRED", Message: err.Error()}
 	case errors.Is(err, iossession.ErrGrantConsumed):

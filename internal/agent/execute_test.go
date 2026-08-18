@@ -49,6 +49,74 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 	}
 }
 
+func TestAgentIOSCreateUsesCoreSimulatorUDIDReturnedByProvider(t *testing.T) {
+	client := &completionClient{}
+	provider := &dynamicIOSProvider{Provider: providermock.New(providermock.Config{})}
+	runtime, err := New(Config{
+		HostID: "ios_host_000000000001", ProviderType: "appium_device_farm_ios", HeartbeatInterval: time.Second,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 4},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "lease_token_000000000001"
+	runtime.execute(context.Background(), hostcommand.Command{
+		ID: "command_0000000000100", CommandType: "create", LeaseToken: &token, Attempt: 1,
+		Payload: map[string]any{
+			"device_id": "device_0000000000100", "platform": "ios", "device_kind": "simulator",
+			"provider_ref": "pending:device_0000000000100", "capabilities": map[string]any{
+				"runtimeId":    "com.apple.CoreSimulator.SimRuntime.iOS-26-3",
+				"deviceTypeId": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+			},
+		},
+	})
+	if provider.startedRef != provider.udid || provider.request.Platform != providers.PlatformIOS || provider.request.DeviceKind != "simulator" {
+		t.Fatalf("provider request=%#v started_ref=%q udid=%q", provider.request, provider.startedRef, provider.udid)
+	}
+	if client.completion.Status != "succeeded" || client.completion.Result["provider_ref"] != provider.udid {
+		t.Fatalf("completion=%#v", client.completion)
+	}
+	connection, ok := client.completion.Result["connection"].(map[string]any)
+	if !ok || connection["provider_id"] != provider.udid || connection["serial"] != provider.udid {
+		t.Fatalf("connection=%#v", client.completion.Result["connection"])
+	}
+}
+
+type dynamicIOSProvider struct {
+	providers.Provider
+	request    providers.CreateRequest
+	startedRef string
+	udid       string
+}
+
+func (provider *dynamicIOSProvider) Create(_ context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
+	provider.request = request
+	provider.udid = "11111111-2222-3333-4444-555555555555"
+	return providers.Snapshot{DeviceID: request.DeviceID, HostID: request.HostID, Platform: providers.PlatformIOS,
+		DeviceKind: "simulator", ProviderRef: provider.udid, State: providers.StateCreated, Generation: 1}, nil
+}
+
+func (provider *dynamicIOSProvider) Start(_ context.Context, providerRef string) (providers.Snapshot, error) {
+	provider.startedRef = providerRef
+	return providers.Snapshot{DeviceID: provider.request.DeviceID, HostID: provider.request.HostID, Platform: providers.PlatformIOS,
+		DeviceKind: "simulator", ProviderRef: providerRef, State: providers.StateRunning, Generation: 1}, nil
+}
+
+func (provider *dynamicIOSProvider) InspectHealth(_ context.Context, providerRef string) (providers.Health, error) {
+	if providerRef != provider.udid {
+		return providers.Health{}, errors.New("使用了错误的 Simulator UDID")
+	}
+	return providers.Health{Platform: providers.PlatformIOS, Online: true, BootCompleted: true, AppiumHealthy: true,
+		Components: map[string]providers.ProbeStatus{providers.ProbeTransport: providers.ProbePassed,
+			providers.ProbeOSReady: providers.ProbePassed, providers.ProbeAutomation: providers.ProbePassed, providers.ProbeRouter: providers.ProbePassed}}, nil
+}
+
+func (provider *dynamicIOSProvider) GetConnectionInfo(_ context.Context, providerRef string) (providers.ConnectionInfo, error) {
+	return providers.ConnectionInfo{Platform: providers.PlatformIOS, Serial: providerRef, DeviceUDID: providerRef, ProviderID: providerRef,
+		AppiumEndpoint: "http://127.0.0.1:4723", AppiumUDID: providerRef}, nil
+}
+
 func TestLongImagePreparationRenewsCommandLease(t *testing.T) {
 	client := &completionClient{}
 	runtime, err := New(Config{

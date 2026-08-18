@@ -45,7 +45,7 @@
 | DF-041 | completed | `ba25501 完成DF-041 macOS宿主机与iOS只读适配` | `docs/evidence/DF-041/acceptance.md` |
 | DF-042 | completed | `aea220d 完成DF-042 iOS预约会话围栏`、`d485460 完成DF-042验收归档` | `docs/evidence/DF-042/acceptance.md` |
 | DF-043 | completed | 本提交：`完成DF-043 iOS模拟器固定库存接入` | `docs/evidence/DF-043/acceptance.md` |
-| DF-044 | pending | — | `docs/evidence/DF-044/acceptance.md` |
+| DF-044 | completed | 本提交：`完成DF-044 iOS模拟器动态生命周期` | `docs/evidence/DF-044/acceptance.md` |
 | DF-045 | pending | — | `docs/evidence/DF-045/acceptance.md` |
 | DF-046 | pending | — | `docs/evidence/DF-046/acceptance.md` |
 | ALCOR-001 | completed | `9300fa2 完成Alcor设备农场统一入口`、`106e9dd 优化Alcor嵌入式设备页面` | `docs/evidence/ALCOR-001/readiness.md` |
@@ -53,5 +53,5 @@
 ## 当前结论
 
 1. Android 第一版 DF-003～DF-038 和本地 ALCOR-001 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
-2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039～DF-043 已完成，下一步从 DF-044 开始并按 DF-046 顺序验收；
+2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039～DF-044 已完成，下一步按顺序实施 DF-045 Console 与 DF-046 最终验收；
 3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。

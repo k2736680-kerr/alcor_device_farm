@@ -10,7 +10,7 @@ test.describe('设备农场控制台 E2E', () => {
     await page.getByLabel('用户 ID').fill('admin')
     await page.getByLabel('密码').fill('wrong-password')
     await page.getByRole('button', { name: /登\s*录/ }).click()
-    await expect(page.getByText('invalid user ID or password')).toBeVisible()
+    await expect(page.getByText('用户 ID 或密码错误')).toBeVisible()
 
     // 3. 正确密码登录，进入控制台布局
     await page.getByLabel('密码').fill('admin-password')

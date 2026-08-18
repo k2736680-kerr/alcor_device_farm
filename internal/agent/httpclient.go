@@ -20,7 +20,7 @@ type HTTPClient struct {
 
 func NewHTTPClient(baseURL, token string, client *http.Client) (*HTTPClient, error) {
 	if strings.TrimSpace(baseURL) == "" || strings.TrimSpace(token) == "" {
-		return nil, errors.New("agent server URL and token are required")
+		return nil, errors.New("必须配置宿主机代理服务地址和令牌")
 	}
 	if client == nil {
 		client = http.DefaultClient
@@ -75,7 +75,7 @@ func (client *HTTPClient) call(ctx context.Context, method, path string, input, 
 		if envelope.Error != nil {
 			return fmt.Errorf("agent API %s: %s", envelope.Error.Code, envelope.Error.Message)
 		}
-		return fmt.Errorf("agent API status %d", response.StatusCode)
+		return fmt.Errorf("宿主机代理接口返回状态码 %d", response.StatusCode)
 	}
 	if output != nil {
 		return json.Unmarshal(envelope.Data, output)

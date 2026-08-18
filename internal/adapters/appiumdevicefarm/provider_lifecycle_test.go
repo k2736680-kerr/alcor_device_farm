@@ -38,10 +38,13 @@ func (runner *simulatorRunner) Run(ctx context.Context, binary string, arguments
 			}
 		case "list":
 			udid := "SIM-ALLOWED"
-			if len(arguments) >= 4 {
+			if len(arguments) >= 4 && arguments[3] != "-j" {
 				udid = arguments[3]
 			}
-			output, _ = json.Marshal(map[string]any{"devices": map[string]any{"runtime": []map[string]any{{"udid": udid, "state": runner.state}}}})
+			output, _ = json.Marshal(map[string]any{"devices": map[string]any{"com.apple.CoreSimulator.SimRuntime.iOS-26-3": []map[string]any{{
+				"udid": udid, "name": "iPhone 17 Pro", "state": runner.state,
+				"deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+			}}}})
 		}
 	}
 	runner.mutex.Unlock()
@@ -115,7 +118,7 @@ func TestSimulatorLifecycleUsesOnlyControlledSimctlCommands(t *testing.T) {
 	}
 	mutations := make([]string, 0, len(wantMutations))
 	for _, command := range commands {
-		if command == "/usr/bin/xcrun simctl list devices SIM-ALLOWED -j" {
+		if command == "/usr/bin/xcrun simctl list devices SIM-ALLOWED -j" || command == "/usr/bin/xcrun simctl list devices -j" {
 			continue
 		}
 		if command != "/usr/bin/xcrun simctl boot SIM-ALLOWED" &&

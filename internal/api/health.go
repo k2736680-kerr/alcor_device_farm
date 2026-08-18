@@ -18,7 +18,7 @@ func RegisterHealth(mux *http.ServeMux, service *reconcile.Service) {
 func (handler *healthHandler) report(writer http.ResponseWriter, request *http.Request) {
 	if handler.service == nil {
 		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{
-			Code: "SERVICE_UNAVAILABLE", Message: "health service is not configured", Retryable: true,
+			Code: "SERVICE_UNAVAILABLE", Message: "健康检查服务尚未配置", Retryable: true,
 		})
 		return
 	}
@@ -39,8 +39,8 @@ func (handler *healthHandler) report(writer http.ResponseWriter, request *http.R
 	case errors.Is(err, reconcile.ErrInvalidArgument):
 		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: err.Error()})
 	case errors.Is(err, reconcile.ErrNotFound):
-		httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "device not found"})
+		httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "未找到指定设备"})
 	default:
-		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error"})
+		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误"})
 	}
 }

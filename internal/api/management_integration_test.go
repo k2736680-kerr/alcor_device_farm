@@ -22,6 +22,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossimulator"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -770,6 +771,7 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	service := management.NewService(store, provider, generator)
 	reservationService := reservation.NewService(db, generator, controllers...)
 	iosSessions := iossession.New(db, agentToken)
+	iosSimulators := iossimulator.New(db, generator)
 	reservationService.SetIOSSessionController(iosSessions)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	healthService := reconcile.New(db, provider, nil, 3, 0, logger)
@@ -778,7 +780,7 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{
 		Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands,
 		ImageCatalog: imageCatalog, Metrics: farmmetrics.New(db),
-		IOSSessions: iosSessions,
+		IOSSessions: iosSessions, IOSSimulators: iosSimulators,
 	}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
 	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands, reservations: reservationService}

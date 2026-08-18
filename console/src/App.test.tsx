@@ -11,7 +11,7 @@ describe('App session gate', () => {
     server.use(
       http.get('/console/api/v1/me', () =>
         HttpResponse.json(
-          { request_id: 'req_test', data: null, error: { code: 'UNAUTHENTICATED', message: 'console session is not authenticated', retryable: false } },
+          { request_id: 'req_test', data: null, error: { code: 'UNAUTHENTICATED', message: '控制台会话尚未登录', retryable: false } },
           { status: 401 },
         ),
       ),

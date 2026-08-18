@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.3.0
+ * OpenAPI spec version: 2.4.0
  */
 import {
   useMutation,
@@ -51,6 +51,7 @@ import type {
   DeviceSuccessResponse,
   ErrorResponse,
   ForbiddenResponse,
+  GetIOSSimulatorCatalogParams,
   HealthEventBody,
   HealthEventListSuccessResponse,
   HostCreatedResponse,
@@ -65,6 +66,9 @@ import type {
   IOSSessionGrantConsumptionBody,
   IOSSessionGrantCreateBody,
   IOSSessionGrantCreatedResponse,
+  IOSSimulatorCatalogSuccessResponse,
+  IOSSimulatorCreateInputBody,
+  IOSSimulatorOperationAcceptedResponse,
   Identifier,
   ImageAcceptedResponse,
   ImageCreatedResponse,
@@ -2583,6 +2587,268 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getUndrainDeviceHostMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * 返回指定 Mac 宿主机当前心跳上报且通过部署白名单的 iOS Runtime 与 iPhone 机型目录。
+ */
+export type getIOSSimulatorCatalogResponse200 = {
+  data: IOSSimulatorCatalogSuccessResponse
+  status: 200
+}
+
+export type getIOSSimulatorCatalogResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type getIOSSimulatorCatalogResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type getIOSSimulatorCatalogResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type getIOSSimulatorCatalogResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type getIOSSimulatorCatalogResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type getIOSSimulatorCatalogResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type getIOSSimulatorCatalogResponseSuccess = (getIOSSimulatorCatalogResponse200) & {
+  headers: Headers;
+};
+export type getIOSSimulatorCatalogResponseError = (getIOSSimulatorCatalogResponse400 | getIOSSimulatorCatalogResponse401 | getIOSSimulatorCatalogResponse403 | getIOSSimulatorCatalogResponse404 | getIOSSimulatorCatalogResponse409 | getIOSSimulatorCatalogResponse500) & {
+  headers: Headers;
+};
+
+export type getIOSSimulatorCatalogResponse = (getIOSSimulatorCatalogResponseSuccess | getIOSSimulatorCatalogResponseError)
+
+export const getGetIOSSimulatorCatalogUrl = (params: GetIOSSimulatorCatalogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/ios-simulator-catalog?${stringifiedParams}` : `/api/v1/ios-simulator-catalog`
+}
+
+export const getIOSSimulatorCatalog = async (params: GetIOSSimulatorCatalogParams, options?: RequestInit): Promise<getIOSSimulatorCatalogResponse> => {
+
+  return deviceFarmFetch<getIOSSimulatorCatalogResponse>(getGetIOSSimulatorCatalogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIOSSimulatorCatalogQueryKey = (params?: GetIOSSimulatorCatalogParams,) => {
+    return [
+    `/api/v1/ios-simulator-catalog`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+
+export const getGetIOSSimulatorCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(params: GetIOSSimulatorCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIOSSimulatorCatalogQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>> = ({ signal }) => getIOSSimulatorCatalog(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIOSSimulatorCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>>
+export type GetIOSSimulatorCatalogQueryError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+
+export function useGetIOSSimulatorCatalog<TData = Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params: GetIOSSimulatorCatalogParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIOSSimulatorCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof getIOSSimulatorCatalog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIOSSimulatorCatalog<TData = Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params: GetIOSSimulatorCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIOSSimulatorCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof getIOSSimulatorCatalog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIOSSimulatorCatalog<TData = Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params: GetIOSSimulatorCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetIOSSimulatorCatalog<TData = Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse>(
+ params: GetIOSSimulatorCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIOSSimulatorCatalog>>, TError, TData>>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIOSSimulatorCatalogQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * 在受控 Mac 宿主机上异步创建并启动一个持久化虚拟 iPhone，同时原子登记 Device、Pool 成员、Host Command 与审计事件。
+ */
+export type createIOSSimulatorResponse202 = {
+  data: IOSSimulatorOperationAcceptedResponse
+  status: 202
+}
+
+export type createIOSSimulatorResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type createIOSSimulatorResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type createIOSSimulatorResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type createIOSSimulatorResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type createIOSSimulatorResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type createIOSSimulatorResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type createIOSSimulatorResponseSuccess = (createIOSSimulatorResponse202) & {
+  headers: Headers;
+};
+export type createIOSSimulatorResponseError = (createIOSSimulatorResponse400 | createIOSSimulatorResponse401 | createIOSSimulatorResponse403 | createIOSSimulatorResponse404 | createIOSSimulatorResponse409 | createIOSSimulatorResponse500) & {
+  headers: Headers;
+};
+
+export type createIOSSimulatorResponse = (createIOSSimulatorResponseSuccess | createIOSSimulatorResponseError)
+
+export const getCreateIOSSimulatorUrl = () => {
+
+
+
+
+  return `/api/v1/ios-simulators`
+}
+
+export const createIOSSimulator = async (iOSSimulatorCreateInputBody: IOSSimulatorCreateInputBody, options?: RequestInit): Promise<createIOSSimulatorResponse> => {
+
+  return deviceFarmFetch<createIOSSimulatorResponse>(getCreateIOSSimulatorUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      iOSSimulatorCreateInputBody,)
+  }
+);}
+
+
+
+
+export const getCreateIOSSimulatorMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIOSSimulator>>, TError,{data: IOSSimulatorCreateInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createIOSSimulator>>, TError,{data: IOSSimulatorCreateInputBody}, TContext> => {
+
+const mutationKey = ['createIOSSimulator'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createIOSSimulator>>, {data: IOSSimulatorCreateInputBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createIOSSimulator(data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateIOSSimulatorMutationResult = NonNullable<Awaited<ReturnType<typeof createIOSSimulator>>>
+    export type CreateIOSSimulatorMutationBody = IOSSimulatorCreateInputBody
+    export type CreateIOSSimulatorMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useCreateIOSSimulator = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIOSSimulator>>, TError,{data: IOSSimulatorCreateInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createIOSSimulator>>,
+        TError,
+        {data: IOSSimulatorCreateInputBody},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateIOSSimulatorMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

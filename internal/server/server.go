@@ -21,6 +21,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossimulator"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -44,6 +45,7 @@ type Services struct {
 	RemoteControl *remotecontrol.Service
 	ImageCatalog  *imagecatalog.Service
 	IOSSessions   *iossession.Service
+	IOSSimulators *iossimulator.Service
 	WarmPool      *warmpool.Controller
 }
 
@@ -74,6 +76,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterProvisioning(mux, services.WarmPool, services.ImageCatalog)
 	api.RegisterReservations(mux, services.Reservations)
 	api.RegisterIOSSessions(mux, services.IOSSessions)
+	api.RegisterIOSSimulators(mux, services.IOSSimulators)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
 	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery, services.RemoteControl)
@@ -116,6 +119,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			services.Scheduler = scheduler.New(db, nil, logger)
 		}
 		services.IOSSessions = iossession.New(db, cfg.Security.AgentToken)
+		services.IOSSimulators = iossimulator.New(db, nil)
 		services.Reservations.SetIOSSessionController(services.IOSSessions)
 		go services.IOSSessions.RunReconcile(ctx, cfg.Reconcile.Interval, logger)
 		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
@@ -204,7 +208,7 @@ func readinessHandler(registry *farmmetrics.Registry) http.HandlerFunc {
 		defer cancel()
 		if err := registry.Ready(ctx); err != nil {
 			httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{
-				Code: "SERVICE_UNAVAILABLE", Message: "database is not ready", Retryable: true,
+				Code: "SERVICE_UNAVAILABLE", Message: "数据库尚未就绪", Retryable: true,
 			})
 			return
 		}
@@ -215,7 +219,7 @@ func readinessHandler(registry *farmmetrics.Registry) http.HandlerFunc {
 func notFoundHandler(writer http.ResponseWriter, request *http.Request) {
 	httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{
 		Code:      "NOT_FOUND",
-		Message:   "resource not found",
+		Message:   "未找到指定资源",
 		Retryable: false,
 	})
 }
@@ -223,7 +227,7 @@ func notFoundHandler(writer http.ResponseWriter, request *http.Request) {
 func methodNotAllowed(writer http.ResponseWriter, request *http.Request) {
 	httpx.WriteError(writer, request, http.StatusMethodNotAllowed, httpx.APIError{
 		Code:      "METHOD_NOT_ALLOWED",
-		Message:   "method not allowed",
+		Message:   "不支持当前请求方法",
 		Retryable: false,
 	})
 }
@@ -237,7 +241,7 @@ func recoverMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 				logger.Error("http handler panic", attrs...)
 				httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{
 					Code:      "INTERNAL_ERROR",
-					Message:   "internal server error",
+					Message:   "服务器内部错误",
 					Retryable: false,
 				})
 			}

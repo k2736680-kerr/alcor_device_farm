@@ -464,7 +464,7 @@ func (handler *managementHandler) available(writer http.ResponseWriter, request 
 	if handler.service != nil {
 		return true
 	}
-	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "management service is not configured", Retryable: true})
+	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "设备管理服务尚未配置", Retryable: true})
 	return false
 }
 
@@ -480,7 +480,7 @@ func decode(writer http.ResponseWriter, request *http.Request, target any) bool 
 	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeInvalid(writer, request, err.Error())
+		writeInvalid(writer, request, "请求正文格式无效")
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -498,18 +498,18 @@ func requireIdempotencyKey(writer http.ResponseWriter, request *http.Request) bo
 	if len(request.Header.Get("Idempotency-Key")) >= 8 {
 		return true
 	}
-	writeInvalid(writer, request, "Idempotency-Key header must contain at least 8 characters")
+	writeInvalid(writer, request, "Idempotency-Key 请求头至少需要 8 个字符")
 	return false
 }
 
 func writeManagementError(writer http.ResponseWriter, request *http.Request, err error) {
-	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error", Retryable: false}
+	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误", Retryable: false}
 	status := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, management.ErrInvalidArgument):
 		status, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: err.Error()}
 	case errors.Is(err, management.ErrNotFound):
-		status, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "resource not found"}
+		status, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "未找到指定资源"}
 	case errors.Is(err, management.ErrConflict):
 		status, apiError = http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()}
 	case errors.Is(err, management.ErrInsufficientHostResources):

@@ -663,7 +663,7 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 			if _, err := tx.Exec(ctx, `UPDATE device_pools p SET
 				total_target=GREATEST(0,p.total_target-1),
 				min_ready=LEAST(p.min_ready,GREATEST(0,p.total_target-1)),
-				max_concurrency=LEAST(p.max_concurrency,GREATEST(0,p.total_target-1)),
+				max_concurrency=GREATEST(1,LEAST(p.max_concurrency,GREATEST(0,p.total_target-1))),
 				updated_at=clock_timestamp()
 				WHERE EXISTS (SELECT 1 FROM device_pool_devices pd WHERE pd.pool_id=p.id AND pd.device_id=$1)`, operation.Device.ID); err != nil {
 				return err
@@ -932,9 +932,9 @@ func normalize(err error) error {
 		case "23505":
 			return fmt.Errorf("%w: %s", management.ErrConflict, pgErr.ConstraintName)
 		case "23503":
-			return fmt.Errorf("%w: foreign key", management.ErrNotFound)
+			return fmt.Errorf("%w：外键引用不存在", management.ErrNotFound)
 		case "23514", "23502", "22P02":
-			return fmt.Errorf("%w: database constraint", management.ErrInvalidArgument)
+			return fmt.Errorf("%w：数据库约束不满足", management.ErrInvalidArgument)
 		}
 	}
 	return err

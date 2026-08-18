@@ -109,7 +109,7 @@ func (client *Client) Health(ctx context.Context) error {
 func (client *Client) Visible(ctx context.Context, serial string) (bool, error) {
 	serial = strings.TrimSpace(serial)
 	if serial == "" {
-		return false, &Error{Code: "INVALID_ARGUMENT", Message: "serial is required"}
+		return false, &Error{Code: "INVALID_ARGUMENT", Message: "必须提供设备序列号"}
 	}
 	devices, err := client.Inventory(ctx)
 	if err != nil {
@@ -126,7 +126,7 @@ func (client *Client) Visible(ctx context.Context, serial string) (bool, error) 
 func (client *Client) Claim(ctx context.Context, serial string, ttl time.Duration) error {
 	serial = strings.TrimSpace(serial)
 	if serial == "" || ttl < 30*time.Second || ttl > 24*time.Hour {
-		return &Error{Code: "INVALID_ARGUMENT", Message: "serial and a valid STF claim TTL are required"}
+		return &Error{Code: "INVALID_ARGUMENT", Message: "必须提供设备序列号和有效的 STF 占用时长"}
 	}
 	payload := map[string]any{"serial": serial, "timeout": ttl.Milliseconds()}
 	var response operationResponse
@@ -134,7 +134,7 @@ func (client *Client) Claim(ctx context.Context, serial string, ttl time.Duratio
 		return err
 	}
 	if !response.Success {
-		return &Error{Code: "STF_CLAIM_FAILED", Message: "STF did not claim the device", Retryable: true}
+		return &Error{Code: "STF_CLAIM_FAILED", Message: "STF 未能占用设备", Retryable: true}
 	}
 	return nil
 }
@@ -142,7 +142,7 @@ func (client *Client) Claim(ctx context.Context, serial string, ttl time.Duratio
 func (client *Client) Release(ctx context.Context, serial string) error {
 	serial = strings.TrimSpace(serial)
 	if serial == "" {
-		return &Error{Code: "INVALID_ARGUMENT", Message: "serial is required"}
+		return &Error{Code: "INVALID_ARGUMENT", Message: "必须提供设备序列号"}
 	}
 	var response operationResponse
 	if err := client.request(ctx, http.MethodDelete, "/api/v1/user/devices/"+url.PathEscape(serial), nil, "STF_RELEASE_FAILED", &response); err != nil {
@@ -153,7 +153,7 @@ func (client *Client) Release(ctx context.Context, serial string) error {
 		return err
 	}
 	if !response.Success {
-		return &Error{Code: "STF_RELEASE_FAILED", Message: "STF did not release the device", Retryable: true}
+		return &Error{Code: "STF_RELEASE_FAILED", Message: "STF 未能释放设备", Retryable: true}
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func (client *Client) deviceIsNotUsing(ctx context.Context, serial string) bool 
 func (client *Client) RemoteConnect(ctx context.Context, serial string) (RemoteConnection, error) {
 	serial = strings.TrimSpace(serial)
 	if serial == "" {
-		return RemoteConnection{}, &Error{Code: "INVALID_ARGUMENT", Message: "serial is required"}
+		return RemoteConnection{}, &Error{Code: "INVALID_ARGUMENT", Message: "必须提供设备序列号"}
 	}
 	var response struct {
 		Success          bool   `json:"success"`
@@ -188,11 +188,11 @@ func (client *Client) RemoteConnect(ctx context.Context, serial string) (RemoteC
 		return RemoteConnection{}, err
 	}
 	if !response.Success || strings.TrimSpace(response.RemoteConnectURL) == "" {
-		return RemoteConnection{}, &Error{Code: "STF_BAD_RESPONSE", Message: "remoteConnect response did not contain a URL"}
+		return RemoteConnection{}, &Error{Code: "STF_BAD_RESPONSE", Message: "STF 远程连接响应中没有连接地址"}
 	}
 	remoteURL, err := safeRemoteConnectURL(response.RemoteConnectURL)
 	if err != nil {
-		return RemoteConnection{}, &Error{Code: "STF_BAD_RESPONSE", Message: "remoteConnect response contained an unsafe URL", Cause: err}
+		return RemoteConnection{}, &Error{Code: "STF_BAD_RESPONSE", Message: "STF 远程连接响应包含不安全地址", Cause: err}
 	}
 	return RemoteConnection{URL: remoteURL}, nil
 }
@@ -220,14 +220,14 @@ func safeRemoteConnectURL(value string) (string, error) {
 func (client *Client) RemoteDisconnect(ctx context.Context, serial string) error {
 	serial = strings.TrimSpace(serial)
 	if serial == "" {
-		return &Error{Code: "INVALID_ARGUMENT", Message: "serial is required"}
+		return &Error{Code: "INVALID_ARGUMENT", Message: "必须提供设备序列号"}
 	}
 	var response operationResponse
 	if err := client.request(ctx, http.MethodDelete, "/api/v1/user/devices/"+url.PathEscape(serial)+"/remoteConnect", nil, "STF_REMOTE_DISCONNECT_FAILED", &response); err != nil {
 		return err
 	}
 	if !response.Success {
-		return &Error{Code: "STF_REMOTE_DISCONNECT_FAILED", Message: "STF did not close remoteConnect", Retryable: true}
+		return &Error{Code: "STF_REMOTE_DISCONNECT_FAILED", Message: "STF 未能关闭远程连接", Retryable: true}
 	}
 	return nil
 }
@@ -257,7 +257,7 @@ func (client *Client) request(ctx context.Context, method, path string, payload 
 				decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
 				if err := decoder.Decode(target); err != nil {
 					response.Body.Close()
-					return &Error{Code: "STF_BAD_RESPONSE", Message: "STF response was not valid JSON", Cause: err}
+					return &Error{Code: "STF_BAD_RESPONSE", Message: "STF 响应不是有效的 JSON", Cause: err}
 				}
 				response.Body.Close()
 				return nil
@@ -271,11 +271,11 @@ func (client *Client) request(ctx context.Context, method, path string, payload 
 				}
 				return nil
 			}
-			requestErr = &Error{Code: code, Message: "STF request was rejected", Retryable: retryable, StatusCode: response.StatusCode}
+			requestErr = &Error{Code: code, Message: "STF 请求被拒绝", Retryable: retryable, StatusCode: response.StatusCode}
 		}
 		var typed *Error
 		if !errors.As(requestErr, &typed) {
-			typed = &Error{Code: code, Message: "STF request failed", Retryable: true, Cause: requestErr}
+			typed = &Error{Code: code, Message: "STF 请求失败", Retryable: true, Cause: requestErr}
 			requestErr = typed
 		}
 		if !typed.Retryable || attempt == client.attempts {
@@ -285,11 +285,11 @@ func (client *Client) request(ctx context.Context, method, path string, payload 
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return &Error{Code: code, Message: "STF request context ended", Retryable: true, Cause: ctx.Err()}
+			return &Error{Code: code, Message: "STF 请求上下文已结束", Retryable: true, Cause: ctx.Err()}
 		case <-timer.C:
 		}
 	}
-	return &Error{Code: code, Message: "STF request failed", Retryable: true}
+	return &Error{Code: code, Message: "STF 请求失败", Retryable: true}
 }
 
 func (client *Client) do(ctx context.Context, method, path string, body []byte) (*http.Response, error) {

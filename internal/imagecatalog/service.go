@@ -24,10 +24,10 @@ import (
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid Android system image request")
-	ErrNoBuildAgent    = errors.New("no online Build Agent is available")
-	ErrNotFound        = errors.New("Android system image catalog entry not found")
-	ErrConflict        = errors.New("Android system image preparation conflict")
+	ErrInvalidArgument = errors.New("安卓系统镜像请求无效")
+	ErrNoBuildAgent    = errors.New("当前没有在线的镜像构建代理")
+	ErrNotFound        = errors.New("未找到安卓系统镜像目录项")
+	ErrConflict        = errors.New("安卓系统镜像准备发生冲突")
 )
 
 type Entry struct {

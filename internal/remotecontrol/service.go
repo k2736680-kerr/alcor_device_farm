@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	ErrUnavailable = errors.New("remote control is unavailable")
-	ErrNotFound    = errors.New("remote control not found")
-	ErrConflict    = errors.New("remote control conflict")
+	ErrUnavailable = errors.New("远程控制服务不可用")
+	ErrNotFound    = errors.New("未找到远程控制连接")
+	ErrConflict    = errors.New("远程控制操作发生冲突")
 )
 
 type Reservations interface {

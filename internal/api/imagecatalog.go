@@ -21,7 +21,7 @@ func (handler *imageCatalogHandler) available(writer http.ResponseWriter, reques
 	if handler.service != nil {
 		return true
 	}
-	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "Android image catalog is not configured", Retryable: true})
+	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "安卓系统镜像目录尚未配置", Retryable: true})
 	return false
 }
 func (handler *imageCatalogHandler) list(writer http.ResponseWriter, request *http.Request) {
@@ -64,6 +64,6 @@ func (handler *imageCatalogHandler) write(writer http.ResponseWriter, request *h
 	case errors.Is(err, imagecatalog.ErrConflict):
 		httpx.WriteError(writer, request, http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()})
 	default:
-		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error"})
+		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误"})
 	}
 }

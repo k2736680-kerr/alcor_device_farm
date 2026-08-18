@@ -4,7 +4,7 @@
 
 - Android 第一版验收继续有效，但不能替代 iOS 真实验收；
 - Mock 只验证契约、状态机、并发和故障注入，不能证明 Xcode/WDA/iOS 可用；
-- iOS P0/P1 必须在固定版本的真实 macOS Host 上通过；真机能力必须至少使用一台实际 iPhone，Simulator 结果不能替代；
+- iOS P0/P1 必须在固定版本的真实 macOS Host 上通过；当前签收范围是动态 Simulator，不宣称真实 iPhone 已接入；
 - PostgreSQL active Reservation 始终是唯一业务占用真相；Appium Device Farm busy 仅作为技术互斥；
 - 不允许通过手工改数据库、人工 block 插件设备或暴露 Appium Dashboard 来制造成功；
 - 所有日志、截图和配置证据必须移除 Token、Cookie、Apple Account、证书私钥、Profile 内容和 Session Grant。
@@ -17,21 +17,13 @@
 - 固定 Xcode 和至少一个稳定 iOS Simulator Runtime；
 - Node 22.23.2、Appium 3.6.0、Device Farm 12.0.1、XCUITest 12.4.0；
 - Device Farm Host Agent、PostgreSQL 和 Device Farm Server；
-- 至少两个不同 UDID 的 booted Simulator，用于单设备和并发防串机；
-- Appium Node 只在受控网络可达，Dashboard 不提供人工分配入口。
-
-### E5：macOS iOS 真机环境
-
-- E4 的专用 macOS Host；
-- 至少一台已配对和信任的 iPhone，启用 Developer Mode 和 UI Automation；
-- 与目标 iOS 匹配的 Xcode/SDK；
-- 受控 Apple Developer Team、有效 WDA 签名和 Provisioning Profile；
-- go-ios 1.3.2 及目标版本所需的 RemoteXPC/WDA 依赖；
-- 一份最小、已正确签名的测试 IPA，由外部 iOS Executor/验收 Harness 使用，不存入设备农场数据库。
+- 至少两个由后台动态创建的不同 UDID Simulator，用于单设备和并发防串机；
+- 每台 Mac 的 Appium Hub 固定为 `127.0.0.1:4723`，动态发现 Node 固定为 `127.0.0.1:4724` 并每 5 秒向本机 Hub 注册 inventory；两者均不对外开放，Dashboard 不提供人工分配入口；
+- Session Fence 只连接本机 Hub；PostgreSQL Scheduler 先确定唯一 Host/UDID，本机 Hub/Node 不承担跨 Host 自动分配。
 
 ### E6：多 Host 与 Alcor 联调环境
 
-- E4/E5 至少两个 macOS Host 或一个 macOS Host 加故障替身；
+- E4 至少两个 macOS Host 或一个 macOS Host 加故障替身；
 - Alcor 可信 iOS Executor/契约 Harness；
 - Device Farm Service Token 与 Host Agent Token 分离；
 - Android E2/E3 环境保持可用，用于回归。
@@ -43,8 +35,8 @@
 | G10 iOS 设计 | DF-039 | ADR、复用矩阵、功能设计、任务拆分、版本和验收环境明确，无生产代码 |
 | G11 平台中立控制面 | DF-040 | migration/OpenAPI/领域状态支持 Android+iOS，Android 数据无破坏，Mock 无双占 |
 | G12 macOS 与路由 | DF-041～DF-042 | Host/插件 inventory、健康和 Reservation Session Fence 在 E4 可用 |
-| G13 Simulator | DF-043 | 两台 Simulator 发现、预约、并发 Session、释放和故障恢复通过 |
-| G14 真机 | DF-044 | E5 完成配对、签名、WDA、明确 UDID Session、释放和签名故障收敛 |
+| G13 Simulator 基础 | DF-043 | 两台固定 Simulator 发现、预约、并发 Session、释放和故障恢复通过 |
+| G14 动态 Simulator | DF-044 | E4 从受控目录创建、启动、Session、重建和删除通过 |
 | G15 Console | DF-045 | iOS 设备域页面、安全和审计通过，未伪造人工远控 |
 | G16 发布 | DF-046 | E6 全链路、稳定性、回滚和 Android 全量回归通过 |
 
@@ -70,7 +62,8 @@
 | AT-IOS-DISC-001 | P0 | allowlist 中 booted Simulator 出现/消失 | Device 唯一映射，状态在时限内收敛 |
 | AT-IOS-DISC-002 | P0 | 新未知 Simulator/USB 真机接入 | 只登记 unknown/quarantined，不自动进入 Pool |
 | AT-IOS-DISC-003 | P0 | 同一 UDID 从另一 Host 上报 | 不静默迁移；两台 Host 停止相关新分配并产生冲突审计 |
-| AT-IOS-DISC-004 | P1 | Agent 或 Appium Node 重启 | 120 秒内恢复 inventory，旧 Generation 不覆盖新状态 |
+| AT-IOS-DISC-004 | P1 | Agent、本机 Hub 或动态发现 Node 重启 | 120 秒内恢复 inventory，旧 Generation 不覆盖新状态；Session Fence 始终只连接 Hub |
+| AT-IOS-DISC-005 | P0 | 读取 Runtime 与 Device Type 目录 | 只返回 Host 已安装、可用且 allowlist 内的 iOS/iPhone 项，不返回其他平台或任意命令参数 |
 
 ### 4.3 Reservation 与 Session Fence
 
@@ -86,25 +79,29 @@
 | AT-IOS-RES-008 | P1 | 两台 Simulator 并发 | Session/UDID/Host/结果互不串联，两个插件 busy 与两个 Reservation 一一对应 |
 | AT-IOS-RES-009 | P0 | 正常删除 Session 后 Agent 尚未刷新插件 busy | 30 秒清理宽限内不误隔离；随后收敛为 ready/healthy，超时仍 busy 才隔离 |
 
-### 4.4 Simulator 与真机自动化
+### 4.4 动态 Simulator 与自动化
 
 | 编号 | 级别 | 场景 | 预期 |
 |---|---|---|---|
 | AT-IOS-SIM-001 | P0 | 指定 Simulator UDID 创建 XCUITest Session | WDA status、最小页面查询和 Session 删除成功 |
 | AT-IOS-SIM-002 | P0 | Simulator shutdown/boot failure | 不进入 ready；已有预约失败分类为基础设施故障 |
-| AT-IOS-REAL-001 | P0 | 已配对真机明确 UDID 创建 Session | 不自动选择其他设备；WDA 与最小操作成功 |
-| AT-IOS-REAL-002 | P0 | 未信任、Developer Mode 关闭或 UI Automation 关闭 | 健康检查失败，设备不可预约，错误指出缺失步骤 |
-| AT-IOS-REAL-003 | P0 | WDA 签名/Profile 过期 | 设备停止新预约，无 Secret 泄露；更新后可人工解除隔离 |
-| AT-IOS-REAL-004 | P0 | iOS/Xcode/XCUITest 不兼容 | Host/Device readiness 拒绝，不在 Session 时才随机失败 |
-| AT-IOS-REAL-005 | P1 | Session 成功、测试失败、Worker 取消和超时 | 四条路径都最终删除 Session 并释放 Reservation |
+| AT-IOS-SIM-003 | P0 | 后台选择可用 Runtime 与 iPhone 类型创建 | 原子登记 Device/Pool/Host Command；`simctl create/boot/bootstatus` 后 ready/healthy |
+| AT-IOS-SIM-004 | P0 | Runtime/Device Type 不在目录或请求携带任意参数 | 中文稳定错误，Agent 不执行任何变更命令 |
+| AT-IOS-SIM-005 | P0 | 容量不足 | 返回内存/磁盘/槽位中文缺口，无半条 Device、membership 或 command |
+| AT-IOS-SIM-006 | P0 | 空闲 Simulator 重建 | shutdown/erase/boot 后 UDID 不变、旧数据清空并恢复 ready/healthy |
+| AT-IOS-SIM-007 | P0 | 空闲 Simulator 删除 | CoreSimulator UDID 消失，Device 标记 deleted，Pool membership/Endpoint 按既有语义清理 |
+| AT-IOS-SIM-008 | P0 | busy 或有活动 Reservation 时重建/删除 | Console 与 Server/Provider 均拒绝，不中断 Session |
+| AT-IOS-SIM-009 | P0 | 相同幂等键重放创建或 Agent 在 create 后重启 | 只存在一台对应名称/Device/Command，不产生重复 UDID |
+| AT-IOS-SIM-010 | P0 | `simctl create` 成功后 Hub inventory 读取或 Node 注册失败 | Agent 按刚创建的受管 UDID 直接执行 shutdown/delete 补偿，无 CoreSimulator、Device、membership 或 command 半成品 |
+| AT-IOS-SIM-011 | P0 | 删除 Pool 最后一台动态 Simulator | 删除成功且 `total_target=0`；`max_concurrency` 保留合法最小值，不因数据库约束遗留 Simulator |
 
 ### 4.5 安全、Console 和回归
 
 | 编号 | 级别 | 场景 | 预期 |
 |---|---|---|---|
 | AT-IOS-SEC-001 | P0 | 扫描 API、日志、审计、数据库普通字段和浏览器 | 无 Apple Account、私钥、Profile、Token、Grant 或内部 WDA 地址 |
-| AT-IOS-SEC-002 | P0 | 浏览器访问 Appium Node/Dashboard/Session Grant | 网络和 API 均拒绝 |
-| AT-IOS-UI-001 | P0 | iOS Device 页面 | 显示平台、机型、OS、真机/Simulator、健康和签名摘要；明确人工远控不支持 |
+| AT-IOS-SEC-002 | P0 | 浏览器访问 Appium Hub、动态发现 Node、Dashboard 或 Session Grant | 网络和 API 均拒绝 |
+| AT-IOS-UI-001 | P0 | iOS Device 页面 | 显示平台、Runtime、机型、Simulator、健康和创建/管理入口；明确人工远控不支持 |
 | AT-IOS-UI-002 | P0 | 点击 Android STF 远控逻辑作用于 iOS | UI 不提供该操作，API 也拒绝 |
 | AT-IOS-REG-001 | P0 | Android 全量 Go/Console/契约和真实冒烟 | 第一版预约、STF、Appium、DaFit 和长期设备语义无回归 |
 | AT-IOS-RBK-001 | P0 | drain iOS Host、禁用 iOS Pool并回滚版本 | 无新 iOS 流量，活动 Session 正常结束或受控终止；Android 不受影响 |
@@ -118,7 +115,7 @@
 | Session 路由 | 100% 与 Reservation UDID 相同 |
 | Host/Agent/Appium 恢复 | 120 秒内收敛或明确隔离 |
 | 过期回收 | grace period 后 60 秒内开始关闭 Session |
-| 稳定性 | Simulator 50 次循环；真机至少 20 次循环，无永久 busy/Reservation |
+| 稳定性 | Simulator 创建、Session、重建、删除至少 50 次循环，无永久 busy/Reservation 或残留 UDID |
 | Secret 泄露 | 0 |
 | Android 回归 | P0/P1 仍全部通过 |
 
@@ -127,7 +124,6 @@
 - Host 硬件、macOS、Xcode、iOS Runtime 和测试设备脱敏清单；
 - Node/Appium/插件/XCUITest/WDA/go-ios 的固定版本和安装校验；
 - Reservation、Session Grant、Appium Session、UDID 与插件 busy 的脱敏时间线；
-- Simulator/真机的成功、故障、取消、过期和恢复日志；
-- WDA 签名到期测试只保存状态和有效期摘要，不保存证书/Profile 内容；
+- Simulator 创建、Session、重建、删除、故障、取消、过期和恢复日志；
 - PostgreSQL 唯一约束、漂移事件、最终清理和 Android 回归结果；
 - 回滚步骤与回滚后资源状态。

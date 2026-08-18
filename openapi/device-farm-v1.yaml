@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 2.3.0
+  version: 2.4.0
   x-contract-status: frozen
-  x-contract-frozen-at: 2026-08-17
+  x-contract-frozen-at: 2026-08-18
   x-platform-semantics: Case/Run/RunAttempt
   description: >-
     Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份，
@@ -278,6 +278,39 @@ paths:
       requestBody: {$ref: "#/components/requestBodies/OperationReason"}
       responses:
         "200": {$ref: "#/components/responses/HostSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/ios-simulator-catalog:
+    get:
+      tags: [Devices]
+      operationId: getIOSSimulatorCatalog
+      description: 返回指定 Mac 宿主机当前心跳上报且通过部署白名单的 iOS Runtime 与 iPhone 机型目录。
+      parameters:
+        - name: host_id
+          in: query
+          required: true
+          schema: {$ref: "#/components/schemas/Identifier"}
+      responses:
+        "200": {$ref: "#/components/responses/IOSSimulatorCatalogSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/ios-simulators:
+    post:
+      tags: [Devices]
+      operationId: createIOSSimulator
+      description: 在受控 Mac 宿主机上异步创建并启动一个持久化虚拟 iPhone，同时原子登记 Device、Pool 成员、Host Command 与审计事件。
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSimulatorCreateInput"}
+      responses:
+        "202": {$ref: "#/components/responses/IOSSimulatorOperationAccepted"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -1090,6 +1123,18 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceHostInput"}
           example: {name: kvm-host-01, host_type: docker_emulator, host_os: linux, host_arch: x86_64, capacity: {cpu: 16, memory_mb: 32768, device_slots: 8}}
+    IOSSimulatorCreateInput:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSimulatorCreateInput"}
+          example:
+            host_id: "01JIOSHOST000000000000000"
+            pool_id: "01JIOSPOOL000000000000000"
+            runtime_id: "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
+            device_type_id: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+            display_name: "自动化 iPhone"
+            reason: "为 DaFit 长时自动化创建 iOS 测试设备"
     DevicePoolInput:
       required: true
       content:
@@ -1243,6 +1288,12 @@ components:
     HostCreated:
       description: Host 已创建
       content: {application/json: {schema: {$ref: "#/components/schemas/HostEnvelope"}}}
+    IOSSimulatorCatalogSuccess:
+      description: Mac 宿主机当前可创建的受控 Simulator 目录
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSimulatorCatalogEnvelope"}}}
+    IOSSimulatorOperationAccepted:
+      description: iOS Simulator 创建操作已原子登记并等待 Host Agent 执行
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSimulatorOperationEnvelope"}}}
     PoolListSuccess:
       description: Pool 分页列表
       content: {application/json: {schema: {$ref: "#/components/schemas/PoolListEnvelope"}}}
@@ -1558,6 +1609,70 @@ components:
         last_heartbeat_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    IOSSimulatorRuntime:
+      type: object
+      additionalProperties: false
+      required: [id, name, version]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 255}
+        name: {type: string, minLength: 1, maxLength: 128}
+        version: {type: string, minLength: 1, maxLength: 32}
+    IOSSimulatorDeviceType:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 255}
+        name: {type: string, minLength: 1, maxLength: 128}
+    IOSSimulatorCatalog:
+      type: object
+      additionalProperties: false
+      required: [host_id, runtimes, device_types]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        runtimes: {type: array, items: {$ref: "#/components/schemas/IOSSimulatorRuntime"}}
+        device_types: {type: array, items: {$ref: "#/components/schemas/IOSSimulatorDeviceType"}}
+    IOSSimulatorCreateInput:
+      type: object
+      additionalProperties: false
+      required: [host_id, pool_id, runtime_id, device_type_id, reason]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        runtime_id: {type: string, minLength: 1, maxLength: 255}
+        device_type_id: {type: string, minLength: 1, maxLength: 255}
+        display_name: {type: string, maxLength: 128}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: 必填操作原因；包含 Token、密码、Cookie、密钥或带口令 DSN 时拒绝请求。
+    IOSSimulatorOperation:
+      type: object
+      additionalProperties: false
+      required: [device_id, command_id, host_id, pool_id, status]
+      properties:
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        command_id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        status: {type: string, enum: [creating_simulator]}
+    IOSSimulatorCatalogEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/IOSSimulatorCatalog"}
+        error: {nullable: true}
+    IOSSimulatorOperationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/IOSSimulatorOperation"}
+        error: {nullable: true}
     DevicePool:
       type: object
       additionalProperties: false

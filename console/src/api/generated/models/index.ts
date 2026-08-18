@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.3.0
+ * OpenAPI spec version: 2.4.0
  */
 
 export * from './aPIError';
@@ -146,6 +146,7 @@ export * from './errorResponse';
 export * from './evalAttemptIDParameter';
 export * from './evalRunIDParameter';
 export * from './forbiddenResponse';
+export * from './getIOSSimulatorCatalogParams';
 export * from './healthEvent';
 export * from './healthEventBody';
 export * from './healthEventListEnvelope';
@@ -202,6 +203,19 @@ export * from './iOSSessionGrantCreatedResponse';
 export * from './iOSSessionGrantEnvelope';
 export * from './iOSSessionGrantEnvelopeError';
 export * from './iOSSessionGrantPlatform';
+export * from './iOSSimulatorCatalog';
+export * from './iOSSimulatorCatalogEnvelope';
+export * from './iOSSimulatorCatalogEnvelopeError';
+export * from './iOSSimulatorCatalogSuccessResponse';
+export * from './iOSSimulatorCreateInput';
+export * from './iOSSimulatorCreateInputBody';
+export * from './iOSSimulatorDeviceType';
+export * from './iOSSimulatorOperation';
+export * from './iOSSimulatorOperationAcceptedResponse';
+export * from './iOSSimulatorOperationEnvelope';
+export * from './iOSSimulatorOperationEnvelopeError';
+export * from './iOSSimulatorOperationStatus';
+export * from './iOSSimulatorRuntime';
 export * from './idempotencyKeyParameter';
 export * from './identifier';
 export * from './imageAcceptedResponse';

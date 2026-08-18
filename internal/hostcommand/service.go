@@ -27,11 +27,11 @@ var errorCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,63}$`)
 var hostArchPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
 
 var (
-	ErrInvalidArgument        = errors.New("invalid host command argument")
-	ErrNotFound               = errors.New("host command resource not found")
-	ErrConflict               = errors.New("host command conflict")
-	ErrDeviceIdentityConflict = errors.New("discovered device identity conflict")
-	ErrNoCommand              = errors.New("no host command available")
+	ErrInvalidArgument        = errors.New("宿主机命令参数无效")
+	ErrNotFound               = errors.New("未找到宿主机命令资源")
+	ErrConflict               = errors.New("宿主机命令发生冲突")
+	ErrDeviceIdentityConflict = errors.New("发现的设备身份发生冲突")
+	ErrNoCommand              = errors.New("当前没有可领取的宿主机命令")
 )
 
 type DiscoveredDevice struct {
@@ -670,6 +670,7 @@ type managementOperationResult struct {
 	RollbackRestored bool   `json:"rollback_restored"`
 	Connection       struct {
 		Serial         string `json:"serial"`
+		ProviderID     string `json:"provider_id"`
 		ADBEndpoint    string `json:"adb_endpoint"`
 		AppiumEndpoint string `json:"appium_endpoint"`
 		AppiumUDID     string `json:"appium_udid"`
@@ -765,18 +766,19 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 			return err
 		}
 		var healthReason *string
-		if record.CommandType == "create" || record.CommandType == "rebuild" {
+		if (record.CommandType == "create" || record.CommandType == "rebuild") && !strings.EqualFold(result.Platform, "ios") {
 			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
 				return err
 			}
 			value := domain.STFReadinessStabilizationReason
 			healthReason = &value
 		}
-		if _, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
-			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),
-			lifecycle_status=$6,health_status=$7,health_reason=$8,consecutive_failures=0,
-			last_seen_at=$9,updated_at=$9 WHERE id=$1 AND lifecycle_status=$10`,
-			deviceID, result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint,
+		if _, err := tx.Exec(ctx, `UPDATE devices SET provider_ref=CASE WHEN $2<>'' THEN $2 ELSE provider_ref END,
+			serial=$3,adb_endpoint=NULLIF($4,''),appium_endpoint=$5,
+			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+			lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,
+			last_seen_at=$10,updated_at=$10 WHERE id=$1 AND lifecycle_status=$11`,
+			deviceID, result.Connection.ProviderID, result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint,
 			result.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), healthReason, now, lifecycle); err != nil {
 			return err
 		}

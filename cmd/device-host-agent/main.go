@@ -55,10 +55,14 @@ func main() {
 	dockerMemory := flag.String("docker-memory", envOr("DEVICE_FARM_DOCKER_MEMORY", "5g"), "memory limit per emulator")
 	dockerPidsLimit := flag.Int("docker-pids-limit", envInt("DEVICE_FARM_DOCKER_PIDS_LIMIT", 512), "PID limit per emulator")
 	dockerDataRoot := flag.String("docker-data-root", envOr("DEVICE_FARM_DOCKER_DATA_ROOT", "/var/lib/docker"), "Docker data filesystem used for capacity measurement")
+	iosSimulatorDataRoot := flag.String("ios-simulator-data-root", envOr("DEVICE_FARM_IOS_SIMULATOR_DATA_ROOT", defaultIOSDataRoot()), "CoreSimulator 数据所在文件系统，用于容量探测")
 	dockerRenderDevice := flag.String("docker-render-device", envOr("DEVICE_FARM_DOCKER_RENDER_DEVICE", "/dev/dri/renderD128"), "optional GPU render node detected by the agent")
 	imagePrepareScript := flag.String("image-prepare-script", strings.TrimSpace(os.Getenv("DEVICE_FARM_IMAGE_PREPARE_SCRIPT")), "trusted local Android image preparation script; empty disables Build Agent commands")
 	iosEndpoint := flag.String("ios-appium-endpoint", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_APPIUM_ENDPOINT")), "local Appium Device Farm Node endpoint")
 	iosAllowUDIDs := flag.String("ios-allow-udids", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_ALLOW_UDIDS")), "comma-separated fixed iOS UDID allowlist")
+	iosRuntimeIDs := flag.String("ios-runtime-ids", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_RUNTIME_IDS")), "允许动态创建的 iOS Runtime ID，多个值使用逗号分隔")
+	iosDeviceTypeIDs := flag.String("ios-device-type-ids", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_DEVICE_TYPE_IDS")), "允许动态创建的 iPhone Device Type ID，多个值使用逗号分隔")
+	iosManagedNamePrefix := flag.String("ios-managed-name-prefix", envOr("DEVICE_FARM_IOS_MANAGED_NAME_PREFIX", "Alcor-DF-"), "设备农场动态 Simulator 的保留名称前缀")
 	iosWDAPackageJSON := flag.String("ios-wda-package-json", strings.TrimSpace(os.Getenv("DEVICE_FARM_IOS_WDA_PACKAGE_JSON")), "appium-webdriveragent package.json used for pinned WDA readiness")
 	iosXcrunBinary := flag.String("ios-xcrun-binary", envOr("DEVICE_FARM_IOS_XCRUN_BINARY", "xcrun"), "用于受控 Simulator 生命周期的 xcrun 可执行文件")
 	nodeBinary := flag.String("node-binary", envOr("DEVICE_FARM_NODE_BINARY", "node"), "pinned Node.js binary used by the iOS Host")
@@ -90,13 +94,15 @@ func main() {
 	agentEnvironment := map[string]any{}
 	if strings.EqualFold(strings.TrimSpace(*providerType), "appium_device_farm_ios") {
 		iosAdapter, err = appiumdevicefarm.New(appiumdevicefarm.Config{Endpoint: *iosEndpoint, Timeout: *appiumHealthTimeout,
-			AllowUDIDs: splitCSV(*iosAllowUDIDs), XcrunBinary: *iosXcrunBinary})
+			AllowUDIDs: splitCSV(*iosAllowUDIDs), AllowedRuntimeIDs: splitCSV(*iosRuntimeIDs),
+			AllowedDeviceTypeIDs: splitCSV(*iosDeviceTypeIDs), ManagedNamePrefix: *iosManagedNamePrefix, XcrunBinary: *iosXcrunBinary})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Appium Device Farm adapter configuration error: %v\n", err)
 			os.Exit(1)
 		}
 		environmentProbe, err = ioshost.New(ioshost.Config{NodeBinary: *nodeBinary, AppiumBinary: *appiumBinary,
-			GoIOSBinary: *goIOSBinary, XcrunBinary: *iosXcrunBinary, WDAPackageJSON: *iosWDAPackageJSON, NodeHealth: iosAdapter})
+			GoIOSBinary: *goIOSBinary, XcrunBinary: *iosXcrunBinary, WDAPackageJSON: *iosWDAPackageJSON,
+			NodeHealth: iosAdapter, SimulatorCatalog: iosAdapter})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "iOS Host readiness configuration error: %v\n", err)
 			os.Exit(1)
@@ -135,6 +141,8 @@ func main() {
 	var capacityProbe agent.CapacityProbe
 	if strings.EqualFold(strings.TrimSpace(*providerType), "docker") {
 		capacityProbe = hostcapacity.NewSystem(*dockerDataRoot, *dockerRenderDevice, *deviceSlotLimit)
+	} else if strings.EqualFold(strings.TrimSpace(*providerType), "appium_device_farm_ios") {
+		capacityProbe = hostcapacity.NewIOSSystem(*iosSimulatorDataRoot, *deviceSlotLimit)
 	}
 	var imagePreparer imageprepare.Preparer
 	if strings.TrimSpace(*imagePrepareScript) != "" {
@@ -164,6 +172,14 @@ func main() {
 		logger.Error("device host agent stopped with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func defaultIOSDataRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "/Users/Shared"
+	}
+	return home
 }
 
 type componentRunner interface{ Run(context.Context) error }

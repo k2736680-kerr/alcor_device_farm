@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrNothingToReconcile = errors.New("no iOS Session drift to reconcile")
+var ErrNothingToReconcile = errors.New("当前没有需要收敛的 iOS 会话漂移")
 
 // XCUITest 首次启动 WDA 时可能需要现场编译。Session Grant 只限制开始消费的
 // 时间；消费成功后必须给 Fence 足够时间完成 Appium Session 创建和绑定。

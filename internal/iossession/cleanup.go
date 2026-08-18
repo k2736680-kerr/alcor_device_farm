@@ -48,7 +48,7 @@ func (service *Service) CloseForReservation(ctx context.Context, reservationID s
 				_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 				response.Body.Close()
 				if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusNotFound {
-					err = fmt.Errorf("Fence cleanup returned status %d", response.StatusCode)
+					err = fmt.Errorf("Session Fence 清理返回状态码 %d", response.StatusCode)
 				}
 			}
 		}

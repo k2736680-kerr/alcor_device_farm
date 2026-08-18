@@ -119,27 +119,27 @@ func (handler *consoleHandler) writeRemote(writer http.ResponseWriter, request *
 		return
 	}
 	responseStatus := http.StatusInternalServerError
-	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "unable to manage remote control"}
+	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "远程控制操作失败"}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		responseStatus, apiError = http.StatusGatewayTimeout, httpx.APIError{Code: "REMOTE_CONTROL_TIMEOUT", Message: "remote control operation timed out", Retryable: true}
+		responseStatus, apiError = http.StatusGatewayTimeout, httpx.APIError{Code: "REMOTE_CONTROL_TIMEOUT", Message: "远程控制操作超时", Retryable: true}
 	case errors.Is(err, remotecontrol.ErrUnavailable):
-		responseStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "REMOTE_CONTROL_UNAVAILABLE", Message: "remote control is unavailable", Retryable: true}
+		responseStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "REMOTE_CONTROL_UNAVAILABLE", Message: "远程控制服务暂时不可用", Retryable: true}
 	case errors.Is(err, remotecontrol.ErrNotFound):
-		responseStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "REMOTE_CONTROL_NOT_FOUND", Message: "remote control is not active"}
+		responseStatus, apiError = http.StatusNotFound, httpx.APIError{Code: "REMOTE_CONTROL_NOT_FOUND", Message: "当前没有活动的远程控制连接"}
 	case errors.Is(err, remotecontrol.ErrConflict):
-		responseStatus, apiError = http.StatusConflict, httpx.APIError{Code: "REMOTE_CONTROL_CONFLICT", Message: "device cannot start remote control in its current state", Retryable: true}
+		responseStatus, apiError = http.StatusConflict, httpx.APIError{Code: "REMOTE_CONTROL_CONFLICT", Message: "设备当前状态无法启动远程控制", Retryable: true}
 	case errors.Is(err, reservation.ErrInvalidArgument):
-		responseStatus, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "invalid remote control request"}
+		responseStatus, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "远程控制请求无效"}
 	case errors.Is(err, reservation.ErrForbidden):
-		responseStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "remote control owner does not match"}
+		responseStatus, apiError = http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Message: "远程控制连接所有者不匹配"}
 	}
 	httpx.WriteError(writer, request, responseStatus, apiError)
 }
 
 func (handler *consoleHandler) login(writer http.ResponseWriter, request *http.Request) {
 	if handler.auth == nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "console is not configured", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "控制台服务尚未配置", Retryable: true})
 		return
 	}
 	var input struct {
@@ -157,14 +157,14 @@ func (handler *consoleHandler) login(writer http.ResponseWriter, request *http.R
 	if err != nil {
 		if errors.Is(err, consoleauth.ErrRateLimited) {
 			writer.Header().Set("Retry-After", "900")
-			httpx.WriteError(writer, request, http.StatusTooManyRequests, httpx.APIError{Code: "LOGIN_RATE_LIMITED", Message: "too many failed login attempts", Retryable: true})
+			httpx.WriteError(writer, request, http.StatusTooManyRequests, httpx.APIError{Code: "LOGIN_RATE_LIMITED", Message: "登录失败次数过多，请稍后重试", Retryable: true})
 			return
 		}
 		if errors.Is(err, consoleauth.ErrInvalidCredentials) {
-			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "INVALID_CREDENTIALS", Message: "invalid user ID or password"})
+			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "INVALID_CREDENTIALS", Message: "用户 ID 或密码错误"})
 			return
 		}
-		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "unable to create console session"})
+		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "无法创建控制台会话"})
 		return
 	}
 	http.SetCookie(writer, handler.auth.Cookie(consoleauth.SessionCookieName, created.Token, true, created.View.ExpiresAt))
@@ -176,7 +176,7 @@ func (handler *consoleHandler) login(writer http.ResponseWriter, request *http.R
 func (handler *consoleHandler) me(writer http.ResponseWriter, request *http.Request) {
 	view, err := handler.auth.Current(request)
 	if err != nil {
-		httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Message: "console session is not authenticated"})
+		httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Message: "控制台会话尚未登录"})
 		return
 	}
 	noStore(writer)
@@ -185,7 +185,7 @@ func (handler *consoleHandler) me(writer http.ResponseWriter, request *http.Requ
 
 func (handler *consoleHandler) logout(writer http.ResponseWriter, request *http.Request) {
 	if err := handler.auth.Logout(request); err != nil {
-		httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Message: "console session is not authenticated"})
+		httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Message: "控制台会话尚未登录"})
 		return
 	}
 	http.SetCookie(writer, handler.auth.ExpiredCookie(consoleauth.SessionCookieName, true))
@@ -196,7 +196,7 @@ func (handler *consoleHandler) logout(writer http.ResponseWriter, request *http.
 
 func (handler *consoleHandler) listAuditEvents(writer http.ResponseWriter, request *http.Request) {
 	if handler.queries == nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "audit events are unavailable", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "审计事件暂时不可用", Retryable: true})
 		return
 	}
 	page, ok := pagination(request)
@@ -206,7 +206,7 @@ func (handler *consoleHandler) listAuditEvents(writer http.ResponseWriter, reque
 	}
 	items, total, err := handler.queries.ListAuditEvents(request.Context(), page)
 	if err != nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "audit events are unavailable", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "审计事件暂时不可用", Retryable: true})
 		return
 	}
 	httpx.WriteData(writer, request, http.StatusOK, paging.NewResult(items, page, total))
@@ -214,7 +214,7 @@ func (handler *consoleHandler) listAuditEvents(writer http.ResponseWriter, reque
 
 func (handler *consoleHandler) listHealthEvents(writer http.ResponseWriter, request *http.Request) {
 	if handler.queries == nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "health events are unavailable", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "健康事件暂时不可用", Retryable: true})
 		return
 	}
 	page, ok := pagination(request)
@@ -224,7 +224,7 @@ func (handler *consoleHandler) listHealthEvents(writer http.ResponseWriter, requ
 	}
 	items, total, err := handler.queries.ListHealthEvents(request.Context(), request.PathValue("id"), page)
 	if err != nil {
-		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "health events are unavailable", Retryable: true})
+		httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "健康事件暂时不可用", Retryable: true})
 		return
 	}
 	httpx.WriteData(writer, request, http.StatusOK, paging.NewResult(items, page, total))

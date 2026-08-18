@@ -36,11 +36,11 @@ func TestInventoryIsReadOnlyAllowlistedAndPreservesBusy(t *testing.T) {
 	}
 }
 
-func TestInventoryRejectsDuplicateUDIDWithChineseMessage(t *testing.T) {
+func TestInventoryMergesHubNodeDuplicateUDID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`[
-			{"udid":"SIM-DUPLICATE","platform":"ios","deviceType":"simulator"},
-			{"udid":"SIM-DUPLICATE","platform":"ios","deviceType":"simulator"}
+			{"udid":"SIM-DUPLICATE","name":"iPhone 17 Pro","state":"Shutdown","sdk":"26.3","platform":"ios","deviceType":"simulator","busy":false},
+			{"udid":"SIM-DUPLICATE","name":"iPhone 17 Pro","state":"Booted","sdk":"26.3","platform":"ios","deviceType":"simulator","busy":true}
 		]`))
 	}))
 	defer server.Close()
@@ -48,8 +48,26 @@ func TestInventoryRejectsDuplicateUDIDWithChineseMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Inventory(context.Background()); err == nil || !strings.Contains(err.Error(), "重复 UDID") {
-		t.Fatalf("重复 UDID 错误=%v", err)
+	devices, err := client.Inventory(context.Background())
+	if err != nil || len(devices) != 1 || devices[0].State != "Booted" || !devices[0].Busy {
+		t.Fatalf("合并后的 Hub/Node 设备=%#v，错误=%v", devices, err)
+	}
+}
+
+func TestInventoryRejectsConflictingDuplicateUDIDWithChineseMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`[
+			{"udid":"SIM-DUPLICATE","name":"iPhone 17 Pro","platform":"ios","deviceType":"simulator"},
+			{"udid":"SIM-DUPLICATE","name":"iPhone 16 Pro","platform":"ios","deviceType":"simulator"}
+		]`))
+	}))
+	defer server.Close()
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-DUPLICATE"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Inventory(context.Background()); err == nil || !strings.Contains(err.Error(), "身份冲突的重复 UDID") {
+		t.Fatalf("重复 UDID 冲突错误=%v", err)
 	}
 }
 
@@ -78,7 +96,7 @@ func TestProviderRequiresAllowlistAndHealthyNode(t *testing.T) {
 	if err != nil || len(snapshots) != 1 || snapshots[0].Ready() || snapshots[0].State != providers.StateStopped {
 		t.Fatalf("unknown snapshots=%+v error=%v", snapshots, err)
 	}
-	if _, err := unknown.Create(context.Background(), providers.CreateRequest{}); providers.ErrorCode(err) != "IOS_FIXED_INVENTORY_OPERATION_UNSUPPORTED" {
+	if _, err := unknown.Create(context.Background(), providers.CreateRequest{}); providers.ErrorCode(err) != "INVALID_ARGUMENT" {
 		t.Fatalf("unexpected mutation error: %v", err)
 	}
 }

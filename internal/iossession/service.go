@@ -24,17 +24,17 @@ import (
 )
 
 var (
-	ErrInvalidArgument        = errors.New("invalid iOS Session argument")
-	ErrNotFound               = errors.New("iOS Session binding not found")
-	ErrForbidden              = errors.New("iOS Session operation is forbidden")
-	ErrConflict               = errors.New("iOS Session binding conflict")
-	ErrGrantExpired           = errors.New("iOS Session Grant expired")
-	ErrGrantConsumed          = errors.New("iOS Session Grant already consumed")
-	ErrRoutingMismatch        = errors.New("iOS Session routing does not match the Reservation")
-	ErrProviderBusy           = errors.New("Appium Device Farm reports the reserved device busy")
+	ErrInvalidArgument        = errors.New("iOS 会话参数无效")
+	ErrNotFound               = errors.New("未找到 iOS 会话绑定")
+	ErrForbidden              = errors.New("不允许执行当前 iOS 会话操作")
+	ErrConflict               = errors.New("iOS 会话绑定发生冲突")
+	ErrGrantExpired           = errors.New("iOS 会话授权已过期")
+	ErrGrantConsumed          = errors.New("iOS 会话授权已被使用")
+	ErrRoutingMismatch        = errors.New("iOS 会话路由与预约不匹配")
+	ErrProviderBusy           = errors.New("Appium Device Farm 报告预约设备已被占用")
 	ErrProviderBusyConverging = errors.New("Appium Device Farm 正在收敛上一会话的忙碌状态")
-	ErrCleanupFailed          = errors.New("iOS Appium Session cleanup failed")
-	ErrHostUnavailable        = errors.New("iOS Session Fence Host is unavailable")
+	ErrCleanupFailed          = errors.New("iOS Appium 会话清理失败")
+	ErrHostUnavailable        = errors.New("iOS Session Fence 宿主机不可用")
 )
 
 var (
@@ -110,7 +110,7 @@ func New(db *database.DB, agentToken string, generators ...TokenGenerator) *Serv
 		newGrant = generators[0]
 	}
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-		return errors.New("iOS Session Fence redirects are not allowed")
+		return errors.New("iOS Session Fence 不允许重定向")
 	}}
 	return &Service{db: db, newID: identifier.New, newGrant: newGrant, agentToken: strings.TrimSpace(agentToken), httpClient: client}
 }
@@ -137,10 +137,10 @@ func (service *Service) Issue(ctx context.Context, actor audit.Actor, reservatio
 	}
 	grant, err := service.newGrant()
 	if err != nil {
-		return GrantView{}, fmt.Errorf("generate iOS Session Grant: %w", err)
+		return GrantView{}, fmt.Errorf("生成 iOS 会话授权失败：%w", err)
 	}
 	if !validGrant(grant) {
-		return GrantView{}, errors.New("generate iOS Session Grant: generator returned an invalid 256-bit value")
+		return GrantView{}, errors.New("生成 iOS 会话授权失败：生成器返回了无效的 256 位值")
 	}
 	grantHash := hashGrant(grant)
 	var result GrantView
@@ -405,7 +405,7 @@ func (service *Service) RecordFailure(ctx context.Context, input FailureInput, r
 		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
 			(id,device_id,source,event_type,severity,reason,payload,observed_at)
 			VALUES($1,$2,'session_fence','ios_session_create_failed','warning',$3,$4::jsonb,$5)`,
-			eventID, binding.DeviceID, "iOS Session Fence failed to create the upstream Session", payload, now); err != nil {
+			eventID, binding.DeviceID, "iOS Session Fence 创建上游 Appium Session 失败", payload, now); err != nil {
 			return err
 		}
 		actor := audit.Actor{Type: audit.ActorAgent, ID: input.HostID, ClientID: audit.ActorAgent}

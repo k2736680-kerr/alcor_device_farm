@@ -12,12 +12,17 @@ type System struct {
 	DiskPath     string
 	RenderDevice string
 	DeviceSlots  int
+	KVM          bool
 	readMemory   func() (int64, int64, error)
 	readDisk     func(string) (int64, int64, error)
 }
 
 func NewSystem(diskPath, renderDevice string, deviceSlots int) *System {
-	return &System{DiskPath: diskPath, RenderDevice: renderDevice, DeviceSlots: deviceSlots, readMemory: systemMemoryMB, readDisk: systemDiskMB}
+	return &System{DiskPath: diskPath, RenderDevice: renderDevice, DeviceSlots: deviceSlots, KVM: true, readMemory: systemMemoryMB, readDisk: systemDiskMB}
+}
+
+func NewIOSSystem(diskPath string, deviceSlots int) *System {
+	return &System{DiskPath: diskPath, DeviceSlots: deviceSlots, KVM: false, readMemory: systemMemoryMB, readDisk: systemDiskMB}
 }
 
 func (system *System) Snapshot(context.Context) (map[string]any, map[string]any, error) {
@@ -41,7 +46,7 @@ func (system *System) Snapshot(context.Context) (map[string]any, map[string]any,
 	if system.DeviceSlots > 0 {
 		capacity["device_slots"] = system.DeviceSlots
 	}
-	capabilities := map[string]any{"kvm": true, "gpu_render": false}
+	capabilities := map[string]any{"kvm": system.KVM, "gpu_render": false}
 	if system.RenderDevice != "" {
 		if info, statErr := os.Stat(system.RenderDevice); statErr == nil && !info.IsDir() {
 			capabilities["gpu_render"] = true

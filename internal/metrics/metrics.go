@@ -72,7 +72,7 @@ func (registry *Registry) Ready(ctx context.Context) error {
 func (registry *Registry) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", http.MethodGet)
-		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "不支持当前请求方法", http.StatusMethodNotAllowed)
 		return
 	}
 	writer.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

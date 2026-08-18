@@ -127,7 +127,7 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 	}
 	grant, ok := sessionGrant(request.Header.Get("Authorization"))
 	if !ok {
-		http.Error(writer, "valid Session Grant required", http.StatusUnauthorized)
+		http.Error(writer, "需要有效的 Session Grant", http.StatusUnauthorized)
 		return
 	}
 	if request.Method == http.MethodPost && request.URL.Path == "/session" {
@@ -145,7 +145,7 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 func (server *Server) create(writer http.ResponseWriter, request *http.Request, grant string) {
 	raw, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxCreateBody))
 	if err != nil {
-		http.Error(writer, "invalid Session request", http.StatusBadRequest)
+		http.Error(writer, "Session 请求无效", http.StatusBadRequest)
 		return
 	}
 	var authorization iossession.ConsumeView
@@ -158,25 +158,25 @@ func (server *Server) create(writer http.ResponseWriter, request *http.Request, 
 	}
 	if !sameEndpoint(authorization.UpstreamEndpoint, server.upstreamURL.String()) {
 		server.recordFailure(request.Context(), grant, "IOS_UPSTREAM_ENDPOINT_MISMATCH")
-		http.Error(writer, "Session routing was rejected", http.StatusConflict)
+		http.Error(writer, "Session 路由校验未通过", http.StatusConflict)
 		return
 	}
 	response, body, err := server.callUpstream(request.Context(), http.MethodPost, "/session", authorization.Request, request.Header.Get("Content-Type"), maxCreateReply)
 	if err != nil {
 		server.recordFailure(request.Context(), grant, "APPIUM_SESSION_CREATE_FAILED")
-		http.Error(writer, "upstream Appium Session is unavailable", http.StatusBadGateway)
+		http.Error(writer, "上游 Appium Session 当前不可用", http.StatusBadGateway)
 		return
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		server.recordFailure(request.Context(), grant, "APPIUM_SESSION_CREATE_REJECTED")
+		server.recordFailure(request.Context(), grant, classifySessionCreateFailure(body))
 		copyResponse(writer, response, body)
 		return
 	}
 	sessionID := appiumSessionID(body)
 	if sessionID == "" {
 		server.recordFailure(request.Context(), grant, "APPIUM_SESSION_RESPONSE_INVALID")
-		http.Error(writer, "upstream Appium response did not contain a Session ID", http.StatusBadGateway)
+		http.Error(writer, "上游 Appium 响应未包含 Session ID", http.StatusBadGateway)
 		return
 	}
 	if err := server.control(request.Context(), "/internal/v1/ios-session-fence/sessions/bindings", iossession.BindingInput{
@@ -390,6 +390,28 @@ func appiumSessionID(body []byte) string {
 		return ""
 	}
 	return response.SessionID
+}
+
+func classifySessionCreateFailure(body []byte) string {
+	message := strings.ToLower(string(body))
+	switch {
+	case strings.Contains(message, "developer mode"):
+		return "IOS_DEVELOPER_MODE_DISABLED"
+	case strings.Contains(message, "not trusted"), strings.Contains(message, "trust this computer"),
+		strings.Contains(message, "pair record"), strings.Contains(message, "not paired"):
+		return "IOS_PHYSICAL_NOT_TRUSTED"
+	case strings.Contains(message, "device support files"), strings.Contains(message, "developer disk image"),
+		strings.Contains(message, "unsupported os version"), strings.Contains(message, "xcode version"):
+		return "IOS_XCODE_INCOMPATIBLE"
+	case strings.Contains(message, "provisioning profile"), strings.Contains(message, "code signing"),
+		strings.Contains(message, "codesign"), strings.Contains(message, "development team"),
+		strings.Contains(message, "invalid code signature"), strings.Contains(message, "xcodebuild failed with code 65"):
+		return "WDA_SIGNING_FAILED"
+	case strings.Contains(message, "webdriveragent"), strings.Contains(message, "wda"):
+		return "WDA_START_FAILED"
+	default:
+		return "APPIUM_SESSION_CREATE_REJECTED"
+	}
 }
 
 func (server *Server) recordFailure(ctx context.Context, grant, code string) {

@@ -37,6 +37,10 @@ type NodeHealthProbe interface {
 	Health(context.Context) (appiumdevicefarm.NodeHealth, error)
 }
 
+type SimulatorCatalogProbe interface {
+	SimulatorCatalog(context.Context) (appiumdevicefarm.SimulatorCatalog, error)
+}
+
 type Config struct {
 	SWVersBinary     string
 	UnameBinary      string
@@ -51,6 +55,7 @@ type Config struct {
 	Runner           Runner
 	ReadFile         func(string) ([]byte, error)
 	NodeHealth       NodeHealthProbe
+	SimulatorCatalog SimulatorCatalogProbe
 }
 
 type Probe struct {
@@ -147,6 +152,18 @@ func (probe *Probe) collect(ctx context.Context) map[string]any {
 	} else {
 		components["ios_runtime"] = map[string]any{"status": "passed", "available": stringsToAny(runtimes)}
 	}
+	simulatorCatalog := appiumdevicefarm.SimulatorCatalog{}
+	if probe.config.SimulatorCatalog != nil {
+		var catalogErr error
+		simulatorCatalog, catalogErr = probe.config.SimulatorCatalog.SimulatorCatalog(ctx)
+		if catalogErr != nil {
+			ready = false
+			reasons = append(reasons, "ios_simulator_catalog_not_ready")
+			components["ios_simulator_catalog"] = map[string]any{"status": "failed"}
+		} else {
+			components["ios_simulator_catalog"] = map[string]any{"status": "passed", "runtimes": len(simulatorCatalog.Runtimes), "device_types": len(simulatorCatalog.DeviceTypes)}
+		}
+	}
 
 	nodeVersion, nodeErr := probe.versionCommand(ctx, probe.config.NodeBinary, "--version")
 	record("node", nodeVersion, ExpectedNodeVersion, nodeErr)
@@ -183,7 +200,7 @@ func (probe *Probe) collect(ctx context.Context) map[string]any {
 
 	return map[string]any{
 		"macos_version": macOSVersion, "macos_build": macOSBuild, "xcode_version": xcodeVersion, "xcode_build": xcodeBuild,
-		"ios_runtimes": stringsToAny(runtimes), "toolchain_components": components,
+		"ios_runtimes": stringsToAny(runtimes), "ios_simulator_catalog": simulatorCatalog, "toolchain_components": components,
 		"host_readiness": map[string]any{"ready": ready, "reasons": reasons}, "host_arch": arch, "host_os": "macos",
 	}
 }

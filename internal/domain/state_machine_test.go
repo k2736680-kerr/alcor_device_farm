@@ -187,6 +187,21 @@ func TestQuarantinedDeviceCannotBecomeReady(t *testing.T) {
 	}
 }
 
+func TestTransitionErrorUsesChineseOperatorMessage(t *testing.T) {
+	device, err := RestoreDevice("device_0000000000001", DeviceBusy, HealthHealthy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = device.Transition(DeviceDeleted, "验证忙碌保护", transitionTime)
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("transition error = %v", err)
+	}
+	want := "设备 device_0000000000001 的生命周期状态不能从“使用中”转换为“已删除”"
+	if err.Error() != want {
+		t.Fatalf("transition message = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestTransitionValidationLeavesAggregateUnchanged(t *testing.T) {
 	image, err := NewImage("image_00000000000001")
 	if err != nil {
