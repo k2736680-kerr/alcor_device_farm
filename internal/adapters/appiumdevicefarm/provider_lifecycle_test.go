@@ -88,7 +88,7 @@ func TestSimulatorLifecycleUsesOnlyControlledSimctlCommands(t *testing.T) {
 	runner := &simulatorRunner{state: "Shutdown"}
 	server := simulatorServer(t, runner, false)
 	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, AllowUDIDs: []string{"SIM-ALLOWED"},
-		XcrunBinary: "/usr/bin/xcrun", LifecyclePollInterval: time.Millisecond, CommandRunner: runner})
+		XcrunBinary: "/usr/bin/xcrun", LifecyclePollInterval: time.Millisecond, ReadinessStableDuration: 2 * time.Millisecond, CommandRunner: runner})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,7 @@
 | `device_farm_health_events_total` | 按 severity 累计健康事件 | Appium/STF/Agent 错误增长 |
 | `device_farm_metric_collection_errors_total` | 指标查询失败次数 | 指标本身失真告警 |
 
-当前 MVP 只有一台模拟器，不按 Device ID、Reservation ID、owner ID 建指标标签，避免高基数和业务标识泄露。排障明细使用 request ID、审计表和健康事件查询。
+指标不按 Device ID、Reservation ID、owner ID、UDID 或 Host 地址建标签，避免高基数和设备标识泄露。Android/iOS 和 lifecycle/health 使用固定低基数维度；排障明细使用 request ID、脱敏审计和健康事件查询。
 
 ## Dashboard 最小面板
 
@@ -55,6 +55,9 @@
 | CommandFailures | failed/timed_out command 增长 | P1 | 按 error_code 和 Host 日志处理 |
 | HTTP5xx | 5 分钟 5xx 比例大于 5% | P1 | 按路由和 request ID 排查 |
 | MetricCollectionError | collection error 增长 | P1 | 指标可能不完整，检查 DB 查询 |
+| IOSHostMaintenance | iOS Host maintenance 或 heartbeat 超过 120 秒未恢复 | P0 | 检查 Hub、Node、Agent、固定版本和启动 doctor；Hub/Node 进程存在但 inventory 无响应也必须告警。自动维护默认有 90 秒恢复宽限，期间停止调度但不累计设备隔离次数 |
+| IOSSessionDrift | `ios_session_drift`、provider busy 或 Session 清理失败增长 | P0 | 停止新 iOS 分配，核对 Reservation/Fence/Appium 后隔离处理 |
+| IOSInventoryResidue | 已删除动态 Simulator 仍存在于 Hub/Node 或 CoreSimulator | P1 | 使用正式 DELETE 补偿并按运维手册排空恢复 |
 
 阈值是单台设备 MVP 的起始值。增加模拟器或接入真机后只调整阈值，不修改指标和架构。
 
@@ -64,4 +67,7 @@
 - 停止 Host Agent 超过阈值：Host offline/heartbeat stale 可触发；
 - 创建无法匹配能力的 Reservation：oldest pending 上升并触发 backlog；
 - 让 Appium 健康检查失败：设备最终 quarantined，health error 和 command failure 增长；
+- 分别停止 macOS Host Agent、Appium Hub 和动态发现 Node：Host 停止新分配，launchd 在 120 秒内恢复或留下明确隔离证据；
+- 创建未绑定 Reservation 的旁路 iOS Appium busy：Session Reconciler 记录漂移并隔离，清理后不能自动伪装为 ready；
+- 让 iOS Reservation 带活跃 Session 过期：Reaper 先关闭 Session/WDA，再结束 Reservation；关闭失败时保持隔离；
 - 使用 Mock 故障只验证指标表达式和流程，真实签收仍需 Linux KVM、Docker、Agent 和监控系统。

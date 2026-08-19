@@ -244,7 +244,7 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		server.config.Logger.Warn("iOS remote action rejected by Appium", "status", response.StatusCode, "action", action.Type)
+		server.config.Logger.Warn("iOS 远控操作被 Appium 拒绝", "status", response.StatusCode, "action", action.Type)
 		http.Error(writer, "iOS 远控操作执行失败", http.StatusBadGateway)
 		return
 	}
@@ -323,7 +323,7 @@ func (server *Server) remoteWindowSize(ctx context.Context, sessionID string) (i
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || json.Unmarshal(body, &envelope) != nil ||
 		envelope.Value.Width < 1 || envelope.Value.Height < 1 {
-		return 0, 0, errors.New("invalid Appium window size")
+		return 0, 0, errors.New("Appium 窗口尺寸无效")
 	}
 	return envelope.Value.Width, envelope.Value.Height, nil
 }

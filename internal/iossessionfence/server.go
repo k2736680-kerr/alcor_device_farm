@@ -56,18 +56,18 @@ func New(config Config) (*Server, error) {
 	config.AgentToken = strings.TrimSpace(config.AgentToken)
 	config.HostID = strings.TrimSpace(config.HostID)
 	if config.ListenAddress == "" || config.AdvertiseURL == "" || len(config.AgentToken) < 16 || !validIdentifier(config.HostID) {
-		return nil, errors.New("invalid iOS Session Fence configuration")
+		return nil, errors.New("iOS Session Fence 配置无效")
 	}
 	if _, err := validateAdvertiseURL(config.AdvertiseURL); err != nil {
 		return nil, err
 	}
 	controlURL, err := parseEndpoint(config.ControlServerURL, false)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Session Fence control Server URL: %w", err)
+		return nil, fmt.Errorf("Session Fence 控制端 Server 地址无效：%w", err)
 	}
 	upstreamURL, err := parseEndpoint(config.UpstreamEndpoint, true)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Session Fence Appium endpoint: %w", err)
+		return nil, fmt.Errorf("Session Fence 的 Appium Endpoint 无效：%w", err)
 	}
 	if config.Timeout <= 0 {
 		config.Timeout = 30 * time.Second
@@ -87,7 +87,7 @@ func New(config Config) (*Server, error) {
 	}
 	client.Timeout = config.Timeout
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return errors.New("iOS Session Fence redirects are not allowed")
+		return errors.New("iOS Session Fence 不允许重定向")
 	}
 	streamClient := &http.Client{CheckRedirect: client.CheckRedirect}
 	server := &Server{config: config, controlURL: controlURL, upstreamURL: upstreamURL, httpClient: client, streamClient: streamClient}
@@ -214,12 +214,12 @@ func (server *Server) proxyBound(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	if !sameEndpoint(authorization.UpstreamEndpoint, server.upstreamURL.String()) {
-		http.Error(writer, "Session routing was rejected", http.StatusConflict)
+		http.Error(writer, "Session 路由被拒绝", http.StatusConflict)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxCommandBody))
 	if err != nil {
-		http.Error(writer, "WebDriver request is too large", http.StatusRequestEntityTooLarge)
+		http.Error(writer, "WebDriver 请求体过大", http.StatusRequestEntityTooLarge)
 		return
 	}
 	upstreamPath := request.URL.Path
@@ -228,7 +228,7 @@ func (server *Server) proxyBound(writer http.ResponseWriter, request *http.Reque
 	}
 	response, err := server.streamUpstream(request.Context(), request.Method, upstreamPath, body, request.Header.Get("Content-Type"))
 	if err != nil {
-		http.Error(writer, "upstream Appium request failed", http.StatusBadGateway)
+		http.Error(writer, "上游 Appium 请求失败", http.StatusBadGateway)
 		return
 	}
 	defer response.Body.Close()
@@ -240,7 +240,7 @@ func (server *Server) proxyBound(writer http.ResponseWriter, request *http.Reque
 		if err := server.control(context.WithoutCancel(request.Context()), "/internal/v1/ios-session-fence/sessions/closures", iossession.BindingInput{
 			HostID: server.config.HostID, SessionGrant: grant, AppiumSessionID: sessionID,
 		}, nil); err != nil {
-			server.config.Logger.Error("record closed iOS Appium Session failed", "error", err)
+			server.config.Logger.Error("记录已关闭的 iOS Appium Session 失败", "error", err)
 		}
 	}
 }
@@ -248,16 +248,16 @@ func (server *Server) proxyBound(writer http.ResponseWriter, request *http.Reque
 func (server *Server) cleanup(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodDelete || !constantBearer(request.Header.Get("Authorization"), server.config.AgentToken) ||
 		request.Header.Get("X-Device-Farm-Host-Id") != server.config.HostID {
-		http.Error(writer, "cleanup request is not authorized", http.StatusForbidden)
+		http.Error(writer, "清理请求未授权", http.StatusForbidden)
 		return
 	}
 	sessionID := strings.TrimPrefix(request.URL.Path, "/internal/v1/ios-session-fence/sessions/")
 	if !validAppiumSessionID(sessionID) || strings.Contains(sessionID, "/") {
-		http.Error(writer, "invalid Appium Session ID", http.StatusBadRequest)
+		http.Error(writer, "Appium Session ID 无效", http.StatusBadRequest)
 		return
 	}
 	if err := server.deleteUpstream(request.Context(), sessionID); err != nil {
-		http.Error(writer, "upstream Appium cleanup failed", http.StatusBadGateway)
+		http.Error(writer, "上游 Appium 清理失败", http.StatusBadGateway)
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
@@ -274,7 +274,7 @@ func (server *Server) deleteUpstream(ctx context.Context, sessionID string) erro
 		server.remoteSessions.Delete(sessionID)
 		return nil
 	}
-	return fmt.Errorf("upstream cleanup status %d", response.StatusCode)
+	return fmt.Errorf("上游清理返回状态码 %d", response.StatusCode)
 }
 
 func (server *Server) control(ctx context.Context, path string, input, output any) error {
@@ -307,7 +307,7 @@ func (server *Server) control(ctx context.Context, path string, input, output an
 		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
-		return errors.New("invalid Session Fence control response")
+		return errors.New("Session Fence 控制响应无效")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || envelope.Error != nil {
 		code := "IOS_SESSION_CONTROL_FAILED"
@@ -318,7 +318,7 @@ func (server *Server) control(ctx context.Context, path string, input, output an
 		return &ControlError{Status: response.StatusCode, Code: code, Retryable: retryable}
 	}
 	if output != nil && json.Unmarshal(envelope.Data, output) != nil {
-		return errors.New("invalid Session Fence control data")
+		return errors.New("Session Fence 控制响应数据无效")
 	}
 	return nil
 }
@@ -337,7 +337,7 @@ func writeControlError(writer http.ResponseWriter, err error) {
 	if errors.As(err, &control) && control.Status >= 400 && control.Status <= 599 {
 		status = control.Status
 	}
-	http.Error(writer, "Session authorization failed", status)
+	http.Error(writer, "Session 授权失败", status)
 }
 
 func (server *Server) callUpstream(ctx context.Context, method, path string, body []byte, contentType string, limit int64) (*http.Response, []byte, error) {
@@ -348,7 +348,7 @@ func (server *Server) callUpstream(ctx context.Context, method, path string, bod
 	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil || int64(len(raw)) > limit {
 		response.Body.Close()
-		return nil, nil, errors.New("upstream Appium response is too large")
+		return nil, nil, errors.New("上游 Appium 响应过大")
 	}
 	response.Body.Close()
 	response.Body = io.NopCloser(bytes.NewReader(raw))
@@ -503,13 +503,13 @@ func parseEndpoint(raw string, loopbackOnly bool) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, errors.New("invalid endpoint")
+		return nil, errors.New("Endpoint 无效")
 	}
 	if loopbackOnly {
 		hostname := strings.ToLower(parsed.Hostname())
 		ip := net.ParseIP(hostname)
 		if hostname != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return nil, errors.New("upstream Appium must use loopback")
+			return nil, errors.New("上游 Appium 必须使用回环地址")
 		}
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
@@ -525,7 +525,7 @@ func validateAdvertiseURL(raw string) (string, error) {
 	ip := net.ParseIP(hostname)
 	loopback := hostname == "localhost" || (ip != nil && ip.IsLoopback())
 	if parsed.Scheme != "https" && !loopback {
-		return "", errors.New("non-loopback Fence advertise URL requires HTTPS")
+		return "", errors.New("非回环 Fence 发布地址必须使用 HTTPS")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }

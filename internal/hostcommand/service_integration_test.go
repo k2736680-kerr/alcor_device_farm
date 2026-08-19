@@ -305,11 +305,15 @@ func TestIOSHeartbeatReadinessControlsHostAndPersistsOnlyRegisteredInventory(t *
 		t.Fatalf("status=%s", result.Status)
 	}
 	var status, hostOS, hostArch, lifecycle, health, platformVersion, router string
-	var providerBusy bool
+	var providerBusy, autoMaintenance bool
+	var readinessFailureStartedAt *time.Time
 	var usedCPU float64
 	var usedSlots int
 	if err := db.Pool().QueryRow(context.Background(), `SELECT status,host_os,host_arch,COALESCE((used_capacity->>'cpu_cores')::float,0),
-		COALESCE((used_capacity->>'device_slots')::int,0) FROM device_hosts WHERE id='ios_host_000000000001'`).Scan(&status, &hostOS, &hostArch, &usedCPU, &usedSlots); err != nil {
+		COALESCE((used_capacity->>'device_slots')::int,0),COALESCE((capabilities->>'host_readiness_auto_maintenance')::boolean,false),
+		NULLIF(capabilities->>'host_readiness_failure_started_at','')::timestamptz
+		FROM device_hosts WHERE id='ios_host_000000000001'`).Scan(&status, &hostOS, &hostArch, &usedCPU, &usedSlots,
+		&autoMaintenance, &readinessFailureStartedAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,capabilities->>'platformVersion',
@@ -321,7 +325,7 @@ func TestIOSHeartbeatReadinessControlsHostAndPersistsOnlyRegisteredInventory(t *
 	if err := db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE provider_ref='SIM-UNKNOWN'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if status != "maintenance" || hostOS != "macos" || hostArch != "arm64" || usedCPU != 0 || usedSlots != 1 || lifecycle != "booting" ||
+	if status != "maintenance" || !autoMaintenance || readinessFailureStartedAt == nil || hostOS != "macos" || hostArch != "arm64" || usedCPU != 0 || usedSlots != 1 || lifecycle != "booting" ||
 		health != "degraded" || platformVersion != "26.3" || !providerBusy || router != "failed" || count != 0 {
 		t.Fatalf("host=%s/%s/%s cpu=%v slots=%d device=%s/%s version=%s busy=%v router=%s unknown=%d", status, hostOS, hostArch,
 			usedCPU, usedSlots, lifecycle, health, platformVersion, providerBusy, router, count)
@@ -334,6 +338,14 @@ func TestIOSHeartbeatReadinessControlsHostAndPersistsOnlyRegisteredInventory(t *
 	result, err = service.Heartbeat(context.Background(), "ios_host_000000000001", input)
 	if err != nil || result.Status != "online" {
 		t.Fatalf("recovery result=%+v error=%v", result, err)
+	}
+	var failureTimestampPresent bool
+	if err := db.Pool().QueryRow(context.Background(), `SELECT capabilities ? 'host_readiness_failure_started_at'
+		FROM device_hosts WHERE id='ios_host_000000000001'`).Scan(&failureTimestampPresent); err != nil {
+		t.Fatal(err)
+	}
+	if failureTimestampPresent {
+		t.Fatal("宿主机就绪恢复后仍保留故障起始时间")
 	}
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET status='maintenance' WHERE id='ios_host_000000000001'`); err != nil {
 		t.Fatal(err)

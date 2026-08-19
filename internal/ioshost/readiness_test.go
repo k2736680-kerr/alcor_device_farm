@@ -18,10 +18,26 @@ type fakeRunner map[string]struct {
 
 type hangingDoctorRunner struct{ fakeRunner }
 
+type failDoctorAfterFirstPassRunner struct {
+	fakeRunner
+	doctorCalls int
+}
+
 func (runner hangingDoctorRunner) Run(ctx context.Context, binary string, arguments ...string) ([]byte, error) {
 	if binary+" "+strings.Join(arguments, " ") == "appium driver doctor xcuitest" {
 		<-ctx.Done()
 		return []byte("HOME is set to: /Users/test\nXcode is installed at /Applications/Xcode.app\nXcode Command Line Tools are installed and work properly\n"), ctx.Err()
+	}
+	return runner.fakeRunner.Run(ctx, binary, arguments...)
+}
+
+func (runner *failDoctorAfterFirstPassRunner) Run(ctx context.Context, binary string, arguments ...string) ([]byte, error) {
+	if binary+" "+strings.Join(arguments, " ") == "appium driver doctor xcuitest" {
+		runner.doctorCalls++
+		if runner.doctorCalls > 1 {
+			return nil, errors.New("doctor must not run again after validation")
+		}
+		return []byte("all checks passed"), nil
 	}
 	return runner.fakeRunner.Run(ctx, binary, arguments...)
 }
@@ -103,6 +119,33 @@ func TestProbeBoundsDoctorOptionalCheckAfterRequiredChecksPass(t *testing.T) {
 	snapshot, err := probe.Snapshot(context.Background())
 	if err != nil || snapshot["host_readiness"].(map[string]any)["ready"] != true {
 		t.Fatalf("snapshot=%+v error=%v", snapshot, err)
+	}
+}
+
+func TestProbeTreatsPassedDoctorAsProcessStartupPrerequisite(t *testing.T) {
+	runner := &failDoctorAfterFirstPassRunner{fakeRunner: fakeRunner{
+		"sw -productVersion": {output: "26.5.1"}, "sw -buildVersion": {output: "25F80"}, "uname -m": {output: "arm64"},
+		"xcode -version": {output: "Xcode 26.3\nBuild version 17C529"}, "xcode -checkFirstLaunchStatus": {},
+		"xcrun simctl list runtimes --json": {output: `{"runtimes":[{"name":"iOS 26.3","version":"26.3","isAvailable":true}]}`},
+		"node --version":                    {output: "v22.23.2"}, "appium --version": {output: "3.6.0"},
+		"appium plugin list --installed --json": {output: `{"device-farm":{"version":"12.0.1"}}`},
+		"appium driver list --installed --json": {output: `{"xcuitest":{"version":"12.4.0"}}`},
+		"ios version":                           {output: "1.3.2"},
+	}}
+	probe, err := New(Config{SWVersBinary: "sw", UnameBinary: "uname", XcodebuildBinary: "xcode", XcrunBinary: "xcrun", NodeBinary: "node", AppiumBinary: "appium", GoIOSBinary: "ios",
+		WDAPackageJSON: "wda.json", CacheTTL: time.Nanosecond, Runner: runner,
+		ReadFile: func(string) ([]byte, error) { return []byte(`{"version":"16.2.0"}`), nil }, NodeHealth: fakeHealth{value: appiumdevicefarm.NodeHealth{AppiumReady: true, PluginReady: true, PluginVersion: "12.0.1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2; index++ {
+		snapshot, snapshotErr := probe.Snapshot(context.Background())
+		if snapshotErr != nil || snapshot["host_readiness"].(map[string]any)["ready"] != true {
+			t.Fatalf("snapshot=%+v error=%v", snapshot, snapshotErr)
+		}
+	}
+	if runner.doctorCalls != 1 {
+		t.Fatalf("doctor calls=%d, want 1", runner.doctorCalls)
 	}
 }
 

@@ -21,11 +21,13 @@ const (
 )
 
 type dynamicRunner struct {
-	mu       sync.Mutex
-	created  bool
-	state    string
-	name     string
-	commands []string
+	mu             sync.Mutex
+	created        bool
+	staleInventory bool
+	state          string
+	name           string
+	commands       []string
+	unregistered   int
 }
 
 func (runner *dynamicRunner) Run(_ context.Context, binary string, arguments ...string) ([]byte, error) {
@@ -69,11 +71,11 @@ func (runner *dynamicRunner) Run(_ context.Context, binary string, arguments ...
 func (runner *dynamicRunner) inventory() []map[string]any {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
-	if !runner.created {
+	if !runner.created && !runner.staleInventory {
 		return []map[string]any{}
 	}
 	return []map[string]any{{"udid": testDynamicUDID, "name": runner.name, "state": runner.state, "sdk": "26.3",
-		"platform": "ios", "deviceType": "simulator", "busy": false, "realDevice": false}}
+		"platform": "ios", "deviceType": "simulator", "busy": false, "realDevice": false, "host": "http://127.0.0.1:4724"}}
 }
 
 func dynamicServer(t *testing.T, runner *dynamicRunner) *httptest.Server {
@@ -83,6 +85,21 @@ func dynamicServer(t *testing.T, runner *dynamicRunner) *httptest.Server {
 		switch request.URL.Path {
 		case "/device-farm/api/device/ios":
 			_ = json.NewEncoder(writer).Encode(runner.inventory())
+		case "/device-farm/api/register":
+			if request.Method != http.MethodPost || request.URL.Query().Get("type") != "remove" {
+				http.Error(writer, "unexpected registration", http.StatusBadRequest)
+				return
+			}
+			var devices []map[string]any
+			if json.NewDecoder(request.Body).Decode(&devices) != nil || len(devices) != 1 || devices[0]["udid"] != testDynamicUDID {
+				http.Error(writer, "unexpected unregister payload", http.StatusBadRequest)
+				return
+			}
+			runner.mu.Lock()
+			runner.staleInventory = false
+			runner.unregistered++
+			runner.mu.Unlock()
+			_, _ = writer.Write([]byte(`{"success":true}`))
 		case "/status":
 			_, _ = writer.Write([]byte(`{"value":{"ready":true}}`))
 		case "/device-farm/api/status":
@@ -95,11 +112,86 @@ func dynamicServer(t *testing.T, runner *dynamicRunner) *httptest.Server {
 	return server
 }
 
+func TestDynamicSimulatorDeleteIgnoresStalePluginInventory(t *testing.T) {
+	runner := &dynamicRunner{created: false, staleInventory: true, state: "Booted", name: "Alcor-DF-stale"}
+	server := dynamicServer(t, runner)
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, CommandRunner: runner,
+		AllowedRuntimeIDs: []string{testRuntimeID}, AllowedDeviceTypeIDs: []string{testDeviceTypeID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Delete(context.Background(), testDynamicUDID); err != nil {
+		t.Fatalf("CoreSimulator 已不存在时，插件残留 inventory 不应阻止幂等删除：%v", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if runner.unregistered != 1 || runner.staleInventory {
+		t.Fatalf("Appium Device Farm 残留清单未注销：count=%d stale=%v", runner.unregistered, runner.staleInventory)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, " simctl delete ") || strings.Contains(command, " simctl shutdown ") {
+			t.Fatalf("CoreSimulator 已不存在时不应再次执行删除命令：%v", runner.commands)
+		}
+	}
+}
+
+func TestDynamicSimulatorDeleteUnregistersHubAndNodeInventories(t *testing.T) {
+	runner := &dynamicRunner{created: false, staleInventory: true, state: "Booted", name: "Alcor-DF-stale"}
+	type endpointState struct {
+		mu      sync.Mutex
+		present bool
+		posts   int
+	}
+	newEndpoint := func(state *endpointState) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			switch request.URL.Path {
+			case "/device-farm/api/device/ios":
+				items := []map[string]any{}
+				if state.present {
+					items = append(items, map[string]any{"udid": testDynamicUDID, "name": "Alcor-DF-stale", "host": "http://127.0.0.1:4724", "platform": "ios", "deviceType": "simulator"})
+				}
+				_ = json.NewEncoder(writer).Encode(items)
+			case "/device-farm/api/register":
+				state.posts++
+				state.present = false
+				_, _ = writer.Write([]byte(`{"success":true}`))
+			default:
+				http.NotFound(writer, request)
+			}
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
+	hubState, nodeState := &endpointState{present: true}, &endpointState{present: true}
+	hub, node := newEndpoint(hubState), newEndpoint(nodeState)
+	client, err := New(Config{Endpoint: hub.URL, RegistrationEndpoints: []string{hub.URL, node.URL}, Timeout: time.Second,
+		CommandRunner: runner, AllowedRuntimeIDs: []string{testRuntimeID}, AllowedDeviceTypeIDs: []string{testDeviceTypeID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Delete(context.Background(), testDynamicUDID); err != nil {
+		t.Fatal(err)
+	}
+	hubState.mu.Lock()
+	hubPosts := hubState.posts
+	hubState.mu.Unlock()
+	nodeState.mu.Lock()
+	nodePosts := nodeState.posts
+	nodeState.mu.Unlock()
+	if hubPosts != 1 || nodePosts != 1 {
+		t.Fatalf("Hub/Node 注销次数=%d/%d", hubPosts, nodePosts)
+	}
+}
+
 func TestDynamicSimulatorCreateRebuildDeleteUsesControlledCatalog(t *testing.T) {
 	runner := &dynamicRunner{}
 	server := dynamicServer(t, runner)
 	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second, CommandRunner: runner, LifecyclePollInterval: time.Millisecond,
-		AllowedRuntimeIDs: []string{testRuntimeID}, AllowedDeviceTypeIDs: []string{testDeviceTypeID}})
+		ReadinessStableDuration: 2 * time.Millisecond,
+		AllowedRuntimeIDs:       []string{testRuntimeID}, AllowedDeviceTypeIDs: []string{testDeviceTypeID}})
 	if err != nil {
 		t.Fatal(err)
 	}

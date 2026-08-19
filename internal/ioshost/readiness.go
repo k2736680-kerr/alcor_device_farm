@@ -59,10 +59,11 @@ type Config struct {
 }
 
 type Probe struct {
-	config   Config
-	mu       sync.Mutex
-	cached   map[string]any
-	cachedAt time.Time
+	config          Config
+	mu              sync.Mutex
+	cached          map[string]any
+	cachedAt        time.Time
+	doctorValidated bool
 }
 
 type execRunner struct{}
@@ -82,7 +83,7 @@ func New(config Config) (*Probe, error) {
 		}
 	}
 	if strings.TrimSpace(config.WDAPackageJSON) == "" || config.NodeHealth == nil {
-		return nil, errors.New("WDA package metadata and Appium Device Farm health probe are required")
+		return nil, errors.New("必须配置 WDA 包元数据和 Appium Device Farm 健康探测")
 	}
 	if config.Runner == nil {
 		config.Runner = execRunner{}
@@ -173,14 +174,14 @@ func (probe *Probe) collect(ctx context.Context) map[string]any {
 	pluginOutput, pluginErr := probe.config.Runner.Run(ctx, probe.config.AppiumBinary, "plugin", "list", "--installed", "--json")
 	pluginVersion := extensionVersion(pluginOutput, "device-farm")
 	if pluginVersion == "" && pluginErr == nil {
-		pluginErr = errors.New("device-farm plugin is absent")
+		pluginErr = errors.New("未安装 device-farm 插件")
 	}
 	record("appium_device_farm", pluginVersion, ExpectedPluginVersion, pluginErr)
 
 	driverOutput, driverErr := probe.config.Runner.Run(ctx, probe.config.AppiumBinary, "driver", "list", "--installed", "--json")
 	driverVersion := extensionVersion(driverOutput, "xcuitest")
 	if driverVersion == "" && driverErr == nil {
-		driverErr = errors.New("xcuitest driver is absent")
+		driverErr = errors.New("未安装 xcuitest 驱动")
 	}
 	record("xcuitest", driverVersion, ExpectedXCUITestVersion, driverErr)
 
@@ -188,13 +189,22 @@ func (probe *Probe) collect(ctx context.Context) map[string]any {
 	record("wda", wdaVersion, ExpectedWDAVersion, wdaErr)
 	goIOSVersion, goIOSErr := probe.versionCommand(ctx, probe.config.GoIOSBinary, "version")
 	record("go_ios", goIOSVersion, ExpectedGoIOSVersion, goIOSErr)
-	doctorErr := probe.doctor(ctx)
+	// Appium doctor validates installation prerequisites. Re-running it while
+	// XCUITest is compiling or using WDA can report a transient failure and
+	// incorrectly take the whole Host out of service. Once the pinned toolchain
+	// has passed doctor, live Appium/Device Farm health remains the runtime gate
+	// and doctor is checked again on the next Agent process start.
+	var doctorErr error
+	if !probe.doctorValidated {
+		doctorErr = probe.doctor(ctx)
+		probe.doctorValidated = doctorErr == nil
+	}
 	record("appium_doctor", "", "", doctorErr)
 
 	nodeHealth, healthErr := probe.config.NodeHealth.Health(ctx)
 	nodeVersion = nodeHealth.PluginVersion
 	if healthErr == nil && !nodeHealth.Ready() {
-		healthErr = errors.New("Appium or Device Farm node is not ready")
+		healthErr = errors.New("Appium 或 Device Farm Node 尚未就绪")
 	}
 	record("appium_node", nodeVersion, "", healthErr)
 
@@ -320,7 +330,7 @@ func packageVersion(readFile func(string) ([]byte, error), path string) (string,
 		return "", err
 	}
 	if payload.Version == "" {
-		return "", errors.New("package version is missing")
+		return "", errors.New("包元数据缺少版本号")
 	}
 	return payload.Version, nil
 }

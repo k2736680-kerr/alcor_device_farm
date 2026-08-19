@@ -68,7 +68,7 @@
 | DF-044 | iOS Simulator 动态创建、重建和删除 | completed | DF-043 |
 | DF-045 | Device Farm Console iOS 设备域页面 | completed | DF-044 |
 | DF-046 | iOS Simulator 受控远程控制 | completed | DF-045、ADR-0025 |
-| DF-047 | iOS 真实验收、运维回滚与 Android 回归 | pending | DF-046 |
+| DF-047 | iOS 真实验收、运维回滚与 Android 回归 | completed | DF-046 |
 
 ## 3. 阶段 A：工程和契约基础
 

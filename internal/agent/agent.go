@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"runtime"
 	"strings"
 	"sync"
@@ -37,21 +38,24 @@ type EnvironmentProbe interface {
 }
 
 type Config struct {
-	HostID              string
-	ProviderType        string
-	HeartbeatInterval   time.Duration
-	LeaseSeconds        int
-	WaitSeconds         int
-	Concurrency         int
-	CommandTimeout      time.Duration
-	ImagePrepareTimeout time.Duration
-	ShutdownTimeout     time.Duration
-	Capacity            map[string]any
-	Environment         map[string]any
-	CapacityProbe       CapacityProbe
-	EnvironmentProbe    EnvironmentProbe
-	STFADBRegistrar     EndpointRegistrar
-	ImagePreparer       imageprepare.Preparer
+	HostID                    string
+	ProviderType              string
+	HeartbeatInterval         time.Duration
+	LeaseSeconds              int
+	WaitSeconds               int
+	Concurrency               int
+	CommandTimeout            time.Duration
+	ImagePrepareTimeout       time.Duration
+	ShutdownTimeout           time.Duration
+	EnvironmentProbeInterval  time.Duration
+	EnvironmentProbeTimeout   time.Duration
+	EnvironmentSnapshotMaxAge time.Duration
+	Capacity                  map[string]any
+	Environment               map[string]any
+	CapacityProbe             CapacityProbe
+	EnvironmentProbe          EnvironmentProbe
+	STFADBRegistrar           EndpointRegistrar
+	ImagePreparer             imageprepare.Preparer
 }
 
 type Agent struct {
@@ -62,16 +66,38 @@ type Agent struct {
 	preparer   imageprepare.Preparer
 	logger     *slog.Logger
 	resourceMu sync.Mutex
+
+	environmentMu         sync.RWMutex
+	environmentSnapshot   map[string]any
+	environmentSnapshotAt time.Time
+	environmentProbeErr   error
 }
+
+const (
+	defaultEnvironmentProbeTimeout   = 90 * time.Second
+	defaultEnvironmentSnapshotMaxAge = 120 * time.Second
+)
 
 func New(config Config, client Client, provider providers.Provider, logger *slog.Logger) (*Agent, error) {
 	config.ProviderType = strings.ToLower(strings.TrimSpace(config.ProviderType))
 	if config.ImagePrepareTimeout <= 0 {
 		config.ImagePrepareTimeout = config.CommandTimeout
 	}
+	if config.EnvironmentProbe != nil {
+		if config.EnvironmentProbeInterval <= 0 {
+			config.EnvironmentProbeInterval = config.HeartbeatInterval
+		}
+		if config.EnvironmentProbeTimeout <= 0 {
+			config.EnvironmentProbeTimeout = defaultEnvironmentProbeTimeout
+		}
+		if config.EnvironmentSnapshotMaxAge <= 0 {
+			config.EnvironmentSnapshotMaxAge = defaultEnvironmentSnapshotMaxAge
+		}
+	}
 	if len(config.HostID) < 16 || client == nil || provider == nil || config.HeartbeatInterval <= 0 ||
 		config.LeaseSeconds < 5 || config.LeaseSeconds > 300 || config.Concurrency < 1 ||
-		config.CommandTimeout <= 0 || config.ImagePrepareTimeout <= 0 || config.ShutdownTimeout <= 0 || config.ProviderType == "" {
+		config.CommandTimeout <= 0 || config.ImagePrepareTimeout <= 0 || config.ShutdownTimeout <= 0 || config.ProviderType == "" ||
+		(config.EnvironmentProbe != nil && (config.EnvironmentProbeInterval <= 0 || config.EnvironmentProbeTimeout <= 0 || config.EnvironmentSnapshotMaxAge <= 0)) {
 		return nil, errors.New("宿主机代理配置无效")
 	}
 	if logger == nil {
@@ -82,25 +108,28 @@ func New(config Config, client Client, provider providers.Provider, logger *slog
 }
 
 func (agent *Agent) Run(ctx context.Context) error {
-	if err := agent.sendHeartbeat(ctx); err != nil && ctx.Err() == nil {
-		agent.logger.Warn("agent initial heartbeat failed", "error", err)
+	backgroundCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+	if agent.config.EnvironmentProbe != nil {
+		go agent.environmentProbeLoop(backgroundCtx)
 	}
-	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
-	defer stopHeartbeat()
+	if err := agent.sendHeartbeat(ctx); err != nil && ctx.Err() == nil {
+		agent.logger.Warn("宿主机代理首次心跳失败", "error", err)
+	}
 	heartbeatErrors := make(chan error, 1)
-	go agent.heartbeatLoop(heartbeatCtx, heartbeatErrors)
+	go agent.heartbeatLoop(backgroundCtx, heartbeatErrors)
 
 	semaphore := make(chan struct{}, agent.config.Concurrency)
 	var workers sync.WaitGroup
 	for {
 		if ctx.Err() != nil {
-			stopHeartbeat()
+			stopBackground()
 			return waitWorkers(&workers, agent.config.ShutdownTimeout)
 		}
 		select {
 		case err := <-heartbeatErrors:
 			if err != nil {
-				agent.logger.Warn("agent heartbeat failed", "error", err)
+				agent.logger.Warn("宿主机代理心跳失败", "error", err)
 			}
 		default:
 		}
@@ -119,7 +148,7 @@ func (agent *Agent) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				continue
 			}
-			agent.logger.Warn("agent command claim failed", "error", err)
+			agent.logger.Warn("宿主机代理领取命令失败", "error", err)
 			select {
 			case <-ctx.Done():
 			case <-time.After(250 * time.Millisecond):
@@ -137,6 +166,71 @@ func (agent *Agent) Run(ctx context.Context) error {
 			}()
 		}
 	}
+}
+
+func (agent *Agent) environmentProbeLoop(ctx context.Context) {
+	ticker := time.NewTicker(agent.config.EnvironmentProbeInterval)
+	defer ticker.Stop()
+	for {
+		agent.refreshEnvironmentSnapshot(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (agent *Agent) refreshEnvironmentSnapshot(ctx context.Context) {
+	probeCtx, cancel := context.WithTimeout(ctx, agent.config.EnvironmentProbeTimeout)
+	values, err := agent.config.EnvironmentProbe.Snapshot(probeCtx)
+	cancel()
+	if err == nil {
+		readiness, ok := values["host_readiness"].(map[string]any)
+		_, readyOK := readiness["ready"].(bool)
+		if !ok || !readyOK {
+			err = errors.New("宿主机环境探测结果缺少就绪状态")
+		}
+	}
+	agent.environmentMu.Lock()
+	if err == nil {
+		agent.environmentSnapshot = maps.Clone(values)
+		agent.environmentSnapshotAt = time.Now()
+		agent.environmentProbeErr = nil
+	} else {
+		agent.environmentProbeErr = err
+	}
+	agent.environmentMu.Unlock()
+	if err != nil && ctx.Err() == nil {
+		agent.logger.Warn("宿主机环境就绪探测失败", "error", err)
+		return
+	}
+	if readiness, ok := values["host_readiness"].(map[string]any); ok && readiness["ready"] == false {
+		agent.logger.Warn("宿主机环境未就绪", "reasons", readiness["reasons"])
+	}
+}
+
+func (agent *Agent) currentEnvironmentSnapshot(now time.Time) map[string]any {
+	agent.environmentMu.RLock()
+	values := maps.Clone(agent.environmentSnapshot)
+	completedAt := agent.environmentSnapshotAt
+	probeErr := agent.environmentProbeErr
+	agent.environmentMu.RUnlock()
+
+	if values != nil && now.Sub(completedAt) <= agent.config.EnvironmentSnapshotMaxAge {
+		return values
+	}
+	if values == nil {
+		values = map[string]any{}
+	}
+	reason := "environment_probe_pending"
+	if probeErr != nil {
+		reason = "environment_probe_failed"
+	} else if !completedAt.IsZero() {
+		reason = "environment_probe_stale"
+	}
+	values["host_readiness"] = map[string]any{"ready": false, "reasons": []any{reason}}
+	return values
 }
 
 func (agent *Agent) heartbeatLoop(ctx context.Context, errorsChannel chan<- error) {
@@ -165,7 +259,7 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	for _, snapshot := range snapshots {
 		if snapshot.Platform == providers.PlatformAndroid && snapshot.Ready() && agent.registrar != nil {
 			if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
-				agent.logger.Warn("STF ADB endpoint registration failed", "provider_ref", snapshot.ProviderRef, "error", err)
+				agent.logger.Warn("STF ADB Endpoint 注册失败", "provider_ref", snapshot.ProviderRef, "error", err)
 			}
 		}
 		connection := map[string]any{"appium_endpoint": snapshot.Connection.AppiumEndpoint,
@@ -213,18 +307,12 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 		}
 	}
 	if agent.config.EnvironmentProbe != nil {
-		values, probeErr := agent.config.EnvironmentProbe.Snapshot(ctx)
-		if probeErr != nil {
-			agent.logger.Warn("host environment readiness probe failed", "error", probeErr)
-			environment["host_readiness"] = map[string]any{"ready": false, "reasons": []any{"environment_probe_failed"}}
-		} else {
-			for key, value := range values {
-				environment[key] = value
-			}
+		for key, value := range agent.currentEnvironmentSnapshot(time.Now()) {
+			environment[key] = value
 		}
 	}
 	if err != nil {
-		agent.logger.Warn("provider inventory failed; reporting Host as not ready", "error", err)
+		agent.logger.Warn("Provider 设备清单获取失败，宿主机将上报为未就绪", "error", err)
 		environment["host_readiness"] = map[string]any{"ready": false, "reasons": []any{"provider_inventory_failed"}}
 	}
 	return agent.client.Heartbeat(ctx, agent.config.HostID, hostcommand.HeartbeatInput{
@@ -389,7 +477,7 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 	completionContext, completionCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer completionCancel()
 	if completeErr := agent.client.Complete(completionContext, command.ID, completion); completeErr != nil {
-		agent.logger.Error("agent command completion failed", "command_id", command.ID, "error", completeErr)
+		agent.logger.Error("宿主机代理回报命令完成状态失败", "command_id", command.ID, "error", completeErr)
 	}
 }
 

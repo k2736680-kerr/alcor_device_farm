@@ -104,3 +104,17 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 ## 9. 敏感信息处理
 
 本清单未保存完整设备序列号、用户名密码、数据库 DSN、Appium/STF Token、Docker Registry 凭据或 Alcor Secret。后续证据继续使用相同规则。
+
+## 10. DF-047 第二版真实环境更新（2026-08-19）
+
+原 DF-000 盘点保留为第一版开发起点；DF-047 最终验收使用的真实环境已扩展为：
+
+| 环境 | 脱敏事实 | 当前用途 |
+|---|---|---|
+| Windows 开发机 | Windows 11、Go 1.26.5、Python 3.12.10、PostgreSQL 17.10 便携测试实例 | Go/Console/OpenAPI、migration up/down/up、DaFit collect-only、Alcor 契约 |
+| Linux KVM Host | Ubuntu x86_64、Docker Engine、KVM；当前一台 Android 15 / API 35 / x86_64 长期 Emulator | Android 第一版 Reservation、STF、Appium、DaFit 真实回归；不因 iOS 回滚重建 |
+| 专用 macOS Host | macOS 26.5.1（25F80）、arm64、10 核、24 GiB 内存、4 个设备槽位、Xcode 26.3（17C529） | iOS Simulator 动态生命周期、XCUITest/WDA Session 与受控远控 |
+
+macOS Host 固定工具链为 Node.js 22.23.2、Appium 3.6.0、Appium Device Farm 12.0.1、XCUITest Driver 12.4.0、WebDriverAgent 16.2.0、go-ios 1.3.2。DF-047 选择 Host 已安装且受 allowlist 约束的 iOS 18.6 Runtime 与 iPhone 16 Pro Simulator 类型执行真实循环；不自动下载 Runtime，不使用 tvOS，不宣称接入真实 iPhone。
+
+当前设备农场开发分支为本地 `codex/device-farm-v2`。DaFit 当前用户工作树收集 449 个执行实例，不能把 DF-000 的 26 项或旧文档中的 158 项写回当前基线；Alcor 和 DaFit 的既有未提交修改均按用户资产保留。

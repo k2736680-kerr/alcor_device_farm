@@ -215,8 +215,10 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var status domain.HostStatus
 		var autoMaintenance bool
-		if err := tx.QueryRow(ctx, `SELECT status,COALESCE((capabilities->>'host_readiness_auto_maintenance')::boolean,false)
-			FROM device_hosts WHERE id=$1 FOR UPDATE`, hostID).Scan(&status, &autoMaintenance); err != nil {
+		var readinessFailureStartedAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT status,COALESCE((capabilities->>'host_readiness_auto_maintenance')::boolean,false),
+			NULLIF(capabilities->>'host_readiness_failure_started_at','')::timestamptz
+			FROM device_hosts WHERE id=$1 FOR UPDATE`, hostID).Scan(&status, &autoMaintenance, &readinessFailureStartedAt); err != nil {
 			return err
 		}
 		now, err := database.ClockNow(ctx, tx)
@@ -230,9 +232,14 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 					target = domain.HostMaintenance
 					autoMaintenance = true
 				}
+				if autoMaintenance && readinessFailureStartedAt == nil {
+					startedAt := now
+					readinessFailureStartedAt = &startedAt
+				}
 			} else if status == domain.HostOffline || status == domain.HostOnline || (status == domain.HostMaintenance && autoMaintenance) {
 				target = domain.HostOnline
 				autoMaintenance = false
+				readinessFailureStartedAt = nil
 			}
 		} else if status == domain.HostOffline {
 			target = domain.HostOnline
@@ -249,9 +256,12 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		}
 		if _, err := tx.Exec(ctx, `UPDATE device_hosts SET status=$2::varchar,draining=($2::varchar='draining'),
 			capacity=CASE WHEN $3::jsonb->>'resource_model'='dynamic_v1' THEN $3::jsonb ELSE capacity || ($3::jsonb-'device_slots') END,
-			capabilities=(capabilities || ($4::jsonb-'provider'-'host_os'-'host_arch')) || jsonb_build_object('host_readiness_auto_maintenance',$9::boolean),used_capacity=$5,
+			capabilities=((capabilities || ($4::jsonb-'provider'-'host_os'-'host_arch'))-'host_readiness_failure_started_at') ||
+				jsonb_build_object('host_readiness_auto_maintenance',$9::boolean) ||
+				CASE WHEN $10::timestamptz IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('host_readiness_failure_started_at',$10::timestamptz) END,
+			used_capacity=$5,
 			host_os=COALESCE($6,host_os),host_arch=COALESCE($7,host_arch),last_heartbeat_at=$8,updated_at=$8 WHERE id=$1`,
-			hostID, target, capacity, environment, usedCapacity, hostOS, hostArch, now, autoMaintenance); err != nil {
+			hostID, target, capacity, environment, usedCapacity, hostOS, hostArch, now, autoMaintenance, readinessFailureStartedAt); err != nil {
 			return err
 		}
 		for _, discovered := range input.Devices {

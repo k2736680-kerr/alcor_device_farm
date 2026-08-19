@@ -36,7 +36,7 @@ func TestAgentLeaseAndCommandTimeoutSupportEnvironmentConfiguration(t *testing.T
 
 func TestBuildProviderRequiresExplicitProvider(t *testing.T) {
 	provider, err := buildProvider(" ", providerdocker.Config{}, nil)
-	if err == nil || provider != nil || !strings.Contains(err.Error(), "required") {
+	if err == nil || provider != nil || !strings.Contains(err.Error(), "必须配置设备 Provider") {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }
@@ -50,7 +50,7 @@ func TestBuildProviderAcceptsExplicitMock(t *testing.T) {
 
 func TestBuildProviderRejectsUnknownProvider(t *testing.T) {
 	provider, err := buildProvider("unknown", providerdocker.Config{}, nil)
-	if err == nil || provider != nil || !strings.Contains(err.Error(), "unsupported provider") {
+	if err == nil || provider != nil || !strings.Contains(err.Error(), "不支持的 Provider") {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }

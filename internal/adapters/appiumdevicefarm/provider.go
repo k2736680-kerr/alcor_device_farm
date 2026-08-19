@@ -149,6 +149,9 @@ func (client *Client) Delete(ctx context.Context, providerRef string) error {
 		// 删除是幂等操作。创建在 CoreSimulator 分配 UDID 前失败时，数据库仍会
 		// 保存 pending:<device-id> 占位引用；宿主机确认不存在对应资源即可安全收敛。
 		if providers.ErrorCode(err) == "PROVIDER_DEVICE_NOT_FOUND" {
+			if unregisterErr := client.unregisterManagedSimulator(ctx, providerRef); unregisterErr != nil {
+				return providerError(providers.OperationDelete, "IOS_SIMULATOR_UNREGISTER_FAILED", "Simulator 已不存在，但注销 Appium Device Farm 清单失败", true, unregisterErr)
+			}
 			return nil
 		}
 		return err
@@ -164,7 +167,13 @@ func (client *Client) Delete(ctx context.Context, providerRef string) error {
 			return client.lifecycleError(providers.OperationDelete, "IOS_SIMULATOR_SHUTDOWN_FAILED", "IOS_SIMULATOR_DELETE_TIMEOUT", "删除前停止 Simulator 失败", ctx, err)
 		}
 	}
-	return client.deleteManagedSimulator(ctx, device.UDID)
+	if err := client.deleteManagedSimulator(ctx, device.UDID); err != nil {
+		return err
+	}
+	if err := client.unregisterManagedSimulator(ctx, device.UDID); err != nil {
+		return providerError(providers.OperationDelete, "IOS_SIMULATOR_UNREGISTER_FAILED", "Simulator 已删除，但注销 Appium Device Farm 清单失败", true, err)
+	}
+	return nil
 }
 
 // CleanupCreated is the failure-compensation path used only after this Agent
@@ -176,6 +185,9 @@ func (client *Client) CleanupCreated(ctx context.Context, providerRef string) er
 		return err
 	}
 	if !found {
+		// 创建失败补偿必须以 CoreSimulator 清理为优先；插件不可用时由其启动
+		// 清表和后续正常 delete 收敛，不能反过来把已完成的补偿判成失败。
+		client.unregisterManagedSimulatorBestEffort(ctx, providerRef)
 		return nil
 	}
 	if !strings.EqualFold(device.State, "Shutdown") {
@@ -183,7 +195,11 @@ func (client *Client) CleanupCreated(ctx context.Context, providerRef string) er
 			return client.lifecycleError(providers.OperationDelete, "IOS_SIMULATOR_SHUTDOWN_FAILED", "IOS_SIMULATOR_DELETE_TIMEOUT", "失败补偿时停止 Simulator 失败", ctx, err)
 		}
 	}
-	return client.deleteManagedSimulator(ctx, device.UDID)
+	if err := client.deleteManagedSimulator(ctx, device.UDID); err != nil {
+		return err
+	}
+	client.unregisterManagedSimulatorBestEffort(ctx, device.UDID)
+	return nil
 }
 
 func (client *Client) InspectHealth(ctx context.Context, providerRef string) (providers.Health, error) {
@@ -236,13 +252,29 @@ func (client *Client) allowedSimulator(ctx context.Context, providerRef string, 
 func (client *Client) waitSimulator(ctx context.Context, providerRef string, operation providers.Operation, ready func(providers.Snapshot) bool) (providers.Snapshot, error) {
 	ticker := time.NewTicker(client.lifecyclePollInterval)
 	defer ticker.Stop()
+	var readySince time.Time
 	for {
 		device, node, nodeErr, err := client.find(ctx, providerRef)
 		if err == nil {
 			snapshot := client.snapshot("", device, node, nodeErr)
 			if ready(snapshot) {
-				return snapshot, nil
+				if operation == providers.OperationStop {
+					return snapshot, nil
+				}
+				if readySince.IsZero() {
+					readySince = time.Now()
+				}
+				// Device Farm 的 Hub/Node 清单每 5 秒同步一次。启动或重建只在
+				// 连续稳定跨过至少一个同步周期后完成，避免首次 ready 后的路由
+				// 瞬时消失让刚创建的设备被 Reconciler 误隔离。
+				if time.Since(readySince) >= client.readinessStableDuration {
+					return snapshot, nil
+				}
+			} else {
+				readySince = time.Time{}
 			}
+		} else {
+			readySince = time.Time{}
 		}
 		select {
 		case <-ctx.Done():
@@ -291,6 +323,23 @@ func (client *Client) devices(ctx context.Context) ([]Device, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Appium Device Farm 12.0.1 会在动态 Simulator 已由 simctl 删除后短暂甚至
+	// 长期保留旧 inventory。CoreSimulator 才是本机 Simulator 存在性的权威；
+	// 不能让插件残影阻止幂等删除、继续占用 Pool，或被误判成未知设备。
+	simulatorByUDID := make(map[string]Device, len(simulators))
+	for _, simulator := range simulators {
+		simulatorByUDID[simulator.UDID] = simulator
+	}
+	filtered := devices[:0]
+	for _, device := range devices {
+		if device.Managed && device.DeviceType == "simulator" && !device.RealDevice {
+			if _, exists := simulatorByUDID[device.UDID]; !exists {
+				continue
+			}
+		}
+		filtered = append(filtered, device)
+	}
+	devices = filtered
 	byUDID := make(map[string]int, len(devices))
 	for index := range devices {
 		byUDID[devices[index].UDID] = index

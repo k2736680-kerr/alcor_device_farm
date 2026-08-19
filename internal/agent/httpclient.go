@@ -73,7 +73,7 @@ func (client *HTTPClient) call(ctx context.Context, method, path string, input, 
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if envelope.Error != nil {
-			return fmt.Errorf("agent API %s: %s", envelope.Error.Code, envelope.Error.Message)
+			return fmt.Errorf("宿主机代理 API %s：%s", envelope.Error.Code, envelope.Error.Message)
 		}
 		return fmt.Errorf("宿主机代理接口返回状态码 %d", response.StatusCode)
 	}

@@ -27,7 +27,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 		t.Fatalf("lease defaults = %+v", cfg.Lease)
 	}
 	if cfg.Reconcile.FailureThreshold != 3 || cfg.Reconcile.HostTimeout != 30*time.Second ||
-		cfg.Reconcile.STFVisibilityGrace != 30*time.Second {
+		cfg.Reconcile.STFVisibilityGrace != 30*time.Second || cfg.Reconcile.HostRecoveryGrace != 90*time.Second {
 		t.Fatalf("reconcile defaults = %+v", cfg.Reconcile)
 	}
 	if cfg.WarmPool.Interval != 30*time.Second {
@@ -83,6 +83,7 @@ ios_remote_control:
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
 	t.Setenv("DEVICE_FARM_RECONCILE_STF_VISIBILITY_GRACE", "40s")
+	t.Setenv("DEVICE_FARM_RECONCILE_HOST_RECOVERY_GRACE", "80s")
 	t.Setenv("DEVICE_FARM_WARM_POOL_INTERVAL", "12s")
 	t.Setenv("DEVICE_FARM_STF_BASE_URL", "http://stf-environment.local/base")
 	t.Setenv("DEVICE_FARM_STF_API_TOKEN", "environment-stf-secret")
@@ -120,6 +121,9 @@ ios_remote_control:
 	}
 	if cfg.Reconcile.STFVisibilityGrace != 40*time.Second {
 		t.Fatalf("STFVisibilityGrace = %v", cfg.Reconcile.STFVisibilityGrace)
+	}
+	if cfg.Reconcile.HostRecoveryGrace != 80*time.Second {
+		t.Fatalf("HostRecoveryGrace = %v", cfg.Reconcile.HostRecoveryGrace)
 	}
 	if cfg.WarmPool.Interval != 12*time.Second {
 		t.Fatalf("WarmPool interval = %v", cfg.WarmPool.Interval)

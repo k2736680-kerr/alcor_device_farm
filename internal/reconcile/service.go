@@ -51,18 +51,20 @@ type Event struct {
 }
 
 type DeviceState struct {
-	ID                  string
-	HostID              string
-	ProviderRef         string
-	Serial              string
-	Lifecycle           domain.DeviceLifecycleStatus
-	Health              domain.HealthStatus
-	HealthReason        string
-	ConsecutiveFailures int
-	HostStatus          domain.HostStatus
-	OperationInFlight   bool
-	LatestProvisionedAt *time.Time
-	STFFailureStartedAt *time.Time
+	ID                   string
+	HostID               string
+	ProviderRef          string
+	Serial               string
+	Lifecycle            domain.DeviceLifecycleStatus
+	Health               domain.HealthStatus
+	HealthReason         string
+	ConsecutiveFailures  int
+	HostStatus           domain.HostStatus
+	OperationInFlight    bool
+	DeletionInFlight     bool
+	LatestProvisionedAt  *time.Time
+	STFFailureStartedAt  *time.Time
+	HostFailureStartedAt *time.Time
 }
 
 type Result struct {
@@ -73,16 +75,17 @@ type Result struct {
 }
 
 type Service struct {
-	db               *database.DB
-	provider         providers.Provider
-	visibility       Visibility
-	visibilityGrace  time.Duration
-	failureThreshold int
-	newID            func() (string, error)
-	logger           *slog.Logger
+	db                *database.DB
+	provider          providers.Provider
+	visibility        Visibility
+	visibilityGrace   time.Duration
+	hostRecoveryGrace time.Duration
+	failureThreshold  int
+	newID             func() (string, error)
+	logger            *slog.Logger
 }
 
-func New(db *database.DB, provider providers.Provider, visibility Visibility, failureThreshold int, visibilityGrace time.Duration, logger *slog.Logger) *Service {
+func New(db *database.DB, provider providers.Provider, visibility Visibility, failureThreshold int, visibilityGrace, hostRecoveryGrace time.Duration, logger *slog.Logger) *Service {
 	if failureThreshold < 1 {
 		failureThreshold = 3
 	}
@@ -92,7 +95,10 @@ func New(db *database.DB, provider providers.Provider, visibility Visibility, fa
 	if visibilityGrace < 0 {
 		visibilityGrace = 0
 	}
-	return &Service{db: db, provider: provider, visibility: visibility, visibilityGrace: visibilityGrace,
+	if hostRecoveryGrace < 0 {
+		hostRecoveryGrace = 0
+	}
+	return &Service{db: db, provider: provider, visibility: visibility, visibilityGrace: visibilityGrace, hostRecoveryGrace: hostRecoveryGrace,
 		failureThreshold: failureThreshold, newID: identifier.New, logger: logger}
 }
 
@@ -143,7 +149,7 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 			lifecycle_status=$2::varchar,health_status=$3::varchar,health_reason=$4,consecutive_failures=$5,
 			last_seen_at=CASE WHEN $3::varchar='healthy' THEN $6::timestamptz ELSE last_seen_at END,updated_at=$6::timestamptz
             WHERE id=$1`, device.ID, aggregate.Lifecycle(), aggregate.Health(), input.Reason, failures, now); err != nil {
-			return fmt.Errorf("update device health: %w", err)
+			return fmt.Errorf("更新设备健康状态：%w", err)
 		}
 		err = tx.QueryRow(ctx, `INSERT INTO device_health_events
             (id,device_id,source,event_type,severity,reason,payload,observed_at)
@@ -151,7 +157,7 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
             RETURNING created_at`, id, device.ID, input.Source, input.EventType,
 			input.Severity, input.Reason, payload, input.ObservedAt).Scan(&event.CreatedAt)
 		if err != nil {
-			return fmt.Errorf("insert device health event: %w", err)
+			return fmt.Errorf("写入设备健康事件：%w", err)
 		}
 		event = Event{ID: id, DeviceID: device.ID, Source: input.Source, EventType: input.EventType,
 			Severity: input.Severity, Reason: input.Reason, Payload: input.Payload,
@@ -185,10 +191,20 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		if device.OperationInFlight && (device.Lifecycle == domain.DeviceProvisioning || device.Lifecycle == domain.DeviceBooting) {
 			continue
 		}
+		// Provider 删除先移除宿主机资源，再回报 Host Command 成功。这个短窗口内
+		// InspectHealth 必然返回不存在；若把它当漂移隔离，会抢先改变 lifecycle，
+		// 导致成功的 delete completion 无法按 operation_state 收敛为 deleted。
+		if device.DeletionInFlight {
+			continue
+		}
 		result.DevicesChecked++
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", domain.HostUnavailableReason
+			if service.withinHostRecoveryGrace(device, input.ObservedAt) {
+				input.SuppressFailureCount = true
+				input.SuppressQuarantine = true
+			}
 		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
 			service.withinVisibilityGrace(device, input.ObservedAt) {
 			input.EventType, input.Severity, input.Reason = "stf_stabilizing", "error", domain.STFReadinessStabilizationReason
@@ -284,13 +300,23 @@ func (service *Service) withinSTFOutageGrace(device DeviceState, observedAt time
 	return age >= 0 && age < service.visibilityGrace
 }
 
+func (service *Service) withinHostRecoveryGrace(device DeviceState, observedAt time.Time) bool {
+	if service.hostRecoveryGrace <= 0 || device.HostFailureStartedAt == nil {
+		return false
+	}
+	age := observedAt.Sub(*device.HostFailureStartedAt)
+	return age >= 0 && age < service.hostRecoveryGrace
+}
+
 func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout time.Duration) (int, error) {
+	// draining 是运维人员控制的安全状态。心跳过期时仍保留排空意图；
+	// 心跳年龄指标继续暴露故障，Host 在显式解除排空前始终不可调度。
 	rows, err := service.db.Pool().Query(ctx, `SELECT id FROM device_hosts
-        WHERE status IN ('online','draining')
+        WHERE status='online'
           AND COALESCE(last_heartbeat_at,created_at) < clock_timestamp() - make_interval(secs => $1)
         ORDER BY id`, int(hostTimeout/time.Second))
 	if err != nil {
-		return 0, fmt.Errorf("list stale device hosts: %w", err)
+		return 0, fmt.Errorf("查询心跳过期的设备宿主机：%w", err)
 	}
 	var ids []string
 	for rows.Next() {
@@ -311,7 +337,7 @@ func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout t
 		err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
 			var status domain.HostStatus
 			err := tx.QueryRow(ctx, `SELECT status FROM device_hosts
-                WHERE id=$1 AND status IN ('online','draining')
+                WHERE id=$1 AND status='online'
                   AND COALESCE(last_heartbeat_at,created_at) < clock_timestamp() - make_interval(secs => $2)
                 FOR UPDATE`, id, int(hostTimeout/time.Second)).Scan(&status)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -340,7 +366,7 @@ func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout t
 			return nil
 		})
 		if err != nil {
-			return count, fmt.Errorf("mark stale device host offline: %w", err)
+			return count, fmt.Errorf("将心跳过期的设备宿主机标记为离线：%w", err)
 		}
 	}
 	return count, nil
@@ -354,7 +380,7 @@ func (service *Service) Run(ctx context.Context, interval, hostTimeout time.Dura
 	defer ticker.Stop()
 	for {
 		if _, err := service.RunOnce(ctx, hostTimeout); err != nil && !errors.Is(err, context.Canceled) {
-			service.logger.Error("device reconciliation failed", "error", err)
+			service.logger.Error("设备状态收敛失败", "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -410,13 +436,17 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
 			AND c.status IN ('pending','leased')),
+		EXISTS (SELECT 1 FROM device_host_commands c
+			WHERE c.payload->>'device_id'=d.id AND c.command_type='delete'
+			AND c.status IN ('pending','leased')),
 		(SELECT max(c.completed_at) FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild') AND c.status='succeeded'),
 		(SELECT min(recent.observed_at) FROM (
 			SELECT e.observed_at FROM device_health_events e
 			WHERE e.device_id=d.id AND e.event_type='stf_not_visible'
 			ORDER BY e.created_at DESC LIMIT d.consecutive_failures
-		) recent)
+		) recent),
+		NULLIF(h.capabilities->>'host_readiness_failure_started_at','')::timestamptz
 		FROM devices d JOIN device_hosts h ON h.id=d.host_id ORDER BY d.created_at,d.id`)
 	if err != nil {
 		return nil, err
@@ -427,7 +457,8 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 		var device DeviceState
 		if err := rows.Scan(&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
 			&device.Lifecycle, &device.Health, &device.HealthReason, &device.ConsecutiveFailures, &device.HostStatus,
-			&device.OperationInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt); err != nil {
+			&device.OperationInFlight, &device.DeletionInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt,
+			&device.HostFailureStartedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, device)

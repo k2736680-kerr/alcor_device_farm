@@ -98,11 +98,67 @@ export APPIUM_HOME="$IOS_HOST_ROOT/appium-home"
 - 插件数据库只作本机技术状态，不同步到 PostgreSQL 业务表；
 - 插件状态接口可能返回 `version=unknown`，固定版本以 Appium CLI 的 installed JSON 为准。
 
+### 4.1 使用 launchd 常驻运行
+
+生产式 E4/E6 宿主机必须用当前 macOS 服务账号的 LaunchAgent 管理 Hub、动态发现 Node 和 Host Agent，不能依赖 SSH 终端中的前台进程。仓库提供的三个 `*.plist.example` 与 `run-service.sh` 是同一套版本化入口：
+
+```bash
+install -m 755 ./run-service.sh "$IOS_HOST_ROOT/run-service.sh"
+mkdir -p "$IOS_HOST_ROOT/logs" "$HOME/Library/LaunchAgents"
+
+for service in appium-hub appium-node host-agent; do
+  sed "s|__IOS_HOST_ROOT__|$IOS_HOST_ROOT|g" \
+    "./com.alcor.device-farm.${service}.plist.example" \
+    > "$HOME/Library/LaunchAgents/com.alcor.device-farm.${service}.plist"
+  plutil -lint "$HOME/Library/LaunchAgents/com.alcor.device-farm.${service}.plist"
+done
+
+uid="$(id -u)"
+launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.appium-hub.plist"
+launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.appium-node.plist"
+launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.host-agent.plist"
+```
+
+首次安装后使用 `launchctl print gui/$(id -u)/<label>` 检查 `state=running`，并确认 4723、4724 和 Fence 端口只监听 `127.0.0.1`。三个服务都设置 `KeepAlive`；进程异常退出后由 launchd 自动拉起。Node 每次启动先清理自身旧设备表，并每 5 秒检查 stale 设备，避免已从 CoreSimulator 删除的动态 UDID 长期残留；Hub 启动时同样清理旧路由库存。Node 单独设置 4 GiB V8 堆上限；`run-service.sh` 会每 10 秒分别探测 Hub 与 Node 的 `/status` 和 iOS inventory，任一服务连续三次在 5 秒内无响应就只终止对应进程并交给 launchd 拉起。这样既覆盖 OOM/崩溃，也覆盖“进程仍在但 inventory 接口挂死”；Agent 同时把 Hub/Node health 和 inventory 纳入 Host readiness，恢复前 Host 不接收新预约。Host 因组件探测失败自动进入维护后，Reconciler 默认保留 90 秒恢复宽限；宽限内设备停止调度但不累计隔离次数，超时后仍按既有阈值隔离。
+
+不要用 `sudo` 安装为系统级 LaunchDaemon。CoreSimulator 和 Xcode 会话属于当前登录服务账号，必须由相同账号的 `gui/<uid>` LaunchAgent 启动。
+
+Hub plist 的 `ProcessType` 固定为 `Interactive`，因为它会为 Simulator 启动 Xcodebuild/XCTest/WebDriverAgent；这只是 macOS 的进程调度类别，不会打开 Hub 或 Mac 桌面窗口。动态发现 Node 和 Host Agent 不启动 XCTest，继续使用 `Background`。
+
+### 4.2 停止、升级和回滚
+
+停止顺序固定为 Host Agent、动态发现 Node、Hub；启动顺序相反。操作前必须先 drain Host 或禁用 iOS Pool，并等待所有人工/自动化 Session 释放：
+
+```bash
+uid="$(id -u)"
+launchctl bootout "gui/$uid/com.alcor.device-farm.host-agent"
+launchctl bootout "gui/$uid/com.alcor.device-farm.appium-node"
+launchctl bootout "gui/$uid/com.alcor.device-farm.appium-hub"
+```
+
+升级时把新二进制、独立 Node/runtime 目录和 plist 先放入新的版本目录，完成版本与 `plutil -lint` 校验后再切换三个 plist 中的绝对路径；不要原地覆盖正在执行的二进制。重新 `bootstrap` 后验证 Host readiness、inventory 和一条明确 UDID 的最小 Session，再显式解除排空。失败时按相同顺序停止新版本，把 plist 路径切回上一版本目录并重新启动；回滚不修改 Reservation 数据，不删除 Simulator，也不停止 Android Host、STF 或 Android Appium。
+
+只有更新环境变量且 plist 路径未变化时，才可用下面的受控重载方式；`kickstart -k` 会终止当前进程，因此同样要求 Host 已排空且没有活动 Session：
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.alcor.device-farm.appium-hub"
+launchctl kickstart -k "gui/$(id -u)/com.alcor.device-farm.appium-node"
+launchctl kickstart -k "gui/$(id -u)/com.alcor.device-farm.host-agent"
+```
+
+### 4.3 日志与敏感信息
+
+Hub、Node 和 Agent 日志分别写入专用目录的 `logs/appium-hub.log`、`logs/appium-node.log` 和 `logs/host-agent.log`。排障证据只保存时间、服务状态、错误分类和脱敏 ID 前缀；不得收集完整 UDID、Session ID、Session Grant、Service/Agent Token、Cookie、Apple Account、证书/Profile 内容、内部 WDA/MJPEG 地址或 `host-agent.env` 内容。
+
+`host-agent.env` 必须由服务账号持有且权限为 `600`，`run-service.sh` 会在启动 Agent 前强制校验。环境文件、实际 plist、日志和运行目录都不得提交 Git。Node OOM 或其他崩溃恢复的验收应记录旧/新 PID、恢复用时和最终 inventory 数量，不复制包含能力参数或内部地址的整段 Appium 日志。
+
 ## 5. Host Agent 配置
 
 以 [host-agent.env.example](host-agent.env.example) 为模板创建权限受控的本机环境文件，权限必须为 `600`。Agent 会上报：macOS/架构、Xcode build、可用 iOS Runtime/iPhone Device Type、固定 Node/Appium/插件/XCUITest/WDA/go-ios 版本、Appium doctor、Hub health 和脱敏 readiness。
 
-readiness 失败、inventory 读取失败或版本漂移时，心跳把 Host 置为 `maintenance`，Scheduler 不会给该 Host 新预约；恢复后下一次健康心跳回到 `online`。Android Agent 没有 `host_readiness` 时继续保持原行为。
+Hub/Node 分离时，`DEVICE_FARM_IOS_APPIUM_ENDPOINT` 指向本机 Hub 的 `127.0.0.1:4723`，`DEVICE_FARM_IOS_APPIUM_NODE_ENDPOINT` 指向本机 Node 的 `127.0.0.1:4724`。动态 Simulator 删除成功后，Agent 会通过 Appium Device Farm 官方本机注册接口同时注销 Hub 与 Node 清单中的目标受管 UDID；只允许精确匹配 `DEVICE_FARM_IOS_MANAGED_NAME_PREFIX` 的记录，不能删除固定库存或真机。若注销恰好遇到 Node 看门狗恢复窗口，Agent 会在 Host Command 上下文内幂等重试，单个 Endpoint 最长等待 90 秒；永久失败仍按正式错误隔离，不能伪装成删除成功。
+
+readiness 失败、inventory 读取失败或版本漂移时，心跳把 Host 置为 `maintenance`，Scheduler 不会给该 Host 新预约；恢复后下一次健康心跳回到 `online`。`appium driver doctor xcuitest` 是 Agent 进程启动门禁：本次进程首次通过后不在 WDA 编译或 Session 运行期间重复执行，避免 doctor 的瞬时占用结果误下线 Host；Agent 每次重启仍会重新校验，Appium/Device Farm 实时 health 和 inventory 也始终继续探测。Android Agent 没有 `host_readiness` 时继续保持原行为。
 
 ## 6. Session Fence 网络边界
 

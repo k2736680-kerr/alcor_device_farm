@@ -80,7 +80,7 @@ func TestHTTPClientReturnsAPIErrorForNonSuccessStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = client.Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{})
-	if err == nil || !strings.Contains(err.Error(), "UNAUTHORIZED: agent token is invalid") {
+	if err == nil || !strings.Contains(err.Error(), "宿主机代理 API UNAUTHORIZED：agent token is invalid") {
 		t.Fatalf("error=%v", err)
 	}
 }

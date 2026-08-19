@@ -29,6 +29,18 @@
 
 Console 与 Server 使用同一二进制版本。回滚后必须强制刷新浏览器并确认入口 HTML 为 `no-store`、引用的内容哈希资源属于目标旧版本；不得单独回滚或复制静态目录形成与 Server 不一致的 Console。
 
+## iOS macOS Host 回滚
+
+1. 将目标 macOS Host 设为 draining，并禁用对应 iOS Pool；等待活动 Reservation/自动化/远控 Session 正常结束，强制结束必须填写中文原因；
+2. 保存当前 Agent、Hub/Node 启动脚本、launchd plist 和固定依赖版本的校验和；环境文件只记录 Secret 版本与文件权限，不复制内容；
+3. 将三个服务指向已验证的上一版本目录。先停止 Agent，再停止 Node 和 Hub；启动时先 Hub、再 Node、最后 Agent；
+4. 120 秒内确认 Hub/Node `/status`、插件 inventory、Agent 心跳和 Host readiness 收敛；Session Fence 必须仍只连接 Hub，三个入口仍只监听回环地址；
+5. 用一台受管 Simulator 完成创建、明确 UDID 的最小 Session/source、释放和删除，确认无永久 busy、幽灵 inventory、CoreSimulator 或 WDA 残留；
+6. 确认 Android Host、STF、Appium 和长期 Emulator 未被重启或重建后，才重新启用 iOS Pool 并解除 draining；
+7. 若旧版本无法在当前 migration 上安全运行，立即前滚到新版本，不擅自执行 down migration。
+
+详细 launchd 安装、版本目录切换和日志边界见 [iOS Host 部署说明](../deploy/ios-host/README.md)。回滚 iOS Host 不授权修改 Android Host、STF 或 DaFit 工作树。
+
 ## 数据库恢复回滚
 
 适用于 migration 或新版本数据写入导致旧版本不兼容：
@@ -49,6 +61,8 @@ Console 与 Server 使用同一二进制版本。回滚后必须强制刷新浏�
 - `/healthz`、`/readyz`、`/metrics` 正常；
 - `/console/` 可登录，`verify-console-deployment.sh` 通过，静态资源版本与目标 Server commit 一致；
 - active Reservation、Device、Session 和 STF claim 可核对；
+- iOS Hub/Node/Agent 在 120 秒内恢复，动态 inventory 与 CoreSimulator 一致，Session Fence 路由仍固定到本机 Hub；
+- Android 长期设备的数据卷和容器未因 iOS 回滚而重建；
 - Scheduler/Reaper/Reconciler 在两个周期内收敛；
 - 无双占、无永久 recycling、无 Token 泄露；
 - 回滚过程、操作者、原因、恢复点和影响范围进入变更审计。

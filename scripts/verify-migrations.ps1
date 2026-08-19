@@ -12,17 +12,17 @@ $LogPath = [System.IO.Path]::GetFullPath((Join-Path $TempRoot "df004-postgres.lo
 $DatabaseName = "device_farm_df004"
 
 if ([string]::IsNullOrWhiteSpace($PostgresBin)) {
-    throw "Set DEVICE_FARM_POSTGRES_BIN to the PostgreSQL bin directory."
+    throw "请将 DEVICE_FARM_POSTGRES_BIN 设置为 PostgreSQL 的 bin 目录。"
 }
 $PostgresBin = [System.IO.Path]::GetFullPath($PostgresBin)
 
 foreach ($name in @("initdb.exe", "pg_ctl.exe", "createdb.exe", "psql.exe")) {
     if (-not (Test-Path -LiteralPath (Join-Path $PostgresBin $name) -PathType Leaf)) {
-        throw "PostgreSQL tool is missing: $name"
+        throw "缺少 PostgreSQL 工具：$name"
     }
 }
 if (-not $DataDirectory.StartsWith($TempRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to use a data directory outside the project tmp directory."
+    throw "拒绝使用项目 tmp 目录之外的数据目录。"
 }
 
 function Invoke-PostgresTool {
@@ -32,7 +32,7 @@ function Invoke-PostgresTool {
     )
     & (Join-Path $PostgresBin $Name) @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "$Name failed with exit code $LASTEXITCODE."
+        throw "$Name 执行失败，退出码：$LASTEXITCODE。"
     }
 }
 
@@ -69,9 +69,11 @@ function Invoke-GoTest {
 }
 
 $started = $false
+$PreviousClientEncoding = $env:PGCLIENTENCODING
+$env:PGCLIENTENCODING = "UTF8"
 New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
 if (Test-Path -LiteralPath $DataDirectory) {
-    throw "Temporary PostgreSQL data directory already exists: $DataDirectory"
+    throw "临时 PostgreSQL 数据目录已存在：$DataDirectory"
 }
 
 try {
@@ -95,7 +97,7 @@ try {
 
     $PlatformMigration = $UpFiles | Where-Object Name -EQ "000014_platform_neutral_device_domain.up.sql" | Select-Object -First 1
     if (-not $PlatformMigration) {
-        throw "Platform-neutral migration is missing."
+        throw "缺少平台中立迁移文件。"
     }
     foreach ($Migration in $UpFiles | Where-Object Name -LT $PlatformMigration.Name) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQL @"
@@ -113,41 +115,41 @@ VALUES('legacy_pool_000000001','legacy_device_000001',true);
 "@
     Invoke-SQLFile $PlatformMigration.FullName
     Invoke-SQL "DO `$test`$ BEGIN IF EXISTS (SELECT 1 FROM device_hosts WHERE id='legacy_host_000000001' AND (host_os<>'linux' OR host_arch<>'unknown')) OR EXISTS (SELECT 1 FROM device_pools WHERE id='legacy_pool_000000001' AND platform<>'android') OR EXISTS (SELECT 1 FROM devices WHERE id='legacy_device_000001' AND platform<>'android') THEN RAISE EXCEPTION 'legacy Android backfill failed'; END IF; END `$test`$;"
-    Write-Output "legacy Android backfill: passed"
+    Write-Output "旧 Android 数据回填：通过"
     Invoke-SQL "DELETE FROM device_pool_devices WHERE device_id='legacy_device_000001'; DELETE FROM devices WHERE id='legacy_device_000001'; DELETE FROM device_pools WHERE id='legacy_pool_000000001'; DELETE FROM device_hosts WHERE id='legacy_host_000000001'; DELETE FROM device_images WHERE id='legacy_image_00000001';"
     foreach ($Migration in $UpFiles | Where-Object Name -GT $PlatformMigration.Name) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQLFile $Constraints
-    Write-Output "constraint checks: passed"
+    Write-Output "数据库约束检查：通过"
 
     foreach ($Migration in $DownFiles) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQL "DO `$test`$ BEGIN IF EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%') THEN RAISE EXCEPTION 'down migration left device tables'; END IF; END `$test`$;"
-    Write-Output "down migration: passed"
+    Write-Output "向下迁移：通过"
 
     foreach ($Migration in $UpFiles) { Invoke-SQLFile $Migration.FullName }
     Invoke-SQL "DO `$test`$ DECLARE table_count integer; BEGIN SELECT count(*) INTO table_count FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename LIKE 'device_%'; IF table_count <> 15 THEN RAISE EXCEPTION 'expected 15 device tables, got %', table_count; END IF; END `$test`$;"
-    Write-Output "up-down-up migration: passed"
+    Write-Output "向上、向下、再向上迁移：通过"
 
     if ($RunRepositoryTests) {
         $GoExecutable = $env:DEVICE_FARM_GO
         if ([string]::IsNullOrWhiteSpace($GoExecutable)) {
             $GoCommand = Get-Command go -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $GoCommand) {
-                throw "Set DEVICE_FARM_GO before running repository tests."
+                throw "运行 Repository 测试前请设置 DEVICE_FARM_GO。"
             }
             $GoExecutable = $GoCommand.Source
         }
         $PreviousDatabaseURL = $env:DEVICE_FARM_TEST_DATABASE_URL
         try {
             $env:DEVICE_FARM_TEST_DATABASE_URL = "postgres://postgres@127.0.0.1:$Port/$DatabaseName`?sslmode=disable"
-            Invoke-GoTest $GoExecutable "./internal/iossession" "iOS Session Fence integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/repository" "Repository integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/scheduler" "Scheduler integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/reaper" "Reservation lease and Reaper integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/reconcile" "Reconciler and health integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/hostcommand" "Host command protocol integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/metrics" "Metrics integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/api" "Management API integration tests failed."
-            Invoke-GoTest $GoExecutable "./internal/warmpool" "Warm pool controller integration tests failed."
+            Invoke-GoTest $GoExecutable "./internal/iossession" "iOS Session Fence 集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/repository" "Repository 集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/scheduler" "Scheduler 集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/reaper" "预约租约和 Reaper 集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/reconcile" "Reconciler 和健康状态集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/hostcommand" "宿主机命令协议集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/metrics" "指标集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/api" "管理 API 集成测试失败。"
+            Invoke-GoTest $GoExecutable "./internal/warmpool" "预热池控制器集成测试失败。"
         }
         finally {
             $env:DEVICE_FARM_TEST_DATABASE_URL = $PreviousDatabaseURL
@@ -164,4 +166,5 @@ finally {
     if (Test-Path -LiteralPath $LogPath) {
         Remove-Item -LiteralPath $LogPath -Force
     }
+    $env:PGCLIENTENCODING = $PreviousClientEncoding
 }

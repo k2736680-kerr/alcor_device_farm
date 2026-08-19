@@ -774,7 +774,7 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	iosSimulators := iossimulator.New(db, generator)
 	reservationService.SetIOSSessionController(iosSessions)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	healthService := reconcile.New(db, provider, nil, 3, 0, logger)
+	healthService := reconcile.New(db, provider, nil, 3, 0, 0, logger)
 	hostCommands := hostcommand.New(db)
 	imageCatalog := imagecatalog.New(db)
 	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{

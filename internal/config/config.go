@@ -64,6 +64,7 @@ type LeaseConfig struct {
 type ReconcileConfig struct {
 	Interval           time.Duration `yaml:"interval" json:"interval"`
 	HostTimeout        time.Duration `yaml:"host_timeout" json:"host_timeout"`
+	HostRecoveryGrace  time.Duration `yaml:"host_recovery_grace" json:"host_recovery_grace"`
 	STFVisibilityGrace time.Duration `yaml:"stf_visibility_grace" json:"stf_visibility_grace"`
 	FailureThreshold   int           `yaml:"failure_threshold" json:"failure_threshold"`
 }
@@ -124,7 +125,7 @@ func Default() Config {
 			GracePeriod:       30 * time.Second,
 		},
 		Reconcile: ReconcileConfig{Interval: 2 * time.Second, HostTimeout: 30 * time.Second,
-			STFVisibilityGrace: 30 * time.Second, FailureThreshold: 3},
+			HostRecoveryGrace: 90 * time.Second, STFVisibilityGrace: 30 * time.Second, FailureThreshold: 3},
 		WarmPool: WarmPoolConfig{Interval: 30 * time.Second},
 		STF: STFConfig{
 			Timeout: 5 * time.Second, Attempts: 3, RetryDelay: 200 * time.Millisecond, WebTokenTTL: 30 * time.Second,
@@ -227,6 +228,7 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"LEASE_GRACE_PERIOD", &cfg.Lease.GracePeriod},
 		{"RECONCILE_INTERVAL", &cfg.Reconcile.Interval},
 		{"RECONCILE_HOST_TIMEOUT", &cfg.Reconcile.HostTimeout},
+		{"RECONCILE_HOST_RECOVERY_GRACE", &cfg.Reconcile.HostRecoveryGrace},
 		{"RECONCILE_STF_VISIBILITY_GRACE", &cfg.Reconcile.STFVisibilityGrace},
 		{"WARM_POOL_INTERVAL", &cfg.WarmPool.Interval},
 		{"STF_TIMEOUT", &cfg.STF.Timeout},
@@ -320,6 +322,7 @@ func (cfg Config) Validate() error {
 		"lease.reaper_interval":                cfg.Lease.ReaperInterval,
 		"reconcile.interval":                   cfg.Reconcile.Interval,
 		"reconcile.host_timeout":               cfg.Reconcile.HostTimeout,
+		"reconcile.host_recovery_grace":        cfg.Reconcile.HostRecoveryGrace,
 		"reconcile.stf_visibility_grace":       cfg.Reconcile.STFVisibilityGrace,
 		"warm_pool.interval":                   cfg.WarmPool.Interval,
 		"stf.timeout":                          cfg.STF.Timeout,
@@ -507,6 +510,7 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("lease_grace_period", cfg.Lease.GracePeriod),
 		slog.Duration("reconcile_interval", cfg.Reconcile.Interval),
 		slog.Duration("reconcile_host_timeout", cfg.Reconcile.HostTimeout),
+		slog.Duration("reconcile_host_recovery_grace", cfg.Reconcile.HostRecoveryGrace),
 		slog.Duration("reconcile_stf_visibility_grace", cfg.Reconcile.STFVisibilityGrace),
 		slog.Int("reconcile_failure_threshold", cfg.Reconcile.FailureThreshold),
 		slog.Duration("warm_pool_interval", cfg.WarmPool.Interval),

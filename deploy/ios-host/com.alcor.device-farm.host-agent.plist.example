@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alcor.device-farm.host-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__IOS_HOST_ROOT__/run-service.sh</string>
+    <string>host-agent</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>IOS_HOST_ROOT</key>
+    <string>__IOS_HOST_ROOT__</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>__IOS_HOST_ROOT__</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__IOS_HOST_ROOT__/logs/host-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>__IOS_HOST_ROOT__/logs/host-agent.log</string>
+</dict>
+</plist>

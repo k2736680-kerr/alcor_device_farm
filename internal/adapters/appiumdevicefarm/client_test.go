@@ -2,14 +2,67 @@ package appiumdevicefarm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 )
+
+type controlledCommandRunner struct {
+	started chan string
+	release map[string]chan struct{}
+}
+
+func (runner *controlledCommandRunner) Run(ctx context.Context, _ string, arguments ...string) ([]byte, error) {
+	key := strings.Join(arguments, " ")
+	select {
+	case runner.started <- key:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case <-runner.release[key]:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestSerializedCommandRunnerPreventsConcurrentSimctlAndCancelsWaiter(t *testing.T) {
+	delegate := &controlledCommandRunner{started: make(chan string, 3), release: map[string]chan struct{}{
+		"simctl list devices -j": make(chan struct{}),
+		"simctl create test":     make(chan struct{}),
+	}}
+	runner := NewSerializedCommandRunner(delegate)
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := runner.Run(context.Background(), "xcrun", "simctl", "list", "devices", "-j")
+		firstDone <- err
+	}()
+	if started := <-delegate.started; started != "simctl list devices -j" {
+		t.Fatalf("首个 CoreSimulator 命令=%q", started)
+	}
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := runner.Run(waitCtx, "xcrun", "simctl", "create", "test"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("等待串行闸门的错误=%v", err)
+	}
+	select {
+	case unexpected := <-delegate.started:
+		t.Fatalf("被取消的 CoreSimulator 命令仍开始执行：%q", unexpected)
+	default:
+	}
+	close(delegate.release["simctl list devices -j"])
+	if err := <-firstDone; err != nil {
+		t.Fatalf("首个 CoreSimulator 命令错误=%v", err)
+	}
+}
 
 func TestInventoryIsReadOnlyAllowlistedAndPreservesBusy(t *testing.T) {
 	requests := 0
@@ -150,6 +203,100 @@ func TestHealthRejectsVersionDriftAndRedirects(t *testing.T) {
 	}
 	if _, err := New(Config{Endpoint: "http://192.0.2.10:4723", Timeout: time.Second}); err == nil {
 		t.Fatal("non-loopback Node endpoint must be rejected")
+	}
+}
+
+func TestHealthFailsClosedWhenDiscoveryNodeInventoryIsUnavailable(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/status":
+			_, _ = writer.Write([]byte(`{"value":{"ready":true}}`))
+		case "/device-farm/api/status":
+			_, _ = writer.Write([]byte(`{"status":"ok","version":"12.0.1"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer hub.Close()
+	node := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/status":
+			_, _ = writer.Write([]byte(`{"value":{"ready":true}}`))
+		case "/device-farm/api/status":
+			_, _ = writer.Write([]byte(`{"status":"ok","version":"12.0.1"}`))
+		case "/device-farm/api/device/ios":
+			http.Error(writer, "inventory unavailable", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer node.Close()
+	client, err := New(Config{Endpoint: hub.URL, RegistrationEndpoints: []string{hub.URL, node.URL}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	health, err := client.Health(context.Background())
+	if err == nil || !health.Ready() || !strings.Contains(err.Error(), "Node 设备清单失败") {
+		t.Fatalf("health=%+v error=%v", health, err)
+	}
+}
+
+func TestUnregisterWaitsForDiscoveryNodeWatchdogRecovery(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/device-farm/api/device/ios" {
+			_, _ = writer.Write([]byte(`[]`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer hub.Close()
+	var attempts atomic.Int32
+	node := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/device-farm/api/device/ios" {
+			http.NotFound(writer, request)
+			return
+		}
+		if attempts.Add(1) < 3 {
+			http.Error(writer, "node restarting", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = writer.Write([]byte(`[]`))
+	}))
+	defer node.Close()
+	client, err := New(Config{Endpoint: hub.URL, RegistrationEndpoints: []string{hub.URL, node.URL}, Timeout: time.Second,
+		RegistrationRetryTimeout: 200 * time.Millisecond, RegistrationRetryDelay: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.unregisterManagedSimulator(context.Background(), "SIM-RECOVERING"); err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("Node 恢复前后的清单请求次数=%d", attempts.Load())
+	}
+}
+
+func TestUnregisterStopsAtControlledRetryDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/device-farm/api/device/ios" {
+			http.Error(writer, "still unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+	client, err := New(Config{Endpoint: server.URL, Timeout: time.Second,
+		RegistrationRetryTimeout: 20 * time.Millisecond, RegistrationRetryDelay: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	err = client.unregisterManagedSimulator(context.Background(), "SIM-UNAVAILABLE")
+	if err == nil || !strings.Contains(err.Error(), "设备清单恢复超时") {
+		t.Fatalf("注销错误=%v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("受控重试超时未按配置结束：%v", time.Since(started))
 	}
 }
 
