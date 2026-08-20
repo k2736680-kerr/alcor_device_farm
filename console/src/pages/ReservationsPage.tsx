@@ -26,6 +26,7 @@ import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { ownerTypeLabel, poolStatusLabel, reservationStatusLabel } from '../api/labels'
+import { apiErrorText, durationLabel, platformLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { ReasonActionModal } from '../components/ReasonActionModal'
 
@@ -45,11 +46,6 @@ interface CreateFormValues {
 
 interface ExtendFormValues {
   additional_seconds: number
-}
-
-function errorText(error: unknown): string {
-  const err = error as { code?: string; requestId?: string; message?: string }
-  return `错误代码：${err.code ?? '未知错误'}（请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`
 }
 
 export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
@@ -78,13 +74,12 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       { data: { pool_id: values.pool_id, owner_type: 'manual', owner_id: '', lease_seconds: values.lease_seconds } },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`预约已创建（request_id: ${requestID}），等待分配设备…`)
+          message.success(`预约已创建，正在等待分配设备（请求编号：${responseRequestID(data)}）`)
           createForm.resetFields()
           setCreateOpen(false)
           invalidate()
         },
-        onError: (error) => message.error(`创建失败：${errorText(error)}`),
+        onError: (error) => message.error(`创建失败：${apiErrorText(error)}`),
       },
     )
   }
@@ -97,12 +92,11 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       { id: extendFor.id, data: values },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`租期已续（request_id: ${requestID}）`)
+          message.success(`租期窗口已延长（请求编号：${responseRequestID(data)}）`)
           setExtendFor(null)
           invalidate()
         },
-        onError: (error) => message.error(`续租失败：${errorText(error)}`),
+        onError: (error) => message.error(`续租失败：${apiErrorText(error)}`),
       },
     )
   }
@@ -115,12 +109,11 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       { id: releaseFor.id, data: { reason } },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`${releaseFor.status === 'pending' ? '预约已取消' : '预约已释放'}（request_id: ${requestID}）`)
+          message.success(`${releaseFor.status === 'pending' ? '预约已取消' : '预约已释放'}（请求编号：${responseRequestID(data)}）`)
           setReleaseFor(null)
           invalidate()
         },
-        onError: (error) => message.error(`释放失败：${errorText(error)}`),
+        onError: (error) => message.error(`释放失败：${apiErrorText(error)}`),
       },
     )
   }
@@ -130,10 +123,10 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor[value] ?? 'default'}>{reservationStatusLabel(value)}</Tag> },
     { title: '预约类型', dataIndex: 'owner_type', width: 110, render: (value: string) => ownerTypeLabel(value) },
     { title: '预约归属', dataIndex: 'owner_id', width: 170, render: (value: string) => shortID(value) },
-    { title: '平台', dataIndex: 'pool_id', width: 90, render: (value: string) => <Tag color={poolByID.get(value)?.platform === 'ios' ? 'blue' : 'green'}>{poolByID.get(value)?.platform === 'ios' ? 'iOS' : '安卓'}</Tag> },
+    { title: '平台', dataIndex: 'pool_id', width: 90, render: (value: string) => <Tag color={poolByID.get(value)?.platform === 'ios' ? 'blue' : 'green'}>{platformLabel(poolByID.get(value)?.platform)}</Tag> },
     { title: '设备池', dataIndex: 'pool_id', width: 190, render: (value: string) => poolByID.get(value)?.name ?? shortID(value) },
     { title: '设备', dataIndex: 'device_id', width: 150, render: (value?: string) => (value ? shortID(value) : '-') },
-    { title: '租期（秒）', dataIndex: 'lease_seconds', width: 100 },
+    { title: '租期窗口', dataIndex: 'lease_seconds', width: 120, render: (value: number) => durationLabel(value) },
     { title: '开始', dataIndex: 'starts_at', width: 160, render: (value?: string) => formatTime(value) },
     { title: '到期', dataIndex: 'expires_at', width: 160, render: (value?: string) => formatTime(value) },
     {
@@ -206,7 +199,8 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         destroyOnHidden
       >
         <Form<ExtendFormValues> form={extendForm} layout="vertical" onFinish={submitExtend}>
-          <Form.Item name="additional_seconds" label="续租时长(s)" rules={[{ required: true, message: '请输入续租时长' }]}>
+          <Typography.Paragraph type="secondary">续租会把当前到期时间向后顺延；这是可继续滑动的租期窗口，不是设备运行总时长上限。</Typography.Paragraph>
+          <Form.Item name="additional_seconds" label="续租时长（秒）" rules={[{ required: true, message: '请输入续租时长' }]}>
             <InputNumber min={60} max={86400} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
@@ -215,8 +209,8 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       <ReasonActionModal
         open={releaseFor !== null}
         title={releaseFor ? `${releaseFor.status === 'pending' ? '取消' : '释放'}预约 · ${shortID(releaseFor.id)}` : ''}
-        description={releaseFor?.status === 'pending' ? '取消后不再等待设备，操作会写入审计。' : '释放后设备立即进入清理流程，危险操作。'}
-        danger
+        description={releaseFor?.status === 'pending' ? '取消后不再等待设备，操作会写入审计。' : '释放后预约结束；健康设备返回可用状态。设备数据不会因为释放预约而自动清空。'}
+        danger={releaseFor?.status === 'pending'}
         confirmLoading={release.isPending}
         onSubmit={submitRelease}
         onCancel={() => setReleaseFor(null)}
@@ -245,23 +239,35 @@ function FormValues({
 }: {
   form: FormInstance<CreateFormValues>
   onSubmit: (values: CreateFormValues) => void
-  pools: { id: string; name: string; status: string; platform?: string }[]
+  pools: { id: string; name: string; status: string; platform?: string; default_lease_seconds?: number; max_lease_seconds?: number }[]
   poolsLoading: boolean
 }) {
+  const selectedPoolID = Form.useWatch('pool_id', form)
+  const selectedPool = pools.find((pool) => pool.id === selectedPoolID)
   return (
     <Form<CreateFormValues> form={form} layout="vertical" onFinish={onSubmit}>
       <Form.Item name="pool_id" label="设备池" rules={[{ required: true, message: '请选择设备池' }]}>
         <Select
           loading={poolsLoading}
           placeholder="选择设备池"
-          options={pools.map((pool) => ({ value: pool.id, label: `${pool.platform === 'ios' ? 'iOS' : '安卓'} · ${pool.name} · ${poolStatusLabel(pool.status)}` }))}
+          options={pools.map((pool) => ({ value: pool.id, label: `${platformLabel(pool.platform)} · ${pool.name} · ${poolStatusLabel(pool.status)}` }))}
+          onChange={(poolID) => {
+            const pool = pools.find((item) => item.id === poolID)
+            if (pool?.default_lease_seconds) form.setFieldValue('lease_seconds', pool.default_lease_seconds)
+          }}
         />
       </Form.Item>
       <Form.Item label="预约所有者">
         <Input aria-label="预约所有者" value="由当前登录会话确定，浏览器不可修改" disabled />
       </Form.Item>
-      <Form.Item name="lease_seconds" label="租期（秒）" initialValue={1800} rules={[{ required: true, message: '请输入租期' }]}>
-        <InputNumber min={60} max={86400} style={{ width: '100%' }} />
+      <Form.Item
+        name="lease_seconds"
+        label="初始租期（秒）"
+        initialValue={1800}
+        extra={selectedPool ? `设备池默认 ${durationLabel(selectedPool.default_lease_seconds)}，单次租期窗口最长 ${durationLabel(selectedPool.max_lease_seconds)}。运行中的自动化可在到期前继续续租。` : '选择设备池后会自动填入该池默认租期。'}
+        rules={[{ required: true, message: '请输入租期' }]}
+      >
+        <InputNumber min={60} max={selectedPool?.max_lease_seconds ?? 86400} style={{ width: '100%' }} />
       </Form.Item>
     </Form>
   )

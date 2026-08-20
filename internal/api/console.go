@@ -161,7 +161,7 @@ func (handler *consoleHandler) login(writer http.ResponseWriter, request *http.R
 			return
 		}
 		if errors.Is(err, consoleauth.ErrInvalidCredentials) {
-			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "INVALID_CREDENTIALS", Message: "用户 ID 或密码错误"})
+			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "INVALID_CREDENTIALS", Message: "用户账号或密码错误"})
 			return
 		}
 		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "无法创建控制台会话"})

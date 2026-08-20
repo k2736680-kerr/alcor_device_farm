@@ -7,6 +7,7 @@ import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { healthEventTypeLabel, healthReasonLabel, healthSourceLabel, lifecycleStatusLabel, severityLabel } from '../api/labels'
+import { detailText, platformLabel } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 
 const severityColor: Record<string, string> = {
@@ -22,7 +23,7 @@ const columns: TableColumnsType<HealthEventRecord> = [
   { title: '事件', dataIndex: 'event_type', width: 160, render: (value: string) => healthEventTypeLabel(value) },
   { title: '级别', dataIndex: 'severity', width: 90, render: (value: string) => <Tag color={severityColor[value] ?? 'default'}>{severityLabel(value)}</Tag> },
   { title: '原因', dataIndex: 'reason', ellipsis: true, render: (value?: string) => healthReasonLabel(value) },
-  { title: '技术详情', dataIndex: 'payload', ellipsis: true, render: (value: Record<string, unknown>) => (value && Object.keys(value).length > 0 ? JSON.stringify(value) : '-') },
+  { title: '事件详情', dataIndex: 'payload', width: 360, ellipsis: true, render: (value: Record<string, unknown>) => detailText(value) },
   { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
 ]
 
@@ -50,7 +51,7 @@ export function HealthEventsPage() {
             onChange={setDeviceId}
             options={devices.map((device) => ({
               value: device.id,
-              label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
+              label: `${platformLabel(device.platform)} · ${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
             }))}
             notFoundContent={devicesQuery.isFetching ? '加载中…' : '无设备'}
           />

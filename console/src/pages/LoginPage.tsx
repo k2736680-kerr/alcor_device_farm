@@ -2,6 +2,7 @@ import { App as AntApp, Button, Card, Form, Input, Typography } from 'antd'
 import { CloudServerOutlined, LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
 import { useQueryClient } from '@tanstack/react-query'
 import { getGetConsoleSessionQueryKey, useCreateConsoleSession } from '../api/generated/device-farm'
+import { apiErrorText } from '../api/presentation'
 
 interface LoginValues {
   user_id: string
@@ -17,7 +18,7 @@ export function LoginPage() {
         void queryClient.invalidateQueries({ queryKey: getGetConsoleSessionQueryKey() })
       },
       onError: (error) => {
-        message.error(error instanceof Error ? error.message : '登录失败')
+        message.error(`登录失败：${apiErrorText(error)}`)
       },
     },
   })
@@ -33,12 +34,12 @@ export function LoginPage() {
         <div className="login-hero-copy">
           <Typography.Title>统一管理每一台<br />测试设备</Typography.Title>
           <Typography.Paragraph>
-            查看宿主机容量、设备健康与预约状态，集中完成设备域日常运维与调度。
+            统一查看 Android 与 iOS 宿主机容量、设备健康和预约状态，集中完成设备域日常运维与调度。
           </Typography.Paragraph>
           <div className="login-feature-list">
-            <span><i /> 固定暖池与自动回收</span>
+            <span><i /> 统一设备池与安全伸缩</span>
             <span><i /> 设备状态与审计可追踪</span>
-            <span><i /> 浏览器不接触内部 Token</span>
+            <span><i /> 浏览器不接触内部访问凭证</span>
           </div>
         </div>
         <div className="login-hero-foot"><SafetyCertificateOutlined /> 设备域独立控制面</div>
@@ -49,8 +50,8 @@ export function LoginPage() {
           <Typography.Title level={2}>设备农场控制台登录</Typography.Title>
           <Typography.Paragraph type="secondary">使用管理员账户进入设备资源控制台</Typography.Paragraph>
         <Form<LoginValues> layout="vertical" onFinish={onSubmit}>
-          <Form.Item name="user_id" label="用户 ID" rules={[{ required: true, message: '请输入用户 ID' }]}>
-            <Input size="large" prefix={<UserOutlined />} autoComplete="username" placeholder="请输入用户 ID" />
+          <Form.Item name="user_id" label="用户账号" rules={[{ required: true, message: '请输入用户账号' }]}>
+            <Input size="large" prefix={<UserOutlined />} autoComplete="username" placeholder="请输入用户账号" />
           </Form.Item>
           <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password size="large" prefix={<LockOutlined />} autoComplete="current-password" placeholder="请输入密码" />

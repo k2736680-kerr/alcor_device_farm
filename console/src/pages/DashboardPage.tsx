@@ -79,7 +79,7 @@ export function DashboardPage() {
   const items = [
     { title: '当前可用设备', value: readyDevices?.total ?? 0, note: '现在可以直接预约使用', to: '/devices', icon: <CloudServerOutlined />, tone: 'blue' },
     { title: '使用中设备', value: busyDevices?.total ?? 0, note: '正在被预约占用', to: '/reservations', icon: <CalendarOutlined />, tone: 'orange' },
-    { title: '宿主机', value: hosts?.total ?? 0, note: '运行模拟器的服务器', to: '/hosts', icon: <DesktopOutlined />, tone: 'cyan' },
+    { title: '宿主机', value: hosts?.total ?? 0, note: '承载 Android 与 iOS 设备', to: '/hosts', icon: <DesktopOutlined />, tone: 'cyan' },
     { title: '设备池', value: pools?.total ?? 0, note: '设备调度分组', to: '/pools', icon: <DatabaseOutlined />, tone: 'violet' },
   ]
 
@@ -89,7 +89,7 @@ export function DashboardPage() {
         <div>
           <div className="dashboard-kicker"><span /> 设备运行状态</div>
           <Typography.Title level={2}>设备运行概览</Typography.Title>
-          <Typography.Paragraph>只展示当前容量、进行中的任务和需要处理的异常。</Typography.Paragraph>
+          <Typography.Paragraph>展示 Android 与 iOS 的当前容量、设备处理状态和需要关注的异常。</Typography.Paragraph>
         </div>
         <Space wrap>
           <Button icon={<ReloadOutlined />} loading={manualRefreshing} onClick={() => void refreshAll()}>刷新状态</Button>
@@ -128,7 +128,7 @@ export function DashboardPage() {
             <div className="health-row">
               <div className="health-copy">
                 <span className="health-icon"><DesktopOutlined /></span>
-                <div><strong>执行宿主机</strong><small>当前登记的模拟器服务器</small></div>
+                <div><strong>设备宿主机</strong><small>当前登记的 Linux 与 macOS 宿主机</small></div>
               </div>
               <Typography.Text strong>{hosts?.total ?? 0} 台</Typography.Text>
             </div>
@@ -144,7 +144,7 @@ export function DashboardPage() {
         <Col xs={24} xl={11}>
           <Card
             className="dashboard-panel task-panel"
-            title="当前任务"
+            title="设备处理状态"
             extra={<span className="refresh-status">每 5 秒自动更新</span>}
           >
             <div className="task-status-grid">
@@ -154,14 +154,14 @@ export function DashboardPage() {
               </div>
               <div className={cleaningCount > 0 ? 'task-status active' : 'task-status'}>
                 <span className="task-status-icon"><ReloadOutlined spin={cleaningCount > 0} /></span>
-                <div><strong>{cleaningCount}</strong><span>清理中</span></div>
+                <div><strong>{cleaningCount}</strong><span>回收或停止中</span></div>
               </div>
             </div>
             <div className="task-message">
               {hasRunningTask ? (
                 <><LoadingOutlined spin /> 系统正在处理设备，完成后数量会自动更新，无需手动刷新。</>
               ) : (
-                <><CheckCircleFilled /> 当前没有创建或清理任务。</>
+                <><CheckCircleFilled /> 当前没有正在进行的设备处理。</>
               )}
             </div>
             {(quarantinedDevices?.total ?? 0) > 0 && (

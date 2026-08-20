@@ -7,10 +7,10 @@ test.describe('设备农场控制台 E2E', () => {
     await expect(page.getByText('设备农场控制台登录')).toBeVisible()
 
     // 2. 错误密码被拒绝并给出提示
-    await page.getByLabel('用户 ID').fill('admin')
+    await page.getByLabel('用户账号').fill('admin')
     await page.getByLabel('密码').fill('wrong-password')
     await page.getByRole('button', { name: /登\s*录/ }).click()
-    await expect(page.getByText('用户 ID 或密码错误')).toBeVisible()
+    await expect(page.getByText(/用户账号或密码错误/)).toBeVisible()
 
     // 3. 正确密码登录，进入控制台布局
     await page.getByLabel('密码').fill('admin-password')
@@ -19,7 +19,7 @@ test.describe('设备农场控制台 E2E', () => {
     await expect(page.getByText('设备农场控制台')).toBeVisible()
 
     // 4. 进入镜像列表页，表格与分页信息渲染
-    await page.getByRole('link', { name: '设备镜像' }).first().click()
+    await page.getByRole('link', { name: 'Android 镜像' }).first().click()
     await expect(page.getByRole('table')).toBeVisible()
     await expect(page.getByRole('columnheader', { name: '名称' })).toBeVisible()
     await expect(page.getByText(/共 \d+ 条/)).toBeVisible()

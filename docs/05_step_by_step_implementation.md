@@ -70,7 +70,7 @@
 | DF-046 | iOS Simulator 受控远程控制 | completed | DF-045、ADR-0025 |
 | DF-047 | iOS 真实验收、运维回滚与 Android 回归 | completed | DF-046 |
 | DF-048 | 统一 Android 与 iOS 设备池自动伸缩 | completed | DF-047 |
-| DF-049 | 统一设备农场控制台功能与中文文案审校 | pending | DF-048 |
+| DF-049 | 统一设备农场控制台功能与中文文案审校 | completed | DF-048 |
 
 ## 3. 阶段 A：工程和契约基础
 

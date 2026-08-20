@@ -38,6 +38,7 @@ import { RemoteControlProvider, useRemoteControl } from './remote/RemoteControlP
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
   { key: '/hosts', icon: <DesktopOutlined />, label: <NavLink to="/hosts">宿主机</NavLink> },
+  { key: '/images', icon: <CameraOutlined />, label: <NavLink to="/images">Android 镜像</NavLink> },
   { key: '/pools', icon: <DatabaseOutlined />, label: <NavLink to="/pools">设备池</NavLink> },
   { key: '/devices', icon: <CloudServerOutlined />, label: <NavLink to="/devices">设备</NavLink> },
   { key: '/reservations', icon: <CalendarOutlined />, label: <NavLink to="/reservations">预约</NavLink> },
@@ -47,7 +48,7 @@ const menuItems: MenuProps['items'] = [
 
 const pageTitles: Record<string, string> = {
   '/': '运行概览',
-  '/images': '设备镜像',
+  '/images': 'Android 镜像',
   '/hosts': '宿主机',
   '/pools': '设备池',
   '/devices': '设备',
@@ -70,7 +71,7 @@ export default function App() {
     },
   })
   const session = unwrapData<ConsoleSession>(data)
-  const currentTitle = pageTitles[location.pathname] ?? '设备资源管理'
+  const currentTitle = pageTitles[location.pathname] ?? '设备农场管理'
   const embedded = window.self !== window.top
 
   useEffect(() => {
@@ -130,8 +131,8 @@ function AuthenticatedConsole({
         {!embedded && <div className="console-brand">
           <div className="console-brand-mark"><CloudServerOutlined /></div>
           <div className="console-brand-copy">
-            <strong>Alcor Farm</strong>
-            <span>设备控制</span>
+            <strong>Alcor 设备农场</strong>
+            <span>Android 与 iOS</span>
           </div>
         </div>}
         {!embedded && <div className="console-nav-label">资源与调度</div>}
@@ -165,7 +166,7 @@ function AuthenticatedConsole({
               type={remote.view?.status === 'connected' ? 'success' : 'info'}
               showIcon
               message={remote.view?.status === 'connected' ? `正在远控 ${remote.device.serial}` : `正在连接 ${remote.device.serial}`}
-              description="远控会话会在控制台各页面间持续保活；只有明确点击取消连接或挂断才会立即释放设备，关闭远控标签页后可重新打开，控制台异常退出时由短租约兜底回收。"
+              description="远控会话会在控制台各页面间持续保活；明确点击取消连接或挂断会立即释放预约。关闭远控标签页后可以重新打开，控制台异常退出时系统会自动回收。"
               action={(
                 <Space>
                   {remote.view?.url && <Button onClick={remote.reopen}>重新打开远控</Button>}

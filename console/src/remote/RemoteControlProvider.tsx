@@ -20,6 +20,7 @@ import {
 } from '../api/generated/device-farm'
 import type { Device, RemoteControl } from '../api/generated/models'
 import { unwrapData } from '../api/unwrap'
+import { apiErrorText } from '../api/presentation'
 
 const storedDeviceKey = 'device-farm.remote-control-device'
 const remoteConnectTimeoutMs = 30_000
@@ -147,7 +148,7 @@ export function RemoteControlProvider({
       { id: remoteState.device.id },
       {
         onSuccess: () => {
-          if (!silent) message.success('远控已挂断，设备正在释放')
+          if (!silent) message.success('远控已挂断，设备预约正在释放')
           clearRemote(closePopup)
         },
         onError: (error) => {
@@ -159,11 +160,11 @@ export function RemoteControlProvider({
             return
           }
           if (settleOnError) {
-            message.warning(`取消连接未能确认（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}），设备状态已刷新`)
+            message.warning(`取消连接未能确认，设备状态已刷新：${apiErrorText(error)}`)
             clearRemote(closePopup)
             return
           }
-          message.error(`挂断失败（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+          message.error(`挂断失败：${apiErrorText(error)}`)
         },
       },
     )
@@ -224,7 +225,7 @@ export function RemoteControlProvider({
           if (isRemoteAlreadyGone(err)) {
             message.info('设备或远控会话已不存在，列表状态已刷新')
           } else {
-            message.error(`远控连接失败（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+            message.error(`远控连接失败：${apiErrorText(error)}`)
           }
         },
       },
@@ -261,7 +262,7 @@ export function RemoteControlProvider({
     navigatePopup(remoteState.popup, remoteView.url)
     message.success(remoteState.device.platform === 'ios'
       ? 'iOS 远控已连接；画面和操作已绑定当前预约的目标模拟器'
-      : '安卓远控已连接；点击挂断会释放设备')
+      : 'Android 远控已连接；点击挂断会释放本次设备预约')
   }, [message, navigatePopup, remoteState, remoteView?.url])
 
   const sendHeartbeat = useCallback(async () => {

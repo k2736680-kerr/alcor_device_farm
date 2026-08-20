@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '../test/renderWithProviders'
-import { sampleDevices } from '../test/handlers'
+import { sampleDevices, samplePools } from '../test/handlers'
 import { server } from '../test/server'
 import { RemoteControlProvider } from '../remote/RemoteControlProvider'
 import { DevicesPage } from './DevicesPage'
@@ -200,8 +200,8 @@ describe('DevicesPage device categories', () => {
 
     expect(await screen.findByText('emulator-5554')).toBeInTheDocument()
     expect(screen.queryByText('emulator-5558')).not.toBeInTheDocument()
-    expect(screen.getByText('安卓模拟器')).toBeInTheDocument()
-    expect(screen.getByText('Docker 模拟器')).toBeInTheDocument()
+    expect(screen.getByText('Android 模拟器')).toBeInTheDocument()
+    expect(screen.getByText('Android Docker 模拟器')).toBeInTheDocument()
     expect(screen.getByText('可用')).toBeInTheDocument()
     expect(screen.getByText('正常')).toBeInTheDocument()
 
@@ -307,7 +307,7 @@ describe('DevicesPage device categories', () => {
     )
     renderWithProviders(<DevicesPageWithRemoteControl />)
 
-    await user.click(await screen.findByRole('button', { name: '新增安卓设备' }))
+    await user.click(await screen.findByRole('button', { name: '新增 Android 模拟器' }))
     await user.click(screen.getByRole('button', { name: '下一步' }))
     const imageRow = (await screen.findByText('Android API 36')).closest('tr')
     expect(imageRow).not.toBeNull()
@@ -320,6 +320,32 @@ describe('DevicesPage device categories', () => {
     expect(await screen.findByText('设备创建进度：等待宿主机容量')).toBeInTheDocument()
     expect(screen.getAllByText('宿主机资源不足：内存还缺 2048 MB，磁盘还缺 8192 MB。容量恢复后会自动继续创建。').length).toBeGreaterThan(0)
     expect(screen.queryByText(/unknown|ERROR/)).not.toBeInTheDocument()
+  })
+
+  it('only offers Android pools in the Android creation wizard', async () => {
+    const user = userEvent.setup()
+    const iosPool = {
+      id: 'pool_ios_not_for_android', name: 'iOS 回归池', platform: 'ios', default_lease_seconds: 1800,
+      max_lease_seconds: 86400, total_target: 2, min_ready: 2, max_concurrency: 2, status: 'active',
+      created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
+    }
+    server.use(http.get('/api/v1/device-pools', () => HttpResponse.json({
+      request_id: 'req_platform_pools',
+      data: { items: [...samplePools, iosPool], total: 2, page: 1, page_size: 200 },
+      error: null,
+    })))
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+
+    await user.click(await screen.findByRole('button', { name: '新增 Android 模拟器' }))
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    const imageRow = (await screen.findByText('Android API 36')).closest('tr')
+    expect(imageRow).not.toBeNull()
+    await user.click(within(imageRow as HTMLElement).getByRole('radio').parentElement as HTMLElement)
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    await user.click(screen.getByLabelText('Android 设备池'))
+
+    expect((await screen.findAllByText(/default-android/)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/iOS 回归池/)).not.toBeInTheDocument()
   })
 
   it('shows iOS Simulator details, remote control and lifecycle actions without exposing Appium internals', async () => {
@@ -351,8 +377,8 @@ describe('DevicesPage device categories', () => {
     expect(row).not.toBeNull()
     expect(within(row as HTMLElement).getByText('iOS')).toBeInTheDocument()
     expect(within(row as HTMLElement).getByText('iPhone 17 Pro')).toBeInTheDocument()
-    expect(within(row as HTMLElement).getByText('26.3')).toBeInTheDocument()
-    expect(within(row as HTMLElement).getByText('由会话围栏管理')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText('iOS 26.3')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText('按预约建立受控会话')).toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: '远程连接' })).toBeInTheDocument()
     expect(within(row as HTMLElement).queryByRole('button', { name: '编辑配置' })).not.toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: /停\s*止/ })).toBeInTheDocument()
@@ -457,7 +483,7 @@ describe('DevicesPage device categories', () => {
     renderWithProviders(<DevicesPageWithRemoteControl />)
     await user.click(await screen.findByRole('button', { name: '新增 iOS 模拟器' }))
     await user.click(screen.getByRole('button', { name: '下一步' }))
-    await user.click(screen.getByLabelText('iOS Runtime'))
+    await user.click(screen.getByLabelText('iOS 运行时'))
     await user.click(await screen.findByText('iOS 26.3 · 26.3'))
     await user.click(screen.getByLabelText('iPhone 机型'))
     expect(screen.queryByText('iPhone 15 Pro')).not.toBeInTheDocument()

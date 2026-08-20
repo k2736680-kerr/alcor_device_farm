@@ -105,7 +105,7 @@ describe('App session gate', () => {
     expect(row).not.toBeNull()
     await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
 
-    expect(await screen.findByText(/远控连接失败（REMOTE_CONTROL_TIMEOUT/)).toBeInTheDocument()
+    expect(await screen.findByText(/远控连接失败：远控连接请求超时（错误代码：REMOTE_CONTROL_TIMEOUT；请求编号：req_remote_timeout）/)).toBeInTheDocument()
     await waitFor(() => expect(endRequests).toBe(1))
     expect(screen.queryByText(/正在连接 emulator-5554/)).not.toBeInTheDocument()
   })

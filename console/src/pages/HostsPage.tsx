@@ -13,6 +13,7 @@ import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { hostStatusLabel, hostTypeLabel } from '../api/labels'
+import { apiErrorText, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { ReasonActionModal } from '../components/ReasonActionModal'
 
@@ -31,7 +32,7 @@ function resourceText(host: DeviceHost, kind: 'cpu' | 'memory' | 'disk') {
   const capacity = host.capacity as Record<string, unknown>
   const used = host.used_capacity as Record<string, unknown>
   if (capacity.resource_model !== 'dynamic_v1') {
-    return '等待 Agent 上报'
+    return '等待宿主代理上报'
   }
   if (kind === 'cpu') {
     return `${numeric(used.cpu_cores) ?? 0} / ${numeric(capacity.cpu_cores) ?? '-'} 核`
@@ -63,11 +64,11 @@ function iosEnvironment(host: DeviceHost): string {
   const catalog = capabilityObject(host, 'ios_simulator_catalog')
   const runtimes = Array.isArray(catalog?.runtimes) ? catalog.runtimes.length : 0
   const deviceTypes = Array.isArray(catalog?.device_types) ? catalog.device_types.length : 0
-  return `Xcode ${String(capabilities.xcode_version ?? '-')}；${runtimes} 个 Runtime，${deviceTypes} 个机型`
+  return `Xcode ${String(capabilities.xcode_version ?? '-')}；${runtimes} 个 iOS 运行时，${deviceTypes} 个机型`
 }
 
 function hostReadiness(host: DeviceHost) {
-  if (host.host_os !== 'macos') return <Tag>安卓宿主机</Tag>
+  if (host.host_os !== 'macos') return <Tag>Android 宿主机</Tag>
   const readiness = capabilityObject(host, 'host_readiness')
   return readiness?.ready === true ? <Tag color="green">iOS 自动化就绪</Tag> : <Tag color="red">iOS 环境未就绪</Tag>
 }
@@ -94,14 +95,12 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       { id: host.id, data: { reason } },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`${action === 'drain' ? '排空' : '解除排空'}已受理（request_id: ${requestID}）`)
+          message.success(`${action === 'drain' ? '排空' : '解除排空'}已受理（请求编号：${responseRequestID(data)}）`)
           setActionState(null)
           invalidate()
         },
         onError: (error) => {
-          const err = error as { code?: string; requestId?: string; message?: string }
-          message.error(`操作被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+          message.error(`操作被拒绝：${apiErrorText(error)}`)
         },
       },
     )
@@ -110,7 +109,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const columns: TableColumnsType<DeviceHost> = [
     { title: '宿主机编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 140 },
-    { title: '平台', dataIndex: 'host_os', width: 100, render: (value: string) => <Tag color={value === 'macos' ? 'blue' : 'green'}>{value === 'macos' ? 'iOS / macOS' : value === 'linux' ? '安卓 / Linux' : value}</Tag> },
+    { title: '平台 / 系统', dataIndex: 'host_os', width: 130, render: (value: string) => <Tag color={value === 'macos' ? 'blue' : 'green'}>{value === 'macos' ? 'iOS / macOS' : value === 'linux' ? 'Android / Linux' : value}</Tag> },
     { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
     { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
@@ -162,7 +161,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       <ReasonActionModal
         open={actionState !== null}
         title={actionState ? `${actionState.action === 'drain' ? '排空' : '解除排空'} · ${shortID(actionState.host.id)}` : ''}
-        description={actionState?.action === 'drain' ? '排空后宿主机不再接受新设备，存量设备迁移完成后自动下线。' : '解除排空后宿主机重新接受设备调度。'}
+        description={actionState?.action === 'drain' ? '排空后不再接受新建设备和新预约；已有预约可以继续运行，结束后可安全维护宿主机。' : '解除排空后宿主机重新接受设备创建和预约调度。'}
         danger={actionState?.action === 'drain'}
         confirmLoading={drain.isPending || undrain.isPending}
         onSubmit={submitAction}

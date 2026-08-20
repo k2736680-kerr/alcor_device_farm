@@ -31,6 +31,7 @@ import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, formatTime, shortID } from '../api/format'
 import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
+import { apiErrorText, durationLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 
 interface PoolFormValues {
@@ -39,11 +40,6 @@ interface PoolFormValues {
   max_lease_seconds: number
   device_count: number
   reason: string
-}
-
-function errorText(error: unknown): string {
-  const err = error as { code?: string; requestId?: string; message?: string }
-  return `${err.code ?? '未知错误'}（请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`
 }
 
 function numeric(value: unknown): number | undefined {
@@ -138,9 +134,11 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     },
   )
   const currentPoolDevices = unwrapPage<Device>(poolDevicesQuery.data)?.total ?? 0
-  const devicesQuery = useListDevices({ page: 1, page_size: 200, pool_id: configPool?.id }, { query: { enabled: Boolean(configPool) } })
+  const devicesQuery = useListDevices({ page: 1, page_size: 200 }, { query: { enabled: Boolean(configPool) } })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
-  const baseDevice = devices.find((device) => device.id === configPool?.base_device_id)
+  const poolDevices = devices.filter((device) => device.pool_id === configPool?.id)
+  const addableDevices = devices.filter((device) => configPool && device.platform === configPool.platform && !device.pool_id && device.lifecycle_status !== 'deleted')
+  const baseDevice = poolDevices.find((device) => device.id === configPool?.base_device_id)
   const baseHost = hostByID.get(baseDevice?.host_id ?? '')
 
   const updatePoolConfiguration = (values: PoolFormValues) => {
@@ -163,17 +161,16 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
           const updated = (data as unknown as { data?: DevicePool } | undefined)?.data
           if (updated) {
             setConfigPool(updated)
             poolForm.setFieldsValue({ device_count: updated.total_target, reason: '' })
           }
-          message.success(`设备池配置已更新（请求编号：${requestID}）`)
+          message.success(`设备池配置已更新（请求编号：${responseRequestID(data)}）`)
           invalidatePools()
           invalidateDevices()
         },
-        onError: (error) => message.error(`更新失败：${errorText(error)}`),
+        onError: (error) => message.error(`更新失败：${apiErrorText(error)}`),
       },
     )
   }
@@ -208,12 +205,13 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       { id: configPool.id, data: { device_id: deviceID } },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`设备已加入设备池（请求编号：${requestID}）`)
+          message.success(`设备已加入设备池（请求编号：${responseRequestID(data)}）`)
           setAddDeviceOpen(false)
+          setSelectedDevice(null)
           invalidatePools()
+          invalidateDevices()
         },
-        onError: (error) => message.error(`加入失败：${errorText(error)}`),
+        onError: (error) => message.error(`加入失败：${apiErrorText(error)}`),
       },
     )
   }
@@ -224,12 +222,12 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       onSuccess: (data) => {
         const updated = (data as unknown as { data?: DevicePool }).data
         if (updated) setConfigPool(updated)
-        message.success(configPool.platform === 'ios'
+        message.success(`${configPool.platform === 'ios'
           ? '扩容模板已更新；后续扩容将沿用它的 Mac、iOS 运行时和 iPhone 机型'
-          : '扩容模板已更新；后续扩容将沿用它的镜像和资源配置')
+          : '扩容模板已更新；后续扩容将沿用它的镜像和资源配置'}（请求编号：${responseRequestID(data)}）`)
         invalidatePools()
       },
-      onError: (error) => message.error(`设置扩容模板失败：${errorText(error)}`),
+      onError: (error) => message.error(`设置扩容模板失败：${apiErrorText(error)}`),
     })
   }
 
@@ -238,8 +236,8 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     { title: '名称', dataIndex: 'name', width: 180 },
     { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{value === 'ios' ? 'iOS' : 'Android'}</Tag> },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
-    { title: '默认租期（秒）', dataIndex: 'default_lease_seconds', width: 130 },
-    { title: '最长租期（秒）', dataIndex: 'max_lease_seconds', width: 130 },
+    { title: '默认租期', dataIndex: 'default_lease_seconds', width: 130, render: (value: number) => durationLabel(value) },
+    { title: '最长租期窗口', dataIndex: 'max_lease_seconds', width: 140, render: (value: number) => durationLabel(value) },
     { title: '目标设备数', dataIndex: 'total_target', width: 110 },
     {
       title: '默认系统', dataIndex: 'default_image_id', width: 180,
@@ -306,7 +304,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             <Form.Item name="default_lease_seconds" label="默认租期（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400} />
             </Form.Item>
-            <Form.Item name="max_lease_seconds" label="最长租期（秒）" rules={[{ required: true }]}>
+            <Form.Item name="max_lease_seconds" label="最大租期窗口（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
             <Form.Item name="device_count" label="目标设备数" extra="调大后自动扩容，调小后安全缩容。" rules={[{ required: true, message: '请输入目标设备数' }]}>
@@ -325,7 +323,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
               type={currentPoolDevices === (desiredDeviceCount ?? configPool.total_target) ? 'success' : 'info'}
               message={`当前 ${currentPoolDevices} 台，目标 ${(desiredDeviceCount ?? configPool.total_target)} 台`}
               description={currentPoolDevices < (desiredDeviceCount ?? configPool.total_target)
-                ? scaleUpDescription(configPool, currentPoolDevices, desiredDeviceCount ?? configPool.total_target, devices, baseHost)
+                ? scaleUpDescription(configPool, currentPoolDevices, desiredDeviceCount ?? configPool.total_target, poolDevices, baseHost)
                 : currentPoolDevices > (desiredDeviceCount ?? configPool.total_target)
                   ? `保存后将安全移除 ${currentPoolDevices - (desiredDeviceCount ?? configPool.total_target)} 台空闲设备；使用中的设备会在任务结束后处理。`
                   : '当前数量与目标一致，无需扩容或缩容。'}
@@ -365,7 +363,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           placeholder="选择健康的扩容模板"
           loading={devicesQuery.isFetching || selectBaseDevice.isPending}
           onChange={setBaseDevice}
-          options={devices.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
+          options={poolDevices.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
             configPool.platform === 'ios'
               ? device.platform === 'ios' && device.device_kind === 'simulator' && device.provider_type === 'appium_device_farm_ios'
               : device.platform === 'android' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
@@ -398,9 +396,11 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           }
         }}
         confirmLoading={addDevice.isPending}
+        okButtonProps={{ disabled: selectedDevice === null }}
         destroyOnHidden
       >
-        <DeviceSelect devices={devices} loading={devicesQuery.isFetching} onChange={(id) => setSelectedDevice(id)} />
+        <Typography.Paragraph type="secondary">只列出尚未加入其他设备池、且与当前设备池平台一致的设备。</Typography.Paragraph>
+        <DeviceSelect devices={addableDevices} loading={devicesQuery.isFetching} onChange={(id) => setSelectedDevice(id)} />
       </Modal>
     </>
   )
@@ -411,9 +411,10 @@ function DeviceSelect({ devices, loading, onChange }: { devices: Device[]; loadi
     <Select
       showSearch
       style={{ width: '100%' }}
-      placeholder="选择设备（设备 ID · 序列号）"
+      placeholder="选择设备（设备编号 · 设备标识）"
       optionFilterProp="label"
       loading={loading}
+      notFoundContent={loading ? '正在加载设备…' : '没有可加入的设备'}
       onChange={onChange}
       options={devices.map((device) => ({
         value: device.id,

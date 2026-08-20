@@ -129,4 +129,36 @@ describe('PoolsPage pool capacity', () => {
       platform: 'ios', total_target: 4, min_ready: 4, max_concurrency: 4,
     }))
   }, 10_000)
+
+  it('only lists unassigned devices from the same platform when joining a pool', async () => {
+    const unassignedAndroid: Device = {
+      id: 'device_android_unassigned', host_id: 'host_000000000000001', platform: 'android',
+      device_kind: 'emulator', provider_type: 'docker_emulator', provider_ref: 'emulator-5570',
+      lifecycle_mode: 'rebuild', serial: 'emulator-5570', capabilities: {}, effective_runtime_profile: {},
+      reimage_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
+      created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
+    }
+    const assignedAndroid: Device = { ...unassignedAndroid, id: 'device_android_assigned', serial: 'emulator-5572', pool_id: 'pool_other', pool_name: '其他池' }
+    const unassignedIOS: Device = {
+      ...unassignedAndroid, id: 'device_ios_unassigned', platform: 'ios', device_kind: 'simulator',
+      provider_type: 'appium_device_farm_ios', provider_ref: 'IOS-UNASSIGNED', serial: 'IOS-UNASSIGNED',
+    }
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      const current = search.get('pool_id') ? [] : [unassignedAndroid, assignedAndroid, unassignedIOS]
+      return HttpResponse.json({ request_id: 'req_addable_devices', data: { items: current, total: current.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
+    }))
+    const user = userEvent.setup()
+    renderWithProviders(<PoolsPage />)
+
+    expect(await screen.findByText('default-android')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /配\s*置/ }))
+    await user.click(await screen.findByRole('button', { name: '加入设备' }))
+    fireEvent.mouseDown(screen.getByText('选择设备（设备编号 · 设备标识）'))
+
+    expect(await screen.findByText(/emulator-5570/)).toBeInTheDocument()
+    expect(screen.queryByText(/emulator-5572/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/IOS-UNASSIGNED/)).not.toBeInTheDocument()
+    expect(screen.getByText(/只列出尚未加入其他设备池、且与当前设备池平台一致的设备/)).toBeInTheDocument()
+  })
 })

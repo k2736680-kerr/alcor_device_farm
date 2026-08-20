@@ -30,8 +30,8 @@ describe('DashboardPage current operation view', () => {
     expect(availableCard).not.toBeNull()
     await waitFor(() => expect(within(availableCard as HTMLElement).getByText('1')).toBeInTheDocument())
 
-    expect(screen.getByText('当前任务')).toBeInTheDocument()
-    expect(await screen.findByText('当前没有创建或清理任务。')).toBeInTheDocument()
+    expect(screen.getByText('设备处理状态')).toBeInTheDocument()
+    expect(await screen.findByText('当前没有正在进行的设备处理。')).toBeInTheDocument()
     expect(screen.getByText('每 5 秒自动更新')).toBeInTheDocument()
     const quarantineWarning = screen.getByText('发现 1 台隔离设备，点击查看处理')
     expect(quarantineWarning).toBeInTheDocument()
@@ -65,7 +65,7 @@ describe('DashboardPage current operation view', () => {
     expect(creatingStatus).not.toBeNull()
     await waitFor(() => expect(within(creatingStatus as HTMLElement).getByText('1')).toBeInTheDocument())
 
-    const cleaningLabel = screen.getByText('清理中')
+    const cleaningLabel = screen.getByText('回收或停止中')
     const cleaningStatus = cleaningLabel.closest('.task-status')
     expect(cleaningStatus).not.toBeNull()
     expect(within(cleaningStatus as HTMLElement).getByText('1')).toBeInTheDocument()
@@ -97,7 +97,7 @@ describe('DashboardPage current operation view', () => {
     expect(creatingStatus).not.toBeNull()
     await waitFor(() => expect(within(creatingStatus as HTMLElement).getByText('1')).toBeInTheDocument())
 
-    expect(await screen.findByText('当前没有创建或清理任务。', {}, { timeout: 7_000 })).toBeInTheDocument()
+    expect(await screen.findByText('当前没有正在进行的设备处理。', {}, { timeout: 7_000 })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /刷\s*新状态/ })).not.toHaveClass('ant-btn-loading')
   }, 10_000)
 })

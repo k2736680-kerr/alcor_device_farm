@@ -6,6 +6,7 @@ import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { actorTypeLabel, auditActionLabel, resourceTypeLabel } from '../api/labels'
+import { detailText } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 
 const actorColor: Record<string, string> = {
@@ -21,10 +22,10 @@ const columns: TableColumnsType<AuditEvent> = [
   { title: '操作者', dataIndex: 'actor_id', width: 150, render: (value: string) => shortID(value) },
   { title: '操作内容', dataIndex: 'action', width: 180, render: (value: string) => <Typography.Text>{auditActionLabel(value)}</Typography.Text> },
   { title: '资源类型', dataIndex: 'resource_type', width: 140, render: (value: string) => resourceTypeLabel(value) },
-  { title: '资源 ID', dataIndex: 'resource_id', width: 170, render: (value: string) => shortID(value) },
-  { title: '请求 ID', dataIndex: 'request_id', width: 170, render: (value: string) => shortID(value) },
+  { title: '资源编号', dataIndex: 'resource_id', width: 170, render: (value: string) => shortID(value) },
+  { title: '请求编号', dataIndex: 'request_id', width: 170, render: (value: string) => shortID(value) },
   { title: '原因', dataIndex: 'reason', ellipsis: true, render: (value?: string) => value ?? '-' },
-  { title: '摘要', dataIndex: 'summary', ellipsis: true, render: (value: Record<string, unknown>) => (value ? JSON.stringify(value) : '-') },
+  { title: '操作详情', dataIndex: 'summary', width: 360, ellipsis: true, render: (value: Record<string, unknown>) => detailText(value) },
 ]
 
 export function AuditPage() {

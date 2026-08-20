@@ -5,7 +5,7 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     // 登录
     await page.goto('/console/')
     await expect(page.getByText('设备农场控制台登录')).toBeVisible()
-    await page.getByLabel('用户 ID').fill('admin')
+    await page.getByLabel('用户账号').fill('admin')
     await page.getByLabel('密码').fill('admin-password')
     await page.getByRole('button', { name: /登\s*录/ }).click()
     await expect(page.getByText('控制台管理员')).toBeVisible()
@@ -20,7 +20,7 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await page.locator('.ant-select-dropdown').getByText(/e2e-pool/).click()
     await expect(page.getByLabel('预约所有者')).toBeDisabled()
     await page.locator('.ant-modal').getByRole('button', { name: /创\s*建/ }).click()
-    await expect(page.getByText(/预约已创建.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/预约已创建.*请求编号：req_/)).toBeVisible()
 
     // 列表出现 pending，并在轮询下变为 active（调度器 provider-free 分配预置设备）
     await expect(page.getByRole('row', { name: /active/ }).first()).toBeVisible({ timeout: 20_000 })
@@ -45,19 +45,19 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await pendingRow.getByRole('button', { name: /取\s*消/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('e2e 单设备容量验证后取消')
     await page.getByRole('button', { name: '确认执行' }).click()
-    await expect(page.getByText(/预约已取消.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/预约已取消.*请求编号：req_/)).toBeVisible()
 
     // 续租
     await activeRow.getByRole('button', { name: /续\s*租/ }).click()
-    await page.getByLabel('续租时长(s)').fill('600')
+    await page.getByLabel('续租时长（秒）').fill('600')
     await page.locator('.ant-modal').getByRole('button', { name: /续\s*租/ }).click()
-    await expect(page.getByText(/租期已续/)).toBeVisible()
+    await expect(page.getByText(/租期窗口已延长.*请求编号：req_/)).toBeVisible()
 
     // 释放
     await page.getByRole('row', { name: /active/ }).first().getByRole('button', { name: /释\s*放/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('e2e 验证完成')
     await page.getByRole('button', { name: '确认执行' }).click()
-    await expect(page.getByText(/预约已释放.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/预约已释放.*请求编号：req_/)).toBeVisible()
 
     // 审计留痕
     await page.getByRole('link', { name: '审计' }).first().click()

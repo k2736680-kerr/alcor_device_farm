@@ -17,6 +17,7 @@ import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { imageStatusLabel } from '../api/labels'
+import { apiErrorText, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 
 function canValidate(image: DeviceImage): boolean {
@@ -43,11 +44,6 @@ interface ImagesPageProps { role: ConsoleRole }
 
 interface RetirementValues { reason: string }
 
-function errorText(error: unknown): string {
-  const value = error as { code?: string; requestId?: string; message?: string }
-  return `${value.code ?? 'ERROR'}（request_id: ${value.requestId ?? '-'}）：${value.message ?? ''}`
-}
-
 export function ImagesPage({ role }: ImagesPageProps) {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
@@ -73,26 +69,25 @@ export function ImagesPage({ role }: ImagesPageProps) {
     if (!values) return
     retire.mutate({ id: retiringImage.id, data: { reason: values.reason.trim() } }, {
       onSuccess: (data) => {
-        const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-        message.success(`旧镜像已停用并移入归档（request_id: ${requestID}）`)
+        message.success(`旧 Android 镜像已停用并移入归档（请求编号：${responseRequestID(data)}）`)
         setRetiringImage(undefined)
         retirementForm.resetFields()
         invalidate()
       },
-      onError: (error) => message.error(`停用失败：${errorText(error)}`),
+      onError: (error) => message.error(`停用失败：${apiErrorText(error)}`),
     })
   }
 
   const synchronizeCatalog = () => synchronize.mutate(undefined, {
-    onSuccess: () => { message.success('官方稳定版目录同步已受理'); invalidate() },
-    onError: (error) => message.error(`目录同步被拒绝：${(error as { message?: string }).message ?? '未知错误'}`),
+    onSuccess: (data) => { message.success(`官方稳定版目录同步已受理（请求编号：${responseRequestID(data)}）`); invalidate() },
+    onError: (error) => message.error(`目录同步被拒绝：${apiErrorText(error)}`),
   })
 
   const submitPreparation = async () => {
     if (!selected) return
     prepare.mutate({ data: { catalog_id: selected.id, runtime_profile: defaultProfile } }, {
-      onSuccess: () => { message.success('镜像准备任务已受理，首次下载和构建需要等待'); setSelected(undefined); invalidate() },
-      onError: (error) => message.error(`准备任务被拒绝：${(error as { message?: string }).message ?? '未知错误'}`),
+      onSuccess: (data) => { message.success(`镜像准备任务已受理，首次下载和构建需要等待（请求编号：${responseRequestID(data)}）`); setSelected(undefined); invalidate() },
+      onError: (error) => message.error(`准备任务被拒绝：${apiErrorText(error)}`),
     })
   }
 
@@ -101,13 +96,11 @@ export function ImagesPage({ role }: ImagesPageProps) {
       { id: image.id },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`镜像验证已受理（request_id: ${requestID}）`)
+          message.success(`Android 镜像验证已受理（请求编号：${responseRequestID(data)}）`)
           invalidate()
         },
         onError: (error) => {
-          const err = error as { code?: string; requestId?: string; message?: string }
-          message.error(`验证被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+          message.error(`验证被拒绝：${apiErrorText(error)}`)
         },
       },
     )
@@ -123,7 +116,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
     { title: '共享镜像层', key: 'image_disk', width: 120, render: (_, image) => diskSize(image.resource_config?.image_disk_mb) },
     { title: '设备数据卷', key: 'data_disk', width: 120, render: (_, image) => diskSize(image.resource_config?.data_disk_mb) },
     { title: '镜像引用', dataIndex: 'docker_image', ellipsis: true, render: (value?: string) => value ?? '-' },
-    { title: '摘要', dataIndex: 'docker_digest', ellipsis: true, render: (value: string) => shortID(value) },
+    { title: '镜像摘要', dataIndex: 'docker_digest', ellipsis: true, render: (value: string) => shortID(value) },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
       title: '操作',
@@ -168,7 +161,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
         extra={role === 'admin' ? <Button loading={synchronize.isPending} onClick={synchronizeCatalog}>同步官方目录</Button> : undefined}
       >
         <Typography.Paragraph type="secondary">
-          版本、镜像类型和 ABI 来自 Android SDK 稳定频道。这里仅负责受控下载、构建和验证；Phone、CPU、内存、磁盘、分辨率和 GPU 在“设备 → 创建设备”中选择。浏览器不会访问 Google。
+          版本、镜像类型和 ABI 来自 Android SDK 稳定频道。这里仅负责受控下载、构建和验证；Phone、CPU、内存、磁盘、分辨率和 GPU 在“设备 → 新增 Android 模拟器”中选择。浏览器不会直接访问 Google 服务。
         </Typography.Paragraph>
         <Table<AndroidSystemImage>
           rowKey="id" size="small" loading={catalogQuery.isLoading} dataSource={catalog} pagination={false}
@@ -183,7 +176,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
             { title: '镜像类型', dataIndex: 'image_type', render: (value) => value === 'google_play' ? 'Google Play' : 'Google APIs' },
             { title: 'ABI', dataIndex: 'abi' },
             { title: '官方修订', dataIndex: 'revision' },
-            { title: '状态', dataIndex: 'status', render: (value: string) => { const item = catalogStatus[value] ?? { label: value, color: 'default' }; return <Tag color={item.color}>{item.label}</Tag> } },
+            { title: '状态', dataIndex: 'status', render: (value: string) => { const item = catalogStatus[value] ?? { label: '未知状态', color: 'default' }; return <Tag color={item.color}>{item.label}</Tag> } },
             { title: '操作', key: 'action', render: (_, value) => role === 'admin' && !['preparing', 'validating'].includes(value.status)
               ? <Button size="small" onClick={() => setSelected(value)}>{value.status === 'cached' ? '重新准备' : '准备镜像'}</Button>
               : <Typography.Text type="secondary">-</Typography.Text> },
@@ -191,7 +184,7 @@ export function ImagesPage({ role }: ImagesPageProps) {
         />
       </Card>
       <Card
-        title="设备镜像列表"
+        title="Android 设备镜像列表"
         extra={<Segmented value={imageView} options={[{ label: '可用镜像', value: 'ready' }, { label: '已停用归档', value: 'disabled' }]}
           onChange={(value) => { setImageView(value as DeviceImageStatus); onPageChange(1, pageSize) }} />}
         styles={{ body: { padding: 0 } }}

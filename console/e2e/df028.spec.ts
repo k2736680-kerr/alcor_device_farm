@@ -23,10 +23,10 @@ function evidencePath(defaultPath: string, name: string): string {
 async function login(page: Page) {
   await page.goto('/console/')
   await expect(page.getByText('设备农场控制台登录')).toBeVisible()
-  await page.getByLabel('用户 ID').fill(userID)
+  await page.getByLabel('用户账号').fill(userID)
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: /登\s*录/ }).click()
-  await expect(page.getByRole('link', { name: '设备镜像' }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Android 镜像' }).first()).toBeVisible()
 }
 
 test.describe('DF-028 Web 安全与部署基线', () => {
@@ -41,10 +41,10 @@ test.describe('DF-028 Web 安全与部署基线', () => {
     await anon.dispose()
 
     await page.goto('/console/')
-    await page.getByLabel('用户 ID').fill(userID)
+    await page.getByLabel('用户账号').fill(userID)
     await page.getByLabel('密码').fill(`${password}-wrong`)
     await page.getByRole('button', { name: /登\s*录/ }).click()
-    await expect(page.getByText('用户 ID 或密码错误')).toBeVisible()
+    await expect(page.getByText(/用户账号或密码错误/)).toBeVisible()
 
     await login(page)
 
@@ -107,7 +107,7 @@ test.describe('DF-028 E3 真实设备 Web 验收', () => {
     await page.locator('.ant-modal').getByLabel('设备池').click()
     await page.locator('.ant-select-dropdown .ant-select-item-option:not(.ant-select-item-option-disabled)').first().click()
     await page.locator('.ant-modal').getByRole('button', { name: /创\s*建/ }).click()
-    await expect(page.getByText(/预约已创建.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/预约已创建.*请求编号：req_/)).toBeVisible()
 
     const activeRow = page.getByRole('row', { name: /active/ }).first()
     await expect(activeRow).toBeVisible({ timeout: 30_000 })
@@ -116,14 +116,14 @@ test.describe('DF-028 E3 真实设备 Web 验收', () => {
     await page.screenshot({ path: evidencePath(testInfo.outputPath('reservation-active.png'), 'reservation-active.png'), fullPage: true })
 
     await activeRow.getByRole('button', { name: /续\s*租/ }).click()
-    await page.getByLabel('续租时长(s)').fill('600')
+    await page.getByLabel('续租时长（秒）').fill('600')
     await page.locator('.ant-modal').getByRole('button', { name: /续\s*租/ }).click()
-    await expect(page.getByText(/租期已续.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/租期窗口已延长.*请求编号：req_/)).toBeVisible()
 
     await page.getByRole('row', { name: /active/ }).first().getByRole('button', { name: /释\s*放/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('DF-028 真实浏览器预约释放验收')
     await page.getByRole('button', { name: '确认执行' }).click()
-    await expect(page.getByText(/预约已释放.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/预约已释放.*请求编号：req_/)).toBeVisible()
 
     await page.getByRole('link', { name: '审计' }).first().click()
     await expect(page.getByText('DF-028 真实浏览器预约释放验收').first()).toBeVisible()
@@ -148,7 +148,7 @@ test.describe('DF-028 E3 真实设备 Web 验收', () => {
     await deviceRow.getByRole('button', { name: /隔\s*离/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('DF-028 真实环境隔离验证')
     await page.getByRole('button', { name: '确认执行' }).click()
-    await expect(page.getByText(/操作已受理.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/操作已受理.*请求编号：req_/)).toBeVisible()
 
     await page.reload()
     const quarantinedRow = page.getByRole('row', { name: new RegExp(deviceLabel) }).first()
@@ -158,7 +158,7 @@ test.describe('DF-028 E3 真实设备 Web 验收', () => {
     await quarantinedRow.getByRole('button', { name: /解除\s*隔离/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('DF-028 真实环境恢复验证')
     await page.getByRole('button', { name: '确认执行' }).click()
-    await expect(page.getByText(/操作已受理.*request_id: req_/)).toBeVisible()
+    await expect(page.getByText(/操作已受理.*请求编号：req_/)).toBeVisible()
 
     await expect.poll(async () => {
       await page.reload()
