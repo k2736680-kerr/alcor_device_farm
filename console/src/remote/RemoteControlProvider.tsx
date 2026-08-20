@@ -23,6 +23,12 @@ import { unwrapData } from '../api/unwrap'
 
 const storedDeviceKey = 'device-farm.remote-control-device'
 const remoteConnectTimeoutMs = 30_000
+const iosRemotePrefix = '/console/remote/ios/'
+
+export function remoteEntryURL(url: string, embedded = window.self !== window.top): string {
+  if (!embedded || !url.startsWith(iosRemotePrefix)) return url
+  return `/api/v2/device-farm/remote/ios/${url.slice(iosRemotePrefix.length)}`
+}
 
 type RemoteDevice = Pick<Device, 'id' | 'serial' | 'platform' | 'device_kind'>
 
@@ -164,7 +170,7 @@ export function RemoteControlProvider({
   }, [clearRemote, endRemote, message, remoteState])
 
   const navigatePopup = useCallback((popup: Window, url: string) => {
-    popup.location.replace(url)
+    popup.location.replace(remoteEntryURL(url))
     setRemoteState((current) => current ? { ...current, opened: true } : current)
   }, [])
 
