@@ -261,7 +261,7 @@ Reconciler：
 - Pool：列表、租期、Image、Device membership 和单一目标设备数；Pool 并发由启用 Image 目标自动同步；
 - Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine，以及空闲 Emulator 的镜像和运行规格编辑；
 - Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
-- STF 原生远控：管理员从 Device 行一键创建精确设备短租约，无需再次输入 STF 账号密码，并在新标签页打开 STF 原生单设备控制页；
+- 原生远控：operator/admin 从 Device 行一键创建精确设备短租约，Android 打开 STF，iOS 打开 Baguette；viewer 保持只读；
 - 设备域审计：按资源查看操作人、原因、request ID、动作和时间。
 
 控制台必须遵守：

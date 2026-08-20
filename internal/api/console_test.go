@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 )
 
 func requestFrom(remoteAddress string) *http.Request {
@@ -97,5 +100,33 @@ func TestRemoteControlTimeoutReturnsStableRetryableError(t *testing.T) {
 	}
 	if envelope.Error.Code != "REMOTE_CONTROL_TIMEOUT" || !envelope.Error.Retryable {
 		t.Fatalf("error=%#v", envelope.Error)
+	}
+}
+
+func TestRemoteControlAllowsOperatorsAndRejectsViewers(t *testing.T) {
+	security := config.SecurityConfig{ServiceToken: "service-secret", AgentToken: "agent-secret"}
+	for _, test := range []struct {
+		name       string
+		role       auth.ConsoleRole
+		wantStatus int
+	}{
+		{name: "operator", role: auth.ConsoleOperator, wantStatus: http.StatusServiceUnavailable},
+		{name: "admin", role: auth.ConsoleAdmin, wantStatus: http.StatusServiceUnavailable},
+		{name: "viewer", role: auth.ConsoleViewer, wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			authenticator := stubConsoleAuthenticator{principal: auth.Principal{
+				Role: auth.RoleConsole, SubjectID: test.name, ConsoleRole: test.role,
+			}}
+			request := httptest.NewRequest(http.MethodGet,
+				"http://console.test/console/api/v1/devices/device_00000000000001/remote-control", nil)
+			response := httptest.NewRecorder()
+			handler := &consoleHandler{}
+			auth.RouteMiddleware(security, http.HandlerFunc(handler.getRemoteControl), authenticator).
+				ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
 	}
 }

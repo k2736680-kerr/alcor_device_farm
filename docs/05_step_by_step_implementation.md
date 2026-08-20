@@ -72,6 +72,7 @@
 | DF-048 | 统一 Android 与 iOS 设备池自动伸缩 | completed | DF-047 |
 | DF-049 | 统一设备农场控制台功能与中文文案审校 | completed | DF-048 |
 | DF-050 | 使用 Baguette 替换并清理自写 iOS 远控 | completed | DF-049、ADR-0026 |
+| DF-051 | 修复普通成员远控入口与独立网关可达性 | completed | DF-050 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -514,6 +515,14 @@
 产出：ADR-0026、Baguette Adapter/Gateway、Mac 后台服务与安全通道配置、OpenAPI/Console/Alcor 入口修正、旧代码零残留扫描、真实浏览器证据和 `docs/evidence/DF-050/`。
 
 验收：真实 Mac 与浏览器连续操作舒适可用，点击、滑动、文字、Home、应用切换和重连生效；其他 UDID、设备墙、生命周期和插件命令被拒绝；结束或超时后页面失效且 Reservation 回收；Android STF、iOS 自动化 Session Fence、Appium Device Farm inventory 均无回归；仓库和部署中不存在旧自写页面、MJPEG/动作转发或可恢复旧方案的配置；全部提示为中文。
+
+### DF-051 修复普通成员远控入口与独立网关可达性
+
+实施：修正 Console 角色与既有设备 API 权限不一致的问题，使 operator/admin 可使用 Android STF 和 iOS Baguette 人工远控，viewer 保持只读；iOS Gateway 使用与 Android STF 一致的 30.171 可访问主机名，不要求修改 Alcor 代码或新增 Alcor 远控路由。
+
+产出：Console/Server 权限修正、角色回归测试、30.171 部署配置和 `docs/evidence/DF-051/`。
+
+验收：普通 Alcor 设备农场成员可以看到远程连接入口并使用自己预约的 Android/iOS 设备；viewer 不能启动远控；管理员危险操作权限不下放；Baguette HTTP/WebSocket、预约隔离、心跳、挂断和 Android STF 无回归；正式 Alcor 代码与服务不改动。
 
 ## 12. 单任务完成定义
 

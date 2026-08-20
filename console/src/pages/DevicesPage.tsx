@@ -476,7 +476,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     render: (_, device) => (
       <Space size={4} wrap>
         {role === 'viewer' && <Typography.Text type="secondary">只读</Typography.Text>}
-        {role === 'admin' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
+        {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
           && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
           <Button
             type="primary"
@@ -486,7 +486,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             onClick={() => remote.start(device)}
           >远程连接</Button>
         )}
-        {role === 'admin' && remote.device?.id === device.id && (
+        {role !== 'viewer' && remote.device?.id === device.id && (
           <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
             {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
           </Button>

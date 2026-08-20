@@ -51,7 +51,7 @@ func RegisterConsole(mux *http.ServeMux, authentication *consoleauth.Service, qu
 }
 
 func (handler *consoleHandler) startRemoteControl(writer http.ResponseWriter, request *http.Request) {
-	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
+	if !handler.remoteOperator(writer, request) || !requireIdempotencyKey(writer, request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
@@ -61,7 +61,7 @@ func (handler *consoleHandler) startRemoteControl(writer http.ResponseWriter, re
 }
 
 func (handler *consoleHandler) getRemoteControl(writer http.ResponseWriter, request *http.Request) {
-	if !handler.remoteAdmin(writer, request) {
+	if !handler.remoteOperator(writer, request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
@@ -71,7 +71,7 @@ func (handler *consoleHandler) getRemoteControl(writer http.ResponseWriter, requ
 }
 
 func (handler *consoleHandler) heartbeatRemoteControl(writer http.ResponseWriter, request *http.Request) {
-	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
+	if !handler.remoteOperator(writer, request) || !requireIdempotencyKey(writer, request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
@@ -84,7 +84,7 @@ func (handler *consoleHandler) heartbeatRemoteControl(writer http.ResponseWriter
 }
 
 func (handler *consoleHandler) endRemoteControl(writer http.ResponseWriter, request *http.Request) {
-	if !handler.remoteAdmin(writer, request) || !requireIdempotencyKey(writer, request) {
+	if !handler.remoteOperator(writer, request) || !requireIdempotencyKey(writer, request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), remoteControlRequestTimeout)
@@ -96,12 +96,13 @@ func (handler *consoleHandler) endRemoteControl(writer http.ResponseWriter, requ
 	handler.writeRemote(writer, request, http.StatusOK, value, err)
 }
 
-func (handler *consoleHandler) remoteAdmin(writer http.ResponseWriter, request *http.Request) bool {
+func (handler *consoleHandler) remoteOperator(writer http.ResponseWriter, request *http.Request) bool {
 	principal, ok := auth.FromContext(request.Context())
 	allowed := ok && (principal.Role == auth.RoleService ||
-		(principal.Role == auth.RoleConsole && principal.ConsoleRole == auth.ConsoleAdmin))
+		(principal.Role == auth.RoleConsole &&
+			(principal.ConsoleRole == auth.ConsoleOperator || principal.ConsoleRole == auth.ConsoleAdmin)))
 	if !allowed {
-		writeForbidden(writer, request, "只有可信平台服务或控制台管理员可以远程控制设备")
+		writeForbidden(writer, request, "只有可信平台服务、控制台操作员或管理员可以远程控制设备")
 		return false
 	}
 	if handler.remote == nil {

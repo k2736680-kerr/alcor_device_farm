@@ -188,10 +188,13 @@ describe('DevicesPage device categories', () => {
     expect(screen.queryByText('正在远控 emulator-5554')).not.toBeInTheDocument()
   }, 8_000)
 
-  it('does not show remote control to non-admin console roles', async () => {
+  it('allows an operator to open remote control without exposing admin actions', async () => {
     renderWithProviders(<DevicesPageWithRemoteControl role="operator" />)
-    expect(await screen.findByText('emulator-5554')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '远程连接' })).not.toBeInTheDocument()
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByRole('button', { name: '远程连接' })).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByRole('button', { name: '重建' })).not.toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByRole('button', { name: '删除' })).not.toBeInTheDocument()
   })
 
   it('defaults to usable devices and separates isolated and deleted records', async () => {
@@ -415,7 +418,7 @@ describe('DevicesPage device categories', () => {
       })),
     )
 
-    renderWithProviders(<DevicesPageWithRemoteControl />, '/devices?platform=ios')
+    renderWithProviders(<DevicesPageWithRemoteControl role="operator" />, '/devices?platform=ios')
     const row = (await screen.findByText('SIMULATOR-REMOTE-001')).closest('tr')
     expect(row).not.toBeNull()
     await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
