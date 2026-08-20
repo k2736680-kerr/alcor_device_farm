@@ -433,6 +433,42 @@ func TestIOSHeartbeatSelectsFirstHealthySimulatorAsDefaultPoolTemplate(t *testin
 	}
 }
 
+func TestIOSHeartbeatRecoversAutomaticSharedAutomationQuarantine(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_pools(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,base_device_id,status)
+		VALUES('ios_pool_000000000001','iOS 默认池','ios',1800,86400,1,1,0,'ios_device_000000001','active');
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-RECOVER','rebuild','SIM-RECOVER',
+		'http://127.0.0.1:4723','{"platformName":"iOS"}','quarantined','unhealthy',$1,3);
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('ios_pool_000000000001','ios_device_000000001',true)`, domain.AgentReportedUnhealthyReason); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-RECOVER", Serial: "SIM-RECOVER", Platform: "ios", DeviceKind: "simulator",
+			ProviderType: "appium_device_farm_ios", LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection:   map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-RECOVER"},
+			Capabilities: map[string]any{"platformName": "iOS", "allowlisted": true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health string
+	var failures int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,consecutive_failures
+		FROM devices WHERE id='ios_device_000000001'`).Scan(&lifecycle, &health, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "ready" || health != "healthy" || failures != 0 {
+		t.Fatalf("recovered iOS device lifecycle=%s health=%s failures=%d", lifecycle, health, failures)
+	}
+}
+
 func TestIOSHeartbeatRejectsRegisteredIdentityMismatch(t *testing.T) {
 	db := openTestDatabase(t)
 	seedIOSHost(t, db)

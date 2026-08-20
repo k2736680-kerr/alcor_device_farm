@@ -248,7 +248,17 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 				}
 			}
 		} else if device.Health != domain.HealthHealthy && schedulableLifecycle(device.Lifecycle) {
-			input.EventType, input.Severity, input.Reason = "agent_reported_unhealthy", "error", "agent heartbeat reported an assigned or schedulable device is not healthy"
+			input.EventType, input.Severity, input.Reason = "agent_reported_unhealthy", "error", domain.AgentReportedUnhealthyReason
+			// iOS Simulators share one Appium/Device Farm automation service on the Mac.
+			// Creating another Simulator can briefly degrade that shared service for every
+			// otherwise healthy device. Keep the observation, but do not spend an
+			// individual device's quarantine budget; persistent shared failures are
+			// handled by host readiness/maintenance instead.
+			if device.Platform == "ios" {
+				input.EventType, input.Severity = "ios_automation_stabilizing", "warning"
+				input.SuppressFailureCount = true
+				input.SuppressQuarantine = true
+			}
 		} else {
 			continue
 		}

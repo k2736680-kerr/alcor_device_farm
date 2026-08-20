@@ -180,6 +180,31 @@ func TestIOSDeviceDoesNotUseAndroidProviderOrSTFHealthChain(t *testing.T) {
 	assertDevice(t, environment.db, "ready", "healthy", 0)
 }
 
+func TestIOSSharedAutomationStabilizationDoesNotQuarantineSimulator(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `
+		UPDATE device_hosts SET host_type='appium_device_farm_ios',host_os='macos',host_arch='arm64'
+		WHERE id='host_000000000000001';
+		UPDATE devices SET platform='ios',image_id=NULL,device_kind='simulator',provider_type='appium_device_farm_ios',
+			provider_ref='SIM-IOS-1',serial='SIM-IOS-1',lifecycle_status='ready',health_status='degraded',
+			health_reason='agent heartbeat reported degraded',consecutive_failures=0
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 3, 0, 0, testLogger())
+	for range 5 {
+		result, err := service.RunOnce(context.Background(), time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.DevicesQuarantined != 0 {
+			t.Fatalf("iOS stabilization quarantined device: %+v", result)
+		}
+	}
+	assertDevice(t, environment.db, "ready", "degraded", 0)
+	assertEvent(t, environment.db, "ios_automation_stabilizing")
+}
+
 func TestSTFVisibilityGraceDoesNotConsumeFailureBudgetAfterProvisioning(t *testing.T) {
 	environment := newEnvironment(t, true)
 	if _, err := environment.db.Pool().Exec(context.Background(), `INSERT INTO device_host_commands

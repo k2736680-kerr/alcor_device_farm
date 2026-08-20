@@ -336,12 +336,15 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	preserveSTFHealth := false
 	recoveredHostOutage := current.lifecycle == domain.DeviceQuarantined && current.healthReason != nil &&
 		*current.healthReason == domain.HostUnavailableReason && discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
-	if recoveredHostOutage {
+	recoveredIOSAutomation := current.lifecycle == domain.DeviceQuarantined && current.platform == "ios" && current.healthReason != nil &&
+		*current.healthReason == domain.AgentReportedUnhealthyReason && discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
+	recoveredAutomatically := recoveredHostOutage || recoveredIOSAutomation
+	if recoveredAutomatically {
 		if err := recoverFromHostOutage(aggregate, current.assignmentTarget, now); err != nil {
 			return err
 		}
 	}
-	if (current.lifecycle != domain.DeviceQuarantined || recoveredHostOutage) && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
+	if (current.lifecycle != domain.DeviceQuarantined || recoveredAutomatically) && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
 		incomingHealth := domain.HealthStatus(discovered.HealthStatus)
 		preserveSTFHealth = incomingHealth == domain.HealthHealthy && current.healthReason != nil &&
 			domain.IsSTFFailureReason(*current.healthReason)
@@ -357,7 +360,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 	}
 	healthReason := current.healthReason
-	if (current.lifecycle != domain.DeviceQuarantined || recoveredHostOutage) && current.lifecycle != domain.DeviceDeleted &&
+	if (current.lifecycle != domain.DeviceQuarantined || recoveredAutomatically) && current.lifecycle != domain.DeviceDeleted &&
 		!current.operationInFlight && !preserveSTFHealth {
 		healthReason = nil
 		if aggregate.Health() != domain.HealthHealthy {
