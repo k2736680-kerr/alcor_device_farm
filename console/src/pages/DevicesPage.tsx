@@ -153,6 +153,20 @@ function iosSystemVersion(device: Device): string {
   return 'iOS（版本待上报）'
 }
 
+function iosDeviceModel(device: Device): string {
+  const deviceTypeID = device.capabilities.deviceTypeId
+  if (typeof deviceTypeID === 'string' && deviceTypeID.trim()) {
+    const identifier = deviceTypeID.split('.').at(-1) ?? deviceTypeID
+    return identifier.replaceAll('-', ' ')
+  }
+  const deviceName = device.capabilities.deviceName
+  if (typeof deviceName === 'string' && deviceName.trim() && !deviceName.startsWith('Alcor-DF-')) {
+    return deviceName
+  }
+  const model = device.capabilities.model
+  return typeof model === 'string' && model.trim() ? model : '-'
+}
+
 function androidCatalogStatus(value: string): string {
   const labels: Record<string, string> = {
     downloadable: '可下载', preparing: '下载或构建中', validating: '验证中', cached: '已缓存可用',
@@ -523,7 +537,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const columns: TableColumnsType<Device> = [
     { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{platformLabel(value)}</Tag> },
-    { title: '设备型号', width: 170, render: (_, device) => String(device.platform === 'ios' ? (device.capabilities.model ?? device.capabilities.deviceName ?? '-') : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-')) },
+    { title: '设备型号', width: 170, render: (_, device) => String(device.platform === 'ios' ? iosDeviceModel(device) : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-')) },
     {
       title: '系统版本', width: 190, render: (_, device) => {
         if (device.platform === 'ios') {
@@ -588,7 +602,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
         <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Space>
-          <Button onClick={openCreateDevice}>新增 Android 模拟器</Button>
+          <Button type="primary" onClick={openCreateDevice}>新增 Android 模拟器</Button>
           <Button type="primary" onClick={openCreateIOS}>新增 iOS 模拟器</Button>
         </Space> : undefined} title="Android 与 iOS 设备">
           <Typography.Text type="secondary">Android 模拟器与 iOS 模拟器都由各自宿主机按需创建；重建或删除会清空对应虚拟设备数据，普通预约释放不会自动清空。</Typography.Text>
@@ -746,7 +760,13 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             />
           </Form.Item>}
           {iosCreateStep === 1 && <>
-            {iosCatalogQuery.isError && <Alert type="error" showIcon message="无法读取这台 Mac 的 iOS 目录，请检查宿主机在线状态后重试" style={{ marginBottom: 12 }} />}
+            {iosCatalogQuery.isError && <Alert
+              type="error"
+              showIcon
+              message="无法读取这台 Mac 的 iOS 目录"
+              description={apiErrorText(iosCatalogQuery.error)}
+              style={{ marginBottom: 12 }}
+            />}
             <Form.Item name="runtime_id" label="iOS 运行时" rules={[{ required: true, message: '请选择 iOS 运行时' }]}>
               <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS 运行时" options={(iosCatalog?.runtimes ?? []).map((runtime, index) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}${index === 0 ? '（默认）' : ''}` }))} onChange={() => iosForm.setFieldValue('device_type_id', undefined)} />
             </Form.Item>

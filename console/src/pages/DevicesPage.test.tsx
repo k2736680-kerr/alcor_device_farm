@@ -382,7 +382,7 @@ describe('DevicesPage device categories', () => {
     expect(screen.queryByText(/Appium|Dashboard|WDA|Session Grant/)).not.toBeInTheDocument()
   })
 
-  it('opens an iOS Simulator through the same-origin Appium/WDA entry with Chinese guidance', async () => {
+  it('opens an iOS Simulator through the Baguette Gateway with Chinese guidance', async () => {
     const user = userEvent.setup()
     const iosDevice = {
       ...sampleDevices[0], id: 'device_ios_remote_001', platform: 'ios', device_kind: 'simulator',
@@ -408,7 +408,7 @@ describe('DevicesPage device categories', () => {
         request_id: 'req_ios_remote_start',
         data: {
           device_id: String(params.id), reservation_id: 'reservation_ios_remote_001', status: 'connected',
-          transport: 'appium', url: '/console/remote/ios/opaque-entry/control',
+		  transport: 'baguette', url: 'http://device-farm.example.test:18081/entry/opaque-ticket',
           heartbeat_interval_seconds: 15,
         },
         error: null,
@@ -421,7 +421,7 @@ describe('DevicesPage device categories', () => {
     await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
 
     expect(popup.document.body.textContent).toBe('正在预约设备并连接 iOS 远程画面，请稍候…')
-    await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringMatching(/^\/console\/remote\/ios\//)))
+	await waitFor(() => expect(replace).toHaveBeenCalledWith('http://device-farm.example.test:18081/entry/opaque-ticket'))
     expect(await screen.findByText(/只会显示当前预约的目标模拟器/)).toBeInTheDocument()
   })
 
@@ -444,6 +444,33 @@ describe('DevicesPage device categories', () => {
     expect(within(row as HTMLElement).getByText('只读')).toBeInTheDocument()
     expect(within(row as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '新增 iOS 模拟器' })).not.toBeInTheDocument()
+  })
+
+  it('shows a friendly iOS model name and uses the same primary style for both create buttons', async () => {
+    const iosDevice = {
+      ...sampleDevices[0], id: 'device_ios_model_001', platform: 'ios', device_kind: 'simulator',
+      provider_type: 'appium_device_farm_ios', serial: 'SIMULATOR-MODEL-001',
+      capabilities: {
+        model: 'iPhone18,1',
+        deviceName: 'Alcor-DF-device_ios_model_001',
+        deviceTypeId: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro',
+      },
+    }
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      const lifecycle = search.get('lifecycle_status')
+      const health = search.get('health_status')
+      const items = (!lifecycle || lifecycle === iosDevice.lifecycle_status) && (!health || health === iosDevice.health_status) ? [iosDevice] : []
+      return HttpResponse.json({ request_id: 'req_ios_model', data: { items, total: items.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
+    }))
+
+    renderWithProviders(<DevicesPageWithRemoteControl />, '/devices?platform=ios')
+
+    const row = (await screen.findByText('SIMULATOR-MODEL-001')).closest('tr')
+    expect(within(row as HTMLElement).getByText('iPhone 17 Pro')).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByText('iPhone18,1')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新增 Android 模拟器' })).toHaveClass('ant-btn-primary')
+    expect(screen.getByRole('button', { name: '新增 iOS 模拟器' })).toHaveClass('ant-btn-primary')
   })
 
   it('creates an iOS Simulator from the Mac runtime and model catalog', async () => {
