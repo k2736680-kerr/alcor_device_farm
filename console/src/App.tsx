@@ -4,7 +4,6 @@ import { Alert, Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'ant
 import { useQueryClient } from '@tanstack/react-query'
 import {
   CalendarOutlined,
-  CameraOutlined,
   CloudServerOutlined,
   DashboardOutlined,
   DatabaseOutlined,
@@ -25,7 +24,6 @@ import { unwrapData } from './api/unwrap'
 import type { ConsoleSession } from './api/generated/models'
 import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
-import { ImagesPage } from './pages/ImagesPage'
 import { HostsPage } from './pages/HostsPage'
 import { PoolsPage } from './pages/PoolsPage'
 import { DevicesPage } from './pages/DevicesPage'
@@ -38,7 +36,6 @@ import { RemoteControlProvider, useRemoteControl } from './remote/RemoteControlP
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
   { key: '/hosts', icon: <DesktopOutlined />, label: <NavLink to="/hosts">宿主机</NavLink> },
-  { key: '/images', icon: <CameraOutlined />, label: <NavLink to="/images">Android 镜像</NavLink> },
   { key: '/pools', icon: <DatabaseOutlined />, label: <NavLink to="/pools">设备池</NavLink> },
   { key: '/devices', icon: <CloudServerOutlined />, label: <NavLink to="/devices">设备</NavLink> },
   { key: '/reservations', icon: <CalendarOutlined />, label: <NavLink to="/reservations">预约</NavLink> },
@@ -48,7 +45,6 @@ const menuItems: MenuProps['items'] = [
 
 const pageTitles: Record<string, string> = {
   '/': '运行概览',
-  '/images': 'Android 镜像',
   '/hosts': '宿主机',
   '/pools': '设备池',
   '/devices': '设备',
@@ -179,7 +175,7 @@ function AuthenticatedConsole({
           )}
           <Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/images" element={<ImagesPage role={session.user.role} />} />
+            <Route path="/images" element={<Navigate to="/devices" replace />} />
             <Route path="/hosts" element={<HostsPage role={session.user.role} />} />
             <Route path="/pools" element={<PoolsPage role={session.user.role} />} />
             <Route path="/devices" element={<DevicesPage role={session.user.role} />} />

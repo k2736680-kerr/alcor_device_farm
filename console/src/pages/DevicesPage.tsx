@@ -167,6 +167,16 @@ function androidImageType(value: string): string {
   return '其他镜像类型'
 }
 
+function androidCatalogOptionLabel(image: AndroidSystemImage): string {
+  return `Android ${image.api_level - 20} / API ${image.api_level} · ${androidImageType(image.image_type)} · ${image.abi} · ${androidCatalogStatus(image.status)}`
+}
+
+function defaultAndroidCatalogID(catalog: AndroidSystemImage[]): string | undefined {
+  return catalog.find((image) => image.api_level === 36 && image.image_type === 'google_apis' && image.abi === 'x86_64')?.id
+    ?? catalog.find((image) => image.status === 'cached')?.id
+    ?? catalog[0]?.id
+}
+
 export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const { message, modal } = AntApp.useApp()
   const queryClient = useQueryClient()
@@ -353,6 +363,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     createForm.setFieldsValue({
       pool_id: androidPools[0]?.id,
       hardware_profile_id: 'pixel_9',
+      catalog_id: defaultAndroidCatalogID(catalog),
       container_cpu_cores: 4, container_memory_mb: 5120, guest_cpu_cores: 4, guest_memory_mb: 4096,
       data_disk_mb: 4096, image_disk_mb: 0, width: 1080, height: 2424, density_dpi: 420, vm_heap_mb: 512, graphics: 'auto',
     })
@@ -438,6 +449,22 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     if (!createIOS || !defaultIOSHostID) return
     initializeIOSCreateForm(true)
   }, [createIOS, defaultIOSHostID, defaultIOSPoolID])
+
+  useEffect(() => {
+    if (!createDevice || createForm.getFieldValue('catalog_id') || catalog.length === 0) return
+    createForm.setFieldValue('catalog_id', defaultAndroidCatalogID(catalog))
+  }, [catalog, createDevice, createForm])
+
+  useEffect(() => {
+    if (!createIOS || !iosCatalog || iosCatalog.runtimes.length === 0) return
+    const currentRuntimeID = iosForm.getFieldValue('runtime_id')
+    const runtime = iosCatalog.runtimes.find((item) => item.id === currentRuntimeID) ?? iosCatalog.runtimes[0]
+    const supportedTypes = new Set(runtime.device_type_ids ?? [])
+    const currentDeviceTypeID = iosForm.getFieldValue('device_type_id')
+    const deviceType = iosCatalog.device_types.find((item) => item.id === currentDeviceTypeID && supportedTypes.has(item.id))
+      ?? iosCatalog.device_types.find((item) => supportedTypes.has(item.id))
+    iosForm.setFieldsValue({ runtime_id: runtime.id, device_type_id: deviceType?.id })
+  }, [createIOS, iosCatalog, iosForm])
 
   const pending = start.isPending || stop.isPending || restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
@@ -655,8 +682,16 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             } }} columns={[{ title: 'Phone 名称', dataIndex: 'name' }, { title: '宽', dataIndex: 'width', width: 90 }, { title: '高', dataIndex: 'height', width: 90 }, { title: 'DPI', dataIndex: 'density_dpi', width: 90 }, { title: '最低 API', width: 100, render: () => '26+' }]} />
           </>}
           {createStep === 1 && <>
-            <Typography.Paragraph type="secondary">未缓存版本也可选择。服务端将持续完成“准备系统镜像 → 创建模拟器 → ADB → STF → Appium”流程，无需保持此页面开启。</Typography.Paragraph>
-            <Table<AndroidSystemImage> size="small" loading={catalogQuery.isFetching} rowKey="id" pagination={{ pageSize: 8 }} dataSource={catalog} rowSelection={{ type: 'radio', selectedRowKeys: [createForm.getFieldValue('catalog_id')].filter(Boolean), onChange: (keys) => createForm.setFieldValue('catalog_id', String(keys[0] ?? '')) }} columns={[{ title: 'Android / API', render: (_, image) => `Android API ${image.api_level}` }, { title: '类型', dataIndex: 'image_type', render: (value: string) => androidImageType(value) }, { title: 'ABI', dataIndex: 'abi' }, { title: '修订', dataIndex: 'revision' }, { title: '缓存状态', render: (_, image) => <Tag color={image.status === 'cached' ? 'green' : image.status === 'failed' ? 'red' : 'default'}>{androidCatalogStatus(image.status)}</Tag> }]} />
+            <Typography.Paragraph type="secondary">Android 系统列表已经收进新增设备流程。未缓存版本也可选择，服务端会继续完成“准备系统镜像 → 创建模拟器 → ADB → STF → Appium”，无需保持此页面开启。</Typography.Paragraph>
+            <Form.Item name="catalog_id" label="Android 系统版本" rules={[{ required: true, message: '请选择 Android 系统版本' }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                loading={catalogQuery.isFetching}
+                placeholder={catalog.length > 0 ? '选择 Android 系统版本' : '当前没有可选的 Android 系统版本'}
+                options={catalog.map((image) => ({ value: image.id, label: androidCatalogOptionLabel(image) }))}
+              />
+            </Form.Item>
           </>}
           {createStep === 2 && <Form.Item name="pool_id" label="Android 设备池" rules={[{ required: true, message: '请选择活动的 Android 设备池' }]}>
             <Select loading={poolsQuery.isFetching} placeholder={androidPools.length > 0 ? '选择 Android 设备池' : '当前没有活动的 Android 设备池'} options={androidPools.map((pool) => ({ value: pool.id, label: `${pool.name} · 目标 ${pool.total_target} · ${pool.base_device_id ? '已设置扩容模板' : '待设置扩容模板'}` }))} />
@@ -713,10 +748,10 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           {iosCreateStep === 1 && <>
             {iosCatalogQuery.isError && <Alert type="error" showIcon message="无法读取这台 Mac 的 iOS 目录，请检查宿主机在线状态后重试" style={{ marginBottom: 12 }} />}
             <Form.Item name="runtime_id" label="iOS 运行时" rules={[{ required: true, message: '请选择 iOS 运行时' }]}>
-              <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS 运行时" options={(iosCatalog?.runtimes ?? []).map((runtime) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}` }))} onChange={() => iosForm.setFieldValue('device_type_id', undefined)} />
+              <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS 运行时" options={(iosCatalog?.runtimes ?? []).map((runtime, index) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}${index === 0 ? '（默认）' : ''}` }))} onChange={() => iosForm.setFieldValue('device_type_id', undefined)} />
             </Form.Item>
             <Form.Item name="device_type_id" label="iPhone 机型" rules={[{ required: true, message: '请选择 iPhone 机型' }]}>
-              <Select loading={iosCatalogQuery.isFetching} disabled={!selectedIOSRuntimeID} showSearch optionFilterProp="label" placeholder={selectedIOSRuntimeID ? '选择与当前 iOS 运行时兼容的 iPhone 机型' : '请先选择 iOS 运行时'} options={compatibleIOSDeviceTypes.map((deviceType) => ({ value: deviceType.id, label: deviceType.name }))} />
+              <Select loading={iosCatalogQuery.isFetching} disabled={!selectedIOSRuntimeID} showSearch optionFilterProp="label" placeholder={selectedIOSRuntimeID ? '选择与当前 iOS 运行时兼容的 iPhone 机型' : '请先选择 iOS 运行时'} options={compatibleIOSDeviceTypes.map((deviceType, index) => ({ value: deviceType.id, label: `${deviceType.name}${index === 0 ? '（默认模板）' : ''}` }))} />
             </Form.Item>
           </>}
           {iosCreateStep === 2 && <>

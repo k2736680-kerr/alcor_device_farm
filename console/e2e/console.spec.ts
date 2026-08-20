@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('设备农场控制台 E2E', () => {
-  test('登录 → 仪表盘 → 镜像列表 → 退出', async ({ page }) => {
+  test('登录 → 仪表盘 → 设备新增入口 → 退出', async ({ page }) => {
     // 1. SPA 加载出登录页
     await page.goto('/console/')
     await expect(page.getByText('设备农场控制台登录')).toBeVisible()
@@ -18,10 +18,13 @@ test.describe('设备农场控制台 E2E', () => {
     await expect(page.getByText('控制台管理员')).toBeVisible()
     await expect(page.getByText('设备农场控制台')).toBeVisible()
 
-    // 4. 进入镜像列表页，表格与分页信息渲染
-    await page.getByRole('link', { name: 'Android 镜像' }).first().click()
+    // 4. Android 系统列表只在设备新增流程中提供，不再占用独立导航页
+    await expect(page.getByRole('link', { name: 'Android 镜像' })).toHaveCount(0)
+    await page.getByRole('link', { name: '设备', exact: true }).first().click()
     await expect(page.getByRole('table')).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: '名称' })).toBeVisible()
+    await page.getByRole('button', { name: '新增 Android 模拟器' }).click()
+    await page.getByRole('button', { name: '下一步' }).click()
+    await expect(page.getByLabel('Android 系统版本')).toBeVisible()
     await expect(page.getByText(/共 \d+ 条/)).toBeVisible()
 
     // 5. 退出登录回到登录页

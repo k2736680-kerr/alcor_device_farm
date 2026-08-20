@@ -383,6 +383,19 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		lifecycle_status=$7::varchar,health_status=$8::varchar,health_reason=$9,last_seen_at=$10,updated_at=$10
 		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID, capabilitiesJSON,
 		aggregate.Lifecycle(), aggregate.Health(), healthReason, now)
+	if err != nil {
+		return err
+	}
+	// The first healthy managed Simulator is the pool's safe expansion
+	// template. Existing pools are repaired by the next regular heartbeat;
+	// an explicit administrator selection is never overwritten.
+	if current.platform == "ios" && current.deviceKind == "simulator" && current.providerType == "appium_device_farm_ios" &&
+		aggregate.Lifecycle() == domain.DeviceReady && aggregate.Health() == domain.HealthHealthy {
+		_, err = tx.Exec(ctx, `UPDATE device_pools p SET base_device_id=$1,updated_at=$2
+			WHERE p.platform='ios' AND p.status='active' AND p.base_device_id IS NULL
+			AND EXISTS (SELECT 1 FROM device_pool_devices pd
+				WHERE pd.pool_id=p.id AND pd.device_id=$1 AND pd.enabled)`, current.id, now)
+	}
 	return err
 }
 

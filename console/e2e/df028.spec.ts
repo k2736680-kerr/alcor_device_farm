@@ -26,7 +26,8 @@ async function login(page: Page) {
   await page.getByLabel('用户账号').fill(userID)
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: /登\s*录/ }).click()
-  await expect(page.getByRole('link', { name: 'Android 镜像' }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: '设备', exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Android 镜像' })).toHaveCount(0)
 }
 
 test.describe('DF-028 Web 安全与部署基线', () => {

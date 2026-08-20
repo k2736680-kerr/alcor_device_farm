@@ -367,6 +367,72 @@ func TestIOSHeartbeatReadinessControlsHostAndPersistsOnlyRegisteredInventory(t *
 	}
 }
 
+func TestIOSHeartbeatSelectsFirstHealthySimulatorAsDefaultPoolTemplate(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_pools(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,status)
+		VALUES('ios_pool_000000000001','iOS 默认池','ios',1800,86400,1,1,0,'active');
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-DEFAULT','rebuild','SIM-DEFAULT',
+		'http://127.0.0.1:4723','{"platformName":"iOS","runtimeId":"runtime-ios-26","deviceTypeId":"iphone-17"}','booting','degraded');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('ios_pool_000000000001','ios_device_000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(),
+		Capacity:  map[string]any{"device_slots": 2},
+		Environment: map[string]any{
+			"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true, "reasons": []any{}},
+		},
+		Devices: []hostcommand.DiscoveredDevice{{
+			ProviderRef: "SIM-DEFAULT", Serial: "SIM-DEFAULT", Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+			LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection:   map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-DEFAULT"},
+			Capabilities: map[string]any{"platformName": "iOS", "runtimeId": "runtime-ios-26", "deviceTypeId": "iphone-17", "allowlisted": true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var baseDeviceID *string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT base_device_id FROM device_pools WHERE id='ios_pool_000000000001'`).Scan(&baseDeviceID); err != nil {
+		t.Fatal(err)
+	}
+	if baseDeviceID == nil || *baseDeviceID != "ios_device_000000001" {
+		t.Fatalf("base_device_id=%v", baseDeviceID)
+	}
+
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		VALUES('ios_device_000000002','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-SECOND','rebuild','SIM-SECOND',
+		'http://127.0.0.1:4723','{"platformName":"iOS","runtimeId":"runtime-ios-26","deviceTypeId":"iphone-17"}','booting','degraded');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('ios_pool_000000000001','ios_device_000000002',true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true, "reasons": []any{}}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-SECOND", Serial: "SIM-SECOND", Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-SECOND"},
+			Capabilities: map[string]any{"platformName": "iOS", "runtimeId": "runtime-ios-26", "deviceTypeId": "iphone-17", "allowlisted": true}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A later healthy Simulator never overwrites the established template.
+	var preserved *string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT base_device_id FROM device_pools WHERE id='ios_pool_000000000001'`).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	if preserved == nil || *preserved != "ios_device_000000001" {
+		t.Fatalf("preserved base_device_id=%v", preserved)
+	}
+}
+
 func TestIOSHeartbeatRejectsRegisteredIdentityMismatch(t *testing.T) {
 	db := openTestDatabase(t)
 	seedIOSHost(t, db)

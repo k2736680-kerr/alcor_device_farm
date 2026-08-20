@@ -1,12 +1,15 @@
 :root {
   color: #142033;
   background: #f3f6fb;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; background: #f3f6fb; }
+html, body, #root { min-height: 100%; background: #f3f6fb; }
+body { margin: 0; min-width: 320px; color: #142033; font-family: inherit; }
+button, input, select, textarea { font: inherit; }
 a { color: inherit; }
 
 .console-shell { min-height: 100vh; }

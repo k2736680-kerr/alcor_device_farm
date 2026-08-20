@@ -26,11 +26,19 @@ describe('App session gate', () => {
     expect(await screen.findByText('测试管理员')).toBeInTheDocument()
     expect(screen.getByText('仪表盘')).toBeInTheDocument()
     expect(screen.getByText('健康事件')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Android 镜像' })).not.toBeInTheDocument()
     // menu labels also appear as dashboard statistic titles, so expect at least one
     for (const label of ['宿主机', '设备池', '设备', '预约', '审计']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
     expect(screen.getByRole('button', { name: /退出/ })).toBeInTheDocument()
+  })
+
+  it('redirects the removed Android image route to the device page', async () => {
+    renderWithProviders(<App />, '/images')
+
+    expect(await screen.findByText('Android 与 iOS 设备')).toBeInTheDocument()
+    expect(screen.queryByText('Android 官方系统目录')).not.toBeInTheDocument()
   })
 
   it('keeps the remote session alive while navigating away from the devices page', async () => {
