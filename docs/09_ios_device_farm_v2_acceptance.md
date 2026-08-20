@@ -38,7 +38,7 @@
 | G13 Simulator 基础 | DF-043 | 两台固定 Simulator 发现、预约、并发 Session、释放和故障恢复通过 |
 | G14 动态 Simulator | DF-044 | E4 从受控目录创建、启动、Session、重建和删除通过 |
 | G15 Console | DF-045 | iOS 设备域页面、安全和审计通过，未伪造人工远控 |
-| G16 iOS 受控远控 | DF-046 | 目标 Simulator 画面、点击、滑动、文本、Home、互斥和释放通过 |
+| G16 iOS 受控远控替换 | DF-050 | Baguette 原生目标 Simulator 画面、点击、滑动、文本、Home、互斥和释放通过；旧自写实现零残留 |
 | G17 发布 | DF-047 | E6 全链路、稳定性、回滚和 Android 全量回归通过 |
 
 ## 4. P0/P1 验收用例
@@ -107,8 +107,9 @@
 | AT-IOS-SEC-001 | P0 | 扫描 API、日志、审计、数据库普通字段和浏览器 | 无 Apple Account、私钥、Profile、Token、Grant 或内部 WDA 地址 |
 | AT-IOS-SEC-002 | P0 | 浏览器访问 Appium Hub、动态发现 Node、Dashboard 或 Session Grant | 网络和 API 均拒绝 |
 | AT-IOS-UI-001 | P0 | iOS Device 页面 | 显示平台、Runtime、机型、Simulator、健康、创建/管理和受控远控入口 |
-| AT-IOS-UI-002 | P0 | 打开 iOS 远控 | 只显示目标 Simulator；点击、滑动、文本和 Home 有效，不显示 macOS 桌面或其他 Simulator |
-| AT-IOS-UI-003 | P0 | 尝试复用 Android STF 或提交原始 Appium/WDA 命令 | iOS 不进入 STF，网关只接受动作白名单，API 拒绝其他路径 |
+| AT-IOS-UI-002 | P0 | 打开 iOS 远控 | 使用 Baguette 原生 Web UI，只显示目标 Simulator；连续画面、点击、滑动、文本、Home 和应用切换真实有效，不显示 macOS 桌面或其他 Simulator |
+| AT-IOS-UI-003 | P0 | 尝试访问设备墙、其他 UDID、生命周期或插件命令 | Gateway 拒绝，当前预约只能控制目标 Simulator；iOS 不进入 STF，也不创建人工 Appium/WDA Session |
+| AT-IOS-UI-004 | P0 | 扫描仓库和运行路由 | 不存在自写 iOS HTML/CSS/JavaScript、MJPEG/截图代理、坐标转换、Appium 人工动作或旧 Alcor iOS 代理路由 |
 | AT-IOS-REG-001 | P0 | Android 全量 Go/Console/契约和真实冒烟 | 第一版预约、STF、Appium、DaFit 和长期设备语义无回归 |
 | AT-IOS-RBK-001 | P0 | drain iOS Host、禁用 iOS Pool并回滚版本 | 无新 iOS 流量，活动 Session 正常结束或受控终止；Android 不受影响 |
 

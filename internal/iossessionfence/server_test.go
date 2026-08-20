@@ -1,12 +1,10 @@
 package iossessionfence
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,8 +24,7 @@ func TestFenceCreatesAndBindsOnlyPinnedSession(t *testing.T) {
 			return
 		}
 		raw, _ := io.ReadAll(request.Body)
-		if !strings.Contains(string(raw), `"appium:udid":"SIM-1"`) || !strings.Contains(string(raw), `"df:udids":"SIM-1"`) ||
-			!strings.Contains(string(raw), `"appium:mjpegServerPort":`) {
+		if string(raw) != `{"capabilities":{"alwaysMatch":{"platformName":"iOS","appium:udid":"SIM-1","df:udids":"SIM-1"},"firstMatch":[{}]}}` {
 			http.Error(writer, "routing was not pinned", http.StatusBadRequest)
 			return
 		}
@@ -67,108 +64,6 @@ func TestFenceCreatesAndBindsOnlyPinnedSession(t *testing.T) {
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !bound.Load() || upstreamCalls.Load() != 1 || !strings.Contains(response.Body.String(), "appium-session-1") {
 		t.Fatalf("status=%d bound=%v upstream=%d body=%s", response.Code, bound.Load(), upstreamCalls.Load(), response.Body.String())
-	}
-}
-
-func TestFenceRemoteActionsAreNormalizedAndWhitelisted(t *testing.T) {
-	var actionPayload map[string]any
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/window/rect"):
-			_, _ = writer.Write([]byte(`{"value":{"width":400,"height":800}}`))
-		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/actions"):
-			_ = json.NewDecoder(request.Body).Decode(&actionPayload)
-			_, _ = writer.Write([]byte(`{"value":null}`))
-		case request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/screenshot"):
-			encoded := base64.StdEncoding.EncodeToString([]byte("png-image"))
-			_, _ = writer.Write([]byte(`{"value":"` + encoded + `"}`))
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer upstream.Close()
-	control := httptest.NewServer(http.NotFoundHandler())
-	defer control.Close()
-	server, err := New(Config{ListenAddress: "127.0.0.1:0", AdvertiseURL: "http://127.0.0.1:19001",
-		ControlServerURL: control.URL, AgentToken: "agent-token-00000001", HostID: "host_000000000001",
-		UpstreamEndpoint: upstream.URL, Timeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	action := httptest.NewRequest(http.MethodPost, "/internal/v1/ios-remote/sessions/appium-session-1/actions",
-		strings.NewReader(`{"type":"tap","x":0.5,"y":0.25}`))
-	action.Header.Set("Authorization", "Bearer agent-token-00000001")
-	action.Header.Set("X-Device-Farm-Host-Id", "host_000000000001")
-	actionResponse := httptest.NewRecorder()
-	server.ServeHTTP(actionResponse, action)
-	if actionResponse.Code != http.StatusOK {
-		t.Fatalf("action status=%d body=%s", actionResponse.Code, actionResponse.Body.String())
-	}
-	encoded, _ := json.Marshal(actionPayload)
-	if !strings.Contains(string(encoded), `"x":200`) || !strings.Contains(string(encoded), `"y":200`) {
-		t.Fatalf("translated action=%s", encoded)
-	}
-
-	frame := httptest.NewRequest(http.MethodGet, "/internal/v1/ios-remote/sessions/appium-session-1/frame", nil)
-	frame.Header.Set("Authorization", "Bearer agent-token-00000001")
-	frame.Header.Set("X-Device-Farm-Host-Id", "host_000000000001")
-	frameResponse := httptest.NewRecorder()
-	server.ServeHTTP(frameResponse, frame)
-	if frameResponse.Code != http.StatusOK || frameResponse.Body.String() != "png-image" || frameResponse.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("frame status=%d headers=%v body=%s", frameResponse.Code, frameResponse.Header(), frameResponse.Body.String())
-	}
-
-	arbitrary := httptest.NewRequest(http.MethodPost, "/internal/v1/ios-remote/sessions/appium-session-1/execute", strings.NewReader(`{}`))
-	arbitrary.Header.Set("Authorization", "Bearer agent-token-00000001")
-	arbitrary.Header.Set("X-Device-Farm-Host-Id", "host_000000000001")
-	arbitraryResponse := httptest.NewRecorder()
-	server.ServeHTTP(arbitraryResponse, arbitrary)
-	if arbitraryResponse.Code != http.StatusNotFound {
-		t.Fatalf("arbitrary status=%d", arbitraryResponse.Code)
-	}
-}
-
-func TestFenceRecoversMJPEGPortFromBoundSessionAfterRestart(t *testing.T) {
-	mjpeg := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-		_, _ = writer.Write([]byte("--frame\r\nContent-Type: image/jpeg\r\n\r\nimage\r\n--frame--\r\n"))
-	}))
-	defer mjpeg.Close()
-	port, err := strconv.Atoi(strings.TrimPrefix(mjpeg.URL, "http://127.0.0.1:"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var capabilityReads atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/session/appium-session-restart" {
-			http.NotFound(writer, request)
-			return
-		}
-		capabilityReads.Add(1)
-		_, _ = writer.Write([]byte(`{"value":{"capabilities":{"appium:mjpegServerPort":` + strconv.Itoa(port) + `}}}`))
-	}))
-	defer upstream.Close()
-	control := httptest.NewServer(http.NotFoundHandler())
-	defer control.Close()
-	server, err := New(Config{ListenAddress: "127.0.0.1:0", AdvertiseURL: "http://127.0.0.1:19001",
-		ControlServerURL: control.URL, AgentToken: "agent-token-00000001", HostID: "host_000000000001",
-		UpstreamEndpoint: upstream.URL, Timeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		request := httptest.NewRequest(http.MethodGet,
-			"/internal/v1/ios-remote/sessions/appium-session-restart/stream", nil)
-		request.Header.Set("Authorization", "Bearer agent-token-00000001")
-		request.Header.Set("X-Device-Farm-Host-Id", "host_000000000001")
-		response := httptest.NewRecorder()
-		server.ServeHTTP(response, request)
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "image") {
-			t.Fatalf("attempt=%d status=%d body=%s", attempt, response.Code, response.Body.String())
-		}
-	}
-	if capabilityReads.Load() != 1 {
-		t.Fatalf("capability reads=%d want=1", capabilityReads.Load())
 	}
 }
 

@@ -1,7 +1,6 @@
 package remotecontrol
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,18 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/baguette"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
-	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 )
@@ -42,26 +38,22 @@ type Devices interface {
 	GetDevice(context.Context, string) (management.Device, error)
 }
 
-type IOSSessions interface {
-	IssueManual(context.Context, audit.Actor, string, string, iossession.GrantInput) (iossession.GrantView, error)
-	RemoteBinding(context.Context, string, string, string) (iossession.RemoteBindingView, error)
+type IOSRemote interface {
+	EnsureBooted(context.Context, string) error
+	EntryURL(string, string, string, string) (string, error)
 }
 
 type Config struct {
-	STFWebURL          string
-	STFWebAuthSecret   string
-	STFWebUserName     string
-	STFWebUserEmail    string
-	STFWebTokenTTL     time.Duration
-	IOSEnabled         bool
-	IOSGatewaySecret   string
-	IOSGatewayTokenTTL time.Duration
-	AgentToken         string
-	IOSCreateTimeout   time.Duration
-	Lease              time.Duration
-	Heartbeat          time.Duration
-	Now                func() time.Time
-	Logger             *slog.Logger
+	STFWebURL        string
+	STFWebAuthSecret string
+	STFWebUserName   string
+	STFWebUserEmail  string
+	STFWebTokenTTL   time.Duration
+	IOSEnabled       bool
+	Lease            time.Duration
+	Heartbeat        time.Duration
+	Now              func() time.Time
+	Logger           *slog.Logger
 }
 
 type View struct {
@@ -77,28 +69,18 @@ type View struct {
 type Service struct {
 	reservations Reservations
 	devices      Devices
-	iosSessions  IOSSessions
+	iosRemote    IOSRemote
 	config       Config
 	stfWebURL    *url.URL
-	httpClient   *http.Client
-	streamClient *http.Client
 	logger       *slog.Logger
-	iosStarts    sync.Map
 }
 
 const (
-	TransportSTF    = "stf"
-	TransportAppium = "appium"
+	TransportSTF      = "stf"
+	TransportBaguette = "baguette"
 )
 
-type gatewayClaims struct {
-	DeviceID      string `json:"device_id"`
-	ReservationID string `json:"reservation_id"`
-	OwnerID       string `json:"owner_id"`
-	ExpiresAt     int64  `json:"expires_at"`
-}
-
-func New(reservations Reservations, devices Devices, cfg Config, iosSessionServices ...IOSSessions) (*Service, error) {
+func New(reservations Reservations, devices Devices, cfg Config, iosRemotes ...IOSRemote) (*Service, error) {
 	if reservations == nil || devices == nil || cfg.Lease < time.Minute ||
 		cfg.Heartbeat <= 0 || cfg.Heartbeat >= cfg.Lease {
 		return nil, ErrUnavailable
@@ -116,18 +98,12 @@ func New(reservations Reservations, devices Devices, cfg Config, iosSessionServi
 		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/"
 		stfWebURL = parsed
 	}
-	var iosSessions IOSSessions
-	if len(iosSessionServices) > 0 {
-		iosSessions = iosSessionServices[0]
+	var iosRemote IOSRemote
+	if len(iosRemotes) > 0 {
+		iosRemote = iosRemotes[0]
 	}
-	if cfg.IOSEnabled {
-		if iosSessions == nil || len(cfg.IOSGatewaySecret) < 32 || len(strings.TrimSpace(cfg.AgentToken)) < 16 ||
-			cfg.IOSGatewayTokenTTL <= 0 || cfg.IOSGatewayTokenTTL > time.Minute {
-			return nil, fmt.Errorf("%w: iOS 远控配置无效", ErrUnavailable)
-		}
-		if cfg.IOSCreateTimeout <= 0 {
-			cfg.IOSCreateTimeout = 2 * time.Minute
-		}
+	if cfg.IOSEnabled && iosRemote == nil {
+		return nil, fmt.Errorf("%w: iOS 远控配置无效", ErrUnavailable)
 	}
 	if stfWebURL == nil && !cfg.IOSEnabled {
 		return nil, ErrUnavailable
@@ -138,12 +114,8 @@ func New(reservations Reservations, devices Devices, cfg Config, iosSessionServi
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	client := &http.Client{Timeout: cfg.IOSCreateTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
-		return errors.New("iOS 远控内部请求不允许重定向")
-	}}
-	streamClient := &http.Client{CheckRedirect: client.CheckRedirect}
-	return &Service{reservations: reservations, devices: devices, iosSessions: iosSessions,
-		config: cfg, stfWebURL: stfWebURL, httpClient: client, streamClient: streamClient, logger: cfg.Logger}, nil
+	return &Service{reservations: reservations, devices: devices, iosRemote: iosRemote,
+		config: cfg, stfWebURL: stfWebURL, logger: cfg.Logger}, nil
 }
 
 func ConfigFrom(app config.Config) Config {
@@ -151,8 +123,6 @@ func ConfigFrom(app config.Config) Config {
 		STFWebURL: app.STF.WebURL, STFWebAuthSecret: app.STF.WebAuthSecret,
 		STFWebUserName: app.STF.WebUserName, STFWebUserEmail: app.STF.WebUserEmail,
 		STFWebTokenTTL: app.STF.WebTokenTTL, IOSEnabled: app.IOSRemote.Enabled,
-		IOSGatewaySecret: app.IOSRemote.GatewaySecret, IOSGatewayTokenTTL: app.IOSRemote.GatewayTokenTTL,
-		AgentToken: app.Security.AgentToken, IOSCreateTimeout: 2 * time.Minute,
 		Lease: app.Console.RemoteLease, Heartbeat: app.Console.RemoteHeartbeat,
 	}
 }
@@ -210,24 +180,6 @@ func (service *Service) Heartbeat(ctx context.Context, actor audit.Actor, key, r
 	if err != nil {
 		return View{}, err
 	}
-	if transport == TransportAppium {
-		device, getErr := service.devices.GetDevice(ctx, deviceID)
-		if getErr != nil {
-			return View{}, fmt.Errorf("%w: 无法读取 iOS 远控设备", ErrUnavailable)
-		}
-		binding, bindingErr := service.iosSessions.RemoteBinding(ctx, actor.ID, kept.ID, deviceID)
-		switch {
-		case errors.Is(bindingErr, iossession.ErrNotFound):
-			service.ensureIOSSession(device, kept)
-			view := service.viewWithoutURL(deviceID, transport, kept)
-			view.Status = "connecting"
-			return view, nil
-		case bindingErr != nil:
-			return View{}, fmt.Errorf("%w: iOS 远控 Session 尚不可用", ErrUnavailable)
-		case service.iosHealth(ctx, binding) != nil:
-			return View{}, fmt.Errorf("%w: iOS 远控 Session 健康检查失败", ErrUnavailable)
-		}
-	}
 	return service.viewWithoutURL(deviceID, transport, kept), nil
 }
 
@@ -282,25 +234,12 @@ func (service *Service) view(ctx context.Context, device management.Device, tran
 		entry.RawQuery = query.Encode()
 		entry.Fragment = "!/control/" + url.PathEscape(device.Serial)
 		view.URL = entry.String()
-	case TransportAppium:
-		binding, err := service.iosSessions.RemoteBinding(ctx, current.OwnerID, current.ID, device.ID)
-		if errors.Is(err, iossession.ErrNotFound) {
-			view.Status = "connecting"
-			service.ensureIOSSession(device, current)
-			return view, nil
-		}
+	case TransportBaguette:
+		entry, err := service.iosRemote.EntryURL(device.ID, device.Serial, current.ID, current.OwnerID)
 		if err != nil {
-			return View{}, fmt.Errorf("%w: iOS 远控 Session 尚不可用", ErrUnavailable)
+			return View{}, fmt.Errorf("%w: 无法签发 iOS 远控入口", ErrUnavailable)
 		}
-		_ = binding
-		token, err := service.signGatewayToken(gatewayClaims{
-			DeviceID: device.ID, ReservationID: current.ID, OwnerID: current.OwnerID,
-			ExpiresAt: service.config.Now().Add(service.config.IOSGatewayTokenTTL).Unix(),
-		})
-		if err != nil {
-			return View{}, err
-		}
-		view.URL = "/console/remote/ios/" + url.PathEscape(token) + "/control"
+		view.URL = entry
 	default:
 		return View{}, ErrUnavailable
 	}
@@ -344,142 +283,19 @@ func (service *Service) signSTFToken() (string, error) {
 	return unsigned + "." + encode(mac.Sum(nil)), nil
 }
 
-func (service *Service) signGatewayToken(claims gatewayClaims) (string, error) {
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("签发 iOS 远控入口：%w", err)
+func (service *Service) AuthorizeBaguette(ctx context.Context, ticket baguette.Ticket) error {
+	if service == nil || service.iosRemote == nil {
+		return ErrUnavailable
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(payload)
-	mac := hmac.New(sha256.New, []byte(service.config.IOSGatewaySecret))
-	_, _ = mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
-}
-
-func (service *Service) ensureIOSSession(device management.Device, current reservation.View) {
-	if service == nil || service.iosSessions == nil || current.Status != domain.ReservationActive ||
-		current.DeviceID == nil || *current.DeviceID != device.ID {
-		return
+	current, err := service.reservations.FindOpenForDevice(ctx, ticket.OwnerID, ticket.DeviceID)
+	if err != nil || current.ID != ticket.ReservationID || current.Status != domain.ReservationActive ||
+		current.DeviceID == nil || *current.DeviceID != ticket.DeviceID || current.ExpiresAt == nil ||
+		!current.ExpiresAt.After(service.config.Now()) {
+		return ErrNotFound
 	}
-	if _, loaded := service.iosStarts.LoadOrStore(current.ID, struct{}{}); loaded {
-		return
-	}
-	go func() {
-		defer service.iosStarts.Delete(current.ID)
-		ctx, cancel := context.WithTimeout(context.Background(), service.config.IOSCreateTimeout)
-		defer cancel()
-		actor := audit.Console(current.OwnerID)
-		stage := "签发一次性 Session Grant"
-		grant, err := service.iosSessions.IssueManual(ctx, actor, current.ID,
-			"ios_remote_grant_"+current.ID, iossession.GrantInput{
-				OwnerType: "manual", OwnerID: current.OwnerID, TTLSeconds: 120,
-			})
-		if err == nil {
-			stage = "创建固定目标的 Appium Session"
-			err = service.createIOSSession(ctx, grant)
-		}
-		if err == nil {
-			return
-		}
-		service.logger.ErrorContext(context.Background(), "iOS 远控 Session 创建失败",
-			"阶段", stage, "预约ID", current.ID, "设备ID", device.ID, "错误", err)
-		releaseContext, releaseCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer releaseCancel()
-		_, _ = service.reservations.Release(releaseContext, actor,
-			"ios-remote-create-failed-"+current.ID, current.ID, "ios_remote_create_failed_"+current.ID,
-			reservation.ReleaseInput{Reason: "iOS 远控 Session 创建失败"})
-	}()
-}
-
-func (service *Service) createIOSSession(ctx context.Context, grant iossession.GrantView) error {
-	payload, err := json.Marshal(map[string]any{"capabilities": map[string]any{
-		"alwaysMatch": map[string]any{
-			"platformName": "iOS", "appium:automationName": "XCUITest",
-			"appium:udid": grant.UDID, "df:udids": grant.UDID,
-			"appium:noReset": true, "df:skipReport": true,
-		},
-		"firstMatch": []any{map[string]any{}},
-	}})
-	if err != nil {
-		return err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(grant.FenceEndpoint, "/")+"/session", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Session-Grant "+grant.SessionGrant)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := service.httpClient.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	var envelope struct {
-		SessionID string `json:"sessionId"`
-		Value     struct {
-			SessionID string `json:"sessionId"`
-		} `json:"value"`
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<20))
-	if response.StatusCode < 200 || response.StatusCode >= 300 || decoder.Decode(&envelope) != nil {
-		return errors.New("iOS 远控 Appium Session 创建失败")
-	}
-	if envelope.Value.SessionID != "" {
-		envelope.SessionID = envelope.Value.SessionID
-	}
-	if strings.TrimSpace(envelope.SessionID) == "" {
-		return errors.New("iOS 远控 Appium Session 响应无效")
-	}
-	return nil
-}
-
-func (service *Service) iosBinding(ctx context.Context, claims gatewayClaims) (iossession.RemoteBindingView, error) {
-	if service == nil || service.iosSessions == nil {
-		return iossession.RemoteBindingView{}, ErrUnavailable
-	}
-	binding, err := service.iosSessions.RemoteBinding(ctx, claims.OwnerID, claims.ReservationID, claims.DeviceID)
-	if err != nil {
-		return iossession.RemoteBindingView{}, fmt.Errorf("%w: iOS 远控 Session 未绑定", ErrUnavailable)
-	}
-	return binding, nil
-}
-
-func (service *Service) iosFenceRequest(ctx context.Context, binding iossession.RemoteBindingView, method, operation string, body []byte) (*http.Response, error) {
-	if method != http.MethodGet && method != http.MethodPost {
-		return nil, ErrUnavailable
-	}
-	switch operation {
-	case "stream", "frame", "health", "actions":
-	default:
-		return nil, ErrUnavailable
-	}
-	endpoint := strings.TrimRight(binding.FenceEndpoint, "/") + "/internal/v1/ios-remote/sessions/" +
-		url.PathEscape(binding.AppiumSessionID) + "/" + operation
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+service.config.AgentToken)
-	request.Header.Set("X-Device-Farm-Host-Id", binding.HostID)
-	if len(body) > 0 {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	client := service.httpClient
-	if operation == "stream" {
-		client = service.streamClient
-	}
-	return client.Do(request)
-}
-
-func (service *Service) iosHealth(ctx context.Context, binding iossession.RemoteBindingView) error {
-	response, err := service.iosFenceRequest(ctx, binding, http.MethodGet, "health", nil)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
-	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("iOS Session Fence 健康状态码 %d", response.StatusCode)
+	device, err := service.devices.GetDevice(ctx, ticket.DeviceID)
+	if err != nil || device.Serial != ticket.UDID || strings.ToLower(device.Platform) != "ios" {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -490,6 +306,11 @@ func (service *Service) remoteDevice(ctx context.Context, deviceID string) (mana
 		return management.Device{}, "", fmt.Errorf("%w: 无法读取远控设备", ErrUnavailable)
 	}
 	transport, err := service.transportForDevice(device, true)
+	if err == nil && transport == TransportBaguette {
+		if bootErr := service.iosRemote.EnsureBooted(ctx, device.Serial); bootErr != nil {
+			return management.Device{}, "", fmt.Errorf("%w: %v", ErrUnavailable, bootErr)
+		}
+	}
 	return device, transport, err
 }
 
@@ -512,10 +333,10 @@ func (service *Service) transportForDevice(device management.Device, requireConf
 		if device.DeviceKind != "simulator" || device.ProviderType != "appium_device_farm_ios" {
 			return "", fmt.Errorf("%w: 当前只支持 iOS Simulator 远程控制", ErrUnavailable)
 		}
-		if requireConfigured && (!service.config.IOSEnabled || service.iosSessions == nil) {
+		if requireConfigured && (!service.config.IOSEnabled || service.iosRemote == nil) {
 			return "", fmt.Errorf("%w: iOS 远程控制尚未配置", ErrUnavailable)
 		}
-		return TransportAppium, nil
+		return TransportBaguette, nil
 	default:
 		return "", fmt.Errorf("%w: 当前设备平台不支持远程控制", ErrUnavailable)
 	}

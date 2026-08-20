@@ -1,6 +1,6 @@
-# DF-041/DF-042 macOS iOS Host 部署与验证
+# macOS iOS Host 部署与验证
 
-本目录部署专用 macOS Host：DF-041 提供固定工具链、Appium Device Farm 本机 Hub/Node、只读 inventory/health Adapter；DF-042 在同一个 Host Agent 进程内增加 Reservation 绑定的 Session Fence；DF-044 增加 CoreSimulator 动态创建、重建和删除；DF-046 在 Session Fence 中复用 Appium/XCUITest/WDA 的 MJPEG 与动作接口，只远控目标 Simulator。它不安装 IPA、不实现 DaFit 业务步骤、不启用跨 Host Hub、不开放 Dashboard、不控制 macOS 桌面，也不管理真机签名。
+本目录部署专用 macOS Host：Appium Device Farm Hub/Node 与 Session Fence 只负责 inventory、明确 UDID 的自动化 Session 和异常清理；Host Agent 负责 CoreSimulator 动态生命周期；Baguette 0.1.92 只提供目标 Simulator 的原生 Web 画面和 Host HID。它不安装 IPA、不实现 DaFit 业务步骤、不启用跨 Host Hub、不开放 Appium Dashboard、不控制 macOS 桌面，也不管理真机签名。
 
 ## 1. 固定版本
 
@@ -12,6 +12,7 @@
 | XCUITest Driver | 12.4.0 |
 | WebDriverAgent | 16.2.0 |
 | go-ios | 1.3.2 |
+| Baguette | 0.1.92 |
 
 Node 必须安装到项目独立目录，不能替换 macOS 已有的系统或全局 Node。Apple Silicon 的官方 `node-v22.23.2-darwin-arm64.tar.gz` SHA-256 为：
 
@@ -42,6 +43,14 @@ npm install --prefix "$IOS_HOST_ROOT/runtime" --no-audit --no-fund appium@3.6.0 
 "$IOS_HOST_ROOT/runtime/node_modules/.bin/appium" plugin install --source=npm appium-device-farm@12.0.1
 "$IOS_HOST_ROOT/runtime/node_modules/.bin/appium" driver install --source=npm appium-xcuitest-driver@12.4.0
 ```
+
+Baguette 使用独立目录 `$IOS_HOST_ROOT/baguette-runtime`。部署包必须固定为 0.1.92，当前验收的 arm64 bottle SHA-256 为：
+
+```text
+902c5cba54e44408d40dbb08ff7faf6a34edef24d50700a5679bcfbf5377fe84
+```
+
+安装后执行 `$IOS_HOST_ROOT/baguette-runtime/bin/baguette --version`，版本不符时禁止启动。Baguette 只监听 `127.0.0.1:8421`，Server 通过 SSH 安全通道访问，不得直接发布到局域网。
 
 安装后必须核对插件和 Driver 的 JSON 输出，并读取 XCUITest 安装目录中的 `appium-webdriveragent/package.json`，不能根据网站首页或浮动 npm tag 推断版本。
 
@@ -100,13 +109,13 @@ export APPIUM_HOME="$IOS_HOST_ROOT/appium-home"
 
 ### 4.1 使用 launchd 常驻运行
 
-生产式 E4/E6 宿主机必须用当前 macOS 服务账号的 LaunchAgent 管理 Hub、动态发现 Node 和 Host Agent，不能依赖 SSH 终端中的前台进程。仓库提供的三个 `*.plist.example` 与 `run-service.sh` 是同一套版本化入口：
+生产式宿主机必须用当前 macOS 服务账号的 LaunchAgent 管理 Hub、动态发现 Node、Host Agent 和 Baguette，不能依赖 SSH 终端中的前台进程。仓库提供的四个 `*.plist.example` 与 `run-service.sh` 是同一套版本化入口：
 
 ```bash
 install -m 755 ./run-service.sh "$IOS_HOST_ROOT/run-service.sh"
 mkdir -p "$IOS_HOST_ROOT/logs" "$HOME/Library/LaunchAgents"
 
-for service in appium-hub appium-node host-agent; do
+for service in appium-hub appium-node host-agent baguette; do
   sed "s|__IOS_HOST_ROOT__|$IOS_HOST_ROOT|g" \
     "./com.alcor.device-farm.${service}.plist.example" \
     > "$HOME/Library/LaunchAgents/com.alcor.device-farm.${service}.plist"
@@ -117,6 +126,7 @@ uid="$(id -u)"
 launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.appium-hub.plist"
 launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.appium-node.plist"
 launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.host-agent.plist"
+launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.alcor.device-farm.baguette.plist"
 ```
 
 首次安装后使用 `launchctl print gui/$(id -u)/<label>` 检查 `state=running`，并确认 4723、4724 和 Fence 端口只监听 `127.0.0.1`。三个服务都设置 `KeepAlive`；进程异常退出后由 launchd 自动拉起。Node 每次启动先清理自身旧设备表，并每 5 秒检查 stale 设备，避免已从 CoreSimulator 删除的动态 UDID 长期残留；Hub 启动时同样清理旧路由库存。Node 单独设置 4 GiB V8 堆上限；`run-service.sh` 会每 10 秒分别探测 Hub 与 Node 的 `/status` 和 iOS inventory，任一服务连续三次在 5 秒内无响应就只终止对应进程并交给 launchd 拉起。这样既覆盖 OOM/崩溃，也覆盖“进程仍在但 inventory 接口挂死”；Agent 同时把 Hub/Node health 和 inventory 纳入 Host readiness，恢复前 Host 不接收新预约。Host 因组件探测失败自动进入维护后，Reconciler 默认保留 90 秒恢复宽限；宽限内设备停止调度但不累计隔离次数，超时后仍按既有阈值隔离。
@@ -172,29 +182,23 @@ Host Agent 启动 DF-042 Session Fence，并通过心跳上报 `session_fence_en
 
 Reservation release 和 Reaper 会先通过 Fence 删除上游 Appium Session；清理失败时 Reservation 保持 active，Device 进入 quarantine，禁止静默释放后把残留 Session 留在 macOS Host。
 
-Fence 重启不会结束仍然有效的 Appium/WDA Session。首次重新请求画面时，Fence 从该绑定 Session 的 capabilities 恢复 `mjpegServerPort` 并重新建立内存映射；端口缺失、越界或 Session 已结束时拒绝恢复，不能接受调用方自报端口。
+Fence 重启不会结束仍然有效的自动化 Appium/WDA Session。Fence 不提供任何人工画面、截图或动作路由，也不为 Session 注入 MJPEG 端口。
 
 ## 7. iOS 人工远控
 
-不需要开启 macOS Remote Management、Screen Sharing 或 VNC，也不安装 noVNC/websockify。人工远控与自动化一样先取得 active Reservation，再由 Server 通过一次性 Grant 请求 Session Fence 创建固定 `df:udids` 和 `appium:udid` 的 XCUITest Session。Fence 为每条 Session 分配独立回环 MJPEG 端口，并只允许 Server 使用 Agent Token 调用以下固定接口：
+不需要开启 macOS Remote Management、Screen Sharing 或 VNC，也不安装 noVNC/websockify。人工远控先取得指定 Simulator 的 active Reservation，Server 再返回独立 Baguette Gateway 的短时入口。浏览器使用 Baguette 原生页面、WebSocket 画面和 Host HID；不会创建 Appium Session，也不会占用 WDA。
 
-- `GET /internal/v1/ios-remote/sessions/{session}/stream`：目标 Simulator MJPEG；
-- `GET /internal/v1/ios-remote/sessions/{session}/frame`：目标 Simulator PNG 截图；
-- `GET /internal/v1/ios-remote/sessions/{session}/health`：Session 健康与保活；
-- `POST /internal/v1/ios-remote/sessions/{session}/actions`：仅允许点击、滑动、文本和 Home。
-
-这些接口不接受 Host、端口、UDID、URL、shell、bundle ID、脚本名或原始 WebDriver 路径。浏览器只能访问 Server 同源短时入口，不能直连 Fence、Appium、WDA 或 MJPEG。
-
-同源 URL 中的短时签名只作为首次加载 `control` 页面的入口票据。页面已加载后，JS/CSS、画面和动作继续依赖 Console 会话、操作者和 active Reservation；入口票据到期不会中断健康的长时间远控，但重新打开旧 `control` URL 会被拒绝。
+入口票据只用于首次建立 HttpOnly 会话 Cookie。后续 HTTP/WebSocket 请求都由 Gateway 重新校验 active Reservation 和唯一 UDID；Console 心跳持续滑动续约，因此没有固定一小时上限。释放或超时后，Gateway 会拒绝新请求并主动中断正在使用的长连接。
 
 本机检查：
 
 ```bash
 curl --fail http://127.0.0.1:4723/status
 lsof -nP -iTCP:4810 -sTCP:LISTEN
+curl --fail http://127.0.0.1:8421/simulators.json
 ```
 
-本机部署的 4723、4724、4810 和动态 MJPEG 端口必须只监听回环；分离部署时 4810 由受控 HTTPS 内网代理暴露给 Server。人工 Session 必须通过 Console 正常结束或由 Reservation Reaper 清理，不得直接杀 WDA 后伪造数据库释放。
+本机部署的 4723、4724、4810 和 8421 必须只监听回环。4810 只服务可信自动化 Worker；8421 只通过 Server 侧 SSH 隧道进入 Baguette Gateway。人工预约必须通过 Console 正常结束或由 Reservation Reaper 清理。
 
 ## 8. 验收入口
 
@@ -215,4 +219,4 @@ go test -count=1 -v ./internal/adapters/appiumdevicefarm ./internal/ioshost ./in
 
 ## 9. 回滚
 
-先 drain Host 或禁用 iOS Pool，等待人工和自动化 Appium Session 全部释放，再停止 Host Agent、本机动态发现 Node 和 Hub。关闭 `DEVICE_FARM_IOS_REMOTE_CONTROL_ENABLED` 并删除 Gateway Secret 即可回滚到 DF-045；Session Fence 仍可供自动化使用。不要修改 PostgreSQL Reservation 伪造释放，不要删除其他全局 Node/npm/Xcode 工具。Android Host、STF 和 Android Appium Endpoint 不受该回滚影响。
+先 drain Host 或禁用 iOS Pool，等待人工预约和自动化 Appium Session 全部释放，再停止 Baguette、Host Agent、本机动态发现 Node 和 Hub。关闭 `DEVICE_FARM_IOS_REMOTE_CONTROL_ENABLED` 并删除 Gateway Secret 只会停用 iOS 人工远控；Session Fence 仍供自动化使用。不要修改 PostgreSQL Reservation 伪造释放。Android Host、STF 和 Android Appium Endpoint 不受影响。

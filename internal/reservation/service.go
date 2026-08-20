@@ -220,9 +220,6 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 			if lockErr := service.repo.LockTargetDevice(ctx, tx, targetDeviceID); lockErr != nil {
 				return lockErr
 			}
-			if lockErr := service.repo.LockIOSRemoteHost(ctx, tx, targetDeviceID); lockErr != nil {
-				return lockErr
-			}
 			existing, findErr := service.repo.FindOpenTargeted(ctx, tx, "", targetDeviceID)
 			switch {
 			case findErr == nil && existing.OwnerID == actor.ID:

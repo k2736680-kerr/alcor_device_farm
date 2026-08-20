@@ -4,7 +4,7 @@
 
 本文是 DF-039 的 iOS 实施基线。它在 Android 第一版之上增加多平台设备域设计，不修改 Alcor/DaFit 业务边界，也不代表当前生产代码已经支持 iOS。
 
-当前目标是让现有设备农场内核把专用 macOS Host 作为动态 iOS 虚拟设备宿主机，按需创建、启动、停止、重建和删除 CoreSimulator 虚拟 iPhone，并向可信 iOS Executor 返回与 active Reservation 唯一绑定的 Appium XCUITest 连接。DF-046 按 ADR-0025 增加只操作目标 Simulator 的受控人工远控；当前仍不建设 iOS 业务执行器、不管理 IPA、不把 Android 迁入 Appium Device Farm，真实 iPhone延后独立接入。
+当前目标是让现有设备农场内核把专用 macOS Host 作为动态 iOS 虚拟设备宿主机，按需创建、启动、停止、重建和删除 CoreSimulator 虚拟 iPhone，并向可信 iOS Executor 返回与 active Reservation 唯一绑定的 Appium XCUITest 连接。人工远控由 ADR-0026/DF-050 通过 Baguette Adapter 挂载上游原生 Web UI；当前仍不建设 iOS 业务执行器、不管理 IPA、不把 Android 迁入 Appium Device Farm，真实 iPhone延后独立接入。
 
 ## 2. 总体结论
 
@@ -139,7 +139,7 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 | `os_ready` | boot completed | SpringBoard/Simulator ready |
 | `automation` | UiAutomator2/Appium 冒烟 | XCUITest/WDA 冒烟 |
 | `router` | 独立 Endpoint healthy | 本机 Appium Hub 与动态 Node healthy、UDID inventory 一致 |
-| `remote_control` | STF 可见性 | DF-046 的 Appium/XCUITest/WDA MJPEG 与动作白名单 |
+| `remote_control` | STF 可见性 | DF-050 的 Baguette 原生画面流与 Host HID；不占用 WDA |
 
 只有必需探针全部通过才能 `ready/healthy`。`unsupported` 不是失败；Runtime 不可用、UDID 漂移或插件 inventory 冲突为 unhealthy/quarantined。插件 `providerBusy` 只表示技术占用，不降低 Router 健康：Reservation 和 Appium Session 一致时 Device 为 `busy/healthy`。固定版 XCUITest doctor 的必需结果必须通过。
 
@@ -188,9 +188,9 @@ Host Agent 后续用组件探针代替 Android 专用布尔值作为内部真相
 
 ## 11. Console 与人工调试
 
-Console 展示 iOS Host、Runtime/机型目录、动态创建向导、Device、Pool、预约、健康组件和审计。DF-045 只交付设备域页面；DF-046 按 ADR-0025 复用目标 Appium Session 的 WDA MJPEG/动作增加独立同源入口。Appium Device Farm 12.x 没有可直接复用的人工远控页面，因此本项目只补预约鉴权代理和动作白名单；浏览器不获得 Host/Fence/Appium/WDA/MJPEG 地址、Agent Token、Session Grant 或原始 WebDriver 能力。
+Console 展示 iOS Host、Runtime/机型目录、动态创建向导、Device、Pool、预约、健康组件和审计。人工远控按 ADR-0026/DF-050 使用 Baguette 原生 Web UI；项目只补固定版本 Adapter、目标 UDID 过滤、Reservation 鉴权和独立 Gateway，不实现页面、画面流、坐标转换或输入协议。浏览器不获得 Mac/Baguette 回环地址、Host/Fence/Appium/WDA 地址、Agent Token、Session Grant 或原始 WebDriver 能力。
 
-短时同源签名是首次打开控制页的入口票据，不是远控 Session 的固定寿命。已加载页面的资源、画面和动作继续由 Console 会话、操作者与滑动续约的 active Reservation 鉴权；Fence 重启时从绑定 Appium Session capabilities 恢复 MJPEG 端口，不要求重启 Simulator 或暴露端口给浏览器。
+短时签名是首次进入独立 Baguette Gateway 的入口票据，不是远控的固定寿命。已加载页面的 HTTP/WebSocket 请求继续由票据绑定信息与滑动续约的 active Reservation 鉴权；Gateway 或 Baguette 重启后可重新打开同一目标 Simulator，不创建或恢复人工 Appium/WDA Session。
 
 ## 12. 安全、可观测性和回滚
 

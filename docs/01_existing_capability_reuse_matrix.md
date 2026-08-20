@@ -13,7 +13,8 @@
 | STF claim/release/remoteConnect | DeviceFarmer/STF REST API | Adapter封装并增加超时、重试和错误分类 | 不重新实现相同设备控制协议 |
 | Android UI自动化协议 | Appium 2 + UiAutomator2 | 使用现有服务和Driver | 不自研WebDriver协议或UiAutomator2 Server |
 | iOS UI 自动化协议 | Appium 3 + XCUITest Driver + WebDriverAgent | 使用固定上游版本和明确 UDID；设备农场只管理宿主机连接与健康 | 不自研 WebDriver、XCTest、WDA、页面动作或断言 |
-| iOS 宿主机设备发现、Session 路由与人工远控 | Appium Device Farm 12.0.1、Appium XCUITest Driver、WebDriverAgent MJPEG/动作接口 | Host Adapter 复用 inventory、技术 busy 和路由；人工远控复用明确 UDID 的 Appium Session、WDA 画面/动作及既有预约审计 | 不使用插件 Dashboard 建第二套 Pool/预约；不自研画面编码、WebDriver 或 WDA，不向浏览器公开 Host、Fence、Appium、WDA、MJPEG 或 Grant |
+| iOS 宿主机设备发现与自动化 Session 路由 | Appium Device Farm 12.0.1、Appium XCUITest Driver、WebDriverAgent | Host Adapter 复用 inventory、技术 busy、明确 UDID 路由和自动化 Session Fence | 不使用插件 Dashboard 建第二套 Pool/预约；不把已由上游删除的人工串流重新包装为产品能力 |
+| iOS Simulator 浏览器远控 | Baguette 0.1.92 原生 Web UI、画面流和 Host HID 输入 | `adapters/baguette` 只做固定版本健康、目标 UDID、签名 Gateway 和 Reservation 鉴权；页面和输入实现完全复用上游 | 不自研或保留第二套 HTML/画面流/触控协议；不让 Baguette 接管 Pool、预约、租约或审计 |
 | Android Emulator容器基础 | Google Android Emulator Container Scripts与Android SDK | 固定上游版本并制作内部不可变镜像 | 不从零编写Emulator实现 |
 | 数据库事务与唯一约束 | PostgreSQL | 预约、租约、状态和命令使用PostgreSQL | 不用内存锁代替数据库并发控制 |
 
@@ -80,6 +81,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -Device Farm Console，只展示和操作设备域资源；
 -浏览器安全访问、页面权限和设备域操作审计衔接；
 -管理员 STF Web 远控编排：精确设备短租约、短时 JWT 入口、心跳和关闭回收；只链接 STF 原生页面，不实现画面或触控；
+-管理员 Baguette Web 远控编排：精确 iOS Simulator 短租约、短时签名入口、独立 Gateway、心跳和关闭回收；只代理目标 UDID 的 Baguette 原生页面，不实现画面或触控；
 -Alcor 统一设备入口：只允许 Alcor 服务端持有 Device Farm Service Token，钉钉用户经同源代理访问既有 Console；代理透传受控操作者 ID，浏览器不得获得 Service Token、STF Token 或设备内部端口；
 -Host 资源探测、设备运行规格校验和动态容量预检；复用 Docker/KVM/Android Emulator 的限制参数，不另建虚拟化层；
 -官方 Android System Image 目录同步、按需镜像准备、不可变 digest 验证和内部缓存；继续复用 Android SDK `sdkmanager`/`avdmanager`、既有 Image、Host Command 和 Docker Provider；
@@ -109,7 +111,7 @@ DF-039 已按 ADR-0021 完成职责和验收设计。后续只能按 DF-040～DF
 
 - PostgreSQL Reservation、Scheduler、Pool、Lease、Reaper 和审计继续是唯一设备占用真相；
 - Appium Device Farm 不得再次自由选择我方已经预约的设备，Session 必须同时使用与 active Reservation 相同的单值字符串 `df:udids=<reserved_udid>` 和 `appium:udid=<reserved_udid>`，并经过 Session Fence；
-- Android 继续复用 STF 原生远控；iOS 按 ADR-0025 复用目标 Appium/XCUITest Session 的 WDA MJPEG 与动作接口，Appium Device Farm Dashboard 仍不是现成远控页面；
+- Android 继续复用 STF 原生远控；iOS 按 ADR-0026 复用 Baguette 原生 Web UI 和 Host HID，Appium Device Farm Dashboard 仍不是远控页面；
 - iOS 自动化继续复用 Appium XCUITest/WebDriverAgent，不在本仓库重写 WebDriver、WDA 或业务用例执行器；
 - iOS App、Build、Case、Run、结果和 Artifact 仍属于 Alcor/对应执行器，不进入设备域；
 - 首期只允许专用 macOS Host；Windows/Linux iOS 真机、tvOS、无线设备、跨 Host Appium Hub 和 Runtime 自动下载必须另行验收；
@@ -139,7 +141,7 @@ DF-037 复用 Android SDK/`avdmanager` 的 Phone Profile 命名、既有官方 S
 
 DF-038 复用 Reservation 的 STF release、既有 System Image 准备、Device/Pool PostgreSQL 锁、Host Command、Host Agent 和 Docker Provider。新增 `device_provisioning_jobs` 仅持久化编排状态，绝不下载镜像或直接操作 Docker；目录项未缓存时复用既有准备/验证链路，完成后再调用既有创建链路。release 后不再排队 recycle rebuild，直接回到 ready 并保留数据卷；显式 rebuild/reimage 继续使用既有清空链路。基础设备只复制已登记的 Image、Phone Profile 和 runtime profile 来创建干净新实例，绝不复制 App 数据。直接删除仍由既有 delete Host Command 清理容器/网络/卷，并在同一事务收缩所属 Pool 目标。
 
-DF-039 的 iOS 复用结论固定为 Appium 3.6.0、Appium Device Farm 12.0.1、XCUITest Driver 12.4.0 和 go-ios 1.3.2 的宿主机 Adapter 方案。插件内部 busy 只是技术互斥，出现与 PostgreSQL Reservation 不一致时必须隔离收敛；共享 Appium Endpoint 不代表共享 UDID。ADR-0025 额外复用明确 UDID 的人工 Appium Session、WDA MJPEG/动作和既有远控会话编排；不复用会暴露整台宿主机的 VNC，也不经过 Appium Dashboard。
+DF-039 的自动化复用结论固定为 Appium 3.6.0、Appium Device Farm 12.0.1、XCUITest Driver 12.4.0 和 go-ios 1.3.2 的宿主机 Adapter 方案。插件内部 busy 只是技术互斥，出现与 PostgreSQL Reservation 不一致时必须隔离收敛；共享 Appium Endpoint 不代表共享 UDID。人工远控由 ADR-0026 改为固定版本 Baguette 原生 Web UI；不复用会暴露整台宿主机的 VNC，也不恢复已被 Device Farm 12.x 删除的 WDA 串流页面。
 
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 

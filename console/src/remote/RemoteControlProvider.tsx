@@ -24,12 +24,6 @@ import { apiErrorText } from '../api/presentation'
 
 const storedDeviceKey = 'device-farm.remote-control-device'
 const remoteConnectTimeoutMs = 30_000
-const iosRemotePrefix = '/console/remote/ios/'
-
-export function remoteEntryURL(url: string, embedded = window.self !== window.top): string {
-  if (!embedded || !url.startsWith(iosRemotePrefix)) return url
-  return `/api/v2/device-farm/remote/ios/${url.slice(iosRemotePrefix.length)}`
-}
 
 type RemoteDevice = Pick<Device, 'id' | 'serial' | 'platform' | 'device_kind'>
 
@@ -104,9 +98,8 @@ export function RemoteControlProvider({
         enabled: remoteState?.started === true,
         retry: false,
         refetchInterval: remoteState?.started ? 1_000 : false,
-        // Opening the placeholder popup backgrounds the Console tab. Keep
-        // polling there so a ready STF URL can replace about:blank without
-        // requiring the administrator to focus the Console again.
+        // 预先打开空白标签页后，控制台会进入后台；后台轮询可在入口就绪时
+        // 直接替换空白页，无需管理员再次切回控制台。
         refetchIntervalInBackground: true,
       },
     },
@@ -171,7 +164,7 @@ export function RemoteControlProvider({
   }, [clearRemote, endRemote, message, remoteState])
 
   const navigatePopup = useCallback((popup: Window, url: string) => {
-    popup.location.replace(remoteEntryURL(url))
+    popup.location.replace(url)
     setRemoteState((current) => current ? { ...current, opened: true } : current)
   }, [])
 

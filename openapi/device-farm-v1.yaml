@@ -802,7 +802,7 @@ paths:
     post:
       tags: [Console]
       operationId: startDeviceRemoteControl
-      description: Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device, then uses STF for Android or a pinned Appium/XCUITest Session for an iOS Simulator.
+      description: 仅限管理员。为当前就绪且健康的目标设备创建短时人工预约；Android 打开 STF，iOS Simulator 打开受预约约束的 Baguette 原生 Web 远控。
       security: [{consoleCookie: []}]
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
@@ -818,7 +818,7 @@ paths:
     get:
       tags: [Console]
       operationId: getDeviceRemoteControl
-      description: Admin only. Returns the current administrator-owned remote control. Android uses a short-lived STF Web login; iOS uses a same-origin Appium/WDA entry that never exposes internal endpoints.
+      description: 仅限管理员。返回当前管理员拥有的远控连接；Android 使用短时 STF Web 登录，iOS 使用仅允许访问预约 Simulator 的签名 Baguette 网关入口。
       security: [{consoleCookie: []}]
       responses:
         "200": {$ref: "#/components/responses/RemoteControlSuccess"}
@@ -830,7 +830,7 @@ paths:
     delete:
       tags: [Console]
       operationId: endDeviceRemoteControl
-      description: Admin only. Idempotently ends remote control and releases the Reservation plus the platform-specific STF claim or Appium/WDA Session.
+      description: 仅限管理员。幂等结束远控并释放预约；Android 同时释放 STF 占用，iOS Baguette 入口随预约结束立即失效。
       security: [{consoleCookie: []}]
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
@@ -848,7 +848,7 @@ paths:
     post:
       tags: [Console]
       operationId: heartbeatDeviceRemoteControl
-      description: Admin only. Slides the Reservation lease while the platform-specific STF claim or pinned iOS Appium Session remains healthy; unhealthy control is ended instead.
+      description: 仅限管理员。管理员保持连接时滑动续租预约；Android 继续使用 STF，iOS 网关请求继续绑定有效预约。
       security: [{consoleCookie: []}]
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
@@ -914,7 +914,7 @@ paths:
     delete:
       tags: [Devices]
       operationId: endIntegratedDeviceRemoteControl
-      description: Trusted Alcor gateway operation that reuses the existing Reservation and platform-specific STF or Appium/WDA release path.
+      description: 供可信 Alcor 网关调用，复用已有预约以及对应平台的 STF 或 Baguette 释放路径。
       security: [{serviceBearer: []}]
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       responses:
@@ -1350,7 +1350,7 @@ components:
       description: 当前 Console 会话已撤销
       content: {application/json: {schema: {$ref: "#/components/schemas/ConsoleLogoutEnvelope"}}}
     RemoteControlAccepted:
-      description: 远控预约已创建，等待 Scheduler/STF claim
+      description: 远控预约已创建，正在等待设备分配和远控通道就绪
       content: {application/json: {schema: {$ref: "#/components/schemas/RemoteControlEnvelope"}}}
     RemoteControlSuccess:
       description: 管理员设备远控状态
@@ -1825,7 +1825,7 @@ components:
       enum: [connecting, connected, ended, failed]
     RemoteControlTransport:
       type: string
-      enum: [stf, appium]
+      enum: [stf, baguette]
     RemoteControl:
       type: object
       additionalProperties: false
@@ -1838,7 +1838,7 @@ components:
         url:
           type: string
           format: uri
-          description: Short-lived controlled remote entry. Android uses STF and iOS uses a same-origin Appium/WDA gateway bound to the target Simulator. It never contains Host/Fence/Appium/WDA/MJPEG endpoints, Session Grants, API tokens or signing secrets and must not be cached or persisted.
+          description: 短时受控远控入口。Android 使用 STF；iOS 通过绑定预约 Simulator 的独立网关使用 Baguette 原生 Web。入口不包含 Mac/Baguette 回环地址、Fence/Appium/WDA 地址、Session Grant、API Token 或签名密钥，且不得缓存或持久化。
         expires_at: {type: string, format: date-time}
         heartbeat_interval_seconds: {type: integer, minimum: 1}
     PageMetadata:

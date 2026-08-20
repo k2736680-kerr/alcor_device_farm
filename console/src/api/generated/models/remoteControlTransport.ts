@@ -12,5 +12,5 @@ export type RemoteControlTransport = typeof RemoteControlTransport[keyof typeof 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RemoteControlTransport = {
   stf: 'stf',
-  appium: 'appium',
+  baguette: 'baguette',
 } as const;

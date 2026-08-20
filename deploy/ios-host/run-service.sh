@@ -109,8 +109,16 @@ case "$component" in
     set +a
     exec "$ios_host_root/device-host-agent"
     ;;
+  baguette)
+    baguette="$ios_host_root/baguette-runtime/bin/baguette"
+    if [ ! -x "$baguette" ]; then
+      echo "缺少固定版本 Baguette 可执行文件" >&2
+      exit 64
+    fi
+    exec "$baguette" serve --host 127.0.0.1 --port 8421 --no-plugins
+    ;;
   *)
-    echo "服务类型必须是 appium-hub、appium-node 或 host-agent" >&2
+	 echo "服务类型必须是 appium-hub、appium-node、host-agent 或 baguette" >&2
     exit 64
     ;;
 esac

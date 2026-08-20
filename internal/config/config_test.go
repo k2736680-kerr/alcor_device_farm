@@ -71,6 +71,9 @@ stf:
   web_token_ttl: 25s
 ios_remote_control:
   enabled: true
+  baguette_url: http://127.0.0.1:8421
+  gateway_address: 0.0.0.0:8081
+  public_url: http://device-farm.example.test:18081
   gateway_secret: yaml-ios-gateway-secret-at-least-32-bytes
   gateway_token_ttl: 25s
 `)
@@ -93,6 +96,9 @@ ios_remote_control:
 	t.Setenv("DEVICE_FARM_STF_WEB_USER_EMAIL", "environment-admin@example.test")
 	t.Setenv("DEVICE_FARM_STF_ATTEMPTS", "4")
 	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_ENABLED", "true")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_BAGUETTE_URL", "http://127.0.0.1:4842")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_ADDRESS", "127.0.0.1:28081")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_PUBLIC_URL", "http://gateway.example.test:28081")
 	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_SECRET", "environment-ios-gateway-secret-at-least-32-bytes")
 	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_TOKEN_TTL", "20s")
 
@@ -133,7 +139,9 @@ ios_remote_control:
 		cfg.STF.WebURL != "http://stf-web-environment.local" || cfg.STF.WebUserEmail != "environment-admin@example.test" {
 		t.Fatalf("STF config = %+v", cfg.STF)
 	}
-	if !cfg.IOSRemote.Enabled || cfg.IOSRemote.GatewayTokenTTL != 20*time.Second {
+	if !cfg.IOSRemote.Enabled || cfg.IOSRemote.GatewayTokenTTL != 20*time.Second ||
+		cfg.IOSRemote.BaguetteURL != "http://127.0.0.1:4842" || cfg.IOSRemote.GatewayAddress != "127.0.0.1:28081" ||
+		cfg.IOSRemote.PublicURL != "http://gateway.example.test:28081" {
 		t.Fatalf("iOS remote config = %+v", cfg.IOSRemote)
 	}
 }
@@ -159,7 +167,7 @@ func TestValidateRejectsInvalidValues(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() error = nil")
 	}
-	for _, want := range []string{"host must not be empty", "read_timeout", "warm_pool.interval", "log.level"} {
+	for _, want := range []string{"主机不能为空", "read_timeout", "warm_pool.interval", "log.level"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Validate() error = %q, want %q", err, want)
 		}
@@ -212,6 +220,16 @@ func TestValidateRequiresIOSRemoteGatewaySecret(t *testing.T) {
 	cfg := Default()
 	cfg.IOSRemote.Enabled = true
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "ios_remote_control.gateway_secret") {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
+func TestValidateRequiresDedicatedIOSGatewayAddress(t *testing.T) {
+	cfg := Default()
+	cfg.IOSRemote = IOSRemoteConfig{Enabled: true, BaguetteURL: "http://127.0.0.1:8421",
+		GatewayAddress: cfg.Server.Address, PublicURL: "http://gateway.example.test:18081",
+		GatewaySecret: "ios-gateway-secret-at-least-32-bytes", GatewayTokenTTL: 30 * time.Second}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "不能与 server.address 相同") {
 		t.Fatalf("Validate() error=%v", err)
 	}
 }

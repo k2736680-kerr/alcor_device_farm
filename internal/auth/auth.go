@@ -55,11 +55,6 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 			return
 		case strings.HasPrefix(request.URL.Path, "/console/api/v1/"):
 			required = RoleConsole
-		case strings.HasPrefix(request.URL.Path, "/console/remote/ios/"):
-			// 独立控制台使用 Console Session；Alcor 嵌入控制台使用可信
-			// Service Token 代理同源画面。required=service 仍允许 Console
-			// 身份，但不会接受未认证的浏览器直连。
-			required = RoleService
 		case strings.HasPrefix(request.URL.Path, "/api/v1/"):
 			required = RoleService
 		case strings.HasPrefix(request.URL.Path, "/internal/v1/"):
@@ -115,9 +110,6 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 }
 
 func consoleAllowed(request *http.Request, principal Principal) bool {
-	if strings.HasPrefix(request.URL.Path, "/console/remote/ios/") {
-		return principal.ConsoleRole == ConsoleAdmin
-	}
 	if strings.HasPrefix(request.URL.Path, "/console/api/v1/") {
 		return true
 	}

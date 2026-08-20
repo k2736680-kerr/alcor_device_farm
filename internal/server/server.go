@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/baguette"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/api"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
@@ -36,19 +37,25 @@ import (
 )
 
 type Services struct {
-	Management    *management.Service
-	Reservations  *reservation.Service
-	Scheduler     *scheduler.Scheduler
-	Reconcile     *reconcile.Service
-	HostCommands  *hostcommand.Service
-	Metrics       *farmmetrics.Registry
-	ConsoleAuth   *consoleauth.Service
-	ConsoleQuery  *consolequery.Service
-	RemoteControl *remotecontrol.Service
-	ImageCatalog  *imagecatalog.Service
-	IOSSessions   *iossession.Service
-	IOSSimulators *iossimulator.Service
-	WarmPool      *warmpool.Controller
+	Management      *management.Service
+	Reservations    *reservation.Service
+	Scheduler       *scheduler.Scheduler
+	Reconcile       *reconcile.Service
+	HostCommands    *hostcommand.Service
+	Metrics         *farmmetrics.Registry
+	ConsoleAuth     *consoleauth.Service
+	ConsoleQuery    *consolequery.Service
+	RemoteControl   *remotecontrol.Service
+	ImageCatalog    *imagecatalog.Service
+	IOSSessions     *iossession.Service
+	IOSSimulators   *iossimulator.Service
+	WarmPool        *warmpool.Controller
+	BaguetteGateway http.Handler
+}
+
+func NewBaguetteHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+	return &http.Server{Addr: cfg.IOSRemote.GatewayAddress, Handler: handler,
+		ReadHeaderTimeout: cfg.Server.ReadTimeout, IdleTimeout: cfg.Server.IdleTimeout}
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -82,7 +89,6 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
 	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery, services.RemoteControl)
-	remotecontrol.RegisterGateway(mux, services.RemoteControl, logger)
 	mux.Handle("/console/", consoleui.Handler())
 	mux.Handle("/console", consoleui.Handler())
 	mux.HandleFunc("/", notFoundHandler)
@@ -94,6 +100,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	var services Services
 	var db *database.DB
+	var baguetteClient *baguette.Client
 	if cfg.Database.URL != "" {
 		var err error
 		db, err = database.Open(ctx, cfg.Database.URL)
@@ -152,13 +159,27 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				return err
 			}
 			go services.ConsoleAuth.RunCleanup(ctx)
-			if (stfClient != nil && cfg.STF.WebConfigured()) || cfg.IOSRemote.Configured() {
+			if cfg.IOSRemote.Configured() {
+				baguetteClient, err = baguette.New(baguette.Config{UpstreamURL: cfg.IOSRemote.BaguetteURL,
+					PublicURL: cfg.IOSRemote.PublicURL, Secret: cfg.IOSRemote.GatewaySecret,
+					TicketTTL: cfg.IOSRemote.GatewayTokenTTL})
+				if err != nil {
+					return err
+				}
+			}
+			if (stfClient != nil && cfg.STF.WebConfigured()) || baguetteClient != nil {
 				remoteConfig := remotecontrol.ConfigFrom(cfg)
 				remoteConfig.Logger = logger
 				services.RemoteControl, err = remotecontrol.New(
-					services.Reservations, services.Management, remoteConfig, services.IOSSessions)
+					services.Reservations, services.Management, remoteConfig, baguetteClient)
 				if err != nil {
 					return err
+				}
+				if baguetteClient != nil {
+					services.BaguetteGateway, err = baguette.NewGateway(baguetteClient, services.RemoteControl)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -167,31 +188,51 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		services.Metrics = farmmetrics.New(nil)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
-	errorChannel := make(chan error, 1)
+	servers := []*http.Server{httpServer}
+	if services.BaguetteGateway != nil {
+		servers = append(servers, NewBaguetteHTTPServer(cfg, services.BaguetteGateway))
+	}
+	errorChannel := make(chan error, len(servers))
 
-	go func() {
-		logger.Info("device farm server listening", "address", cfg.Server.Address)
-		err := httpServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errorChannel <- err
-			return
+	for index, running := range servers {
+		name := "设备农场服务"
+		if index == 1 {
+			name = "iOS Baguette 远控网关"
 		}
-		errorChannel <- nil
-	}()
+		go func(server *http.Server, serverName string) {
+			logger.Info(serverName+"正在监听", "地址", server.Addr)
+			err := server.ListenAndServe()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errorChannel <- err
+		}(running, name)
+	}
 
+	var runErr error
 	select {
-	case err := <-errorChannel:
-		return err
+	case runErr = <-errorChannel:
 	case <-ctx.Done():
-		logger.Info("device farm server shutting down")
+		logger.Info("设备农场服务正在停止")
 	}
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
-	if err := httpServer.Shutdown(shutdownContext); err != nil {
-		return err
+	for _, running := range servers {
+		if err := running.Shutdown(shutdownContext); err != nil && runErr == nil {
+			runErr = err
+		}
 	}
-	return <-errorChannel
+	for range servers {
+		select {
+		case err := <-errorChannel:
+			if err != nil && runErr == nil {
+				runErr = err
+			}
+		default:
+		}
+	}
+	return runErr
 }
 
 func healthHandler(writer http.ResponseWriter, request *http.Request) {

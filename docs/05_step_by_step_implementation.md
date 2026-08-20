@@ -71,6 +71,7 @@
 | DF-047 | iOS 真实验收、运维回滚与 Android 回归 | completed | DF-046 |
 | DF-048 | 统一 Android 与 iOS 设备池自动伸缩 | completed | DF-047 |
 | DF-049 | 统一设备农场控制台功能与中文文案审校 | completed | DF-048 |
+| DF-050 | 使用 Baguette 替换并清理自写 iOS 远控 | completed | DF-049、ADR-0026 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -505,6 +506,14 @@
 产出：控制台平台化文案清单、页面与标签修正、组件测试和 `docs/evidence/DF-049/`。
 
 验收：全控制台搜索不存在把统一平台误写成纯 Android、把 Mac 当普通模拟器服务器、把释放误写为清理数据或把目标数量写死的文案；Android/iOS 条件字段和操作正确；所有用户提示为中文且包含可追踪请求编号；前端测试和生产构建通过，真实同一后台能同时查看并操作 Android 与 iOS。
+
+### DF-050 使用 Baguette 替换并清理自写 iOS 远控
+
+实施：按 ADR-0026 固定并部署 Baguette，新增只负责健康、目标 UDID 和独立签名 Gateway 的 Adapter；现有开始、查询、心跳和结束 API 继续复用 PostgreSQL Reservation/Lease/Reaper。删除自写 iOS HTML/CSS/JavaScript、WDA MJPEG/截图/动作代理、人工 Appium Session 创建、Fence 远控路由及 Alcor 旧同源代理。Android 继续挂载 STF 原生页面，iOS 挂载 Baguette 原生页面。
+
+产出：ADR-0026、Baguette Adapter/Gateway、Mac 后台服务与安全通道配置、OpenAPI/Console/Alcor 入口修正、旧代码零残留扫描、真实浏览器证据和 `docs/evidence/DF-050/`。
+
+验收：真实 Mac 与浏览器连续操作舒适可用，点击、滑动、文字、Home、应用切换和重连生效；其他 UDID、设备墙、生命周期和插件命令被拒绝；结束或超时后页面失效且 Reservation 回收；Android STF、iOS 自动化 Session Fence、Appium Device Farm inventory 均无回归；仓库和部署中不存在旧自写页面、MJPEG/动作转发或可恢复旧方案的配置；全部提示为中文。
 
 ## 12. 单任务完成定义
 

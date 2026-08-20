@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
@@ -40,13 +39,11 @@ type Config struct {
 }
 
 type Server struct {
-	config         Config
-	controlURL     *url.URL
-	upstreamURL    *url.URL
-	httpClient     *http.Client
-	streamClient   *http.Client
-	httpServer     *http.Server
-	remoteSessions sync.Map
+	config      Config
+	controlURL  *url.URL
+	upstreamURL *url.URL
+	httpClient  *http.Client
+	httpServer  *http.Server
 }
 
 func New(config Config) (*Server, error) {
@@ -89,8 +86,7 @@ func New(config Config) (*Server, error) {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("iOS Session Fence 不允许重定向")
 	}
-	streamClient := &http.Client{CheckRedirect: client.CheckRedirect}
-	server := &Server{config: config, controlURL: controlURL, upstreamURL: upstreamURL, httpClient: client, streamClient: streamClient}
+	server := &Server{config: config, controlURL: controlURL, upstreamURL: upstreamURL, httpClient: client}
 	server.httpServer = &http.Server{Addr: config.ListenAddress, Handler: server, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: config.Timeout, IdleTimeout: 60 * time.Second}
 	return server, nil
@@ -125,10 +121,6 @@ func (server *Server) Run(ctx context.Context) error {
 func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Pragma", "no-cache")
-	if strings.HasPrefix(request.URL.Path, "/internal/v1/ios-remote/sessions/") {
-		server.remote(writer, request)
-		return
-	}
 	if strings.HasPrefix(request.URL.Path, "/internal/v1/ios-session-fence/sessions/") {
 		server.cleanup(writer, request)
 		return
@@ -169,13 +161,7 @@ func (server *Server) create(writer http.ResponseWriter, request *http.Request, 
 		http.Error(writer, "Session 路由校验未通过", http.StatusConflict)
 		return
 	}
-	upstreamRequest, mjpegPort, err := prepareMJPEGCapabilities(authorization.Request)
-	if err != nil {
-		server.recordFailure(request.Context(), grant, "IOS_REMOTE_PORT_ALLOCATION_FAILED")
-		http.Error(writer, "无法为 iOS 画面分配端口", http.StatusServiceUnavailable)
-		return
-	}
-	response, body, err := server.callUpstream(request.Context(), http.MethodPost, "/session", upstreamRequest, request.Header.Get("Content-Type"), maxCreateReply)
+	response, body, err := server.callUpstream(request.Context(), http.MethodPost, "/session", authorization.Request, request.Header.Get("Content-Type"), maxCreateReply)
 	if err != nil {
 		server.recordFailure(request.Context(), grant, "APPIUM_SESSION_CREATE_FAILED")
 		http.Error(writer, "上游 Appium Session 当前不可用", http.StatusBadGateway)
@@ -201,7 +187,6 @@ func (server *Server) create(writer http.ResponseWriter, request *http.Request, 
 		writeControlError(writer, err)
 		return
 	}
-	server.remoteSessions.Store(sessionID, mjpegPort)
 	copyResponse(writer, response, body)
 }
 
@@ -271,7 +256,6 @@ func (server *Server) deleteUpstream(ctx context.Context, sessionID string) erro
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 	if response.StatusCode == http.StatusNotFound || response.StatusCode >= 200 && response.StatusCode < 300 {
-		server.remoteSessions.Delete(sessionID)
 		return nil
 	}
 	return fmt.Errorf("上游清理返回状态码 %d", response.StatusCode)

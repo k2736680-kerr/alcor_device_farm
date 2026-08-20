@@ -14,7 +14,6 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
-	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 )
@@ -65,17 +64,19 @@ func (fake fakeDevices) GetDevice(context.Context, string) (management.Device, e
 	return fake.device, nil
 }
 
-type fakeIOSSessions struct {
-	binding    iossession.RemoteBindingView
-	bindingErr error
+type fakeIOSRemote struct {
+	bootedUDID string
+	entry      string
+	bootErr    error
 }
 
-func (fake *fakeIOSSessions) IssueManual(context.Context, audit.Actor, string, string, iossession.GrantInput) (iossession.GrantView, error) {
-	return iossession.GrantView{}, errors.New("unexpected manual Grant")
+func (fake *fakeIOSRemote) EnsureBooted(_ context.Context, udid string) error {
+	fake.bootedUDID = udid
+	return fake.bootErr
 }
 
-func (fake *fakeIOSSessions) RemoteBinding(context.Context, string, string, string) (iossession.RemoteBindingView, error) {
-	return fake.binding, fake.bindingErr
+func (fake *fakeIOSRemote) EntryURL(_, _, _, _ string) (string, error) {
+	return fake.entry, nil
 }
 
 func TestStartTargetsSelectedDeviceAndSignsShortSTFWebEntry(t *testing.T) {
@@ -161,24 +162,19 @@ func newTestService(t *testing.T, reservations *fakeReservations, now time.Time)
 	return service
 }
 
-func TestStartIOSUsesSameOriginTargetSimulatorEntryWithoutInternalEndpoint(t *testing.T) {
+func TestStartIOSUsesBaguetteTargetSimulatorEntryWithoutInternalEndpoint(t *testing.T) {
 	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
 	deviceID := "device_00000000000001"
 	reservations := &fakeReservations{current: activeReservation(deviceID)}
-	sessions := &fakeIOSSessions{binding: iossession.RemoteBindingView{
-		ReservationID: "reservation_000000000001", DeviceID: deviceID, HostID: "host_000000000000001",
-		FenceEndpoint: "http://127.0.0.1:4810", AppiumSessionID: "appium-session-1",
-	}}
+	iosRemote := &fakeIOSRemote{entry: "http://farm.example.test:18081/entry/signed-ticket"}
 	service, err := New(reservations, fakeDevices{device: management.Device{
 		ID: deviceID, Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
 		HostID: "host_000000000000001", ProviderRef: "00000000-0000-0000-0000-000000000001",
 		Serial: "00000000-0000-0000-0000-000000000001",
 	}}, Config{
-		IOSEnabled: true, IOSGatewaySecret: "test-ios-gateway-secret-at-least-32-bytes",
-		IOSGatewayTokenTTL: 30 * time.Second, Lease: time.Minute, Heartbeat: 15 * time.Second,
-		AgentToken: "test-agent-token-at-least-16-bytes", IOSCreateTimeout: time.Minute,
+		IOSEnabled: true, Lease: time.Minute, Heartbeat: 15 * time.Second,
 		Now: func() time.Time { return now },
-	}, sessions)
+	}, iosRemote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +182,7 @@ func TestStartIOSUsesSameOriginTargetSimulatorEntryWithoutInternalEndpoint(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Transport != TransportAppium || !strings.HasPrefix(view.URL, "/console/remote/ios/") || !strings.HasSuffix(view.URL, "/control") {
+	if view.Transport != TransportBaguette || view.URL != iosRemote.entry || iosRemote.bootedUDID != "00000000-0000-0000-0000-000000000001" {
 		t.Fatalf("view=%#v", view)
 	}
 	for _, forbidden := range []string{"127.0.0.1", "4810", "appium-session", "password", "passwd", "00000000-0000"} {
@@ -202,10 +198,8 @@ func TestStartRejectsPhysicalIOSBeforeCreatingReservation(t *testing.T) {
 	service, err := New(reservations, fakeDevices{device: management.Device{
 		ID: deviceID, Platform: "ios", DeviceKind: "physical", ProviderType: "appium_device_farm_ios",
 	}}, Config{
-		IOSEnabled: true, IOSGatewaySecret: "test-ios-gateway-secret-at-least-32-bytes",
-		IOSGatewayTokenTTL: 30 * time.Second, Lease: time.Minute, Heartbeat: 15 * time.Second,
-		AgentToken: "test-agent-token-at-least-16-bytes",
-	}, &fakeIOSSessions{})
+		IOSEnabled: true, Lease: time.Minute, Heartbeat: 15 * time.Second,
+	}, &fakeIOSRemote{})
 	if err != nil {
 		t.Fatal(err)
 	}

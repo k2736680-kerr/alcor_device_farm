@@ -89,6 +89,9 @@ type STFConfig struct {
 
 type IOSRemoteConfig struct {
 	Enabled         bool          `yaml:"enabled" json:"enabled"`
+	BaguetteURL     string        `yaml:"baguette_url" json:"baguette_url,omitempty"`
+	GatewayAddress  string        `yaml:"gateway_address" json:"gateway_address,omitempty"`
+	PublicURL       string        `yaml:"public_url" json:"public_url,omitempty"`
 	GatewaySecret   string        `yaml:"gateway_secret" json:"-"`
 	GatewayTokenTTL time.Duration `yaml:"gateway_token_ttl" json:"gateway_token_ttl"`
 }
@@ -205,6 +208,9 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"STF_WEB_AUTH_SECRET", &cfg.STF.WebAuthSecret},
 		{"STF_WEB_USER_NAME", &cfg.STF.WebUserName},
 		{"STF_WEB_USER_EMAIL", &cfg.STF.WebUserEmail},
+		{"IOS_REMOTE_CONTROL_BAGUETTE_URL", &cfg.IOSRemote.BaguetteURL},
+		{"IOS_REMOTE_CONTROL_GATEWAY_ADDRESS", &cfg.IOSRemote.GatewayAddress},
+		{"IOS_REMOTE_CONTROL_PUBLIC_URL", &cfg.IOSRemote.PublicURL},
 		{"IOS_REMOTE_CONTROL_GATEWAY_SECRET", &cfg.IOSRemote.GatewaySecret},
 		{"CONSOLE_USERS_FILE", &cfg.Console.UsersFile},
 	}
@@ -384,6 +390,18 @@ func (cfg Config) Validate() error {
 		}
 	}
 	if cfg.IOSRemote.Enabled {
+		if err := validateLoopbackHTTPURL("ios_remote_control.baguette_url", cfg.IOSRemote.BaguetteURL); err != nil {
+			validationErrors = append(validationErrors, err)
+		}
+		if err := validateNamedAddress("ios_remote_control.gateway_address", cfg.IOSRemote.GatewayAddress); err != nil {
+			validationErrors = append(validationErrors, err)
+		}
+		if err := validateRootHTTPURL("ios_remote_control.public_url", cfg.IOSRemote.PublicURL); err != nil {
+			validationErrors = append(validationErrors, err)
+		}
+		if strings.TrimSpace(cfg.IOSRemote.GatewayAddress) == strings.TrimSpace(cfg.Server.Address) {
+			validationErrors = append(validationErrors, errors.New("ios_remote_control.gateway_address 不能与 server.address 相同"))
+		}
 		if len(cfg.IOSRemote.GatewaySecret) < 32 {
 			validationErrors = append(validationErrors, errors.New("ios_remote_control.gateway_secret 必须至少包含 32 字节"))
 		}
@@ -479,17 +497,32 @@ func validateLoopbackHTTPURL(name, value string) error {
 	return nil
 }
 
+func validateRootHTTPURL(name, value string) error {
+	if err := validateHTTPURL(name, value); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(strings.TrimSpace(value))
+	if parsed.Path != "" && parsed.Path != "/" {
+		return fmt.Errorf("%s 必须使用独立站点根地址", name)
+	}
+	return nil
+}
+
 func validateAddress(address string) error {
+	return validateNamedAddress("server.address", address)
+}
+
+func validateNamedAddress(name, address string) error {
 	host, port, err := net.SplitHostPort(strings.TrimSpace(address))
 	if err != nil {
-		return fmt.Errorf("server.address must use host:port: %w", err)
+		return fmt.Errorf("%s 必须使用 host:port 格式：%w", name, err)
 	}
 	if host == "" {
-		return errors.New("server.address host must not be empty")
+		return fmt.Errorf("%s 的主机不能为空", name)
 	}
 	portNumber, err := strconv.Atoi(port)
 	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return errors.New("server.address port must be between 1 and 65535")
+		return fmt.Errorf("%s 的端口必须在 1 到 65535 之间", name)
 	}
 	return nil
 }
@@ -522,6 +555,9 @@ func (cfg Config) LogValue() slog.Value {
 		slog.String("stf_web_url", cfg.STF.WebURL),
 		slog.Duration("stf_web_token_ttl", cfg.STF.WebTokenTTL),
 		slog.Bool("ios_remote_control_enabled", cfg.IOSRemote.Enabled),
+		slog.String("ios_remote_control_baguette_url", cfg.IOSRemote.BaguetteURL),
+		slog.String("ios_remote_control_gateway_address", cfg.IOSRemote.GatewayAddress),
+		slog.String("ios_remote_control_public_url", cfg.IOSRemote.PublicURL),
 		slog.Duration("ios_remote_control_gateway_token_ttl", cfg.IOSRemote.GatewayTokenTTL),
 		slog.Bool("console_enabled", cfg.Console.Enabled),
 		slog.Bool("console_development_insecure", cfg.Console.DevelopmentInsecure),
@@ -541,7 +577,8 @@ func (cfg STFConfig) WebConfigured() bool {
 }
 
 func (cfg IOSRemoteConfig) Configured() bool {
-	return cfg.Enabled && strings.TrimSpace(cfg.GatewaySecret) != ""
+	return cfg.Enabled && strings.TrimSpace(cfg.BaguetteURL) != "" && strings.TrimSpace(cfg.GatewayAddress) != "" &&
+		strings.TrimSpace(cfg.PublicURL) != "" && strings.TrimSpace(cfg.GatewaySecret) != ""
 }
 
 func isLoopbackAddress(address string) bool {

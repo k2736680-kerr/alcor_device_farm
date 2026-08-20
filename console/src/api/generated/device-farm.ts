@@ -6793,7 +6793,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
 
 /**
- * Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device, then uses STF for Android or a pinned Appium/XCUITest Session for an iOS Simulator.
+ * 仅限管理员。为当前就绪且健康的目标设备创建短时人工预约；Android 打开 STF，iOS Simulator 打开受预约约束的 Baguette 原生 Web 远控。
  */
 export type startDeviceRemoteControlResponse202 = {
   data: RemoteControlAcceptedResponse
@@ -6905,7 +6905,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
 
 /**
- * Admin only. Returns the current administrator-owned remote control. Android uses a short-lived STF Web login; iOS uses a same-origin Appium/WDA entry that never exposes internal endpoints.
+ * 仅限管理员。返回当前管理员拥有的远控连接；Android 使用短时 STF Web 登录，iOS 使用仅允许访问预约 Simulator 的签名 Baguette 网关入口。
  */
 export type getDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse
@@ -7042,7 +7042,7 @@ export function useGetDeviceRemoteControl<TData = Awaited<ReturnType<typeof getD
 
 
 /**
- * Admin only. Idempotently ends remote control and releases the Reservation plus the platform-specific STF claim or Appium/WDA Session.
+ * 仅限管理员。幂等结束远控并释放预约；Android 同时释放 STF 占用，iOS Baguette 入口随预约结束立即失效。
  */
 export type endDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse
@@ -7154,7 +7154,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
 
 /**
- * Admin only. Slides the Reservation lease while the platform-specific STF claim or pinned iOS Appium Session remains healthy; unhealthy control is ended instead.
+ * 仅限管理员。管理员保持连接时滑动续租预约；Android 继续使用 STF，iOS 网关请求继续绑定有效预约。
  */
 export type heartbeatDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse
@@ -7639,7 +7639,7 @@ export function useGetIntegratedDeviceRemoteControl<TData = Awaited<ReturnType<t
 
 
 /**
- * Trusted Alcor gateway operation that reuses the existing Reservation and platform-specific STF or Appium/WDA release path.
+ * 供可信 Alcor 网关调用，复用已有预约以及对应平台的 STF 或 Baguette 释放路径。
  */
 export type endIntegratedDeviceRemoteControlResponse200 = {
   data: RemoteControlSuccessResponse

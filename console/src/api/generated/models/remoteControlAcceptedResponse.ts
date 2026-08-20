@@ -8,6 +8,6 @@
 import type { RemoteControlEnvelope } from './remoteControlEnvelope';
 
 /**
- * 远控预约已创建，等待 Scheduler/STF claim
+ * 远控预约已创建，正在等待设备分配和远控通道就绪
  */
 export type RemoteControlAcceptedResponse = RemoteControlEnvelope;

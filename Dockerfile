@@ -34,5 +34,5 @@ COPY scripts/check-server-deployment.sh /usr/local/bin/check-server-deployment.s
 COPY scripts/device-farm-server-entrypoint.sh /usr/local/bin/device-farm-server-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/device-farm-server /usr/local/bin/check-server-deployment.sh /usr/local/bin/device-farm-server-entrypoint.sh
 USER 65532:65532
-EXPOSE 8080
+EXPOSE 8080 8081
 ENTRYPOINT ["/usr/local/bin/device-farm-server-entrypoint.sh"]

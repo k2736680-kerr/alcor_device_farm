@@ -14,7 +14,7 @@ export interface RemoteControl {
   reservation_id?: Identifier;
   status: RemoteControlStatus;
   transport: RemoteControlTransport;
-  /** Short-lived controlled remote entry. Android uses STF and iOS uses a same-origin Appium/WDA gateway bound to the target Simulator. It never contains Host/Fence/Appium/WDA/MJPEG endpoints, Session Grants, API tokens or signing secrets and must not be cached or persisted. */
+  /** 短时受控远控入口。Android 使用 STF；iOS 通过绑定预约 Simulator 的独立网关使用 Baguette 原生 Web。入口不包含 Mac/Baguette 回环地址、Fence/Appium/WDA 地址、Session Grant、API Token 或签名密钥，且不得缓存或持久化。 */
   url?: string;
   expires_at?: string;
   /** @minimum 1 */

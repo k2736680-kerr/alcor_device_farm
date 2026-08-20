@@ -109,7 +109,7 @@ iOS Executor、IPA 元数据提取、安装、Case、结果和 Artifact 是 Alco
 
 DF-042 按 ADR-0022 固定具体接入：Alcor 可信 iOS Executor 先用 Service Token 为自己的 active Reservation 申请一次性 Session Grant，再把 Grant 交给对应 macOS Host 的 Fence。Grant 不是 Alcor Run Token，不写入 RunAttempt、日志或 Artifact；Fence 只限制明确 UDID 和转发既有 WebDriver 协议。Alcor 浏览器、Device Farm Console 和普通用户都不能获得 Grant、Fence Endpoint 或 Appium Node Endpoint。现有 Alcor Device Farm Gateway 的服务端持证、固定路径白名单和关联 Header 透传模式可以复用，但 iOS Executor 与 XCUITest 业务实现仍留在 Alcor。
 
-DF-046 的人工远控仍属于设备域运维能力，不是 Alcor 业务执行器。它复用同一 Reservation、Session Fence 和明确 UDID 约束建立短期人工 Appium Session，只开放 WDA MJPEG、截图、点击、滑动、文本和 Home 白名单；不向 Alcor 或浏览器公开原始 WebDriver、Host/Fence/Appium/WDA/MJPEG 地址或 Grant，也不新增 Run、RunAttempt、结果和 Artifact 语义。macOS VNC 只可作为宿主机运维能力，不能作为设备用户远控入口。
+DF-046 的 WDA 人工远控已由 ADR-0026 和 DF-050 取代。人工远控仍属于设备域运维能力，不是 Alcor 业务执行器；它复用同一 Reservation 和明确 UDID，通过 Baguette Adapter 挂载上游原生 Web UI，不创建人工 Appium Session。Alcor 浏览器只获得签名 Gateway 入口，不获得 Mac/Baguette 回环地址、Host/Fence/Appium/WDA 地址或 Grant，也不新增 Run、RunAttempt、结果和 Artifact 语义。macOS VNC 只可作为宿主机运维能力，不能作为设备用户远控入口。
 
 DF-043 的固定库存接入继续作为发现、启动/停止、预约和 Session 基础。ADR-0024 根据需求方确认取代其禁止创建/删除的首期限制：DF-044 起允许 Server 通过既有 Host Command、Agent 和 Provider 对 Host 已安装且受控的 CoreSimulator Runtime 执行动态 create/boot/shutdown/erase/delete。该能力仍只产生 Device/Pool/命令/审计，不产生 Alcor Run/Result；Appium Device Farm 继续只提供 inventory、技术 busy 和明确 UDID Session 路由。
 # DF-035 官方目录与按需准备补充（2026-08-10）
