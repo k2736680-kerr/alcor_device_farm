@@ -28,7 +28,7 @@ import {
 import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile, IOSSimulatorCatalog } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { androidVersionLabel, formatTime, shortID } from '../api/format'
+import { androidVersionLabel, formatTime, iosDeviceModelLabel, shortID } from '../api/format'
 import {
   deviceKindLabel,
   healthReasonLabel,
@@ -151,20 +151,6 @@ function iosSystemVersion(device: Device): string {
     if (marker) return `iOS ${marker.replaceAll('-', '.')}`
   }
   return 'iOS（版本待上报）'
-}
-
-function iosDeviceModel(device: Device): string {
-  const deviceTypeID = device.capabilities.deviceTypeId
-  if (typeof deviceTypeID === 'string' && deviceTypeID.trim()) {
-    const identifier = deviceTypeID.split('.').at(-1) ?? deviceTypeID
-    return identifier.replaceAll('-', ' ')
-  }
-  const deviceName = device.capabilities.deviceName
-  if (typeof deviceName === 'string' && deviceName.trim() && !deviceName.startsWith('Alcor-DF-')) {
-    return deviceName
-  }
-  const model = device.capabilities.model
-  return typeof model === 'string' && model.trim() ? model : '-'
 }
 
 function androidCatalogStatus(value: string): string {
@@ -537,7 +523,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const columns: TableColumnsType<Device> = [
     { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{platformLabel(value)}</Tag> },
-    { title: '设备型号', width: 170, render: (_, device) => String(device.platform === 'ios' ? iosDeviceModel(device) : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-')) },
+    { title: '设备型号', width: 170, render: (_, device) => String(device.platform === 'ios' ? iosDeviceModelLabel(device.capabilities) : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-')) },
     {
       title: '系统版本', width: 190, render: (_, device) => {
         if (device.platform === 'ios') {

@@ -35,9 +35,13 @@ function resourceText(host: DeviceHost, kind: 'cpu' | 'memory' | 'disk') {
     return '等待宿主代理上报'
   }
   if (kind === 'cpu') {
-    return `${numeric(used.cpu_cores) ?? 0} / ${numeric(capacity.cpu_cores) ?? '-'} 核`
+    const total = numeric(capacity.cpu_cores) ?? '-'
+    return host.host_os === 'macos' ? `共享使用，共 ${total} 核` : `配额 ${numeric(used.cpu_cores) ?? 0} / ${total} 核`
   }
   if (kind === 'memory') {
+    if (host.host_os === 'macos') {
+      return `共享使用；实时可用 ${numeric(capacity.memory_available_mb) ?? '-'} / ${numeric(capacity.memory_total_mb) ?? '-'} MB`
+    }
     return `配额 ${numeric(used.memory_mb) ?? 0} / ${numeric(capacity.memory_total_mb) ?? '-'} MB；实时可用 ${numeric(capacity.memory_available_mb) ?? '-'} MB`
   }
   return `可用 ${numeric(capacity.disk_available_mb) ?? '-'} / ${numeric(capacity.disk_total_mb) ?? '-'} MB`
@@ -58,19 +62,14 @@ function capabilityObject(host: DeviceHost, key: string): Record<string, unknown
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-function iosEnvironment(host: DeviceHost): string {
-  if (host.host_os !== 'macos') return '不适用'
-  const capabilities = host.capabilities as Record<string, unknown>
-  const catalog = capabilityObject(host, 'ios_simulator_catalog')
-  const runtimes = Array.isArray(catalog?.runtimes) ? catalog.runtimes.length : 0
-  const deviceTypes = Array.isArray(catalog?.device_types) ? catalog.device_types.length : 0
-  return `Xcode ${String(capabilities.xcode_version ?? '-')}；${runtimes} 个 iOS 运行时，${deviceTypes} 个机型`
-}
-
 function hostReadiness(host: DeviceHost) {
-  if (host.host_os !== 'macos') return <Tag>Android 宿主机</Tag>
-  const readiness = capabilityObject(host, 'host_readiness')
-  return readiness?.ready === true ? <Tag color="green">iOS 自动化就绪</Tag> : <Tag color="red">iOS 环境未就绪</Tag>
+  if (host.host_os === 'macos') {
+    const readiness = capabilityObject(host, 'host_readiness')
+    return readiness?.ready === true ? <Tag color="green">自动化就绪</Tag> : <Tag color="red">自动化未就绪</Tag>
+  }
+  const capabilities = host.capabilities as Record<string, unknown>
+  const ready = host.status === 'online' && capabilities.kvm === true && capabilities.docker === true
+  return ready ? <Tag color="green">自动化就绪</Tag> : <Tag color="red">自动化未就绪</Tag>
 }
 
 export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
@@ -113,11 +112,10 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
     { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
-    { title: 'CPU', key: 'cpu', width: 130, render: (_, host) => resourceText(host, 'cpu') },
+    { title: 'CPU', key: 'cpu', width: 160, render: (_, host) => resourceText(host, 'cpu') },
     { title: '内存', key: 'memory', width: 260, render: (_, host) => resourceText(host, 'memory') },
     { title: '宿主机数据盘', key: 'disk', width: 190, render: (_, host) => resourceText(host, 'disk') },
     { title: '创建规则', key: 'capacity_policy', width: 260, render: (_, host) => capacityPolicy(host) },
-    { title: 'iOS 运行环境', key: 'ios_environment', width: 300, render: (_, host) => iosEnvironment(host) },
     { title: '自动化就绪', key: 'readiness', width: 150, render: (_, host) => hostReadiness(host) },
     { title: '地址', dataIndex: 'address', ellipsis: true, render: (value?: string) => value ?? '-' },
     { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 160, render: (value?: string) => formatTime(value) },

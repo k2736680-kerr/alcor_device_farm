@@ -29,7 +29,7 @@ import {
 import type { ConsoleRole, DevicePool, Device, DeviceHost, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { androidVersionLabel, formatTime, shortID } from '../api/format'
+import { androidVersionLabel, formatTime, iosDeviceModelLabel, iosVersionLabel, shortID } from '../api/format'
 import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
 import { apiErrorText, durationLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -49,9 +49,7 @@ function numeric(value: unknown): number | undefined {
 function templateLabel(device: Device): string {
   const capabilities = device.capabilities as Record<string, unknown>
   if (device.platform === 'ios') {
-    const model = String(capabilities.model ?? capabilities.deviceName ?? 'iPhone')
-    const runtime = String(capabilities.runtimeId ?? '运行时未知')
-    return `${shortID(device.id)} · ${model} · ${runtime}`
+    return `${shortID(device.id)} · ${iosVersionLabel(capabilities)} · ${iosDeviceModelLabel(capabilities)}`
   }
   return `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`
 }
@@ -134,8 +132,9 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     },
   )
   const currentPoolDevices = unwrapPage<Device>(poolDevicesQuery.data)?.total ?? 0
-  const devicesQuery = useListDevices({ page: 1, page_size: 200 }, { query: { enabled: Boolean(configPool) } })
+  const devicesQuery = useListDevices({ page: 1, page_size: 200 })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
+  const deviceByID = useMemo(() => new Map(devices.map((device) => [device.id, device])), [devices])
   const poolDevices = devices.filter((device) => device.pool_id === configPool?.id)
   const addableDevices = devices.filter((device) => configPool && device.platform === configPool.platform && !device.pool_id && device.lifecycle_status !== 'deleted')
   const baseDevice = poolDevices.find((device) => device.id === configPool?.base_device_id)
@@ -240,8 +239,16 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     { title: '最长租期窗口', dataIndex: 'max_lease_seconds', width: 140, render: (value: number) => durationLabel(value) },
     { title: '目标设备数', dataIndex: 'total_target', width: 110 },
     {
-      title: '默认系统', dataIndex: 'default_image_id', width: 180,
-      render: (value: string | undefined, pool) => pool.platform === 'ios' ? '由扩容模板决定' : value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-',
+      title: '扩容配置', dataIndex: 'default_image_id', width: 260,
+      render: (value: string | undefined, pool) => {
+        const template = pool.base_device_id ? deviceByID.get(pool.base_device_id) : undefined
+        if (pool.platform === 'ios') {
+          return template ? `${iosVersionLabel(template.capabilities)} · ${iosDeviceModelLabel(template.capabilities)}` : '-'
+        }
+        const version = value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-'
+        const model = template?.capabilities.hardware_profile_name
+        return model ? `${version} · ${String(model)}` : version
+      },
     },
     { title: '扩容模板', dataIndex: 'base_device_id', width: 150, render: (value?: string) => value ? shortID(value) : <Tag>未选择</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
@@ -297,7 +304,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       >
         <Typography.Title level={5}>基本信息</Typography.Title>
         <Form<PoolFormValues> form={poolForm} layout="vertical" onFinish={savePool}>
-          <Form.Item name="name" label="设备池名称" extra={configPool?.platform === 'ios' ? '名称只是管理标识；iOS 运行时和机型由扩容模板决定。' : '名称只是管理标识，不代表当前 Android 版本；系统版本以“默认系统”和设备列表为准。'} rules={[{ required: true, message: '请输入池名称' }]}>
+          <Form.Item name="name" label="设备池名称" extra={configPool?.platform === 'ios' ? '名称只是管理标识；当前用于扩容的 iOS 版本和机型显示在列表“扩容配置”中。' : '名称只是管理标识；当前用于扩容的 Android 版本和机型显示在列表“扩容配置”中。'} rules={[{ required: true, message: '请输入池名称' }]}>
             <Input maxLength={128} />
           </Form.Item>
           <Space size={16} wrap>

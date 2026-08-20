@@ -31,3 +31,30 @@ export function androidVersionLabel(value?: unknown): string {
   const release = releases[apiLevel]
   return release ? `Android ${release}（API ${apiLevel}）` : `API ${apiLevel}`
 }
+
+/** Prefer the public CoreSimulator device type over Apple's internal model identifier. */
+export function iosDeviceModelLabel(capabilities: Record<string, unknown>): string {
+  const deviceTypeID = capabilities.deviceTypeId
+  if (typeof deviceTypeID === 'string' && deviceTypeID.trim()) {
+    const identifier = deviceTypeID.split('.').at(-1) ?? deviceTypeID
+    return identifier.replaceAll('-', ' ')
+  }
+  const deviceName = capabilities.deviceName
+  if (typeof deviceName === 'string' && deviceName.trim() && !deviceName.startsWith('Alcor-DF-')) {
+    return deviceName
+  }
+  const model = capabilities.model
+  return typeof model === 'string' && model.trim() ? model : 'iPhone'
+}
+
+/** Render a friendly iOS version from either the reported version or runtime id. */
+export function iosVersionLabel(capabilities: Record<string, unknown>): string {
+  const platformVersion = capabilities.platformVersion
+  if (typeof platformVersion === 'string' && platformVersion.trim()) return `iOS ${platformVersion}`
+  const runtime = capabilities.runtimeId
+  if (typeof runtime === 'string') {
+    const marker = runtime.match(/iOS[-.]([0-9-]+)$/i)?.[1]
+    if (marker) return `iOS ${marker.replaceAll('-', '.')}`
+  }
+  return 'iOS'
+}

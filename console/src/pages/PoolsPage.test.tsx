@@ -113,13 +113,15 @@ describe('PoolsPage pool capacity', () => {
     const user = userEvent.setup()
     renderWithProviders(<PoolsPage />)
     expect(await screen.findByText('default-ios')).toBeInTheDocument()
+    expect(await screen.findByText('iOS 26.3 · iPhone 17 Pro')).toBeInTheDocument()
+    expect(screen.queryByText('由扩容模板决定')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /配\s*置/ }))
 
     const target = await screen.findByRole('spinbutton', { name: '目标设备数' })
     expect(target).toBeEnabled()
     expect(target).toHaveValue('6')
     expect(screen.getByText(/沿用模板的 Mac、iOS 运行时和 iPhone 机型/)).toBeInTheDocument()
-    expect(screen.getByText(/iPhone 17 Pro/)).toBeInTheDocument()
+    expect(screen.getAllByText(/iPhone 17 Pro/).length).toBeGreaterThan(0)
 
     fireEvent.change(target, { target: { value: '4' } })
     await user.type(screen.getByRole('textbox', { name: '调整原因（缩容时必填并写入审计）' }), '减少空闲设备')
