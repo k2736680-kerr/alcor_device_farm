@@ -152,6 +152,34 @@ func TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover(t *testin
 	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
 }
 
+func TestIOSDeviceDoesNotUseAndroidProviderOrSTFHealthChain(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `
+		DELETE FROM device_pool_devices WHERE device_id='device_0000000000001';
+		UPDATE device_pools SET platform='ios' WHERE id='pool_000000000000001';
+		UPDATE device_hosts SET host_type='appium_device_farm_ios',host_os='macos',host_arch='arm64'
+		WHERE id='host_000000000000001';
+		UPDATE devices SET platform='ios',image_id=NULL,device_kind='simulator',
+			provider_type='appium_device_farm_ios',provider_ref='SIM-IOS-1',serial='SIM-IOS-1',
+			capabilities='{"componentHealth":{"transport":"passed","automation":"passed","router":"passed"}}',
+			lifecycle_status='ready',health_status='healthy',health_reason=NULL,consecutive_failures=0
+		WHERE id='device_0000000000001';
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_0000000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+	visibility := &sequenceVisibility{failures: 10}
+	service := reconcile.New(environment.db, environment.provider, visibility, 2, 0, 0, testLogger())
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibility.calls != 0 || result.EventsRecorded != 0 || result.DevicesQuarantined != 0 {
+		t.Fatalf("iOS reconcile result=%+v STF calls=%d", result, visibility.calls)
+	}
+	assertDevice(t, environment.db, "ready", "healthy", 0)
+}
+
 func TestSTFVisibilityGraceDoesNotConsumeFailureBudgetAfterProvisioning(t *testing.T) {
 	environment := newEnvironment(t, true)
 	if _, err := environment.db.Pool().Exec(context.Background(), `INSERT INTO device_host_commands

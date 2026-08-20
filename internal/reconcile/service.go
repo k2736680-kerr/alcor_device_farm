@@ -53,6 +53,7 @@ type Event struct {
 type DeviceState struct {
 	ID                   string
 	HostID               string
+	Platform             string
 	ProviderRef          string
 	Serial               string
 	Lifecycle            domain.DeviceLifecycleStatus
@@ -198,6 +199,7 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 			continue
 		}
 		result.DevicesChecked++
+		usesAndroidHealthChain := device.Platform == "" || device.Platform == "android"
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", domain.HostUnavailableReason
@@ -205,12 +207,12 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 				input.SuppressFailureCount = true
 				input.SuppressQuarantine = true
 			}
-		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
+		} else if usesAndroidHealthChain && service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
 			service.withinVisibilityGrace(device, input.ObservedAt) {
 			input.EventType, input.Severity, input.Reason = "stf_stabilizing", "error", domain.STFReadinessStabilizationReason
 			input.SuppressFailureCount = true
 			input.SuppressQuarantine = true
-		} else if service.provider != nil {
+		} else if usesAndroidHealthChain && service.provider != nil {
 			health, inspectErr := service.provider.InspectHealth(ctx, device.ProviderRef)
 			switch {
 			case inspectErr != nil && providers.ErrorCode(inspectErr) == "PROVIDER_DEVICE_NOT_FOUND":
@@ -231,7 +233,7 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 					}
 				}
 			}
-		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
+		} else if usesAndroidHealthChain && service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
 			(device.Health == domain.HealthHealthy || domain.IsSTFFailureReason(device.HealthReason)) {
 			visible, visibilityErr := service.visibility.Visible(ctx, device.Serial)
 			if visibilityErr == nil && visible {
@@ -431,7 +433,7 @@ type queryer interface {
 }
 
 func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
-	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.serial,d.lifecycle_status,
+	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.platform,d.provider_ref,d.serial,d.lifecycle_status,
 		d.health_status,COALESCE(d.health_reason,''),d.consecutive_failures,h.status,
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
@@ -455,7 +457,7 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	result := []DeviceState{}
 	for rows.Next() {
 		var device DeviceState
-		if err := rows.Scan(&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
+		if err := rows.Scan(&device.ID, &device.HostID, &device.Platform, &device.ProviderRef, &device.Serial,
 			&device.Lifecycle, &device.Health, &device.HealthReason, &device.ConsecutiveFailures, &device.HostStatus,
 			&device.OperationInFlight, &device.DeletionInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt,
 			&device.HostFailureStartedAt); err != nil {
