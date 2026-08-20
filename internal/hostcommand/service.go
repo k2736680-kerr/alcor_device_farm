@@ -383,9 +383,10 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	_, err = tx.Exec(ctx, `UPDATE devices SET serial=CASE WHEN $2='' THEN serial ELSE $2 END,
 		adb_endpoint=COALESCE($3,adb_endpoint),appium_endpoint=COALESCE($4,appium_endpoint),
 		capabilities=CASE WHEN $5::text IS NULL THEN (capabilities || $6::jsonb) ELSE jsonb_set((capabilities || $6::jsonb),'{appiumUdid}',to_jsonb($5::text),true) END,
-		lifecycle_status=$7::varchar,health_status=$8::varchar,health_reason=$9,last_seen_at=$10,updated_at=$10
+		lifecycle_status=$7::varchar,health_status=$8::varchar,health_reason=$9,
+		consecutive_failures=CASE WHEN $11::boolean THEN 0 ELSE consecutive_failures END,last_seen_at=$10,updated_at=$10
 		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID, capabilitiesJSON,
-		aggregate.Lifecycle(), aggregate.Health(), healthReason, now)
+		aggregate.Lifecycle(), aggregate.Health(), healthReason, now, recoveredAutomatically)
 	if err != nil {
 		return err
 	}
