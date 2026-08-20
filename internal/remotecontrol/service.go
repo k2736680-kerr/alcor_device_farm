@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -60,6 +61,7 @@ type Config struct {
 	Lease              time.Duration
 	Heartbeat          time.Duration
 	Now                func() time.Time
+	Logger             *slog.Logger
 }
 
 type View struct {
@@ -80,6 +82,7 @@ type Service struct {
 	stfWebURL    *url.URL
 	httpClient   *http.Client
 	streamClient *http.Client
+	logger       *slog.Logger
 	iosStarts    sync.Map
 }
 
@@ -132,12 +135,15 @@ func New(reservations Reservations, devices Devices, cfg Config, iosSessionServi
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	client := &http.Client{Timeout: cfg.IOSCreateTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("iOS 远控内部请求不允许重定向")
 	}}
 	streamClient := &http.Client{CheckRedirect: client.CheckRedirect}
 	return &Service{reservations: reservations, devices: devices, iosSessions: iosSessions,
-		config: cfg, stfWebURL: stfWebURL, httpClient: client, streamClient: streamClient}, nil
+		config: cfg, stfWebURL: stfWebURL, httpClient: client, streamClient: streamClient, logger: cfg.Logger}, nil
 }
 
 func ConfigFrom(app config.Config) Config {
@@ -362,16 +368,20 @@ func (service *Service) ensureIOSSession(device management.Device, current reser
 		ctx, cancel := context.WithTimeout(context.Background(), service.config.IOSCreateTimeout)
 		defer cancel()
 		actor := audit.Console(current.OwnerID)
+		stage := "签发一次性 Session Grant"
 		grant, err := service.iosSessions.IssueManual(ctx, actor, current.ID,
 			"ios_remote_grant_"+current.ID, iossession.GrantInput{
 				OwnerType: "manual", OwnerID: current.OwnerID, TTLSeconds: 120,
 			})
 		if err == nil {
+			stage = "创建固定目标的 Appium Session"
 			err = service.createIOSSession(ctx, grant)
 		}
 		if err == nil {
 			return
 		}
+		service.logger.ErrorContext(context.Background(), "iOS 远控 Session 创建失败",
+			"阶段", stage, "预约ID", current.ID, "设备ID", device.ID, "错误", err)
 		releaseContext, releaseCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer releaseCancel()
 		_, _ = service.reservations.Release(releaseContext, actor,

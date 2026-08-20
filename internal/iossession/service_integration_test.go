@@ -131,6 +131,28 @@ func TestManualRemoteGrantAndBindingStayOwnedByConsoleReservation(t *testing.T) 
 	}
 }
 
+func TestManualRemoteGrantAcceptsTrustedServiceScopedReservationForSameOwner(t *testing.T) {
+	db := openIOSSessionTestDatabase(t)
+	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations
+		SET client_id='service',owner_type='manual',owner_id='admin' WHERE id=$1`, testReservation); err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, testAgentToken, fixedGrantGenerator(10))
+	grant, err := service.IssueManual(context.Background(), audit.Console("admin"), testReservation,
+		"issue_delegated_manual_remote_0001", GrantInput{OwnerType: "manual", OwnerID: "admin", TTLSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.ReservationID != testReservation || grant.DeviceID != testDeviceID {
+		t.Fatalf("grant=%#v", grant)
+	}
+	if _, err := service.IssueManual(context.Background(), audit.Console("other-admin"), testReservation,
+		"issue_delegated_manual_remote_0002", GrantInput{OwnerType: "manual", OwnerID: "other-admin", TTLSeconds: 60}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-owner grant error=%v", err)
+	}
+}
+
 func TestGrantExpiryAndProviderBusyDrift(t *testing.T) {
 	db := openIOSSessionTestDatabase(t)
 	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)

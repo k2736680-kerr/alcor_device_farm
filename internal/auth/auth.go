@@ -53,8 +53,13 @@ func RouteMiddleware(security config.SecurityConfig, next http.Handler, consoleA
 		case request.URL.Path == "/console/api/v1/sessions" && request.Method == http.MethodPost:
 			next.ServeHTTP(writer, request)
 			return
-		case strings.HasPrefix(request.URL.Path, "/console/api/v1/") || strings.HasPrefix(request.URL.Path, "/console/remote/ios/"):
+		case strings.HasPrefix(request.URL.Path, "/console/api/v1/"):
 			required = RoleConsole
+		case strings.HasPrefix(request.URL.Path, "/console/remote/ios/"):
+			// 独立控制台使用 Console Session；Alcor 嵌入控制台使用可信
+			// Service Token 代理同源画面。required=service 仍允许 Console
+			// 身份，但不会接受未认证的浏览器直连。
+			required = RoleService
 		case strings.HasPrefix(request.URL.Path, "/api/v1/"):
 			required = RoleService
 		case strings.HasPrefix(request.URL.Path, "/internal/v1/"):

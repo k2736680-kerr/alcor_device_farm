@@ -48,6 +48,36 @@ func TestGatewayShowsOnlyTargetSimulatorPageAndRequiresOwningAdmin(t *testing.T)
 	}
 }
 
+func TestGatewayAllowsTrustedPlatformProxyOnlyForBoundActor(t *testing.T) {
+	service, view, closeFence, _ := newIOSGatewayService(t)
+	defer closeFence()
+	mux := http.NewServeMux()
+	RegisterGateway(mux, service)
+	handler := auth.RouteMiddleware(config.SecurityConfig{ServiceToken: "service-token"}, mux)
+
+	allowed := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, view.URL, nil)
+	request.Header.Set("Authorization", "Bearer service-token")
+	request.Header.Set("X-Device-Farm-Actor-Id", "admin")
+	handler.ServeHTTP(allowed, request)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("platform proxy status=%d body=%s", allowed.Code, allowed.Body.String())
+	}
+
+	for _, actor := range []string{"", "other-admin"} {
+		denied := httptest.NewRecorder()
+		request = httptest.NewRequest(http.MethodGet, view.URL, nil)
+		request.Header.Set("Authorization", "Bearer service-token")
+		if actor != "" {
+			request.Header.Set("X-Device-Farm-Actor-Id", actor)
+		}
+		handler.ServeHTTP(denied, request)
+		if denied.Code != http.StatusForbidden && denied.Code != http.StatusUnauthorized {
+			t.Fatalf("actor=%q status=%d", actor, denied.Code)
+		}
+	}
+}
+
 func TestGatewayProxiesOnlyWhitelistedTargetSessionAction(t *testing.T) {
 	service, view, closeFence, _ := newIOSGatewayService(t)
 	defer closeFence()

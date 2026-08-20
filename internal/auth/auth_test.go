@@ -90,6 +90,33 @@ func TestRouteMiddlewareLeavesPublicPathsUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestIOSRemoteGatewayAcceptsOnlyAuthenticatedConsoleOrService(t *testing.T) {
+	security := config.SecurityConfig{ServiceToken: "service-secret"}
+	next := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		principal, ok := FromContext(request.Context())
+		if !ok {
+			t.Fatal("iOS 远控网关没有认证身份")
+		}
+		writer.Header().Set("X-Test-Role", string(principal.Role))
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	handler := RouteMiddleware(security, next)
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/console/remote/ios/ticket/control", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d", unauthorized.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/console/remote/ios/ticket/control", nil)
+	request.Header.Set("Authorization", "Bearer service-secret")
+	service := httptest.NewRecorder()
+	handler.ServeHTTP(service, request)
+	if service.Code != http.StatusNoContent || service.Header().Get("X-Test-Role") != string(RoleService) {
+		t.Fatalf("service status=%d role=%q", service.Code, service.Header().Get("X-Test-Role"))
+	}
+}
+
 func TestEmptyConfiguredTokensFailClosed(t *testing.T) {
 	handler := correlation.Middleware(RouteMiddleware(config.SecurityConfig{}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("request with empty configured tokens reached protected handler")

@@ -200,7 +200,13 @@ func (service *Service) issue(ctx context.Context, actor audit.Actor, reservatio
 		if err != nil {
 			return err
 		}
-		if clientID != actor.ClientID || ownerType != input.OwnerType || ownerID != input.OwnerID {
+		// 独立控制台创建的人工预约使用 console:<用户> 作为幂等作用域；
+		// Alcor 嵌入控制台则由可信 Service Token 代建预约，作用域为 service，
+		// 但预约所有者仍是当前人工用户。两种入口都必须同时匹配 manual 和
+		// owner_id，不能因为部署形态不同而把已授权的目标 Simulator 拒绝掉。
+		clientOwned := clientID == actor.ClientID ||
+			(actor.Type == audit.ActorConsole && clientID == audit.ActorService && ownerType == "manual")
+		if !clientOwned || ownerType != input.OwnerType || ownerID != input.OwnerID {
 			return ErrForbidden
 		}
 		if reservationStatus != string(domain.ReservationActive) || reservationExpiry == nil || !reservationExpiry.After(now) ||

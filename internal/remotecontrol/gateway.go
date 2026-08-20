@@ -40,7 +40,15 @@ type gatewayHandler struct {
 
 func (handler *gatewayHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := auth.FromContext(request.Context())
-	if !ok || principal.Role != auth.RoleConsole || principal.ConsoleRole != auth.ConsoleAdmin {
+	ownerID := ""
+	if ok && principal.Role == auth.RoleConsole && principal.ConsoleRole == auth.ConsoleAdmin {
+		ownerID = principal.SubjectID
+	} else if ok && principal.Role == auth.RoleService {
+		// 仅可信平台服务可以代理嵌入式控制页；操作者仍由已认证的
+		// Alcor 服务端写入审计头，浏览器无法自行选择预约所有者。
+		ownerID = strings.TrimSpace(request.Header.Get("X-Device-Farm-Actor-Id"))
+	}
+	if ownerID == "" {
 		writeGatewayError(writer, request, http.StatusForbidden, "当前控制台角色无权使用 iOS 远程控制")
 		return
 	}
@@ -50,7 +58,7 @@ func (handler *gatewayHandler) ServeHTTP(writer http.ResponseWriter, request *ht
 	// by that Console session plus the still-active Reservation. Expiring the
 	// ticket on subresources would break a healthy long-running remote session.
 	checkExpiry := asset == "control"
-	claims, err := handler.service.verifyGatewayToken(request.PathValue("token"), principal.SubjectID, checkExpiry)
+	claims, err := handler.service.verifyGatewayToken(request.PathValue("token"), ownerID, checkExpiry)
 	if err != nil {
 		writeGatewayError(writer, request, http.StatusUnauthorized, "iOS 远控入口已失效，请返回设备页面重新打开")
 		return
