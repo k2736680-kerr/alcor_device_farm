@@ -378,13 +378,19 @@ func (store *Store) SetPoolBaseDevice(ctx context.Context, poolID, deviceID stri
 	var value management.Pool
 	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var enabled bool
+		var poolPlatform, devicePlatform, deviceKind, providerType string
 		var lifecycle domain.DeviceLifecycleStatus
 		var health domain.HealthStatus
-		if err := tx.QueryRow(ctx, `SELECT pd.enabled,d.lifecycle_status,d.health_status FROM device_pool_devices pd
-			JOIN devices d ON d.id=pd.device_id WHERE pd.pool_id=$1 AND pd.device_id=$2 FOR UPDATE`, poolID, deviceID).Scan(&enabled, &lifecycle, &health); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT pd.enabled,p.platform,d.platform,d.device_kind,d.provider_type,d.lifecycle_status,d.health_status
+			FROM device_pool_devices pd JOIN device_pools p ON p.id=pd.pool_id
+			JOIN devices d ON d.id=pd.device_id WHERE pd.pool_id=$1 AND pd.device_id=$2 FOR UPDATE OF p,d,pd`, poolID, deviceID).
+			Scan(&enabled, &poolPlatform, &devicePlatform, &deviceKind, &providerType, &lifecycle, &health); err != nil {
 			return err
 		}
-		if !enabled || lifecycle != domain.DeviceReady || health != domain.HealthHealthy {
+		validTemplate := poolPlatform == devicePlatform &&
+			((poolPlatform == "android" && deviceKind == "emulator" && providerType == "docker_emulator") ||
+				(poolPlatform == "ios" && deviceKind == "simulator" && providerType == "appium_device_farm_ios"))
+		if !enabled || !validTemplate || lifecycle != domain.DeviceReady || health != domain.HealthHealthy {
 			return management.ErrInvalidArgument
 		}
 		var err error

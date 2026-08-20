@@ -20,7 +20,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | Device Farm Adapter | 提供北向 OpenAPI 和 Mock | 由新版 Worker 在第六阶段实现 | 不直接依赖旧 `eval_tasks` 或共享数据库 |
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
 | Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
-| 动态容量扩缩容 | Console 设置 Pool 总目标和基础设备；Server 按基础设备当前已生效的 Phone、Image 与 runtime profile，结合 Host 实际 CPU、内存、磁盘与在途预留创建干净新实例 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或数据卷 |
+| 动态容量扩缩容 | Console 为 Android、iOS 单平台 Pool 设置目标和扩容模板设备；Android 复用基础设备的 Phone、Image 与 runtime profile，iOS 复用模板 Simulator 的 Mac Host、Runtime 与 iPhone Device Type；两者均结合 Host 实际内存、磁盘、槽位与在途预留创建全新实例，并只安全删除空闲设备 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或设备数据 |
 | Android 官方目录、Phone 硬件模板与受控创建 | Console 的四步 Phone 向导提交 `catalog_id`、硬件模板、Pool 和 runtime profile；持久化 provisioning job 自动复用或排队既有镜像准备，验证成功后事务登记 `create` Host Command，Agent 创建后沿既有健康链路收敛 | 新版 Alcor 只选择已可用 Device，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；job 幂等重试不得重复下载、创建设备或增加 Pool 目标；未验证、无 digest 的候选项不得写入 `device_images`；首期不暴露 TV、Wear、Automotive、Desktop、XR |
 | 长期设备与人工删除 | Reservation release 只归还 STF 占用并把 Device 直接恢复为 ready，保留 APK、账号、缓存和数据卷；管理员可删除无活动预约的 ready/quarantined/stopped Device，Server 原子退出 Pool 并降低该 Pool 目标，Agent 复用 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作 | 不允许删除 reserved/busy/recycling；不物理删库；不新增 Docker 直连；只有显式 rebuild/reimage 才恢复出厂 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
@@ -43,6 +43,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - Scheduler、租约、续租、释放、数据库并发约束；
 - Reconciler、Reaper、健康事件、隔离和重建；
 - 控制台统一 Pool 总目标、按真实资源动态扩容和最旧空闲 Emulator 安全缩容；
+- iOS Pool 使用同一 `total_target/min_ready/max_concurrency` 目标模型；选择健康 Simulator 作为扩容模板后自动创建或安全删除 CoreSimulator，不另建 iOS 容量表；
 - Host 实际 CPU/内存/磁盘心跳、设备有效运行规格、Server/Agent 双重资源预检和可解释容量结果；
 - 官方稳定 Android System Image 目录同步、后台按需准备、内部缓存、不可变 digest 验证，以及空闲 Emulator 受控重装；
 - Phone 硬件模板搜索、系统镜像选择、完整 runtime profile 与加入 Pool 的受控 Emulator 创建；

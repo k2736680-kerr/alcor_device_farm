@@ -2,6 +2,7 @@ package warmpool_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,11 +14,82 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/capacity"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossimulator"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/warmpool"
 )
+
+func TestConcurrentControllersScaleIOSPoolToTargetWithoutOverbuilding(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSWarmPool(t, db, 6, 3)
+	generator := sequentialGenerator()
+	controllers := []*warmpool.Controller{
+		warmpool.New(db, generator, nil, iossimulator.New(db, generator)),
+		warmpool.New(db, generator, nil, iossimulator.New(db, generator)),
+	}
+	start := make(chan struct{})
+	errorsChannel := make(chan error, len(controllers))
+	var group sync.WaitGroup
+	for _, controller := range controllers {
+		controller := controller
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			_, err := controller.RunOnce(context.Background())
+			errorsChannel <- err
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsChannel)
+	for err := range errorsChannel {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE platform='ios' AND lifecycle_status<>'deleted'`, 6)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'platform'='ios'`, 3)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->'capabilities'->>'runtimeId'='com.apple.CoreSimulator.SimRuntime.iOS-26-3'
+		AND payload->'capabilities'->>'deviceTypeId'='com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro'`, 3)
+	assertCount(t, db, `SELECT total_target FROM device_pools WHERE id='pool_ios_000000000001'`, 6)
+
+	if result, err := controllers[0].RunOnce(context.Background()); err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("second iOS reconciliation result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE platform='ios' AND lifecycle_status<>'deleted'`, 6)
+}
+
+func TestIOSScaleDownProtectsReservationsAndUsesIOSDeletePayload(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSWarmPool(t, db, 1, 3)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='busy'
+		WHERE id='ios_device_0000000001';
+		INSERT INTO device_reservations(id,client_id,pool_id,device_id,owner_type,owner_id,lease_seconds,status,
+		idempotency_key,starts_at,expires_at)
+		VALUES('ios_reservation_000001','service','pool_ios_000000000001','ios_device_0000000001','test_run',
+		'ios_owner_00000000001',600,'active','ios-active-reservation',clock_timestamp(),clock_timestamp()+interval '10 minutes')`); err != nil {
+		t.Fatal(err)
+	}
+	controller := warmpool.New(db, sequentialGenerator(), nil, iossimulator.New(db, sequentialGenerator()))
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("iOS scale down result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'platform'='ios'
+		AND payload->>'provider_type'='appium_device_farm_ios'
+		AND payload->>'provider_ref'='00000000-0000-0000-0000-000000000002'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='ios_device_0000000001'
+		AND lifecycle_status='busy'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000001' AND enabled`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000003' AND enabled`, 1)
+}
 
 func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testing.T) {
 	db := openTestDatabase(t)
@@ -785,6 +857,62 @@ func seedWarmPool(t *testing.T, db *database.DB, imageStatus string, minReady, m
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_images(pool_id,image_id,min_ready,max_instances,enabled)
 		VALUES('pool_000000000000001','image_00000000000001',$1,$2,true)`, minReady, maxInstances); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedIOSWarmPool(t *testing.T, db *database.DB, target, current int) {
+	t.Helper()
+	if _, err := db.Pool().Exec(context.Background(), `TRUNCATE TABLE
+		device_idempotency_records,device_audit_events,device_health_events,device_sessions,
+		device_reservations,device_pool_devices,devices,device_pool_images,device_pools,
+		device_host_commands,device_hosts,device_images RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := json.Marshal(map[string]any{"ios_simulator_catalog": map[string]any{
+		"runtimes": []map[string]any{{
+			"id": "com.apple.CoreSimulator.SimRuntime.iOS-26-3", "name": "iOS 26.3", "version": "26.3",
+			"device_type_ids": []string{"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"},
+		}},
+		"device_types": []map[string]any{{
+			"id": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro", "name": "iPhone 17 Pro",
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_hosts
+		(id,name,host_type,host_os,host_arch,capabilities,capacity,used_capacity,status,draining,last_heartbeat_at)
+		VALUES('host_ios_000000000001','ios-warm-host','appium_device_farm_ios','macos','arm64',$1::jsonb,
+		'{"cpu_cores":12,"memory_total_mb":65536,"memory_available_mb":65536,"disk_total_mb":1000000,"disk_available_mb":800000,"device_slots":12}',
+		'{"device_slots":0}','online',false,clock_timestamp())`, capabilities); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pools
+		(id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status,total_target,min_ready,platform)
+		VALUES('pool_ios_000000000001','default-ios',1800,86400,$1,'active',$1,$1,'ios')`, target); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= current; index++ {
+		id := fmt.Sprintf("ios_device_%010d", index)
+		providerRef := fmt.Sprintf("00000000-0000-0000-0000-%012d", index)
+		createdOffset := current - index + 1
+		if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+			(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,
+			lifecycle_status,health_status,created_at,updated_at)
+			VALUES($1,'host_ios_000000000001','ios','simulator','appium_device_farm_ios',$2,'rebuild',$2,
+			'{"platformName":"iOS","automationName":"XCUITest","runtimeId":"com.apple.CoreSimulator.SimRuntime.iOS-26-3","deviceTypeId":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro","model":"iPhone 17 Pro"}',
+			'ready','healthy',clock_timestamp()-make_interval(hours=>$3),clock_timestamp()-make_interval(hours=>$3))`,
+			id, providerRef, createdOffset); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+			VALUES('pool_ios_000000000001',$1,true)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools
+		SET base_device_id='ios_device_0000000003' WHERE id='pool_ios_000000000001'`); err != nil {
 		t.Fatal(err)
 	}
 }

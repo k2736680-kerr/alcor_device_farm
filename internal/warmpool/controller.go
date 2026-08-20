@@ -89,19 +89,28 @@ type CatalogProvisionInput struct {
 }
 
 type Controller struct {
-	db     *database.DB
-	newID  func() (string, error)
-	logger *slog.Logger
+	db        *database.DB
+	newID     func() (string, error)
+	logger    *slog.Logger
+	iosScaler IOSPoolScaler
 }
 
-func New(db *database.DB, generator func() (string, error), logger *slog.Logger) *Controller {
+type IOSPoolScaler interface {
+	ReconcileScaleUp(context.Context) (created, capacityMisses int, err error)
+}
+
+func New(db *database.DB, generator func() (string, error), logger *slog.Logger, iosScalers ...IOSPoolScaler) *Controller {
 	if generator == nil {
 		generator = identifier.New
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Controller{db: db, newID: generator, logger: logger}
+	controller := &Controller{db: db, newID: generator, logger: logger}
+	if len(iosScalers) > 0 {
+		controller.iosScaler = iosScalers[0]
+	}
+	return controller
 }
 
 func (controller *Controller) CreateCatalogProvisioning(ctx context.Context, input CatalogProvisionInput) (Provisioning, bool, error) {
@@ -344,6 +353,20 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	if err := controller.reconcileCatalogProvisioningJobs(ctx); err != nil {
 		return result, err
 	}
+	iosScaleDown, err := controller.reconcileIOSScaleDown(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.Configurations += iosScaleDown.Configurations
+	result.DeletesQueued += iosScaleDown.DeletesQueued
+	if controller.iosScaler != nil {
+		created, misses, scaleErr := controller.iosScaler.ReconcileScaleUp(ctx)
+		if scaleErr != nil {
+			return result, scaleErr
+		}
+		result.DevicesCreated += created
+		result.CapacityMisses += misses
+	}
 	rows, err := controller.db.Pool().Query(ctx, `SELECT p.id,COALESCE(b.image_id,p.default_image_id)
 		FROM device_pools p
 		LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
@@ -489,7 +512,10 @@ func (controller *Controller) reconcileCatalogProvisioningJobs(ctx context.Conte
 type scaleDownDevice struct {
 	ID           string
 	HostID       string
-	ImageID      string
+	Platform     string
+	DeviceKind   string
+	ProviderType string
+	ImageID      *string
 	ProviderRef  string
 	Lifecycle    domain.DeviceLifecycleStatus
 	Health       domain.HealthStatus
@@ -633,28 +659,35 @@ func (controller *Controller) queueScaleDown(
 	ctx context.Context,
 	tx pgx.Tx,
 	poolID string,
+	platform string,
 	target, excess int,
 ) (int, error) {
 	queued := 0
 	for queued < excess {
 		var current scaleDownDevice
-		err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT d.id,d.host_id,d.image_id,d.provider_ref,d.lifecycle_status,d.health_status,
+		err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT d.id,d.host_id,d.platform,d.device_kind,d.provider_type,d.image_id,d.provider_ref,d.lifecycle_status,d.health_status,
 			EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status='active'),
 			EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased')),
 			EXISTS (SELECT 1 FROM device_pool_devices other WHERE other.device_id=d.id AND other.enabled AND other.pool_id<>$1)
-			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			FROM device_pools p JOIN device_pool_devices pd ON pd.pool_id=p.id JOIN devices d ON d.id=pd.device_id
 			JOIN device_hosts h ON h.id=d.host_id
-			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator'
-			AND d.provider_type='docker_emulator' AND %s
+			WHERE pd.pool_id=$1 AND pd.enabled AND d.platform=$2
+			AND (($2='android' AND d.device_kind='emulator' AND d.provider_type='docker_emulator')
+				OR ($2='ios' AND d.device_kind='simulator' AND d.provider_type='appium_device_farm_ios'))
+			AND %s
 			AND d.lifecycle_status IN ('ready','stopped','quarantined')
+			AND ($3=0 OR p.base_device_id IS NULL OR d.id<>p.base_device_id)
 			AND NOT EXISTS (SELECT 1 FROM device_reservations active_use
-				WHERE active_use.device_id=d.id AND active_use.status='active')
+				WHERE active_use.device_id=d.id AND active_use.status IN ('pending','active'))
+			AND NOT EXISTS (SELECT 1 FROM device_sessions active_session
+				WHERE active_session.device_id=d.id AND active_session.status IN ('starting','active','closing'))
 			AND NOT EXISTS (SELECT 1 FROM device_host_commands active_command
 				WHERE active_command.payload->>'device_id'=d.id AND active_command.status IN ('pending','leased'))
 			AND NOT EXISTS (SELECT 1 FROM device_pool_devices shared_membership
 				WHERE shared_membership.device_id=d.id AND shared_membership.enabled AND shared_membership.pool_id<>$1)
 			ORDER BY d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate),
-			poolID).Scan(&current.ID, &current.HostID, &current.ImageID, &current.ProviderRef, &current.Lifecycle,
+			poolID, platform, target).Scan(&current.ID, &current.HostID, &current.Platform, &current.DeviceKind,
+			&current.ProviderType, &current.ImageID, &current.ProviderRef, &current.Lifecycle,
 			&current.Health, &current.HasActiveUse, &current.HasCommand, &current.Shared)
 		if errors.Is(err, pgx.ErrNoRows) {
 			break
@@ -685,13 +718,18 @@ func (controller *Controller) queueScaleDown(
 		if err != nil {
 			return queued, err
 		}
-		payload, err := json.Marshal(map[string]any{"operation_source": "warm_pool_scale_down",
-			"device_id": current.ID, "pool_id": poolID, "image_id": current.ImageID, "provider_ref": current.ProviderRef,
-			"target_instances": target})
+		payloadValues := map[string]any{"operation_source": "warm_pool_scale_down",
+			"device_id": current.ID, "pool_id": poolID, "platform": current.Platform,
+			"device_kind": current.DeviceKind, "provider_type": current.ProviderType,
+			"provider_ref": current.ProviderRef, "target_instances": target}
+		if current.ImageID != nil {
+			payloadValues["image_id"] = *current.ImageID
+		}
+		payload, err := json.Marshal(payloadValues)
 		if err != nil {
 			return queued, err
 		}
-		hash := sha256.Sum256([]byte(poolID + "\x00" + current.ImageID + "\x00" + current.ID + "\x00" + fmt.Sprint(target)))
+		hash := sha256.Sum256([]byte(poolID + "\x00" + current.Platform + "\x00" + current.ID + "\x00" + fmt.Sprint(target)))
 		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
 			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
 			VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`, commandID, current.HostID, payload,
@@ -701,6 +739,12 @@ func (controller *Controller) queueScaleDown(
 		if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$3
 			WHERE pool_id=$1 AND device_id=$2 AND enabled`, poolID, current.ID, now); err != nil {
 			return queued, err
+		}
+		if target == 0 {
+			if _, err := tx.Exec(ctx, `UPDATE device_pools SET base_device_id=NULL,updated_at=$3
+				WHERE id=$1 AND base_device_id=$2`, poolID, current.ID, now); err != nil {
+				return queued, err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_reason='automatic scale down queued',updated_at=$3
 			WHERE id=$1 AND lifecycle_status=$4`, current.ID, nextLifecycle, now, current.Lifecycle); err != nil {
@@ -713,14 +757,64 @@ func (controller *Controller) queueScaleDown(
 		if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events
 			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
 			VALUES($1,'system','system','scale_down_device','device',$2,$3,
-			'automatic fixed target scale down',jsonb_build_object('command_id',$4::text,'pool_id',$5::text,
-			'image_id',$6::text,'target_instances',$7::int))`, auditID, current.ID, "scale-down-"+commandID,
-			commandID, poolID, current.ImageID, target); err != nil {
+			'按设备池目标自动缩容',jsonb_build_object('command_id',$4::text,'pool_id',$5::text,
+			'platform',$6::text,'target_instances',$7::int))`, auditID, current.ID, "scale-down-"+commandID,
+			commandID, poolID, current.Platform, target); err != nil {
 			return queued, err
 		}
 		queued++
 	}
 	return queued, nil
+}
+
+func (controller *Controller) reconcileIOSScaleDown(ctx context.Context) (Result, error) {
+	rows, err := controller.db.Pool().Query(ctx, `SELECT id FROM device_pools
+		WHERE platform='ios' AND status='active' ORDER BY id`)
+	if err != nil {
+		return Result{}, err
+	}
+	var poolIDs []string
+	for rows.Next() {
+		var poolID string
+		if err := rows.Scan(&poolID); err != nil {
+			rows.Close()
+			return Result{}, err
+		}
+		poolIDs = append(poolIDs, poolID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Result{}, err
+	}
+	rows.Close()
+	result := Result{Configurations: len(poolIDs)}
+	for _, poolID := range poolIDs {
+		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+			var target, current int
+			if err := tx.QueryRow(ctx, `SELECT total_target FROM device_pools
+				WHERE id=$1 AND platform='ios' AND status='active' FOR UPDATE`, poolID).Scan(&target); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil
+				}
+				return err
+			}
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+				WHERE pd.pool_id=$1 AND pd.enabled AND d.platform='ios' AND d.device_kind='simulator'
+				AND d.provider_type='appium_device_farm_ios' AND d.lifecycle_status<>'deleted'`, poolID).Scan(&current); err != nil {
+				return err
+			}
+			if current <= target {
+				return nil
+			}
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, "ios", target, current-target)
+			result.DeletesQueued += queued
+			return err
+		})
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
 }
 
 type recyclingDevice struct {
@@ -1174,7 +1268,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			return err
 		}
 		if activeInstances > totalTarget {
-			queued, err := controller.queueScaleDown(ctx, tx, poolID, totalTarget, activeInstances-totalTarget)
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", totalTarget, activeInstances-totalTarget)
 			if err != nil {
 				return err
 			}

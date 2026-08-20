@@ -30,6 +30,7 @@ var (
 	ErrNotFound        = errors.New("未找到指定的 iOS Simulator 宿主机或设备池")
 	ErrConflict        = errors.New("iOS Simulator 创建请求与当前资源状态冲突")
 	ErrCapacity        = errors.New("宿主机资源不足，暂时不能创建新的 iOS Simulator")
+	ErrTargetSatisfied = errors.New("iOS 设备池已经达到目标数量")
 )
 
 type CapacityError struct{ Result capacity.Result }
@@ -100,6 +101,10 @@ func (service *Service) Catalog(ctx context.Context, hostID string) (Catalog, er
 }
 
 func (service *Service) Create(ctx context.Context, actor audit.Actor, requestID, idempotencyKey string, input CreateInput) (Operation, error) {
+	return service.create(ctx, actor, requestID, idempotencyKey, input, true)
+}
+
+func (service *Service) create(ctx context.Context, actor audit.Actor, requestID, idempotencyKey string, input CreateInput, increaseTarget bool) (Operation, error) {
 	if service == nil || service.db == nil || !actor.Valid() || len(strings.TrimSpace(idempotencyKey)) < 8 ||
 		strings.TrimSpace(requestID) == "" || strings.TrimSpace(input.HostID) == "" || strings.TrimSpace(input.PoolID) == "" ||
 		strings.TrimSpace(input.RuntimeID) == "" || strings.TrimSpace(input.DeviceTypeID) == "" || strings.TrimSpace(input.Reason) == "" ||
@@ -169,7 +174,8 @@ func (service *Service) Create(ctx context.Context, actor audit.Actor, requestID
 			return ErrInvalidArgument
 		}
 		var poolStatus, platform string
-		if err := tx.QueryRow(ctx, `SELECT status,platform FROM device_pools WHERE id=$1 FOR UPDATE`, input.PoolID).Scan(&poolStatus, &platform); err != nil {
+		var totalTarget int
+		if err := tx.QueryRow(ctx, `SELECT status,platform,total_target FROM device_pools WHERE id=$1 FOR UPDATE`, input.PoolID).Scan(&poolStatus, &platform, &totalTarget); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -177,6 +183,18 @@ func (service *Service) Create(ctx context.Context, actor audit.Actor, requestID
 		}
 		if poolStatus != "active" || platform != "ios" {
 			return ErrConflict
+		}
+		if !increaseTarget {
+			var current int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_pool_devices pd
+				JOIN devices d ON d.id=pd.device_id
+				WHERE pd.pool_id=$1 AND pd.enabled AND d.platform='ios' AND d.device_kind='simulator'
+				AND d.provider_type='appium_device_farm_ios' AND d.lifecycle_status<>'deleted'`, input.PoolID).Scan(&current); err != nil {
+				return err
+			}
+			if current >= totalTarget {
+				return ErrTargetSatisfied
+			}
 		}
 		var registeredSlots, pendingSlots int64
 		if err := tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE lifecycle_status IN ('provisioning','booting'))
@@ -211,9 +229,11 @@ func (service *Service) Create(ctx context.Context, actor audit.Actor, requestID
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE device_pools SET total_target=total_target+1,
-			max_concurrency=GREATEST(max_concurrency,total_target+1),updated_at=clock_timestamp() WHERE id=$1`, input.PoolID); err != nil {
-			return err
+		if increaseTarget {
+			if _, err := tx.Exec(ctx, `UPDATE device_pools SET total_target=total_target+1,
+				max_concurrency=GREATEST(max_concurrency,total_target+1),updated_at=clock_timestamp() WHERE id=$1`, input.PoolID); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
 			VALUES($1,$2,$3,'create_ios_simulator','device',$4,$5,$6,jsonb_build_object('host_id',$7::text,'pool_id',$8::text,'runtime_id',$9::text,'device_type_id',$10::text,'command_id',$11::text))`,
@@ -224,6 +244,113 @@ func (service *Service) Create(ctx context.Context, actor audit.Actor, requestID
 		return nil
 	})
 	return result, err
+}
+
+// ReconcileScaleUp fills active iOS pools to their configured total target.
+// It reuses a selected, healthy Simulator only as an immutable Host/Runtime/
+// device-type template; CoreSimulator data is never cloned.
+func (service *Service) ReconcileScaleUp(ctx context.Context) (created, capacityMisses int, err error) {
+	if service == nil || service.db == nil {
+		return 0, 0, errors.New("iOS 设备池伸缩服务尚未配置")
+	}
+	rows, err := service.db.Pool().Query(ctx, `SELECT id FROM device_pools
+		WHERE platform='ios' AND status='active' AND base_device_id IS NOT NULL
+		AND total_target>(SELECT count(*) FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			WHERE pd.pool_id=device_pools.id AND pd.enabled AND d.platform='ios'
+			AND d.device_kind='simulator' AND d.provider_type='appium_device_farm_ios'
+			AND d.lifecycle_status<>'deleted')
+		ORDER BY id`)
+	if err != nil {
+		return 0, 0, err
+	}
+	var poolIDs []string
+	for rows.Next() {
+		var poolID string
+		if err := rows.Scan(&poolID); err != nil {
+			rows.Close()
+			return created, capacityMisses, err
+		}
+		poolIDs = append(poolIDs, poolID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return created, capacityMisses, err
+	}
+	rows.Close()
+
+	for _, poolID := range poolIDs {
+		for {
+			input, templateErr := service.scaleTemplate(ctx, poolID)
+			if errors.Is(templateErr, ErrConflict) || errors.Is(templateErr, ErrNotFound) {
+				break
+			}
+			if templateErr != nil {
+				return created, capacityMisses, templateErr
+			}
+			keyID, keyErr := service.newID()
+			if keyErr != nil {
+				return created, capacityMisses, keyErr
+			}
+			requestID, requestErr := service.newID()
+			if requestErr != nil {
+				return created, capacityMisses, requestErr
+			}
+			_, createErr := service.create(ctx, audit.System(), "ios-pool-scale-"+requestID,
+				"ios-pool-scale-"+keyID, input, false)
+			switch {
+			case createErr == nil:
+				created++
+			case errors.Is(createErr, ErrTargetSatisfied):
+				break
+			case errors.Is(createErr, ErrCapacity):
+				capacityMisses++
+				break
+			case errors.Is(createErr, ErrConflict), errors.Is(createErr, ErrInvalidArgument), errors.Is(createErr, ErrNotFound):
+				break
+			default:
+				return created, capacityMisses, createErr
+			}
+			if createErr != nil {
+				break
+			}
+		}
+	}
+	return created, capacityMisses, nil
+}
+
+func (service *Service) scaleTemplate(ctx context.Context, poolID string) (CreateInput, error) {
+	var hostID string
+	var capabilities []byte
+	var lifecycle, health, platform, kind, provider string
+	err := service.db.Pool().QueryRow(ctx, `SELECT d.host_id,d.capabilities,d.lifecycle_status,d.health_status,
+		d.platform,d.device_kind,d.provider_type
+		FROM device_pools p
+		JOIN device_pool_devices pd ON pd.pool_id=p.id AND pd.device_id=p.base_device_id AND pd.enabled
+		JOIN devices d ON d.id=pd.device_id
+		WHERE p.id=$1 AND p.platform='ios' AND p.status='active'`, poolID).
+		Scan(&hostID, &capabilities, &lifecycle, &health, &platform, &kind, &provider)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CreateInput{}, ErrNotFound
+	}
+	if err != nil {
+		return CreateInput{}, err
+	}
+	if platform != "ios" || kind != "simulator" || provider != "appium_device_farm_ios" ||
+		health != "healthy" || lifecycle == "deleted" || lifecycle == "quarantined" {
+		return CreateInput{}, ErrConflict
+	}
+	var values map[string]any
+	if json.Unmarshal(capabilities, &values) != nil {
+		return CreateInput{}, ErrConflict
+	}
+	runtimeID, _ := values["runtimeId"].(string)
+	deviceTypeID, _ := values["deviceTypeId"].(string)
+	displayName, _ := values["model"].(string)
+	if strings.TrimSpace(runtimeID) == "" || strings.TrimSpace(deviceTypeID) == "" {
+		return CreateInput{}, ErrConflict
+	}
+	return CreateInput{HostID: hostID, PoolID: poolID, RuntimeID: runtimeID,
+		DeviceTypeID: deviceTypeID, DisplayName: displayName, Reason: "按设备池目标自动扩容 iOS 模拟器"}, nil
 }
 
 func catalogFromCapabilities(raw []byte) (Catalog, error) {

@@ -19,13 +19,14 @@ import {
   getListDevicePoolsQueryKey,
   getListDevicesQueryKey,
   useAddDeviceToPool,
+  useListDeviceHosts,
   useListDeviceImages,
   useListDevicePools,
   useListDevices,
   useSelectDevicePoolBaseDevice,
   useUpdateDevicePool,
 } from '../api/generated/device-farm'
-import type { ConsoleRole, DevicePool, Device, DeviceImage } from '../api/generated/models'
+import type { ConsoleRole, DevicePool, Device, DeviceHost, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, formatTime, shortID } from '../api/format'
@@ -45,6 +46,60 @@ function errorText(error: unknown): string {
   return `${err.code ?? '未知错误'}（请求编号：${err.requestId ?? '-'}）：${err.message ?? '请稍后重试'}`
 }
 
+function numeric(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function templateLabel(device: Device): string {
+  const capabilities = device.capabilities as Record<string, unknown>
+  if (device.platform === 'ios') {
+    const model = String(capabilities.model ?? capabilities.deviceName ?? 'iPhone')
+    const runtime = String(capabilities.runtimeId ?? '运行时未知')
+    return `${shortID(device.id)} · ${model} · ${runtime}`
+  }
+  return `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`
+}
+
+function templateHostDescription(host?: DeviceHost): string {
+  if (!host) return '尚未读取到扩容模板所在宿主机。'
+  if (host.status !== 'online') return `模板宿主机“${host.name}”当前离线，恢复在线后才会继续扩容。`
+  if (host.draining) return `模板宿主机“${host.name}”正在排空，解除排空后才会继续扩容。`
+  const capacity = host.capacity as Record<string, unknown>
+  const memory = numeric(capacity.memory_available_mb)
+  const disk = numeric(capacity.disk_available_mb)
+  const slots = numeric(capacity.device_slots)
+  if (memory === undefined && disk === undefined && slots === undefined) {
+    return `模板宿主机“${host.name}”在线，正在等待资源心跳。`
+  }
+  return `模板宿主机“${host.name}”在线；可用内存 ${memory ?? '-'} MB，可用磁盘 ${disk ?? '-'} MB${slots ? `，设备安全上限 ${slots} 台` : ''}。`
+}
+
+function scaleUpDescription(pool: DevicePool, current: number, target: number, devices: Device[], host?: DeviceHost): string {
+  const difference = target - current
+  if (!pool.base_device_id) return '扩容前请先在下方选择一台健康的扩容模板。'
+  if (!host) return `计划补齐 ${difference} 台设备，正在等待扩容模板所在宿主机的状态。`
+  if (host.status !== 'online') return `计划补齐 ${difference} 台设备，但模板宿主机当前离线；恢复在线后自动继续。`
+  if (host.draining) return `计划补齐 ${difference} 台设备，但模板宿主机正在排空；解除排空后自动继续。`
+  if (pool.platform === 'ios') {
+    const capacity = host.capacity as Record<string, unknown>
+    const pending = devices.filter((device) => device.host_id === host.id && ['provisioning', 'booting'].includes(device.lifecycle_status)).length
+    const poolRegistered = devices.filter((device) => device.host_id === host.id && !['deleted', 'quarantined'].includes(device.lifecycle_status)).length
+    const reportedUsed = numeric((host.used_capacity as Record<string, unknown>).device_slots) ?? 0
+    const registered = Math.max(poolRegistered, reportedUsed)
+    const memory = numeric(capacity.memory_available_mb)
+    const disk = numeric(capacity.disk_available_mb)
+    const slots = numeric(capacity.device_slots)
+    const requiredMemory = 4096 * (pending + 1)
+    const requiredDisk = 16384 * (pending + 1)
+    const reasons: string[] = []
+    if (memory !== undefined && memory < requiredMemory) reasons.push(`内存还缺 ${requiredMemory - memory} MB`)
+    if (disk !== undefined && disk < requiredDisk) reasons.push(`磁盘还缺 ${requiredDisk - disk} MB`)
+    if (slots !== undefined && registered >= slots) reasons.push('设备名额已达到安全上限')
+    if (reasons.length > 0) return `还需补齐 ${difference} 台，但模板宿主机${reasons.join('、')}；释放资源后自动继续。`
+  }
+  return `正在按目标自动补齐 ${difference} 台设备；若宿主机资源暂时不足，目标值会保留并在资源恢复后继续。`
+}
+
 export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const { message, modal } = AntApp.useApp()
   const queryClient = useQueryClient()
@@ -60,6 +115,9 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const imagesQuery = useListDeviceImages({ page: 1, page_size: 200, status: 'ready' })
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
   const imageByID = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
+  const hostsQuery = useListDeviceHosts({ page: 1, page_size: 200 })
+  const hosts = unwrapPage<DeviceHost>(hostsQuery.data)?.items ?? []
+  const hostByID = useMemo(() => new Map(hosts.map((host) => [host.id, host])), [hosts])
 
   const invalidatePools = () => {
     void queryClient.invalidateQueries({ queryKey: getListDevicePoolsQueryKey() })
@@ -82,6 +140,8 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const currentPoolDevices = unwrapPage<Device>(poolDevicesQuery.data)?.total ?? 0
   const devicesQuery = useListDevices({ page: 1, page_size: 200, pool_id: configPool?.id }, { query: { enabled: Boolean(configPool) } })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
+  const baseDevice = devices.find((device) => device.id === configPool?.base_device_id)
+  const baseHost = hostByID.get(baseDevice?.host_id ?? '')
 
   const updatePoolConfiguration = (values: PoolFormValues) => {
     if (!configPool) {
@@ -109,7 +169,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             setConfigPool(updated)
             poolForm.setFieldsValue({ device_count: updated.total_target, reason: '' })
           }
-          message.success(`池配置已更新（request_id: ${requestID}）`)
+          message.success(`设备池配置已更新（请求编号：${requestID}）`)
           invalidatePools()
           invalidateDevices()
         },
@@ -149,7 +209,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       {
         onSuccess: (data) => {
           const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`设备已加入池（request_id: ${requestID}）`)
+          message.success(`设备已加入设备池（请求编号：${requestID}）`)
           setAddDeviceOpen(false)
           invalidatePools()
         },
@@ -160,30 +220,32 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
 
   const setBaseDevice = (deviceID: string) => {
     if (!configPool) return
-    selectBaseDevice.mutate({ id: configPool.id, data: { device_id: deviceID, reason: '选择后续扩容的基础设备' } }, {
+    selectBaseDevice.mutate({ id: configPool.id, data: { device_id: deviceID, reason: '选择设备池扩容模板' } }, {
       onSuccess: (data) => {
         const updated = (data as unknown as { data?: DevicePool }).data
         if (updated) setConfigPool(updated)
-        message.success('基础设备已更新；后续扩容将使用它的镜像和资源配置')
+        message.success(configPool.platform === 'ios'
+          ? '扩容模板已更新；后续扩容将沿用它的 Mac、iOS 运行时和 iPhone 机型'
+          : '扩容模板已更新；后续扩容将沿用它的镜像和资源配置')
         invalidatePools()
       },
-      onError: (error) => message.error(`设置基础设备失败：${errorText(error)}`),
+      onError: (error) => message.error(`设置扩容模板失败：${errorText(error)}`),
     })
   }
 
   const columns: TableColumnsType<DevicePool> = [
     { title: '设备池编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
     { title: '名称', dataIndex: 'name', width: 180 },
-    { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{value === 'ios' ? 'iOS' : '安卓'}</Tag> },
+    { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{value === 'ios' ? 'iOS' : 'Android'}</Tag> },
     { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
     { title: '默认租期（秒）', dataIndex: 'default_lease_seconds', width: 130 },
     { title: '最长租期（秒）', dataIndex: 'max_lease_seconds', width: 130 },
-    { title: '设备数量', dataIndex: 'total_target', width: 100 },
+    { title: '目标设备数', dataIndex: 'total_target', width: 110 },
     {
       title: '默认系统', dataIndex: 'default_image_id', width: 180,
-      render: (value: string | undefined, pool) => pool.platform === 'ios' ? '创建时选择 Runtime' : value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-',
+      render: (value: string | undefined, pool) => pool.platform === 'ios' ? '由扩容模板决定' : value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-',
     },
-    { title: '基础设备', dataIndex: 'base_device_id', width: 150, render: (value?: string) => value ? shortID(value) : <Tag>未选择</Tag> },
+    { title: '扩容模板', dataIndex: 'base_device_id', width: 150, render: (value?: string) => value ? shortID(value) : <Tag>未选择</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
       title: '操作',
@@ -237,7 +299,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       >
         <Typography.Title level={5}>基本信息</Typography.Title>
         <Form<PoolFormValues> form={poolForm} layout="vertical" onFinish={savePool}>
-          <Form.Item name="name" label="设备池名称" extra={configPool?.platform === 'ios' ? '名称只是管理标识；iOS Runtime 和机型以每台 Simulator 的创建记录为准。' : '名称只是管理标识，不代表当前 Android 版本；系统版本以“默认系统”和设备列表为准。'} rules={[{ required: true, message: '请输入池名称' }]}>
+          <Form.Item name="name" label="设备池名称" extra={configPool?.platform === 'ios' ? '名称只是管理标识；iOS 运行时和机型由扩容模板决定。' : '名称只是管理标识，不代表当前 Android 版本；系统版本以“默认系统”和设备列表为准。'} rules={[{ required: true, message: '请输入池名称' }]}>
             <Input maxLength={128} />
           </Form.Item>
           <Space size={16} wrap>
@@ -247,14 +309,14 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             <Form.Item name="max_lease_seconds" label="最长租期（秒）" rules={[{ required: true }]}>
               <InputNumber min={60} max={86400 * 7} />
             </Form.Item>
-            <Form.Item name="device_count" label="设备数量" extra={configPool?.platform === 'ios' ? 'iOS 设备通过设备页按需创建或删除。' : '调大自动扩容，调小自动缩容。'} rules={[{ required: true }]}>
-              <InputNumber min={0} max={1000} disabled={configPool?.platform === 'ios'} />
+            <Form.Item name="device_count" label="目标设备数" extra="调大后自动扩容，调小后安全缩容。" rules={[{ required: true, message: '请输入目标设备数' }]}>
+              <InputNumber min={0} max={1000} />
             </Form.Item>
           </Space>
           <Typography.Paragraph type="secondary">
             {configPool?.platform === 'ios'
-              ? 'iOS Pool 只管理预约和并发；虚拟 iPhone 在设备页选择 Mac、Runtime 和机型后按需创建，删除时目标数量自动同步。'
-              : '设备数量决定这个池保留多少台可用设备。扩容会沿用基础设备的系统版本和硬件规格创建全新设备；缩容只处理空闲设备，不会中断正在运行的任务。'}
+              ? '目标设备数决定这个池保留多少台 iOS 模拟器。扩容会沿用模板的 Mac、iOS 运行时和 iPhone 机型创建全新设备，但不会复制模板数据；缩容只处理空闲设备。'
+              : '目标设备数决定这个池保留多少台 Android 设备。扩容会沿用模板的系统版本和硬件规格创建全新设备，但不会复制模板数据；缩容只处理空闲设备。'}
           </Typography.Paragraph>
           {configPool && (
             <Alert
@@ -263,9 +325,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
               type={currentPoolDevices === (desiredDeviceCount ?? configPool.total_target) ? 'success' : 'info'}
               message={`当前 ${currentPoolDevices} 台，目标 ${(desiredDeviceCount ?? configPool.total_target)} 台`}
               description={currentPoolDevices < (desiredDeviceCount ?? configPool.total_target)
-                ? configPool.base_device_id
-                  ? `保存后将自动创建 ${(desiredDeviceCount ?? configPool.total_target) - currentPoolDevices} 台；容量不足时页面会显示具体原因。`
-                  : '扩容前请先在下方选择一台健康的基础设备。'
+                ? scaleUpDescription(configPool, currentPoolDevices, desiredDeviceCount ?? configPool.total_target, devices, baseHost)
                 : currentPoolDevices > (desiredDeviceCount ?? configPool.total_target)
                   ? `保存后将安全移除 ${currentPoolDevices - (desiredDeviceCount ?? configPool.total_target)} 台空闲设备；使用中的设备会在任务结束后处理。`
                   : '当前数量与目标一致，无需扩容或缩容。'}
@@ -292,20 +352,37 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           <Button type="primary" loading={updatePool.isPending} onClick={() => poolForm.submit()}>保存设置</Button>
         </Form>
 
-        {configPool?.platform === 'android' && <>
-        <Typography.Title level={5} style={{ marginTop: 24 }}>设备</Typography.Title>
-        <Typography.Paragraph type="secondary">基础设备决定后续扩容的配置，不会共享或复制这台设备内的数据。</Typography.Paragraph>
+        {configPool && <>
+        <Typography.Title level={5} style={{ marginTop: 24 }}>扩容模板</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          {configPool.platform === 'ios'
+            ? '模板决定后续扩容使用的 Mac、iOS 运行时和 iPhone 机型；每次都会创建全新的 CoreSimulator，不会复制模板数据。'
+            : '模板决定后续扩容使用的 Android 镜像和硬件规格；每次都会创建全新设备，不会复制模板数据。'}
+        </Typography.Paragraph>
         <Select
           style={{ width: '100%', marginBottom: 12 }}
           value={configPool?.base_device_id}
-          placeholder="选择基础设备"
+          placeholder="选择健康的扩容模板"
           loading={devicesQuery.isFetching || selectBaseDevice.isPending}
           onChange={setBaseDevice}
-          options={devices.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator').map((device) => ({
-            value: device.id, label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
+          options={devices.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
+            configPool.platform === 'ios'
+              ? device.platform === 'ios' && device.device_kind === 'simulator' && device.provider_type === 'appium_device_farm_ios'
+              : device.platform === 'android' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
+          )).map((device) => ({
+            value: device.id, label: templateLabel(device),
           }))}
         />
-        <Button size="small" onClick={() => setAddDeviceOpen(true)}>加入设备</Button>
+        {configPool.base_device_id && (
+          <Alert
+            showIcon
+            type="info"
+            message="扩容宿主机资源"
+            description={templateHostDescription(baseHost)}
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        {configPool.platform === 'android' && <Button size="small" onClick={() => setAddDeviceOpen(true)}>加入设备</Button>}
         </>}
       </Drawer>
 

@@ -75,6 +75,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -macOS Host Agent 运行适配、固定版本工具链盘点和 iOS inventory/health Adapter；
 -Reservation 绑定的 iOS Session Fence：只校验 active Reservation、固定 Endpoint 和单一 UDID，并透明转发上游 Appium 协议，不实现 WebDriver 命令；
 -iOS Simulator 的动态创建、启动、停止、擦除重建、删除、设备域登记、Pool、预约、故障收敛和审计；实际虚拟化完全复用 Xcode CoreSimulator，编排按 ADR-0024 实施；
+-iOS Pool 的固定目标自动扩缩容；扩容复用已选扩容模板 Simulator 的 Host、Runtime 与 iPhone Device Type，通过既有 CoreSimulator 创建链路生成全新设备，缩容复用既有 Host Command、Agent 和 Provider `Delete` 安全删除空闲 Simulator；
 -面向未来Alcor的设备北向API；
 -Device Farm Console，只展示和操作设备域资源；
 -浏览器安全访问、页面权限和设备域操作审计衔接；

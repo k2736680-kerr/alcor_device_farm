@@ -69,6 +69,8 @@
 | DF-045 | Device Farm Console iOS 设备域页面 | completed | DF-044 |
 | DF-046 | iOS Simulator 受控远程控制 | completed | DF-045、ADR-0025 |
 | DF-047 | iOS 真实验收、运维回滚与 Android 回归 | completed | DF-046 |
+| DF-048 | 统一 Android 与 iOS 设备池自动伸缩 | completed | DF-047 |
+| DF-049 | 统一设备农场控制台功能与中文文案审校 | pending | DF-048 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -487,6 +489,22 @@
 产出：完整脱敏证据、运维/故障/回滚文档、版本清单、已知问题和最终签收记录。
 
 验收：iOS Simulator 创建/Session/重建/删除至少 50 次循环无双占、串机、永久 busy 或 CoreSimulator 残留；Host/Agent/Appium 故障 120 秒内收敛或隔离；回滚后 Android 继续可用；报告明确当前未宣称真实 iPhone 已接入。
+
+### DF-048 统一 Android 与 iOS 设备池自动伸缩
+
+实施：复用现有 Pool `total_target/min_ready/max_concurrency`、基础设备字段、Host Command、Host Agent、容量预检和 Provider 生命周期，为 iOS Pool 增加与 Android 一致的固定目标自动伸缩。管理员先从本 Pool 选择一台 `ready/healthy` iOS Simulator 作为扩容模板；扩容只复用其 Mac Host、Runtime 与 iPhone Device Type 创建全新 CoreSimulator，不复制设备数据；缩容只删除没有活动 Reservation/Session 和在途命令的最旧空闲 Simulator。Console 的目标输入不再按平台禁用，实际数量、目标、差额、模板缺失和容量不足必须使用真实 API 数据与中文说明。
+
+产出：iOS Pool 目标 Controller、模板设备校验、Android/iOS 通用缩容、Console 目标表单、并发/容量/安全缩容测试和 `docs/evidence/DF-048/`。
+
+验收：iOS 目标从 3 调到 6 时，在模板和容量满足的情况下只创建 3 台且每台 Runtime/机型与模板一致、数据全新；两个 Controller 并发不超建；模板缺失、Host 排空/离线、内存/磁盘/槽位不足时保留真实目标并显示中文原因，不留下半条资源；目标降低时不强删使用中设备，空闲设备经既有 Agent/CoreSimulator 删除链路收敛；Android 自动扩缩容和 iOS 手工创建/删除均无回归。
+
+### DF-049 统一设备农场控制台功能与中文文案审校
+
+实施：逐页审核导航、总览、宿主机、设备池、设备、预约、健康事件、审计、登录和远控中的字段名、按钮、确认、成功/失败提示、空状态和帮助文字。产品口径统一为 Android+iOS 设备农场；平台名称统一使用 Android/iOS，Android 专属镜像、ADB、STF 与 iOS 专属 CoreSimulator、Runtime、WDA 只在对应平台出现；面向用户的 request ID、错误、租期和状态使用中文名称，不显示失实的迁移、自动清理或单平台说明。同步补齐关键交互测试。
+
+产出：控制台平台化文案清单、页面与标签修正、组件测试和 `docs/evidence/DF-049/`。
+
+验收：全控制台搜索不存在把统一平台误写成纯 Android、把 Mac 当普通模拟器服务器、把释放误写为清理数据或把目标数量写死的文案；Android/iOS 条件字段和操作正确；所有用户提示为中文且包含可追踪请求编号；前端测试和生产构建通过，真实同一后台能同时查看并操作 Android 与 iOS。
 
 ## 12. 单任务完成定义
 

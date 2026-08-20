@@ -139,7 +139,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 		services.HostCommands = hostcommand.New(db)
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
-		services.WarmPool = warmpool.New(db, nil, logger)
+		services.WarmPool = warmpool.New(db, nil, logger, services.IOSSimulators)
 		go services.WarmPool.Run(ctx, cfg.WarmPool.Interval)
 		services.ConsoleQuery = consolequery.New(db)
 		if cfg.Console.Enabled {

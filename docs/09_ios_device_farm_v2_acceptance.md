@@ -95,6 +95,10 @@
 | AT-IOS-SIM-009 | P0 | 相同幂等键重放创建或 Agent 在 create 后重启 | 只存在一台对应名称/Device/Command，不产生重复 UDID |
 | AT-IOS-SIM-010 | P0 | `simctl create` 成功后 Hub inventory 读取或 Node 注册失败 | Agent 按刚创建的受管 UDID 直接执行 shutdown/delete 补偿，无 CoreSimulator、Device、membership 或 command 半成品 |
 | AT-IOS-SIM-011 | P0 | 删除 Pool 最后一台动态 Simulator | 删除成功且 `total_target=0`；`max_concurrency` 保留合法最小值，不因数据库约束遗留 Simulator |
+| AT-IOS-SIM-012 | P0 | iOS Pool 目标从 3 调到 6 | 目标可在 Console 输入；模板和容量满足时只新增 3 台，Runtime/机型一致但设备数据全新 |
+| AT-IOS-SIM-013 | P0 | 两个 Controller 并发扩容同一 iOS Pool | Pool 行锁后重新计数，最终不超过目标、无重复 Device/Command/UDID |
+| AT-IOS-SIM-014 | P0 | iOS Pool 缺少扩容模板或 Host 容量不足 | 保留真实目标并显示中文阻塞原因；不创建半条 Device、membership、command 或 CoreSimulator |
+| AT-IOS-SIM-015 | P0 | iOS Pool 缩容且部分 Simulator 使用中 | 不强制中断 Reservation/Session；只删除可安全处理的最旧空闲设备，其余等待释放后收敛 |
 
 ### 4.5 安全、Console 和回归
 
