@@ -73,6 +73,7 @@
 | DF-049 | 统一设备农场控制台功能与中文文案审校 | completed | DF-048 |
 | DF-050 | 使用 Baguette 替换并清理自写 iOS 远控 | completed | DF-049、ADR-0026 |
 | DF-051 | 修复普通成员远控入口与独立网关可达性 | completed | DF-050 |
+| DF-052 | 修复多设备并存时远控安装目标错配 | completed | DF-051、ADR-0027 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -523,6 +524,14 @@
 产出：Console/Server 权限修正、角色回归测试、30.171 部署配置和 `docs/evidence/DF-051/`。
 
 验收：普通 Alcor 设备农场成员可以看到远程连接入口并使用自己预约的 Android/iOS 设备；viewer 不能启动远控；管理员危险操作权限不下放；Baguette HTTP/WebSocket、预约隔离、心跳、挂断和 Android STF 无回归；正式 Alcor 代码与服务不改动。
+
+### DF-052 修复多设备并存时远控安装目标错配
+
+实施：按 ADR-0027 保留 STF/Baguette 原生 APK/IPA 安装实现，不新增 App Build、Artifact 或第二套安装器。Android 的 claim、remoteConnect、release 和 STF Web 单设备入口统一使用预约 Device 的明确 `stf_serial`；iOS Baguette Gateway 将会话 Cookie 按 UDID 隔离，从请求设备路径或同源页面来源选择对应会话，多个设备会话同时存在时禁止模糊回退。只有当前预约 UDID 的 `/simulators/:udid/files` 可透传，错误会话、其他 UDID 或无明确目标均失败关闭。
+
+产出：ADR-0027、Android STF 序列号统一、iOS 多标签页会话隔离、双设备上传目标测试、真实测试环境验证和 `docs/evidence/DF-052/`。
+
+验收：同时打开两台 iOS Simulator 时，分别拖入 Simulator App 包只会向各自 UDID 的 Baguette `/files` 路径发起安装，错误会话不能安装到任一设备；Android STF 入口、claim、远程连接和释放使用同一个 `stf_serial`，不会回退第一台 ADB 设备；上游返回失败时页面不得提示成功；预约结束后安装入口立即失效；正式 Alcor 与正式环境均不改动。
 
 ## 12. 单任务完成定义
 

@@ -8,13 +8,13 @@
 
 | 能力 | 现有来源 | 本项目使用方式 | 禁止事项 |
 |---|---|---|---|
-| 浏览器远程看屏和操作 | DeviceFarmer/STF | `adapters/stf` 调用 STF 页面和 API | 不开发第二套远控页面、画面流或触控协议 |
+| 浏览器远程看屏、操作和临时 APK 安装 | DeviceFarmer/STF | `adapters/stf` 调用 STF 页面和 API；设备农场只把预约设备的明确 `stf_serial` 交给原生单设备页 | 不开发第二套远控页面、画面流、触控或 APK 安装协议，不允许回退到第一台设备 |
 | STF设备Inventory | DeviceFarmer/STF | 读取并映射 serial、present、ready、using | 不复制STF设备库作为业务真相 |
 | STF claim/release/remoteConnect | DeviceFarmer/STF REST API | Adapter封装并增加超时、重试和错误分类 | 不重新实现相同设备控制协议 |
 | Android UI自动化协议 | Appium 2 + UiAutomator2 | 使用现有服务和Driver | 不自研WebDriver协议或UiAutomator2 Server |
 | iOS UI 自动化协议 | Appium 3 + XCUITest Driver + WebDriverAgent | 使用固定上游版本和明确 UDID；设备农场只管理宿主机连接与健康 | 不自研 WebDriver、XCTest、WDA、页面动作或断言 |
 | iOS 宿主机设备发现与自动化 Session 路由 | Appium Device Farm 12.0.1、Appium XCUITest Driver、WebDriverAgent | Host Adapter 复用 inventory、技术 busy、明确 UDID 路由和自动化 Session Fence | 不使用插件 Dashboard 建第二套 Pool/预约；不把已由上游删除的人工串流重新包装为产品能力 |
-| iOS Simulator 浏览器远控 | Baguette 0.1.92 原生 Web UI、画面流和 Host HID 输入 | `adapters/baguette` 只做固定版本健康、目标 UDID、签名 Gateway 和 Reservation 鉴权；页面和输入实现完全复用上游 | 不自研或保留第二套 HTML/画面流/触控协议；不让 Baguette 接管 Pool、预约、租约或审计 |
+| iOS Simulator 浏览器远控和临时 App 安装 | Baguette 0.1.92 原生 Web UI、画面流、Host HID 与明确 UDID 的 `/files` 安装 | `adapters/baguette` 只做固定版本健康、目标 UDID、每设备独立签名会话和 Reservation 鉴权；页面、输入和 `simctl install <udid>` 完全复用上游 | 不自研或保留第二套 HTML/画面流/触控/IPA 安装协议；不让 Baguette 接管 Pool、预约、租约或审计，不使用 `booted` 模糊目标 |
 | Android Emulator容器基础 | Google Android Emulator Container Scripts与Android SDK | 固定上游版本并制作内部不可变镜像 | 不从零编写Emulator实现 |
 | 数据库事务与唯一约束 | PostgreSQL | 预约、租约、状态和命令使用PostgreSQL | 不用内存锁代替数据库并发控制 |
 
@@ -82,6 +82,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -浏览器安全访问、页面权限和设备域操作审计衔接；
 -管理员 STF Web 远控编排：精确设备短租约、短时 JWT 入口、心跳和关闭回收；只链接 STF 原生页面，不实现画面或触控；
 -管理员 Baguette Web 远控编排：精确 iOS Simulator 短租约、短时签名入口、独立 Gateway、心跳和关闭回收；只代理目标 UDID 的 Baguette 原生页面，不实现画面或触控；
+-多设备远控安装目标绑定：Android 原生 STF 页面固定使用预约 Device 的 `stf_serial`，iOS Baguette Gateway 为每个 UDID 使用独立会话并只代理同一 UDID 的上传路径；安装实现仍由 STF/Baguette 上游提供；
 -Alcor 统一设备入口：只允许 Alcor 服务端持有 Device Farm Service Token，钉钉用户经同源代理访问既有 Console；代理透传受控操作者 ID，浏览器不得获得 Service Token、STF Token 或设备内部端口；
 -Host 资源探测、设备运行规格校验和动态容量预检；复用 Docker/KVM/Android Emulator 的限制参数，不另建虚拟化层；
 -官方 Android System Image 目录同步、按需镜像准备、不可变 digest 验证和内部缓存；继续复用 Android SDK `sdkmanager`/`avdmanager`、既有 Image、Host Command 和 Docker Provider；

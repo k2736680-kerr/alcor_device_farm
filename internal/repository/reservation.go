@@ -64,6 +64,7 @@ type DeviceAssignment struct {
 	Lifecycle      domain.DeviceLifecycleStatus
 	Health         domain.HealthStatus
 	Serial         string
+	STFSerial      string
 	ADBEndpoint    *string
 	AppiumEndpoint *string
 	AppiumUDID     string
@@ -457,10 +458,11 @@ func (ReservationRepository) GetSession(ctx context.Context, querier database.Qu
 func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-		SELECT id,host_id,platform,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		SELECT id,host_id,platform,lifecycle_status,health_status,serial,
+		       COALESCE(NULLIF(stf_serial,''),serial),adb_endpoint,appium_endpoint,
 		       COALESCE(capabilities->>'appiumUdid',serial)
 		FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(
-		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -475,10 +477,11 @@ func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id strin
 func (ReservationRepository) GetDevice(ctx context.Context, querier database.Querier, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := querier.QueryRow(ctx, `
-		SELECT id,host_id,platform,lifecycle_status,health_status,serial,adb_endpoint,appium_endpoint,
+		SELECT id,host_id,platform,lifecycle_status,health_status,serial,
+		       COALESCE(NULLIF(stf_serial,''),serial),adb_endpoint,appium_endpoint,
 		       COALESCE(capabilities->>'appiumUdid',serial)
 		FROM devices WHERE id=$1`, id).Scan(
-		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -703,7 +706,8 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
 		SELECT d.id, d.host_id, d.platform, d.lifecycle_status, d.health_status, d.serial,
-		       d.adb_endpoint, d.appium_endpoint, COALESCE(d.capabilities->>'appiumUdid',d.serial)
+		       COALESCE(NULLIF(d.stf_serial,''),d.serial),d.adb_endpoint, d.appium_endpoint,
+		       COALESCE(d.capabilities->>'appiumUdid',d.serial)
         FROM devices d
         JOIN device_pool_devices pd ON pd.device_id = d.id
         JOIN device_hosts h ON h.id = d.host_id
@@ -719,7 +723,7 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
         ORDER BY d.created_at, d.id
         FOR UPDATE OF d SKIP LOCKED
         LIMIT 1`, poolID, capabilities).Scan(
-		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial,
+		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

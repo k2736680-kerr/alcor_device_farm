@@ -76,7 +76,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
 | `internal/adapters/appiumdevicefarm` | 固定 12.0.1 的 iOS inventory、busy 漂移和 Node 健康；通过 CoreSimulator 受控实现动态 Simulator 生命周期 | 只由 macOS Host Agent/Session Fence 使用，不向浏览器暴露插件 API、完整 UDID 或内部 Endpoint |
-| `internal/adapters/baguette` | 固定 0.1.92 的健康、booted UDID 检查和 Reservation 受控原生 Web Gateway | 只服务 iOS Simulator 人工远控；不创建 Appium Session，不保存占用真相，不实现画面或触控 |
+| `internal/adapters/baguette` | 固定 0.1.92 的健康、booted UDID 检查和 Reservation 受控原生 Web Gateway；按 UDID 隔离浏览器会话并把原生 App 上传固定到页面目标 | 只服务 iOS Simulator 人工远控与上游临时安装；不创建 Appium Session，不保存占用真相，不实现画面、触控或 IPA 安装 |
 | `internal/iossession` | 签发/消费一次性 Grant、保存 Appium Session ID、释放前清理和 busy 漂移收敛 | 复用现有 Reservation、Device Session、Reaper 和审计；不保存业务用例或 Apple Secret |
 | `internal/iossessionfence` | macOS Agent 内置的受控反向代理；只允许 `POST /session` 和精确绑定 Session 路径 | 每次向 Server 校验 Grant/Reservation，透明转发其余 WebDriver 请求，不解释或执行页面步骤 |
 | `POST /api/v1/device-reservations/{id}/session-grants` | Service Principal 为 active iOS Reservation 申请 15～120 秒单次 Grant | Console/浏览器禁止；明文只返回一次，数据库只保存摘要 |

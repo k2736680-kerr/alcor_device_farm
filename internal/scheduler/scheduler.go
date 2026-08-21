@@ -116,7 +116,7 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 		return Assignment{}, err
 	}
 	if scheduler.claimer != nil && selected.device.Platform == "android" {
-		if err := scheduler.claimer.Claim(ctx, selected.device.Serial, time.Duration(selected.reservation.LeaseSeconds)*time.Second); err != nil {
+		if err := scheduler.claimer.Claim(ctx, selected.device.STFSerial, time.Duration(selected.reservation.LeaseSeconds)*time.Second); err != nil {
 			terminal := !isRetryable(err)
 			compensateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -190,7 +190,7 @@ func (scheduler *Scheduler) releaseAndCompensate(selected claimCandidate, failur
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if scheduler.claimer != nil && selected.device.Platform == "android" {
-		if err := scheduler.claimer.Release(cleanupCtx, selected.device.Serial); err != nil {
+		if err := scheduler.claimer.Release(cleanupCtx, selected.device.STFSerial); err != nil {
 			scheduler.logger.Error("STF claim cleanup release failed", "reservation_id", selected.reservation.ID, "device_id", selected.device.ID, "error", err)
 		}
 	}

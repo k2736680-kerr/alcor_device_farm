@@ -99,7 +99,7 @@ func TestStartTargetsSelectedDeviceAndSignsShortSTFWebEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.Fragment != "!/control/emulator-5554" {
+	if entry.Fragment != "!/control/stf-provider:31001" {
 		t.Fatalf("fragment=%q", entry.Fragment)
 	}
 	token := entry.Query().Get("jwt")
@@ -146,9 +146,10 @@ func TestHeartbeatRenewsReservationWithoutInferringAnSTFDisconnectIsAHangup(t *t
 
 func newTestService(t *testing.T, reservations *fakeReservations, now time.Time) *Service {
 	t.Helper()
+	stfSerial := "stf-provider:31001"
 	service, err := New(reservations, fakeDevices{device: management.Device{
 		ID: "device_00000000000001", Platform: "android", DeviceKind: "emulator",
-		ProviderType: "docker_emulator", Serial: "emulator-5554",
+		ProviderType: "docker_emulator", Serial: "emulator-5554", STFSerial: &stfSerial,
 	}}, Config{
 		STFWebURL: "http://stf.example.test", STFWebAuthSecret: "test-stf-auth-secret-at-least-32-bytes",
 		STFWebUserName: "Device Farm Admin", STFWebUserEmail: "admin@example.test",

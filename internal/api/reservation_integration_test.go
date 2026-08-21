@@ -21,6 +21,7 @@ type fakeSTFController struct {
 	remoteCalls       int
 	disconnectCalls   int
 	lastReleaseSerial string
+	lastRemoteSerial  string
 }
 
 func (controller *fakeSTFController) Claim(context.Context, string, time.Duration) error {
@@ -38,10 +39,11 @@ func (controller *fakeSTFController) Release(_ context.Context, serial string) e
 	return controller.releaseErr
 }
 
-func (controller *fakeSTFController) RemoteConnect(context.Context, string) (stf.RemoteConnection, error) {
+func (controller *fakeSTFController) RemoteConnect(_ context.Context, serial string) (stf.RemoteConnection, error) {
 	controller.mutex.Lock()
 	defer controller.mutex.Unlock()
 	controller.remoteCalls++
+	controller.lastRemoteSerial = serial
 	return stf.RemoteConnection{URL: "10.0.0.20:7401"}, nil
 }
 
@@ -284,7 +286,7 @@ func TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != "released" || controller.lastReleaseSerial != "emulator-api-lifecycle" {
+	if stored.Status != "released" || controller.lastReleaseSerial != "stf-api-lifecycle" {
 		t.Fatalf("reservation=%#v release serial=%q", stored, controller.lastReleaseSerial)
 	}
 }
@@ -318,7 +320,7 @@ func TestReservationReleasePreservesQuarantinedDeviceAndClosesReservation(t *tes
 	if lifecycle != "quarantined" || health != "unhealthy" || sessionStatus != "closed" {
 		t.Fatalf("device lifecycle=%s health=%s session=%s", lifecycle, health, sessionStatus)
 	}
-	if controller.releaseCalls != 1 || controller.lastReleaseSerial != "emulator-api-lifecycle" {
+	if controller.releaseCalls != 1 || controller.lastReleaseSerial != "stf-api-lifecycle" {
 		t.Fatalf("release calls=%d serial=%q", controller.releaseCalls, controller.lastReleaseSerial)
 	}
 }
@@ -343,7 +345,7 @@ func TestRemoteSessionIsOwnerBoundIdempotentAndDisconnectedAfterExpiry(t *testin
 	assertStatus(t, replayed, http.StatusCreated)
 	var replayedRemote reservation.RemoteSessionView
 	decodeData(t, replayed, &replayedRemote)
-	if replayedRemote.ID != remote.ID || controller.remoteCalls != 1 {
+	if replayedRemote.ID != remote.ID || controller.remoteCalls != 1 || controller.lastRemoteSerial != "stf-api-lifecycle" {
 		t.Fatalf("replayed=%#v remote calls=%d", replayedRemote, controller.remoteCalls)
 	}
 	wrongOwner := map[string]any{
@@ -449,9 +451,9 @@ func seedReservationDevice(t *testing.T, environment *managementEnvironment) {
 		`INSERT INTO device_pools (id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status)
             VALUES ('pool_000000000000001','reservation-lifecycle-pool',600,1200,1,'active')`,
 		`INSERT INTO devices (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,
-            serial,adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status)
-            VALUES ('device_0000000000001','host_000000000000001','image_00000000000001','emulator','mock',
-            'mock-api-lifecycle','rebuild','emulator-api-lifecycle','127.0.0.1:5555','http://127.0.0.1:4723',
+			serial,stf_serial,adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status)
+			VALUES ('device_0000000000001','host_000000000000001','image_00000000000001','emulator','mock',
+			'mock-api-lifecycle','rebuild','emulator-api-lifecycle','stf-api-lifecycle','127.0.0.1:5555','http://127.0.0.1:4723',
             '{"platformName":"Android","apiLevel":34}'::jsonb,'ready','healthy')`,
 		`INSERT INTO device_pool_devices (pool_id,device_id,enabled)
             VALUES ('pool_000000000000001','device_0000000000001',true)`,

@@ -232,7 +232,7 @@ func (service *Service) view(ctx context.Context, device management.Device, tran
 		query := entry.Query()
 		query.Set("jwt", token)
 		entry.RawQuery = query.Encode()
-		entry.Fragment = "!/control/" + url.PathEscape(device.Serial)
+		entry.Fragment = "!/control/" + url.PathEscape(stfSerial(device))
 		view.URL = entry.String()
 	case TransportBaguette:
 		entry, err := service.iosRemote.EntryURL(device.ID, device.Serial, current.ID, current.OwnerID)
@@ -244,6 +244,13 @@ func (service *Service) view(ctx context.Context, device management.Device, tran
 		return View{}, ErrUnavailable
 	}
 	return view, nil
+}
+
+func stfSerial(device management.Device) string {
+	if device.STFSerial != nil && strings.TrimSpace(*device.STFSerial) != "" {
+		return strings.TrimSpace(*device.STFSerial)
+	}
+	return device.Serial
 }
 
 func (service *Service) viewWithoutURL(deviceID, transport string, current reservation.View) View {

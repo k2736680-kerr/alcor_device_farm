@@ -593,7 +593,7 @@ func (service *Service) CreateRemoteSession(
 	if err != nil {
 		return RemoteSessionView{}, fmt.Errorf("generate remote session ID: %w", err)
 	}
-	connection, err := service.stf.RemoteConnect(ctx, device.Serial)
+	connection, err := service.stf.RemoteConnect(ctx, device.STFSerial)
 	if err != nil {
 		return RemoteSessionView{}, fmt.Errorf("%w: %w", ErrSTFRemoteFailed, err)
 	}
@@ -604,7 +604,7 @@ func (service *Service) CreateRemoteSession(
 	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
-		service.disconnectRemote(device.Serial)
+		service.disconnectRemote(device.STFSerial)
 		return RemoteSessionView{}, err
 	}
 	var stored remoteSessionMetadata
@@ -637,7 +637,7 @@ func (service *Service) CreateRemoteSession(
 		return err
 	})
 	if err != nil {
-		service.disconnectRemote(device.Serial)
+		service.disconnectRemote(device.STFSerial)
 		return RemoteSessionView{}, translateRepositoryError(err)
 	}
 	return remoteSessionView(reservationID, stored), nil
@@ -680,7 +680,7 @@ func (service *Service) releaseSTF(ctx context.Context, current repository.Reser
 	if device.Platform != "android" {
 		return nil
 	}
-	if err := service.stf.Release(ctx, device.Serial); err != nil {
+	if err := service.stf.Release(ctx, device.STFSerial); err != nil {
 		return fmt.Errorf("%w: %w", ErrSTFReleaseFailed, err)
 	}
 	return nil

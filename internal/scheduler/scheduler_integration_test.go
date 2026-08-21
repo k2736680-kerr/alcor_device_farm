@@ -334,6 +334,9 @@ func TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount(t *testing.T) {
 func TestSTFClaimRunsBeforeReservationActivation(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET stf_serial='stf-emulator-0'`); err != nil {
+		t.Fatal(err)
+	}
 	service := reservation.NewService(db, nil)
 	created, err := service.Create(context.Background(), audit.Service("service"), "stf-claim-success-key", reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000101",
@@ -343,7 +346,7 @@ func TestSTFClaimRunsBeforeReservationActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimer := &fakeClaimer{claim: func(_ context.Context, serial string, ttl time.Duration) error {
-		if serial != "emulator-0" || ttl != 600*time.Second {
+		if serial != "stf-emulator-0" || ttl != 600*time.Second {
 			t.Fatalf("claim serial=%q ttl=%s", serial, ttl)
 		}
 		var reservationStatus domain.ReservationStatus

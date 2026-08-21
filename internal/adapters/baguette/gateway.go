@@ -2,6 +2,8 @@ package baguette
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httputil"
@@ -10,7 +12,7 @@ import (
 	"time"
 )
 
-const sessionCookie = "device_farm_baguette_session"
+const sessionCookiePrefix = "device_farm_baguette_session_"
 
 type Authorizer interface {
 	AuthorizeBaguette(context.Context, Ticket) error
@@ -100,17 +102,71 @@ func (gateway *Gateway) entry(writer http.ResponseWriter, request *http.Request)
 		http.Error(writer, "无法建立 iOS 远程控制连接", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(writer, &http.Cookie{Name: sessionCookie, Value: session, Path: "/",
+	http.SetCookie(writer, &http.Cookie{Name: sessionCookieName(ticket.UDID), Value: session, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: gateway.client.public.Scheme == "https"})
 	http.Redirect(writer, request, "/simulators/"+url.PathEscape(ticket.UDID), http.StatusFound)
 }
 
 func (gateway *Gateway) session(request *http.Request) (Ticket, error) {
-	cookie, err := request.Cookie(sessionCookie)
-	if err != nil {
+	if udid := requestTargetUDID(request, gateway.client.public); udid != "" {
+		cookie, err := request.Cookie(sessionCookieName(udid))
+		if err != nil {
+			return Ticket{}, ErrUnauthorized
+		}
+		ticket, err := gateway.client.verify(cookie.Value, false)
+		if err != nil || ticket.UDID != udid {
+			return Ticket{}, ErrUnauthorized
+		}
+		return ticket, nil
+	}
+	var selected *Ticket
+	for _, cookie := range request.Cookies() {
+		if !strings.HasPrefix(cookie.Name, sessionCookiePrefix) {
+			continue
+		}
+		ticket, err := gateway.client.verify(cookie.Value, false)
+		if err != nil || cookie.Name != sessionCookieName(ticket.UDID) {
+			continue
+		}
+		if selected != nil {
+			return Ticket{}, ErrUnauthorized
+		}
+		copy := ticket
+		selected = &copy
+	}
+	if selected == nil {
 		return Ticket{}, ErrUnauthorized
 	}
-	return gateway.client.verify(cookie.Value, false)
+	return *selected, nil
+}
+
+func sessionCookieName(udid string) string {
+	sum := sha256.Sum256([]byte(udid))
+	return sessionCookiePrefix + base64.RawURLEncoding.EncodeToString(sum[:12])
+}
+
+func requestTargetUDID(request *http.Request, public *url.URL) string {
+	if udid := targetUDIDFromPath(request.URL.Path); udid != "" {
+		return udid
+	}
+	referer, err := url.Parse(request.Referer())
+	if err != nil || referer.Scheme != public.Scheme || referer.Host != public.Host {
+		return ""
+	}
+	return targetUDIDFromPath(referer.Path)
+}
+
+func targetUDIDFromPath(path string) string {
+	const prefix = "/simulators/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	segment := strings.SplitN(strings.TrimPrefix(path, prefix), "/", 2)[0]
+	udid, err := url.PathUnescape(segment)
+	if err != nil {
+		return ""
+	}
+	return udid
 }
 
 func (gateway *Gateway) filteredInventory(writer http.ResponseWriter, request *http.Request, ticket Ticket) {
