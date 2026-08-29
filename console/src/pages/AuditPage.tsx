@@ -1,11 +1,18 @@
 import { Button, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
-import { useState } from 'react'
-import { useListDeviceAuditEvents } from '../api/generated/device-farm'
-import type { AuditEvent } from '../api/generated/models'
+import { useMemo, useState } from 'react'
+import {
+  useListDeviceAuditEvents,
+  useListDeviceHosts,
+  useListDeviceImages,
+  useListDevicePools,
+  useListDevices,
+} from '../api/generated/device-farm'
+import type { AuditEvent, Device, DeviceHost, DeviceImage, DevicePool } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { auditTargetLabel } from '../api/describe'
 import { actorTypeLabel, auditActionLabel, resourceTypeLabel } from '../api/labels'
 import { detailText } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -20,6 +27,17 @@ const actorColor: Record<string, string> = {
 
 export function AuditPage() {
   const [detailEvent, setDetailEvent] = useState<AuditEvent | null>(null)
+  // 审计只保存资源编号；这里额外拉取名称映射，避免管理员只能看到一串编号。
+  const poolsQuery = useListDevicePools({ page: 1, page_size: 200 }, { query: { staleTime: 60_000 } })
+  const devicesQuery = useListDevices({ page: 1, page_size: 200 }, { query: { staleTime: 60_000 } })
+  const imagesQuery = useListDeviceImages({ page: 1, page_size: 200 }, { query: { staleTime: 60_000 } })
+  const hostsQuery = useListDeviceHosts({ page: 1, page_size: 200 }, { query: { staleTime: 60_000 } })
+  const lookups = useMemo(() => ({
+    poolByID: new Map((unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []).map((pool) => [pool.id, pool])),
+    deviceByID: new Map((unwrapPage<Device>(devicesQuery.data)?.items ?? []).map((device) => [device.id, device])),
+    imageByID: new Map((unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []).map((image) => [image.id, image])),
+    hostByID: new Map((unwrapPage<DeviceHost>(hostsQuery.data)?.items ?? []).map((host) => [host.id, host])),
+  }), [poolsQuery.data, devicesQuery.data, imagesQuery.data, hostsQuery.data])
   const columns: TableColumnsType<AuditEvent> = [
     {
       title: '时间 / 请求', dataIndex: 'created_at', width: 200, render: (value: string, event) => (
@@ -38,10 +56,12 @@ export function AuditPage() {
       ),
     },
     {
-      title: '操作内容 / 资源', dataIndex: 'resource_id', width: 320, render: (value: string, event) => (
+      title: '操作内容 / 操作对象', dataIndex: 'resource_id', width: 340, render: (value: string, event) => (
         <div className="primary-resource">
           <Typography.Text strong>{auditActionLabel(event.action)}</Typography.Text>
-          <small>{resourceTypeLabel(event.resource_type)} · {shortID(value)}</small>
+          <small>
+            {resourceTypeLabel(event.resource_type)} · {auditTargetLabel(event.resource_type, value, lookups)}
+          </small>
         </div>
       ),
     },
@@ -83,7 +103,8 @@ export function AuditPage() {
           { key: 'time', label: '操作时间', children: formatTime(detailEvent.created_at) },
           { key: 'actor', label: '操作者', children: `${actorTypeLabel(detailEvent.actor_type)} · ${detailEvent.actor_id}` },
           { key: 'action', label: '操作内容', children: auditActionLabel(detailEvent.action) },
-          { key: 'resource', label: '资源', children: `${resourceTypeLabel(detailEvent.resource_type)} · ${detailEvent.resource_id}` },
+          { key: 'resource', label: '操作对象', children: `${resourceTypeLabel(detailEvent.resource_type)} · ${auditTargetLabel(detailEvent.resource_type, detailEvent.resource_id, lookups)}` },
+          { key: 'resource_id', label: '完整资源编号', children: <Typography.Text code copyable>{detailEvent.resource_id}</Typography.Text> },
           { key: 'reason', label: '操作原因', children: detailEvent.reason ?? '系统自动操作' },
           { key: 'request', label: '完整请求编号', children: <Typography.Text code copyable>{detailEvent.request_id}</Typography.Text> },
           { key: 'event', label: '完整审计编号', children: <Typography.Text code copyable>{detailEvent.id}</Typography.Text> },

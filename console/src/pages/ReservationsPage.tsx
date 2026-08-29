@@ -19,12 +19,14 @@ import {
   useExtendDeviceReservation,
   useListDevicePools,
   useListDeviceReservations,
+  useListDevices,
   useReleaseDeviceReservation,
 } from '../api/generated/device-farm'
-import type { ConsoleRole, DevicePool, Reservation } from '../api/generated/models'
+import type { ConsoleRole, Device, DevicePool, Reservation } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
+import { deviceLabel, deviceModelLabel } from '../api/describe'
 import { ownerTypeLabel, poolStatusLabel, reservationFailureLabel, reservationStatusLabel } from '../api/labels'
 import { apiErrorText, durationLabel, platformLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -76,6 +78,10 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const poolsQuery = useListDevicePools({ page: 1, page_size: 100 })
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
   const poolByID = useMemo(() => new Map(pools.map((pool) => [pool.id, pool])), [pools])
+  // 只用于把预约里的设备编号翻译成机型和标识，不参与任何业务判断。
+  const devicesQuery = useListDevices({ page: 1, page_size: 200 }, { query: { refetchInterval: 15_000 } })
+  const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
+  const deviceByID = useMemo(() => new Map(devices.map((device) => [device.id, device])), [devices])
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDeviceReservationsQueryKey() })
@@ -160,7 +166,18 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         )
       },
     },
-    { title: '分配设备', dataIndex: 'device_id', width: 150, render: (value?: string) => (value ? <Typography.Text code>{shortID(value)}</Typography.Text> : <Typography.Text type="secondary">尚未分配</Typography.Text>) },
+    {
+      title: '分配设备', dataIndex: 'device_id', width: 190, render: (value?: string) => {
+        if (!value) return <Typography.Text type="secondary">尚未分配</Typography.Text>
+        const device = deviceByID.get(value)
+        return (
+          <div className="primary-resource">
+            <Typography.Text>{device ? deviceModelLabel(device) : '设备已不在当前列表'}</Typography.Text>
+            <small>{device ? device.serial : '请到设备页查询'} · {shortID(value)}</small>
+          </div>
+        )
+      },
+    },
     {
       title: '操作',
       key: 'actions',
@@ -222,7 +239,9 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           { key: 'id', label: '完整预约编号', children: <Typography.Text code copyable>{detailReservation.id}</Typography.Text> },
           { key: 'status', label: '状态', children: reservationProgress(detailReservation) },
           { key: 'pool', label: '设备池', children: poolByID.get(detailReservation.pool_id)?.name ?? detailReservation.pool_id },
-          { key: 'device', label: '设备编号', children: detailReservation.device_id ? <Typography.Text code copyable>{detailReservation.device_id}</Typography.Text> : '尚未分配' },
+          { key: 'device', label: '分配设备', children: detailReservation.device_id
+            ? <Typography.Text code copyable>{deviceLabel(detailReservation.device_id, deviceByID)}（{detailReservation.device_id}）</Typography.Text>
+            : '尚未分配' },
           { key: 'owner', label: '预约归属', children: `${ownerTypeLabel(detailReservation.owner_type)} · ${detailReservation.owner_id || '-'}` },
           { key: 'lease', label: '初始租期', children: durationLabel(detailReservation.lease_seconds) },
           { key: 'starts', label: '开始时间', children: formatTime(detailReservation.starts_at) },
