@@ -119,7 +119,7 @@ function AuthenticatedConsole({
 
   return (
     <Layout className={embedded ? 'console-shell console-shell-embedded' : 'console-shell'}>
-      {!embedded && <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={0}>
+      {!embedded && <Layout.Sider className="console-sider" theme="light" width={232} breakpoint="lg" collapsedWidth={0} style={{ background: '#ffffff' }}>
         {!embedded && <div className="console-brand">
           <div className="console-brand-mark"><CloudServerOutlined /></div>
           <div className="console-brand-copy">
@@ -128,7 +128,7 @@ function AuthenticatedConsole({
           </div>
         </div>}
         {!embedded && <div className="console-nav-label">资源与调度</div>}
-        <Menu className="console-menu" theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
+        <Menu className="console-menu" theme="light" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
         {!embedded && <div className="console-sider-footer">
           <SafetyCertificateOutlined />
           <span>设备域安全边界</span>

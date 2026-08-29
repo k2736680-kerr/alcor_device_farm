@@ -41,8 +41,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
             },
             components: {
-              Layout: { headerBg: '#ffffff', bodyBg: '#f8fafc', siderBg: '#07182c' },
-              Menu: { darkItemBg: '#07182c', darkSubMenuItemBg: '#07182c', darkItemSelectedBg: '#1d4ed8' },
+              Layout: { headerBg: '#ffffff', bodyBg: '#f8fafc', siderBg: '#ffffff' },
+              Menu: { itemSelectedBg: '#eff6ff', itemSelectedColor: '#1769d1', itemHoverBg: '#f8fbff', itemHoverColor: '#1769d1' },
               Card: { paddingLG: 22 },
             },
           }}
