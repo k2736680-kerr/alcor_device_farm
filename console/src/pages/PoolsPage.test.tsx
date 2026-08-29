@@ -167,7 +167,8 @@ describe('PoolsPage pool capacity', () => {
     const user = userEvent.setup()
     renderWithProviders(<PoolsPage />)
     expect(await screen.findByText('default-ios')).toBeInTheDocument()
-    expect(await screen.findByText('iOS 26.3 · iPhone 17 Pro')).toBeInTheDocument()
+    // 扩容模板必须先回答“什么机型 + 什么系统”，编号只是补充信息。
+    expect(await screen.findByText('iPhone 17 Pro · iOS 26.3')).toBeInTheDocument()
     expect(screen.queryByText('由扩容模板决定')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /配\s*置/ }))
 
@@ -210,7 +211,7 @@ describe('PoolsPage pool capacity', () => {
     expect(await screen.findByText('default-android')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /配\s*置/ }))
     await user.click(await screen.findByRole('button', { name: '加入设备' }))
-    fireEvent.mouseDown(screen.getByText('选择设备（设备编号 · 设备标识）'))
+    fireEvent.mouseDown(screen.getByText('选择设备（机型 · 系统版本 · 设备标识）'))
 
     expect(await screen.findByText(/emulator-5570/)).toBeInTheDocument()
     expect(screen.queryByText(/emulator-5572/)).not.toBeInTheDocument()

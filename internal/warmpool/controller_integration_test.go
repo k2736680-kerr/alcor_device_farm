@@ -91,7 +91,7 @@ func TestIOSScaleDownProtectsReservationsAndUsesIOSDeletePayload(t *testing.T) {
 	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000003' AND enabled`, 1)
 }
 
-func TestIOSUnavailableDeviceIsDeletedThenReplacedWithoutChangingTarget(t *testing.T) {
+func TestIOSUnavailableDeviceKeepsIdentityAndDoesNotAutoDeleteOrReplace(t *testing.T) {
 	db := openTestDatabase(t)
 	seedIOSWarmPool(t, db, 2, 2)
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='quarantined',
@@ -102,38 +102,19 @@ func TestIOSUnavailableDeviceIsDeletedThenReplacedWithoutChangingTarget(t *testi
 	generator := sequentialGenerator()
 	controller := warmpool.New(db, generator, nil, iossimulator.New(db, generator))
 	result, err := controller.RunOnce(context.Background())
-	if err != nil || result.DeletesQueued != 1 || result.DevicesCreated != 0 {
-		t.Fatalf("first replacement result=%+v error=%v", result, err)
+	if err != nil || result.DeletesQueued != 0 || result.DevicesCreated != 0 {
+		t.Fatalf("non-destructive recovery result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'operation_source'='ios_auto_replacement'`, 1)
+		AND payload->>'operation_source'='ios_auto_replacement'`, 0)
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
 		AND payload->>'platform'='ios'`, 0)
-
-	if result, err = controller.RunOnce(context.Background()); err != nil || result.DeletesQueued != 0 || result.DevicesCreated != 0 {
-		t.Fatalf("pending replacement result=%+v error=%v", result, err)
-	}
-	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'operation_source'='ios_auto_replacement'`, 1)
-
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
-		result='{"deleted":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
-		WHERE command_type='delete' AND payload->>'operation_source'='ios_auto_replacement'`); err != nil {
-		t.Fatal(err)
-	}
-	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DeletesCompleted != 1 || result.DevicesCreated != 1 {
-		t.Fatalf("completed replacement result=%+v error=%v", result, err)
-	}
 	assertCount(t, db, `SELECT total_target FROM device_pools WHERE id='pool_ios_000000000001'`, 2)
 	assertCount(t, db, `SELECT count(*) FROM devices WHERE platform='ios' AND lifecycle_status<>'deleted'`, 2)
-	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000002' AND enabled`, 0)
-	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
-		AND payload->'capabilities'->>'runtimeId'='com.apple.CoreSimulator.SimRuntime.iOS-26-3'
-		AND payload->'capabilities'->>'deviceTypeId'='com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000002' AND enabled`, 1)
 }
 
-func TestIOSAutoReplacementDeleteFailureBlocksOverbuildAndRetryStorm(t *testing.T) {
+func TestIOSUnavailableDeviceDoesNotCreateCommandOrEventStorm(t *testing.T) {
 	db := openTestDatabase(t)
 	seedIOSWarmPool(t, db, 2, 2)
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='quarantined',
@@ -146,11 +127,6 @@ func TestIOSAutoReplacementDeleteFailureBlocksOverbuildAndRetryStorm(t *testing.
 	if _, err := controller.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='failed',
-		error_code='SIMULATOR_DELETE_FAILED',completed_at=clock_timestamp(),updated_at=clock_timestamp()
-		WHERE command_type='delete' AND payload->>'operation_source'='ios_auto_replacement'`); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := controller.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -158,13 +134,13 @@ func TestIOSAutoReplacementDeleteFailureBlocksOverbuildAndRetryStorm(t *testing.
 		t.Fatal(err)
 	}
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'operation_source'='ios_auto_replacement'`, 1)
+		AND payload->>'operation_source'='ios_auto_replacement'`, 0)
 	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
 		AND payload->>'platform'='ios'`, 0)
 	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='ios_device_0000000002'
-		AND lifecycle_status='quarantined' AND health_reason='IOS_AUTO_REPLACEMENT_DELETE_FAILED: SIMULATOR_DELETE_FAILED'`, 1)
+		AND lifecycle_status='quarantined' AND health_reason='IOS_SESSION_CLEANUP_FAILED'`, 1)
 	assertCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id='ios_device_0000000002'
-		AND event_type='ios_auto_replacement_delete_failed'`, 1)
+		AND event_type='ios_auto_replacement_delete_failed'`, 0)
 }
 
 func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testing.T) {
@@ -692,7 +668,7 @@ func TestHistoricalCreateResultDoesNotCompleteActiveManagementRebuild(t *testing
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning' AND health_status='unknown'", 1)
 }
 
-func TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm(t *testing.T) {
+func TestFailedCreateIsQuarantinedAndKeepsRegisteredSlot(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 2, 2, 2)
 	controller := warmpool.New(db, sequentialGenerator(), nil)
@@ -705,7 +681,7 @@ func TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := controller.RunOnce(context.Background())
-	if err != nil || result.DevicesFailed != 1 || result.BackoffSkips != 1 || result.DevicesCreated != 0 {
+	if err != nil || result.DevicesFailed != 1 || result.BackoffSkips != 0 || result.DevicesCreated != 0 {
 		t.Fatalf("backoff result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined' AND health_status='unhealthy'", 1)
@@ -716,11 +692,12 @@ func TestFailedCreateIsQuarantinedAndBackoffPreventsCommandStorm(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 1 {
-		t.Fatalf("retry result=%+v error=%v", result, err)
+	if err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("registered quarantine result=%+v error=%v", result, err)
 	}
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 3)
-	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status<>'quarantined'", 2)
+	assertCount(t, db, "SELECT count(*) FROM devices", 2)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 2)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status<>'quarantined'", 1)
 }
 
 func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *testing.T) {
@@ -754,18 +731,18 @@ func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 1)
 
-	// A fresh Agent heartbeat that omits the device proves the Provider resource
-	// is gone. The quarantined audit record remains, while one replacement is allowed.
+	// A fresh Agent heartbeat that omits the device does not authorize destructive
+	// replacement. The long-lived Device keeps its registered capacity slot.
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET
 		last_heartbeat_at=last_heartbeat_at+interval '1 second',used_capacity='{"device_slots":0}',
 		updated_at=clock_timestamp()`); err != nil {
 		t.Fatal(err)
 	}
 	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 1 {
-		t.Fatalf("missing quarantined replacement result=%+v error=%v", result, err)
+	if err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("missing quarantined preservation result=%+v error=%v", result, err)
 	}
-	assertCount(t, db, "SELECT count(*) FROM devices", 2)
+	assertCount(t, db, "SELECT count(*) FROM devices", 1)
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined'", 1)
 }
 

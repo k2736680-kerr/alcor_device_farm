@@ -77,6 +77,7 @@
 | DF-053 | 受管虚拟设备自动淘汰替换与可用性收敛 | completed | DF-048、DF-052、ADR-0028 |
 | DF-054 | 设备农场控制台全页面可用性审校 | completed | DF-049、DF-053 |
 | DF-055 | 简化设备运行视图并清理历史噪声入口 | completed | DF-054 |
+| DF-056 | 正式数据清理与长期设备非破坏自愈 | completed | DF-055、ADR-0029 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -559,6 +560,14 @@
 产出：精简后的导航、设备和宿主机主表，设备池清空回归测试，现场 Android 故障资源重建与 Android/iOS 真实 Appium 验收证据。
 
 验收：日常页面不再显示 deleted 数量和数千条底层健康事件，旧链接可安全回到故障设备；后台心跳、健康收敛和审计能力继续工作；设备池可从一台安全降到零并恢复；Android 与两台 iOS 均逐台完成真实 Appium Session、页面树读取和会话释放，无残留预约或会话。
+
+### DF-056 正式数据清理与长期设备非破坏自愈
+
+实施：按 ADR-0029 取代 DF-053 的故障虚拟设备自动删除补建。Warm Pool 把所有未显式删除的虚拟设备计入登记容量，iOS 故障设备不再排队自动 delete；Reconciler 对系统产生的 Android Agent/STF 隔离重探原 Device，恢复时回到原预约状态或 ready，持续失败且空闲时只排队一次既有 restart Host Command。管理端允许隔离设备执行 restart，但 rebuild/reimage/delete 继续明确标记为破坏性人工操作。正式启用前先备份 PostgreSQL，在维护窗口清理测试 Reservation、Session、健康事件、审计、Host Command、provisioning job、幂等和 deleted Device 关系，保留当前 Host、Pool、Image、三台 Device 及 Provider 数据。
+
+产出：ADR-0029、非破坏恢复实现、容量与自动删除回归、清理前备份和清理清单、三台设备身份/数据保持证据、`docs/evidence/DF-056/`。
+
+验收：Android 因 Agent/STF 短暂失败进入系统隔离后，真实健康恢复必须使用原 Device ID 自动回到 ready；持续失败最多自动 restart 一次且 Device ID、Provider ref、Pool membership 和数据卷不变。restart 失败只隔离；人工隔离不自动解除；Android/iOS 故障设备均不得产生自动 delete/rebuild/reimage 或替代 create。清理后历史业务/健康/审计/命令/已删除设备计数为零，当前三台设备、两台 Host、两类 Pool/Image 配置存在且逐台 Appium `/source` 验证通过。
 
 ## 12. 单任务完成定义
 

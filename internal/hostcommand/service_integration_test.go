@@ -475,6 +475,39 @@ func TestIOSHeartbeatRecoversAutomaticSharedAutomationQuarantine(t *testing.T) {
 	}
 }
 
+func TestHealthyIOSHeartbeatClearsStaleFailureCounter(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-HEALTHY','rebuild','SIM-HEALTHY',
+		'http://127.0.0.1:4723','{"platformName":"iOS"}','ready','degraded','host is unavailable',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-HEALTHY", Serial: "SIM-HEALTHY", Platform: "ios", DeviceKind: "simulator",
+			ProviderType: "appium_device_farm_ios", LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection:   map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-HEALTHY"},
+			Capabilities: map[string]any{"platformName": "iOS", "allowlisted": true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health string
+	var reason *string
+	var failures int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,health_reason,consecutive_failures
+		FROM devices WHERE id='ios_device_000000001'`).Scan(&lifecycle, &health, &reason, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "ready" || health != "healthy" || reason != nil || failures != 0 {
+		t.Fatalf("healthy heartbeat lifecycle=%s health=%s reason=%v failures=%d", lifecycle, health, reason, failures)
+	}
+}
+
 func TestIOSHeartbeatRejectsRegisteredIdentityMismatch(t *testing.T) {
 	db := openTestDatabase(t)
 	seedIOSHost(t, db)

@@ -204,7 +204,7 @@ describe('DevicesPage device categories', () => {
     expect(await screen.findByText('emulator-5554')).toBeInTheDocument()
     expect(screen.queryByText('emulator-5558')).not.toBeInTheDocument()
     expect(screen.getByText('Android 模拟器')).toBeInTheDocument()
-    expect(screen.getByText('Android Docker 模拟器')).toBeInTheDocument()
+    expect(screen.getByText('Android 14（API 34）')).toBeInTheDocument()
     expect(screen.getByText('可用')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '可用性' })).toBeInTheDocument()
 

@@ -88,6 +88,10 @@
 
 DF-038 仍只改变 Device、Pool、Reservation、Host Command、持久化 provisioning job 与设备域审计：系统镜像继续作为受控基础设施缓存，创建向导仅提交目录项，Server 自动触发或复用准备并在验证后继续创建，但不新增 Alcor App、Build、Run 或 Artifact。Pool 的基础设备只提供 Phone Profile、已验证 Image 和 runtime profile 给后续干净 Emulator 创建；不复制业务 APK、账户、缓存或数据卷。Reservation release 仅释放 STF 和数据库占用，设备直接回到 `ready/healthy`，只有显式 rebuild/reimage 或 delete 才清空 Provider 数据。管理员直接删除空闲设备会原子降低 Pool 目标以避免自动补回。
 
+## 5.2 DF-056 长期设备非破坏恢复补充
+
+DF-056 只改变设备域内部的健康收敛和运维数据：系统自动隔离的 Android Device 可复用 Agent heartbeat、STF 健康和既有 Provider `Restart` 恢复原 Device，不能创建 Alcor Run/Result，也不能触发 DaFit 业务 App 重置。隔离设备继续占用 Pool 登记容量，自动恢复失败只形成设备域告警；delete/rebuild/reimage 必须由设备管理员明确操作。正式启用前清理的测试 Reservation、Session、健康事件、审计和命令不属于 Alcor 业务数据，且不得删除当前 Host、Pool、Image、Device 或 Provider 资源。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；

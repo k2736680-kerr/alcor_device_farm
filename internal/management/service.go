@@ -721,7 +721,7 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 	} else if found {
 		return replayed, nil
 	}
-	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped {
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped && current.LifecycleStatus != domain.DeviceQuarantined {
 		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: "restart"}
 	}
 	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
@@ -734,7 +734,11 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 			return Device{}, err
 		}
 	}
-	if current.LifecycleStatus == domain.DeviceStopped {
+	if current.LifecycleStatus == domain.DeviceQuarantined {
+		if err := aggregate.Transition(domain.DeviceProvisioning, reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	} else if current.LifecycleStatus == domain.DeviceStopped {
 		if err := aggregate.Transition(domain.DeviceBooting, reason, time.Now().UTC()); err != nil {
 			return Device{}, err
 		}

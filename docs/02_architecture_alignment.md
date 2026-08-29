@@ -23,7 +23,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | 动态容量扩缩容 | Console 为 Android、iOS 单平台 Pool 设置目标和扩容模板设备；Android 复用基础设备的 Phone、Image 与 runtime profile，iOS 复用模板 Simulator 的 Mac Host、Runtime 与 iPhone Device Type；两者均结合 Host 实际内存、磁盘、槽位与在途预留创建全新实例，并只安全删除空闲设备 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或设备数据 |
 | Android 官方目录、Phone 硬件模板与受控创建 | Console 的四步 Phone 向导提交 `catalog_id`、硬件模板、Pool 和 runtime profile；持久化 provisioning job 自动复用或排队既有镜像准备，验证成功后事务登记 `create` Host Command，Agent 创建后沿既有健康链路收敛 | 新版 Alcor 只选择已可用 Device，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；job 幂等重试不得重复下载、创建设备或增加 Pool 目标；未验证、无 digest 的候选项不得写入 `device_images`；首期不暴露 TV、Wear、Automotive、Desktop、XR |
 | 长期设备与人工删除 | Reservation release 只归还 STF 占用并把 Device 直接恢复为 ready，保留 APK、账号、缓存和数据卷；管理员可删除无活动预约的 ready/quarantined/stopped Device，Server 原子退出 Pool 并降低该 Pool 目标，Agent 复用 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作 | 不允许删除 reserved/busy/recycling；不物理删库；不新增 Docker 直连；只有显式 rebuild/reimage 才恢复出厂 |
-| 受管虚拟设备自愈 | Pool 内确定故障且无活动占用的 iOS Simulator 自动复用 Host Command、Agent 和 CoreSimulator Provider 删除，保留历史 Device 后按原目标创建干净替代设备；删除失败保留隔离并阻断盲目超建 | 新版 Alcor 仍只看到可预约 Device，替换属于设备域内部容量收敛 | 不自动删除真机；不在有 Reservation/Session 时删除；不把 quarantine 记录物理抹除；不复制旧设备数据 |
+| 长期虚拟设备自愈 | 已登记且未显式删除的 Emulator/Simulator 始终占用 Pool 登记容量；系统隔离优先重探原机，Android 持续故障且空闲时最多复用一次非破坏 `restart` Host Command，iOS 故障保留原 Simulator 等待恢复或人工处理 | 新版 Alcor 只看到当前可预约 Device；故障恢复属于设备域内部状态收敛 | 不因健康异常自动 delete/rebuild/reimage 或补建替代设备；不自动解除人工隔离；不清空 APK、账号、缓存、文件或数据卷 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Device Image 生命周期与默认选择 | Console 只展示可用 Image 作为默认选择；管理员可将未被活动设备或 Pool 默认引用的旧 Image 受控停用并查看归档 | 新版 Alcor 只会获得当前可用 Image；历史 Run/Artifact 不由本项目处理 | 不物理删除 Device/Image 审计链；不从 Server/浏览器删除 Registry 或 Docker 数据；切换默认值不重装已有设备 |
@@ -72,7 +72,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `cmd/device-farm-server` | 设备农场 Server 二进制入口 | 新版 Worker 的 Device Farm Adapter 调用 |
 | `cmd/device-host-agent` | 宿主机 Agent 二进制入口 | 只和设备农场 `/internal/v1` 通信 |
 | `internal/api/service/repository` | 设备北向 API、业务编排和设备域持久化 | 对 Alcor 只暴露 OpenAPI |
-| `internal/scheduler/reconciler/reaper` | 设备分配、租约和状态收敛 | 对 Alcor 保持内部不可见 |
+| `internal/scheduler/reconciler/reaper` | 设备分配、租约和状态收敛；按 ADR-0029 对系统健康隔离执行原机重探和一次非破坏 restart | 对 Alcor 保持内部不可见 |
 | `internal/providers` | Docker Emulator、Mock、USB 扩展 | 上层统一 Device 模型不变 |
 | `internal/adapters/stf` | STF API 封装 | 由设备农场内部调用 |
 | `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
@@ -116,6 +116,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 8. Alcor Reservation Owner 使用 RunAttempt UUID/ULID；人工和 DaFit 可使用 `manual/test_run`，但不得固化旧整数 Task ID；
 9. 业务报告和测试结果由 Alcor 写入 Supabase Storage/ClickHouse，设备农场不留副本；
 10. DaFit 是成熟执行能力的复用来源和首个联调负载，不是设备农场业务模块。
+11. 已登记且未显式删除的虚拟设备始终占用 Pool 登记容量；故障只停止调度，不允许设备农场自动 delete/rebuild/reimage 或以新设备替代。
 
 ## 7. 文档优先级
 

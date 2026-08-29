@@ -59,6 +59,7 @@ type DeviceState struct {
 	Lifecycle            domain.DeviceLifecycleStatus
 	Health               domain.HealthStatus
 	HealthReason         string
+	AssignmentTarget     string
 	ConsecutiveFailures  int
 	HostStatus           domain.HostStatus
 	OperationInFlight    bool
@@ -73,6 +74,8 @@ type Result struct {
 	DevicesChecked     int `json:"devices_checked"`
 	EventsRecorded     int `json:"events_recorded"`
 	DevicesQuarantined int `json:"devices_quarantined"`
+	DevicesRecovered   int `json:"devices_recovered"`
+	RestartsQueued     int `json:"restarts_queued"`
 }
 
 type Service struct {
@@ -140,6 +143,12 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 				return err
 			}
 		}
+		if input.EventType == "health_recovered" && targetHealth == domain.HealthHealthy &&
+			aggregate.Lifecycle() == domain.DeviceQuarantined && domain.IsSystemRecoverableHealthReason(device.HealthReason) {
+			if err := recoverDeviceLifecycle(aggregate, device.AssignmentTarget, input.Reason, now); err != nil {
+				return err
+			}
+		}
 		if (input.ForceQuarantine || (!input.SuppressQuarantine && failures >= service.failureThreshold)) &&
 			aggregate.Lifecycle() != domain.DeviceQuarantined {
 			if err := aggregate.Transition(domain.DeviceQuarantined, input.Reason, now); err != nil {
@@ -186,7 +195,33 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		return Result{}, err
 	}
 	for _, device := range devices {
-		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceQuarantined || device.Lifecycle == domain.DeviceRecycling {
+		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceRecycling {
+			continue
+		}
+		if device.Lifecycle == domain.DeviceQuarantined {
+			if device.Platform != "android" || !domain.IsSystemRecoverableHealthReason(device.HealthReason) {
+				continue
+			}
+			if domain.IsSTFFailureReason(device.HealthReason) && service.visibility != nil {
+				visible, visibilityErr := service.visibility.Visible(ctx, device.Serial)
+				if visibilityErr == nil && visible {
+					if _, err := service.Report(ctx, device.ID, EventInput{Source: "reconciler", EventType: "health_recovered",
+						Severity: "info", Reason: "STF visibility recovered", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}); err != nil {
+						return result, err
+					}
+					result.DevicesChecked++
+					result.EventsRecorded++
+					result.DevicesRecovered++
+					continue
+				}
+			}
+			queued, err := service.queueSelfHealingRestart(ctx, device.ID)
+			if err != nil {
+				return result, err
+			}
+			if queued {
+				result.RestartsQueued++
+			}
 			continue
 		}
 		if device.OperationInFlight && (device.Lifecycle == domain.DeviceProvisioning || device.Lifecycle == domain.DeviceBooting) {
@@ -204,6 +239,13 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", domain.HostUnavailableReason
 			if service.withinHostRecoveryGrace(device, input.ObservedAt) {
+				// A stale heartbeat can briefly mark the host offline while the server or
+				// agent is restarting. The scheduler already excludes an offline host, so
+				// keep the device's last verified health intact until the recovery grace
+				// expires instead of manufacturing a device failure/event.
+				if device.HostStatus == domain.HostOffline {
+					continue
+				}
 				input.SuppressFailureCount = true
 				input.SuppressQuarantine = true
 			}
@@ -302,6 +344,105 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 
 func schedulableLifecycle(lifecycle domain.DeviceLifecycleStatus) bool {
 	return lifecycle == domain.DeviceReady || lifecycle == domain.DeviceReserved || lifecycle == domain.DeviceBusy
+}
+
+func recoverDeviceLifecycle(device *domain.Device, assignmentTarget, reason string, now time.Time) error {
+	for _, target := range []domain.DeviceLifecycleStatus{domain.DeviceProvisioning, domain.DeviceBooting, domain.DeviceReady} {
+		if err := device.Transition(target, reason, now); err != nil {
+			return err
+		}
+	}
+	if assignmentTarget == string(domain.DeviceReserved) || assignmentTarget == string(domain.DeviceBusy) {
+		if err := device.Transition(domain.DeviceReserved, reason, now); err != nil {
+			return err
+		}
+	}
+	if assignmentTarget == string(domain.DeviceBusy) {
+		return device.Transition(domain.DeviceBusy, reason, now)
+	}
+	return nil
+}
+
+func (service *Service) queueSelfHealingRestart(ctx context.Context, deviceID string) (bool, error) {
+	queued := false
+	err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var hostID, providerRef, platform, healthReason string
+		var lifecycle domain.DeviceLifecycleStatus
+		var health domain.HealthStatus
+		err := tx.QueryRow(ctx, `SELECT d.host_id,d.provider_ref,d.platform,d.lifecycle_status,d.health_status,
+			COALESCE(d.health_reason,'') FROM devices d JOIN device_hosts h ON h.id=d.host_id
+			WHERE d.id=$1 AND d.lifecycle_status='quarantined' AND h.status='online' AND NOT h.draining
+			AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
+			AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
+			AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
+			FOR UPDATE OF d`, deviceID).Scan(&hostID, &providerRef, &platform, &lifecycle, &health, &healthReason)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if platform != "android" || (healthReason != domain.AgentReportedUnhealthyReason && !domain.IsSTFFailureReason(healthReason)) {
+			return nil
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return err
+		}
+		aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+		if err != nil {
+			return err
+		}
+		reason := "系统健康检查持续失败，非破坏重启原设备"
+		if aggregate.Health() != domain.HealthUnknown {
+			if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
+				return err
+			}
+		}
+		if err := aggregate.Transition(domain.DeviceProvisioning, reason, now); err != nil {
+			return err
+		}
+		commandID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]any{"operation_source": "self_healing", "operation_state": string(aggregate.Lifecycle()),
+			"device_id": deviceID, "host_id": hostID, "provider_ref": providerRef, "previous_reason": healthReason})
+		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
+			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+			VALUES($1,$2,'restart',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload, "self-heal-restart-"+commandID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`, deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+		eventID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		eventPayload, _ := json.Marshal(map[string]any{"command_id": commandID, "previous_reason": healthReason})
+		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+			(id,device_id,source,event_type,severity,reason,payload,observed_at)
+			VALUES($1,$2,'reconciler','self_healing_restart_queued','warning',$3,$4::jsonb,$5)`,
+			eventID, deviceID, reason, eventPayload, now); err != nil {
+			return err
+		}
+		auditID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,'system','system','restart_device_self_healing','device',$2,$3,$4,
+			jsonb_build_object('command_id',$5::text,'previous_reason',$6::text))`, auditID, deviceID,
+			"self-heal-restart-"+commandID, reason, commandID, healthReason); err != nil {
+			return err
+		}
+		queued = true
+		return nil
+	})
+	return queued, err
 }
 
 func (service *Service) withinVisibilityGrace(device DeviceState, observedAt time.Time) bool {
@@ -456,7 +597,11 @@ type queryer interface {
 
 func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.platform,d.provider_ref,d.serial,d.lifecycle_status,
-		d.health_status,COALESCE(d.health_reason,''),d.consecutive_failures,h.status,
+		d.health_status,COALESCE(d.health_reason,''),
+		COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
+			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
+			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),
+		d.consecutive_failures,h.status,
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
 			AND c.status IN ('pending','leased')),
@@ -470,7 +615,10 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 			WHERE e.device_id=d.id AND e.event_type='stf_not_visible'
 			ORDER BY e.created_at DESC LIMIT d.consecutive_failures
 		) recent),
-		NULLIF(h.capabilities->>'host_readiness_failure_started_at','')::timestamptz
+		CASE WHEN h.status<>'online' THEN COALESCE(
+			NULLIF(h.capabilities->>'host_readiness_failure_started_at','')::timestamptz,
+			h.last_heartbeat_at,h.updated_at)
+		ELSE NULLIF(h.capabilities->>'host_readiness_failure_started_at','')::timestamptz END
 		FROM devices d JOIN device_hosts h ON h.id=d.host_id ORDER BY d.created_at,d.id`)
 	if err != nil {
 		return nil, err
@@ -480,7 +628,7 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	for rows.Next() {
 		var device DeviceState
 		if err := rows.Scan(&device.ID, &device.HostID, &device.Platform, &device.ProviderRef, &device.Serial,
-			&device.Lifecycle, &device.Health, &device.HealthReason, &device.ConsecutiveFailures, &device.HostStatus,
+			&device.Lifecycle, &device.Health, &device.HealthReason, &device.AssignmentTarget, &device.ConsecutiveFailures, &device.HostStatus,
 			&device.OperationInFlight, &device.DeletionInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt,
 			&device.HostFailureStartedAt); err != nil {
 			return nil, err
@@ -493,10 +641,13 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 func lockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceState, error) {
 	var device DeviceState
 	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.serial,d.lifecycle_status,
-        d.health_status,d.consecutive_failures,h.status
-        FROM devices d JOIN device_hosts h ON h.id=d.host_id WHERE d.id=$1 FOR UPDATE OF d`, id).Scan(
+		d.health_status,COALESCE(d.health_reason,''),COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
+			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
+			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),
+		d.consecutive_failures,h.status
+		FROM devices d JOIN device_hosts h ON h.id=d.host_id WHERE d.id=$1 FOR UPDATE OF d`, id).Scan(
 		&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
-		&device.Lifecycle, &device.Health, &device.ConsecutiveFailures, &device.HostStatus)
+		&device.Lifecycle, &device.Health, &device.HealthReason, &device.AssignmentTarget, &device.ConsecutiveFailures, &device.HostStatus)
 	return device, err
 }
 

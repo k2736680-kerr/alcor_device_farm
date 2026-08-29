@@ -58,3 +58,15 @@ export function iosVersionLabel(capabilities: Record<string, unknown>): string {
   }
   return 'iOS'
 }
+
+/** Same as {@link iosVersionLabel} but keeps a readable fallback when nothing was reported. */
+export function iosSystemVersionLabel(capabilities: Record<string, unknown>): string {
+  const platformVersion = capabilities.platformVersion
+  if (typeof platformVersion === 'string' && platformVersion.trim()) return `iOS ${platformVersion}`
+  const runtime = capabilities.runtimeId
+  if (typeof runtime === 'string') {
+    const marker = runtime.match(/iOS[-.]([0-9-]+)$/i)?.[1]
+    if (marker) return `iOS ${marker.replaceAll('-', '.')}`
+  }
+  return 'iOS（版本待上报）'
+}

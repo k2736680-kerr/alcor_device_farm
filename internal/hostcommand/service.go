@@ -436,11 +436,9 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		return err
 	}
 	preserveSTFHealth := false
-	recoveredHostOutage := current.lifecycle == domain.DeviceQuarantined && current.healthReason != nil &&
-		*current.healthReason == domain.HostUnavailableReason && discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
-	recoveredIOSAutomation := current.lifecycle == domain.DeviceQuarantined && current.platform == "ios" && current.healthReason != nil &&
-		*current.healthReason == domain.AgentReportedUnhealthyReason && discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
-	recoveredAutomatically := recoveredHostOutage || recoveredIOSAutomation
+	recoveredAutomatically := current.lifecycle == domain.DeviceQuarantined && current.healthReason != nil &&
+		domain.IsSystemRecoverableHealthReason(*current.healthReason) && !domain.IsSTFFailureReason(*current.healthReason) &&
+		discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
 	if recoveredAutomatically {
 		if err := recoverFromHostOutage(aggregate, current.assignmentTarget, now); err != nil {
 			return err
@@ -478,6 +476,8 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 		discoveryCapabilities["componentHealth"] = componentValues
 	}
+	resetFailures := recoveredAutomatically || (!preserveSTFHealth && aggregate.Health() == domain.HealthHealthy &&
+		current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight)
 	capabilitiesJSON, err := json.Marshal(discoveryCapabilities)
 	if err != nil {
 		return ErrInvalidArgument
@@ -488,7 +488,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		lifecycle_status=$7::varchar,health_status=$8::varchar,health_reason=$9,
 		consecutive_failures=CASE WHEN $11::boolean THEN 0 ELSE consecutive_failures END,last_seen_at=$10,updated_at=$10
 		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID, capabilitiesJSON,
-		aggregate.Lifecycle(), aggregate.Health(), healthReason, now, recoveredAutomatically)
+		aggregate.Lifecycle(), aggregate.Health(), healthReason, now, resetFailures)
 	if err != nil {
 		return err
 	}
@@ -824,7 +824,8 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if err := json.Unmarshal(record.Payload, &payload); err != nil {
 		return err
 	}
-	if commandPayloadString(payload, "operation_source") != "management" {
+	operationSource := commandPayloadString(payload, "operation_source")
+	if operationSource != "management" && operationSource != "self_healing" {
 		return nil
 	}
 	deviceID := commandPayloadString(payload, "device_id")

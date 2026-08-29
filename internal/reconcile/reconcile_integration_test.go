@@ -112,6 +112,32 @@ func TestRecoveredHostAndSTFVisibilityClearStaleFailureCounter(t *testing.T) {
 	assertEvent(t, environment.db, "health_recovered")
 }
 
+func TestRecentlyOfflineHostDoesNotMutateDeviceDuringRecoveryGrace(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_hosts
+		SET status='offline',last_heartbeat_at=clock_timestamp()-interval '31 seconds'
+		WHERE id='host_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, time.Minute, testLogger())
+	result, err := service.RunOnce(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EventsRecorded != 0 || result.DevicesQuarantined != 0 {
+		t.Fatalf("recovery grace result=%+v", result)
+	}
+	assertDevice(t, environment.db, "ready", "healthy", 0)
+	var events int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id='device_0000000000001'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 {
+		t.Fatalf("recovery grace health events=%d", events)
+	}
+}
+
 func TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter(t *testing.T) {
 	environment := newEnvironment(t, true)
 	environment.provider.SetScenario(providermock.Scenario{AppiumUnhealthy: true})
@@ -133,7 +159,7 @@ func TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter(t *testi
 	assertDevice(t, environment.db, "provisioning", "unknown", 0)
 }
 
-func TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover(t *testing.T) {
+func TestSTFInvisibleConvergesToQuarantineAndSameDeviceAutoRecovers(t *testing.T) {
 	environment := newEnvironment(t, true)
 	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 2, 0, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
@@ -149,7 +175,8 @@ func TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover(t *testin
 	if _, err := healthyService.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+	assertDevice(t, environment.db, "ready", "healthy", 0)
+	assertEvent(t, environment.db, "health_recovered")
 }
 
 func TestIOSDeviceDoesNotUseAndroidProviderOrSTFHealthChain(t *testing.T) {
@@ -411,6 +438,39 @@ func TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess(t *testing
 		t.Fatal(err)
 	}
 	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+}
+
+func TestPersistentSystemQuarantineQueuesOnlyNonDestructiveRestart(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET health_status='unhealthy'
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil || result.RestartsQueued != 1 {
+		t.Fatalf("self-healing result=%+v error=%v", result, err)
+	}
+	assertDevice(t, environment.db, "provisioning", "unknown", 2)
+	var restartCommands, destructiveCommands int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT
+		count(*) FILTER (WHERE command_type='restart' AND payload->>'operation_source'='self_healing'),
+		count(*) FILTER (WHERE command_type IN ('delete','rebuild','create'))
+		FROM device_host_commands WHERE payload->>'device_id'='device_0000000000001'`).Scan(&restartCommands, &destructiveCommands); err != nil {
+		t.Fatal(err)
+	}
+	if restartCommands != 1 || destructiveCommands != 0 {
+		t.Fatalf("restart commands=%d destructive commands=%d", restartCommands, destructiveCommands)
+	}
+	if result, err = service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 0 {
+		t.Fatalf("duplicate self-healing result=%+v error=%v", result, err)
+	}
 }
 
 func TestAutomaticHostMaintenanceUsesRecoveryGraceBeforeQuarantine(t *testing.T) {

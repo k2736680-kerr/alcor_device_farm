@@ -46,6 +46,16 @@ a { color: inherit; }
 .remaining-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .record-finished { color: #8a97a8; font-size: 12px; }
 
+/* 下拉选项两行排版：第一行是“是什么”，第二行是“在哪、编号多少”。 */
+.resource-option { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; padding: 3px 0; }
+.resource-option-title { font-weight: 600; color: #101b2d; }
+.resource-option-meta { color: #8a97a8; font-size: 12px; }
+.ant-select-selection-item .resource-option { padding: 0; justify-content: center; }
+.ant-select-selection-item .resource-option-meta { display: none; }
+.ant-select-selection-item .resource-option-title { font-weight: 500; }
+
+.field-label { margin-bottom: 6px; color: #4b5a6d; font-size: 13px; }
+
 .dashboard-page { max-width: 1500px; margin: 0 auto; }
 .dashboard-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; padding: 2px 2px 14px; }
 .dashboard-hero h2 { margin: 4px 0 2px !important; color: #101b2d; font-size: 25px !important; }

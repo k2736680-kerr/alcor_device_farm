@@ -18,3 +18,16 @@ func TestIsSTFFailureReason(t *testing.T) {
 		}
 	}
 }
+
+func TestIsSystemRecoverableHealthReasonExcludesManualQuarantine(t *testing.T) {
+	for _, reason := range []string{HostUnavailableReason, AgentReportedUnhealthyReason, "device is not visible through STF", "IOS_PROVIDER_DEVICE_MISSING: inventory drift"} {
+		if !IsSystemRecoverableHealthReason(reason) {
+			t.Fatalf("system reason %q is not recoverable", reason)
+		}
+	}
+	for _, reason := range []string{"管理员手工隔离", "IOS_SESSION_CLEANUP_FAILED", "management restart failed"} {
+		if IsSystemRecoverableHealthReason(reason) {
+			t.Fatalf("manual or terminal reason %q is recoverable", reason)
+		}
+	}
+}

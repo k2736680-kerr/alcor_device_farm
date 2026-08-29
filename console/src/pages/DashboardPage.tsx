@@ -87,7 +87,7 @@ export function DashboardPage() {
     { title: '使用中设备', value: inUseCount, note: '已预约或正在执行', to: '/reservations', icon: <CalendarOutlined />, tone: 'orange' },
     { title: '宿主机', value: hosts?.total ?? 0, note: '承载 Android 与 iOS 设备', to: '/hosts', icon: <DesktopOutlined />, tone: 'cyan' },
     { title: '设备池', value: pools?.total ?? 0, note: '设备调度分组', to: '/pools', icon: <DatabaseOutlined />, tone: 'violet' },
-    { title: '故障设备', value: quarantinedDevices?.total ?? 0, note: '等待系统自动清理或人工处理', to: '/devices?view=quarantined', icon: <WarningOutlined />, tone: 'red' },
+    { title: '故障设备', value: quarantinedDevices?.total ?? 0, note: '系统优先恢复原设备，不会自动删除', to: '/devices?view=quarantined', icon: <WarningOutlined />, tone: 'red' },
   ]
 
   return (

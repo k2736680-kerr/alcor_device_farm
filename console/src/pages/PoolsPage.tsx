@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   App as AntApp,
   Alert,
@@ -29,7 +30,8 @@ import {
 import type { ConsoleRole, DevicePool, Device, DeviceHost, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { androidVersionLabel, iosDeviceModelLabel, iosVersionLabel, shortID } from '../api/format'
+import { androidVersionLabel, shortID } from '../api/format'
+import { deviceHeadline, deviceModelLabel, deviceSystemLabel, hostLabel } from '../api/describe'
 import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
 import { apiErrorText, durationLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -47,12 +49,28 @@ function numeric(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function templateLabel(device: Device): string {
-  const capabilities = device.capabilities as Record<string, unknown>
-  if (device.platform === 'ios') {
-    return `${shortID(device.id)} · ${iosVersionLabel(capabilities)} · ${iosDeviceModelLabel(capabilities)}`
+interface TemplateOption {
+  value: string
+  label: ReactNode
+}
+
+/**
+ * Two-line scale-out template option.
+ * The first line answers "which OS and which model", the second "where it runs".
+ * Never lead with a bare identifier — operators cannot map an id to a system.
+ */
+function templateOption(device: Device, imageByID: Map<string, DeviceImage>, hostByID: Map<string, DeviceHost>): TemplateOption {
+  return {
+    value: device.id,
+    label: (
+      <span className="resource-option">
+        <span className="resource-option-title">{deviceHeadline(device, { imageByID })}</span>
+        <span className="resource-option-meta">
+          {device.serial} · 宿主机 {hostLabel(device.host_id, hostByID)} · {shortID(device.id)}
+        </span>
+      </span>
+    ),
   }
-  return `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`
 }
 
 function templateHostDescription(host?: DeviceHost): string {
@@ -78,7 +96,7 @@ function scaleUpDescription(pool: DevicePool, current: number, target: number, d
   if (pool.platform === 'ios') {
     const capacity = host.capacity as Record<string, unknown>
     const pending = devices.filter((device) => device.host_id === host.id && ['provisioning', 'booting'].includes(device.lifecycle_status)).length
-    const poolRegistered = devices.filter((device) => device.host_id === host.id && !['deleted', 'quarantined'].includes(device.lifecycle_status)).length
+    const poolRegistered = devices.filter((device) => device.host_id === host.id && device.lifecycle_status !== 'deleted').length
     const reportedUsed = numeric((host.used_capacity as Record<string, unknown>).device_slots) ?? 0
     const registered = Math.max(poolRegistered, reportedUsed)
     const memory = numeric(capacity.memory_available_mb)
@@ -100,8 +118,7 @@ function capacityForPool(pool: DevicePool, devices: Device[]) {
   const available = members.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy').length
   const inUse = members.filter((device) => ['reserved', 'busy'].includes(device.lifecycle_status) && device.health_status === 'healthy').length
   const recovering = members.filter((device) => ['provisioning', 'booting'].includes(device.lifecycle_status)
-    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')
-    || (device.platform === 'ios' && device.health_reason?.startsWith('IOS_AUTO_REPLACEMENT_DELETE_QUEUED'))).length
+    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')).length
   const serviceable = available + inUse + recovering
   const faulted = Math.max(0, members.length - serviceable)
   return { registered: members.length, available, inUse, recovering, faulted, gap: Math.max(0, pool.total_target - serviceable) }
@@ -309,15 +326,31 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     },
     { title: '调度状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
     {
-      title: '扩容配置', dataIndex: 'default_image_id', width: 240,
-      render: (value: string | undefined, pool) => {
+      title: '扩容模板 / 默认镜像', key: 'scaleout', width: 300,
+      render: (_, pool) => {
         const template = pool.base_device_id ? deviceByID.get(pool.base_device_id) : undefined
-        if (pool.platform === 'ios') {
-          return template ? `${iosVersionLabel(template.capabilities)} · ${iosDeviceModelLabel(template.capabilities)}` : '-'
-        }
-        const version = value && imageByID.get(value) ? androidVersionLabel(imageByID.get(value)?.api_level) : '-'
-        const model = template?.capabilities.hardware_profile_name
-        return model ? `${version} · ${String(model)}` : version
+        const defaultImage = pool.default_image_id ? imageByID.get(pool.default_image_id) : undefined
+        return (
+          <Space direction="vertical" size={2}>
+            <span className="table-secondary">
+              扩容模板：{template
+                ? <Typography.Text>{deviceHeadline(template, { imageByID })}</Typography.Text>
+                : <Typography.Text type="warning">未设置，自动扩容已暂停</Typography.Text>}
+            </span>
+            {pool.platform === 'android' && (
+              <span className="table-secondary">
+                默认镜像：{defaultImage
+                  ? <Typography.Text>{androidVersionLabel(defaultImage.api_level)}</Typography.Text>
+                  : <Typography.Text type="warning">未设置</Typography.Text>}
+              </span>
+            )}
+            {template && (
+              <span className="table-secondary">
+                模板所在宿主机：{hostLabel(template.host_id, hostByID)}
+              </span>
+            )}
+          </Space>
+        )
       },
     },
     {
@@ -356,7 +389,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     <Space direction="vertical" size={14} style={{ display: 'flex' }}>
       <ResourcePageHeader
         title="设备池"
-        description="按池查看目标容量是否真正可服务。可用、使用中和恢复中的设备共同满足目标；故障设备不计入容量，系统会自动清理并补建。"
+        description="按池查看登记容量和实际可服务容量。故障设备仍保留在池中并占用登记名额，系统优先恢复原机，不会自动删除或补建替代设备。"
         dataUpdatedAt={Math.max(query.dataUpdatedAt, devicesQuery.dataUpdatedAt)}
         isFetching={query.isFetching || devicesQuery.isFetching}
         onRefresh={() => void Promise.all([query.refetch(), devicesQuery.refetch()])}
@@ -413,11 +446,15 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
               message={`目标 ${(desiredDeviceCount ?? configPool.total_target)} 台 · 可服务 ${serviceablePoolDevices} 台 · 可立即使用 ${availablePoolDevices} 台`}
               description={<Space direction="vertical" size={2}>
                 <span>已登记 {currentPoolDevices} 台，恢复中 {recoveringPoolDevices} 台，故障 {faultedPoolDevices} 台，缺口 {Math.max(0, (desiredDeviceCount ?? configPool.total_target) - serviceablePoolDevices)} 台。</span>
-                <span>{serviceablePoolDevices < (desiredDeviceCount ?? configPool.total_target)
-                  ? scaleUpDescription(configPool, serviceablePoolDevices, desiredDeviceCount ?? configPool.total_target, poolDevices, baseHost)
-                  : serviceablePoolDevices > (desiredDeviceCount ?? configPool.total_target)
-                    ? `保存后将安全移除 ${serviceablePoolDevices - (desiredDeviceCount ?? configPool.total_target)} 台空闲设备；使用中的设备会在任务结束后处理。`
-                    : faultedPoolDevices > 0 ? '系统正在清理故障虚拟设备，成功后会自动补建；清理失败时才需要人工处理。' : '当前可服务容量与目标一致。'}</span>
+                <span>{currentPoolDevices < (desiredDeviceCount ?? configPool.total_target)
+                  ? scaleUpDescription(configPool, currentPoolDevices, desiredDeviceCount ?? configPool.total_target, poolDevices, baseHost)
+                  : currentPoolDevices > (desiredDeviceCount ?? configPool.total_target)
+                    ? `保存后将安全移除 ${currentPoolDevices - (desiredDeviceCount ?? configPool.total_target)} 台空闲设备；使用中的设备会在任务结束后处理。`
+                    : faultedPoolDevices > 0
+                      ? '故障设备仍保留在池中，系统会持续探测并优先重启原设备；不会自动删除、清空数据或创建替代设备。'
+                      : recoveringPoolDevices > 0
+                        ? '已登记设备正在恢复，完成后会重新进入可用列表。'
+                        : '当前登记容量和可服务容量均达到目标。'}</span>
               </Space>}
             />
           )}
@@ -449,20 +486,38 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             ? '模板决定后续扩容使用的 Mac、iOS 运行时和 iPhone 机型；每次都会创建全新的 CoreSimulator，不会复制模板数据。'
             : '模板决定后续扩容使用的 Android 镜像和硬件规格；每次都会创建全新设备，不会复制模板数据。'}
         </Typography.Paragraph>
+        <div className="field-label">当前扩容模板</div>
         <Select
           style={{ width: '100%', marginBottom: 12 }}
           value={configPool?.base_device_id}
           placeholder="选择健康的扩容模板"
           loading={devicesQuery.isFetching || selectBaseDevice.isPending}
           onChange={setBaseDevice}
+          popupMatchSelectWidth={false}
           options={poolDevices.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
             configPool.platform === 'ios'
               ? device.platform === 'ios' && device.device_kind === 'simulator' && device.provider_type === 'appium_device_farm_ios'
               : device.platform === 'android' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
-          )).map((device) => ({
-            value: device.id, label: templateLabel(device),
-          }))}
+          )).map((device) => templateOption(device, imageByID, hostByID))}
         />
+        {baseDevice && (
+          <Alert
+            showIcon
+            type="success"
+            style={{ marginBottom: 12 }}
+            message={`扩容将沿用：${deviceModelLabel(baseDevice)} · ${deviceSystemLabel(baseDevice, imageByID)}`}
+            description={`模板设备 ${baseDevice.serial} · 宿主机 ${hostLabel(baseDevice.host_id, hostByID)} · 设备编号 ${baseDevice.id}。只有健康设备才能作为模板；模板被删除或隔离后扩容会暂停，需要重新选择。`}
+          />
+        )}
+        {!configPool.base_device_id && (
+          <Alert
+            showIcon
+            type="warning"
+            style={{ marginBottom: 12 }}
+            message="尚未设置扩容模板"
+            description="没有模板时系统不会自动补齐设备，目标设备数只会保留为待办。请在上方选择一台健康设备。"
+          />
+        )}
         {configPool.base_device_id && (
           <Alert
             showIcon
@@ -492,25 +547,30 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary">只列出尚未加入其他设备池、且与当前设备池平台一致的设备。</Typography.Paragraph>
-        <DeviceSelect devices={addableDevices} loading={devicesQuery.isFetching} onChange={(id) => setSelectedDevice(id)} />
+        <DeviceSelect devices={addableDevices} imageByID={imageByID} loading={devicesQuery.isFetching} onChange={(id) => setSelectedDevice(id)} />
       </Modal>
     </Space>
   )
 }
 
-function DeviceSelect({ devices, loading, onChange }: { devices: Device[]; loading: boolean; onChange: (id: string) => void }) {
+function DeviceSelect({ devices, imageByID, loading, onChange }: {
+  devices: Device[]
+  imageByID: ReadonlyMap<string, DeviceImage>
+  loading: boolean
+  onChange: (id: string) => void
+}) {
   return (
     <Select
       showSearch
       style={{ width: '100%' }}
-      placeholder="选择设备（设备编号 · 设备标识）"
+      placeholder="选择设备（机型 · 系统版本 · 设备标识）"
       optionFilterProp="label"
       loading={loading}
       notFoundContent={loading ? '正在加载设备…' : '没有可加入的设备'}
       onChange={onChange}
       options={devices.map((device) => ({
         value: device.id,
-        label: `${shortID(device.id)} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
+        label: `${deviceHeadline(device, { imageByID })} · ${device.serial} · ${lifecycleStatusLabel(device.lifecycle_status)}`,
       }))}
     />
   )

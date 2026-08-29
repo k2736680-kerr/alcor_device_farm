@@ -139,7 +139,9 @@ GetConnectionInfo
 ```text
 provisioning → booting → ready → reserved → busy → ready
                        ↘ stopped
-任一异常状态 → quarantined → rebuild → provisioning
+系统健康异常 → quarantined → 原机重探 → ready
+                         ↘ 原机 restart → provisioning → booting → ready
+人工明确选择 rebuild/reimage → provisioning
 stopped → deleted
 ```
 
@@ -162,6 +164,8 @@ MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行�
 - 控制台显示当前规格最多可新增台数以及 CPU、内存、磁盘中最先达到的限制，不要求管理员登录 Host 修改 Agent 配置；
 - Controller 在目标降低时删除超出的最旧空闲 Emulator，保留最新实例；占用中、回收中或仍有其他 Pool membership 的设备不得被自动删除；
 - 自动删除走持久化 delete Host Command 和 Agent/Docker Provider，成功后 Device 标记为 `deleted` 并保留历史，失败则隔离和告警；
+- 按 ADR-0029，上一条自动删除只适用于管理员明确降低 Pool 目标的缩容；健康异常、STF 不可见、inventory 漂移和隔离不得自动删除或补建。所有未显式删除的设备继续占用登记容量；
+- 系统健康隔离先重探原设备，恢复后使用同一 Device ID、Provider 资源和数据卷回到可用；持续失败且空闲时最多自动执行一次非破坏 restart，失败后保留隔离等待人工；
 - 管理员可对没有活动预约的 `quarantined/stopped` Device 发起人工删除；必须填写原因、携带幂等键并二次确认，复用同一 delete Host Command。成功后退出 Pool、清空 Endpoint 并标记 `deleted`，失败保持 `quarantined/unhealthy`；
 - 缩容是最终一致的：占用中的最旧设备先等待释放，不能为立即达到数字而强制中断 Reservation。
 - 管理员可对空闲 Emulator 选择 Android 13～16 Image 并修改 CPU、内存、数据盘、分辨率和 GPU 模式；该操作会清空设备数据并通过 Host Command 重装，成功前不改变当前 Image/规格，失败时恢复或隔离。
@@ -428,7 +432,7 @@ DF-034 将契约版本提升为 `1.5.0`，新增 Device 当前/有效/待应用�
 4. 每台设备可建立独立 Appium Session；
 5. STF 可看屏、claim、release，且不作为数据库真相；
 6. DaFit 冒烟用例能够申请设备、运行、收集报告并释放；
-7. 超时、Agent 离线、STF 失败和 Appium 失败能够回收或隔离；
+7. 超时、Agent 离线、STF 失败和 Appium 失败能够停止调度并优先恢复原设备；自动恢复失败后隔离，但不自动删除、重建或补建替代设备；
 8. Server/Agent 重启后两分钟内状态收敛；
 9. 重建后无法读取上一次任务 App 数据；
 10. OpenAPI、migration、部署说明、测试报告和回滚步骤齐全。

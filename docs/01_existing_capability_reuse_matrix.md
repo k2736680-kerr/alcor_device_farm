@@ -145,6 +145,8 @@ DF-038 复用 Reservation 的 STF release、既有 System Image 准备、Device/
 
 DF-039 的自动化复用结论固定为 Appium 3.6.0、Appium Device Farm 12.0.1、XCUITest Driver 12.4.0 和 go-ios 1.3.2 的宿主机 Adapter 方案。插件内部 busy 只是技术互斥，出现与 PostgreSQL Reservation 不一致时必须隔离收敛；共享 Appium Endpoint 不代表共享 UDID。人工远控由 ADR-0026 改为固定版本 Baguette 原生 Web UI；不复用会暴露整台宿主机的 VNC，也不恢复已被 Device Farm 12.x 删除的 WDA 串流页面。
 
+DF-056 按 ADR-0029 复用现有健康探针、Agent heartbeat、Host Command、Provider `Restart`、Reservation 真相和 Pool membership。允许新增的只有系统隔离原因判定、原 Device 恢复编排和正式启用前测试历史清理；不得新增第二套 Provider、克隆虚拟机数据、自动执行 `rebuild/reimage/delete`，也不得把 DaFit 的业务 App/Session 重启逻辑迁入设备域。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。

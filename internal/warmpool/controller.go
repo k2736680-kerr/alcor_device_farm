@@ -29,13 +29,10 @@ type CapacityUnavailableError struct {
 func (value *CapacityUnavailableError) Error() string { return capacity.ChineseMessage(value.Result) }
 func (value *CapacityUnavailableError) Unwrap() error { return ErrNoCapacity }
 
-// A quarantined emulator still occupies a slot when the latest Agent heartbeat
-// discovered its Provider resource. A later heartbeat that no longer reports
-// the device advances host.last_heartbeat_at without advancing last_seen_at,
-// allowing the warm pool to replace the missing resource.
-const slotOccupyingDevicePredicate = `(d.lifecycle_status NOT IN ('quarantined','deleted') OR
-	(d.lifecycle_status='quarantined' AND d.last_seen_at IS NOT NULL AND
-	 h.last_heartbeat_at IS NOT NULL AND d.last_seen_at >= h.last_heartbeat_at))`
+// Long-lived devices keep their registered capacity slot until an explicit
+// delete completes. Health isolation stops scheduling but must never create a
+// replacement that would hide the original device or discard its data.
+const slotOccupyingDevicePredicate = `d.lifecycle_status<>'deleted'`
 
 type Result struct {
 	Configurations       int
@@ -353,11 +350,6 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	if err := controller.reconcileCatalogProvisioningJobs(ctx); err != nil {
 		return result, err
 	}
-	iosReplacements, err := controller.reconcileIOSUnavailable(ctx)
-	if err != nil {
-		return result, err
-	}
-	result.DeletesQueued += iosReplacements.DeletesQueued
 	iosScaleDown, err := controller.reconcileIOSScaleDown(ctx)
 	if err != nil {
 		return result, err
@@ -672,103 +664,6 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 		}
 	}
 	return result, nil
-}
-
-// reconcileIOSUnavailable retires disposable managed Simulators before the
-// scale-up pass. Membership stays enabled until Provider deletion succeeds so
-// a leaked CoreSimulator can never be hidden by creating another instance.
-func (controller *Controller) reconcileIOSUnavailable(ctx context.Context) (Result, error) {
-	result := Result{}
-	for {
-		queued := false
-		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
-			var deviceID, hostID, poolID, providerRef, lifecycle, health, previousReason string
-			err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,p.id,d.provider_ref,d.lifecycle_status,d.health_status,
-				COALESCE(d.health_reason,'')
-				FROM device_pool_devices pd
-				JOIN device_pools p ON p.id=pd.pool_id
-				JOIN devices d ON d.id=pd.device_id
-				WHERE pd.enabled AND p.platform='ios' AND p.status='active' AND p.total_target>0
-				AND d.platform='ios' AND d.device_kind='simulator' AND d.provider_type='appium_device_farm_ios'
-				AND (d.lifecycle_status='quarantined' OR (d.lifecycle_status='stopped' AND d.health_status<>'healthy'))
-				AND COALESCE(d.health_reason,'') NOT LIKE 'IOS_AUTO_REPLACEMENT_DELETE_FAILED:%'
-				AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
-				AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
-				AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
-				ORDER BY d.updated_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`).
-				Scan(&deviceID, &hostID, &poolID, &providerRef, &lifecycle, &health, &previousReason)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			commandID, err := controller.newID()
-			if err != nil {
-				return err
-			}
-			payload, err := json.Marshal(map[string]any{
-				"operation_source": "ios_auto_replacement", "device_id": deviceID,
-				"host_id": hostID, "pool_id": poolID, "platform": "ios",
-				"device_kind": "simulator", "provider_type": "appium_device_farm_ios",
-				"provider_ref": providerRef, "previous_reason": previousReason,
-			})
-			if err != nil {
-				return err
-			}
-			digest := sha256.Sum256([]byte("ios-auto-replacement\x00" + deviceID))
-			if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
-				(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
-				VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload,
-				"ios-auto-replacement-"+hex.EncodeToString(digest[:16])); err != nil {
-				return err
-			}
-			now, err := database.ClockNow(ctx, tx)
-			if err != nil {
-				return err
-			}
-			queuedReason := "IOS_AUTO_REPLACEMENT_DELETE_QUEUED"
-			if previousReason != "" {
-				queuedReason += ": " + previousReason
-			}
-			if _, err := tx.Exec(ctx, `UPDATE devices SET health_reason=$2,updated_at=$3
-				WHERE id=$1 AND lifecycle_status=$4::varchar AND health_status=$5::varchar`,
-				deviceID, queuedReason, now, lifecycle, health); err != nil {
-				return err
-			}
-			eventID, err := controller.newID()
-			if err != nil {
-				return err
-			}
-			eventPayload, _ := json.Marshal(map[string]any{"command_id": commandID, "pool_id": poolID})
-			if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
-				(id,device_id,source,event_type,severity,reason,payload,observed_at)
-				VALUES($1,$2,'reconciler','ios_auto_replacement_queued','warning',$3,$4::jsonb,$5)`,
-				eventID, deviceID, queuedReason, eventPayload, now); err != nil {
-				return err
-			}
-			auditID, err := controller.newID()
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events
-				(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
-				VALUES($1,'system','system','auto_replace_ios_simulator','device',$2,$3,$4,
-				jsonb_build_object('command_id',$5::text,'pool_id',$6::text,'previous_reason',$7::text))`,
-				auditID, deviceID, "ios-auto-replacement-"+commandID, queuedReason, commandID, poolID, previousReason); err != nil {
-				return err
-			}
-			queued = true
-			return nil
-		})
-		if err != nil {
-			return result, err
-		}
-		if !queued {
-			return result, nil
-		}
-		result.DeletesQueued++
-	}
 }
 
 func (controller *Controller) queueScaleDown(

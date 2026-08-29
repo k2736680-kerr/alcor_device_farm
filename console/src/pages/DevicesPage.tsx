@@ -1,4 +1,4 @@
-import { Alert, App as AntApp, Button, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Tooltip, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -28,7 +28,8 @@ import {
 import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile, IOSSimulatorCatalog } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { androidVersionLabel, formatTime, iosDeviceModelLabel, shortID } from '../api/format'
+import { androidVersionLabel, formatTime, iosSystemVersionLabel, shortID } from '../api/format'
+import { deviceHeadline, deviceModelLabel, hostLabel, hostOSLabel } from '../api/describe'
 import {
   deviceKindLabel,
   healthReasonLabel,
@@ -109,7 +110,7 @@ function actionable(device: Device, action: DeviceAction): boolean {
     case 'stop':
       return device.platform === 'ios' && device.lifecycle_status === 'ready'
     case 'restart':
-      return device.platform === 'android'
+      return ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status)
     case 'rebuild':
       return (device.platform === 'android' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator')
         || (device.platform === 'ios' && device.device_kind === 'simulator' && device.provider_type === 'appium_device_farm_ios')
@@ -124,17 +125,6 @@ function actionable(device: Device, action: DeviceAction): boolean {
   }
 }
 
-function iosSystemVersion(device: Device): string {
-  const platformVersion = device.capabilities.platformVersion
-  if (typeof platformVersion === 'string' && platformVersion.trim()) return `iOS ${platformVersion}`
-  const runtime = device.capabilities.runtimeId
-  if (typeof runtime === 'string') {
-    const marker = runtime.match(/iOS[-.]([0-9-]+)$/i)?.[1]
-    if (marker) return `iOS ${marker.replaceAll('-', '.')}`
-  }
-  return 'iOS（版本待上报）'
-}
-
 function availabilityTag(device: Device) {
   const detail = `${lifecycleStatusLabel(device.lifecycle_status)} / ${healthStatusLabel(device.health_status)}`
   if (device.lifecycle_status === 'deleted') return <Tag title={detail}>历史记录</Tag>
@@ -143,8 +133,7 @@ function availabilityTag(device: Device) {
     return <Tag color="blue" title={detail}>使用中</Tag>
   }
   if (['provisioning', 'booting'].includes(device.lifecycle_status)
-    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')
-    || (device.platform === 'ios' && device.health_reason?.startsWith('IOS_AUTO_REPLACEMENT_DELETE_QUEUED'))) {
+    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')) {
     return <Tag color="processing" title={detail}>恢复中</Tag>
   }
   return <Tag color="red" title={detail}>故障</Tag>
@@ -234,6 +223,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const defaultIOSPoolID = iosPools[0]?.id
   const imageByID = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
   const poolByID = useMemo(() => new Map(pools.map((pool) => [pool.id, pool])), [pools])
+  const hostByID = useMemo(() => new Map(hosts.map((host) => [host.id, host])), [hosts])
   const filteredHardwareProfiles = useMemo(() => {
     const needle = profileSearch.trim().toLowerCase()
     return needle === '' ? hardwareProfiles : hardwareProfiles.filter((profile) => profile.name.toLowerCase().includes(needle) || profile.id.includes(needle))
@@ -524,7 +514,14 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     {
       title: '设备', dataIndex: 'id', width: 240, render: (value: string, device) => (
         <div className="primary-resource">
-          <Space size={4}><Typography.Text strong>{String(device.platform === 'ios' ? iosDeviceModelLabel(device.capabilities) : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? 'Android 模拟器'))}</Typography.Text>{device.is_pool_base && <Tag color="blue">扩容模板</Tag>}</Space>
+          <Space size={4}>
+            <Typography.Text strong>{deviceModelLabel(device)}</Typography.Text>
+            {device.is_pool_base && (
+              <Tooltip title={`该设备是「${device.pool_name ?? '所属设备池'}」的扩容模板，后续自动扩容会沿用它的系统版本和硬件规格`}>
+                <Tag color="blue">扩容模板</Tag>
+              </Tooltip>
+            )}
+          </Space>
           <small><span>{platformLabel(device.platform)}</span> · <span>{device.serial}</span> · <span>{shortID(value)}</span></small>
         </div>
       ),
@@ -532,21 +529,44 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     {
       title: '系统与配置', width: 210, render: (_, device) => {
         if (device.platform === 'ios') {
-          return <Space direction="vertical" size={0}><Typography.Text>{iosSystemVersion(device)}</Typography.Text><Typography.Text type="secondary">CoreSimulator</Typography.Text><Typography.Text type="secondary">按预约建立受控会话</Typography.Text></Space>
+          return <Space direction="vertical" size={0}><Typography.Text>{iosSystemVersionLabel(device.capabilities)}</Typography.Text><Typography.Text type="secondary">CoreSimulator</Typography.Text><Typography.Text type="secondary">按预约建立受控会话</Typography.Text></Space>
         }
         const image = device.image_id ? imageByID.get(device.image_id) : undefined
-        return <Space direction="vertical" size={0}><Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text><Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}</Typography.Text><Typography.Text type="secondary">{device.reimage_status === 'pending' ? '正在应用新配置' : device.reimage_status === 'failed' ? '上次配置失败' : '配置已生效'}</Typography.Text></Space>
+        return <Space direction="vertical" size={0}><Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text><Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}{image ? ` · ${image.abi} · ${image.resolution}` : ''}</Typography.Text><Typography.Text type="secondary">{device.reimage_status === 'pending' ? '正在应用新配置' : device.reimage_status === 'failed' ? '上次配置失败' : '配置已生效'}</Typography.Text></Space>
       },
     },
     {
-      title: '设备池', dataIndex: 'pool_name', width: 180, render: (value: string | undefined, device) => {
+      title: '设备池', dataIndex: 'pool_name', width: 220, render: (value: string | undefined, device) => {
         const pool = device.pool_id ? poolByID.get(device.pool_id) : undefined
-        const defaultImage = pool?.default_image_id ? imageByID.get(pool.default_image_id) : undefined
+        if (!pool) return <Typography.Text type="secondary">未加入设备池</Typography.Text>
+        const defaultImage = pool.default_image_id ? imageByID.get(pool.default_image_id) : undefined
         return (
           <Space direction="vertical" size={0}>
-            <Typography.Text>{value ?? pool?.name ?? '-'}</Typography.Text>
-            {device.platform === 'android' && defaultImage && <Typography.Text type="secondary">默认 {androidVersionLabel(defaultImage.api_level)}</Typography.Text>}
+            <Typography.Text>{value ?? pool.name}</Typography.Text>
+            {device.platform === 'android' && (
+              <span className="table-secondary">
+                默认镜像：{defaultImage
+                  ? androidVersionLabel(defaultImage.api_level)
+                  : <Typography.Text type="warning">未设置</Typography.Text>}
+              </span>
+            )}
+            {!pool.base_device_id && !device.is_pool_base && (
+              <span className="table-secondary">
+                扩容模板：<Typography.Text type="warning">未设置，自动扩容已暂停</Typography.Text>
+              </span>
+            )}
           </Space>
+        )
+      },
+    },
+    {
+      title: '宿主机', dataIndex: 'host_id', width: 160, render: (value: string) => {
+        const host = hostByID.get(value)
+        return (
+          <div className="primary-resource">
+            <Typography.Text>{host?.name ?? '未知宿主机'}</Typography.Text>
+            <small>{hostOSLabel(host) || '未上报系统'} · {shortID(value)}</small>
+          </div>
         )
       },
     },
@@ -603,12 +623,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           message={`设备创建进度：${({ preparing_image: '准备系统镜像', waiting_capacity: '等待宿主机容量', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? '未知状态'}`}
           description={provisioningState.status === 'waiting_capacity' ? `${capacityMessage}（请求编号：${provisioningRequestID}）` : provisioningState.status === 'failed' ? `设备创建没有完成（错误代码：${provisioningState.error_code ?? '未知'}；请求编号：${provisioningRequestID}）。` : `可关闭页面；创建流程由服务端持续执行。（请求编号：${provisioningRequestID}）`}
         />}
-        <Alert
-          type="info"
-          showIcon
-          message="这里只处理当前设备"
-          description="历史删除记录和底层健康事件不进入日常视图；只有自动恢复失败时才需要查看故障。"
-        />
         <Segmented<PlatformView>
           value={platformView}
           options={[
@@ -665,7 +679,13 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           { key: 'state', label: '内部状态', children: `${lifecycleStatusLabel(detailDevice.lifecycle_status)} / ${healthStatusLabel(detailDevice.health_status)}` },
           { key: 'reason', label: '状态说明', children: healthReasonLabel(detailDevice.health_reason) },
           { key: 'pool', label: '设备池', children: detailDevice.pool_name ?? (detailDevice.pool_id ? poolByID.get(detailDevice.pool_id)?.name : '-') ?? '-' },
-          { key: 'host', label: '宿主机编号', children: <Typography.Text code copyable>{detailDevice.host_id}</Typography.Text> },
+          { key: 'pool_base', label: '扩容模板', children: detailDevice.is_pool_base
+            ? <Tag color="blue">本设备是当前设备池的扩容模板</Tag>
+            : (poolByID.get(detailDevice.pool_id ?? '')?.base_device_id
+              ? '否；设备池已指定其他设备作为模板'
+              : <Typography.Text type="warning">否；设备池尚未设置扩容模板</Typography.Text>) },
+          { key: 'host', label: '宿主机', children: `${hostLabel(detailDevice.host_id, hostByID)} · ${hostOSLabel(hostByID.get(detailDevice.host_id)) || '未上报系统'}` },
+          { key: 'host_id', label: '完整宿主机编号', children: <Typography.Text code copyable>{detailDevice.host_id}</Typography.Text> },
           { key: 'provider', label: '运行方式', children: `${providerTypeLabel(detailDevice.provider_type)} · ${lifecycleModeLabel(detailDevice.lifecycle_mode)}` },
           { key: 'failures', label: '连续失败次数', children: detailDevice.consecutive_failures },
           { key: 'capabilities', label: '设备能力', children: detailText(detailDevice.capabilities) },
@@ -816,7 +836,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           {actionState?.action === 'start' && '启动会在 Mac 宿主机中拉起这台 CoreSimulator 虚拟 iPhone。'}
           {actionState?.action === 'stop' && '停止只关闭空闲的 CoreSimulator，不删除设备和数据。'}
           {actionState?.action === 'rebuild' && (actionState.device.platform === 'ios' ? '重建会关闭、擦除并重新启动 CoreSimulator，UDID 保持不变但设备数据全部清空。' : '重建会销毁并重新拉起设备运行实例，属于危险操作。')}
-          {actionState?.action === 'restart' && '重启会中断当前设备上的会话。'}
+          {actionState?.action === 'restart' && '重启原设备会保留 Device ID、已安装应用、账号、缓存和文件，不会删除数据卷。'}
           {actionState?.action === 'delete' && (actionState.device.platform === 'ios' ? '删除只允许没有活动预约或会话的受管 Simulator；成功后 CoreSimulator UDID 将消失，设备不再出现在列表中。' : '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源、不再出现在设备列表，同时把设备池目标数量减少一台，不会自动补建。')}
         </Typography.Paragraph>
         <Form<ReasonValues> form={form} layout="vertical" onFinish={submitAction}>

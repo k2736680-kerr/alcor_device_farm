@@ -234,7 +234,15 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	if err != nil || len(schedulable) != 0 {
 		t.Fatalf("schedulable after quarantine = %d, error=%v", len(schedulable), err)
 	}
-	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-02"), http.StatusConflict)
+	quarantineRestart := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-02")
+	assertStatus(t, quarantineRestart, http.StatusAccepted)
+	var recovering management.Device
+	decodeData(t, quarantineRestart, &recovering)
+	if recovering.LifecycleStatus != "provisioning" || recovering.HealthStatus != "unknown" {
+		t.Fatalf("queued quarantine restart device = %#v", recovering)
+	}
+	completeNextManagementCommand(t, environment, host.ID, "restart", true)
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
 	rebuildResponse := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01")
 	assertStatus(t, rebuildResponse, http.StatusAccepted)
 	var rebuilding management.Device
@@ -327,7 +335,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&auditedActions, &missingFields); err != nil {
 		t.Fatal(err)
 	}
-	if auditedActions != 6 || missingFields != 0 {
+	if auditedActions != 8 || missingFields != 0 {
 		t.Fatalf("device audit actions=%d missing fields=%d", auditedActions, missingFields)
 	}
 	var alcorActorActions int
@@ -344,7 +352,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&commandEvents); err != nil {
 		t.Fatal(err)
 	}
-	if commandEvents != 4 {
+	if commandEvents != 5 {
 		t.Fatalf("management command health events=%d", commandEvents)
 	}
 

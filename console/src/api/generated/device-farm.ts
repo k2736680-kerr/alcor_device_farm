@@ -4680,6 +4680,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(mutationOptions, queryClient);
     }
 
+/**
+ * 对 ready、stopped 或 quarantined 的已登记虚拟设备排队非破坏 restart。保留 Device ID、Provider 数据和 Pool membership；有活动预约或在途命令时拒绝。
+ */
 export type restartDeviceResponse202 = {
   data: DeviceAcceptedResponse
   status: 202
