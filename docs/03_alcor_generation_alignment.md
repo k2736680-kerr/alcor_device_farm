@@ -92,6 +92,10 @@ DF-038 仍只改变 Device、Pool、Reservation、Host Command、持久化 provi
 
 DF-056 只改变设备域内部的健康收敛和运维数据：系统自动隔离的 Android Device 可复用 Agent heartbeat、STF 健康和既有 Provider `Restart` 恢复原 Device，不能创建 Alcor Run/Result，也不能触发 DaFit 业务 App 重置。隔离设备继续占用 Pool 登记容量，自动恢复失败只形成设备域告警；delete/rebuild/reimage 必须由设备管理员明确操作。正式启用前清理的测试 Reservation、Session、健康事件、审计和命令不属于 Alcor 业务数据，且不得删除当前 Host、Pool、Image、Device 或 Provider 资源。
 
+## 5.3 DF-058 独立控制台保持登录补充
+
+DF-058 只调整独立 Device Farm Console 的设备域技术会话期限，不改变 Alcor 钉钉会话、Service Token、角色边界或设备 API。浏览器继续只持有 HttpOnly/SameSite Cookie 和非 HttpOnly CSRF 双提交 Cookie，不保存明文账号密码；Alcor 同源代理模式仍以 Alcor 会话为准，不复制这套独立 Console 登录。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；

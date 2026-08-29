@@ -135,7 +135,7 @@ func Default() Config {
 		},
 		IOSRemote: IOSRemoteConfig{GatewayTokenTTL: 30 * time.Second},
 		Console: ConsoleConfig{
-			SessionMaxAge: 8 * time.Hour, SessionIdleTimeout: 30 * time.Minute,
+			SessionMaxAge: 30 * 24 * time.Hour, SessionIdleTimeout: 30 * 24 * time.Hour,
 			CleanupInterval: 10 * time.Minute, LoginWindow: 15 * time.Minute, LoginMaxFailures: 5,
 			RemoteLease: 60 * time.Second, RemoteHeartbeat: 15 * time.Second,
 		},

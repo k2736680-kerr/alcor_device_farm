@@ -12,6 +12,7 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('用户账号')).toBeInTheDocument()
     expect(screen.getByLabelText('密码')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登 录' })).toBeInTheDocument()
+    expect(screen.getByText('本浏览器将安全保持登录 30 天，不保存明文密码')).toBeInTheDocument()
   })
 
   it('shows an error message when the credentials are rejected', async () => {

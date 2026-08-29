@@ -48,8 +48,8 @@ console:
   enabled: false
   users_file: ""
   development_insecure: false
-  session_max_age: 8h
-  session_idle_timeout: 30m
+  session_max_age: 720h
+  session_idle_timeout: 720h
   cleanup_interval: 10m
   login_window: 15m
   login_max_failures: 5

@@ -149,6 +149,8 @@ DF-056 按 ADR-0029 复用现有健康探针、Agent heartbeat、Host Command、
 
 DF-057 不新增设备能力，只删除经生产入口、测试入口、构建入口和静态调用图共同证明不可达的旧实现。DF-053 的 iOS 自动删除补建完成分支、事件/审计翻译和兼容原因在 ADR-0029 生效且正式历史清零后不再保留；Warm Pool 的管理员显式缩容链路必须继续存在。Go 领域对象只保留实际调用的构造器和事件接口；Console 继续复用 OpenAPI 生成代码、Orval、现有 E2E fixture 和共享资源描述函数，不手改生成文件来伪造精简。
 
+DF-058 复用既有 `device_console_sessions`、HttpOnly/SameSite Cookie、CSRF 校验、Argon2id 用户文件和注销吊销链路，只把控制台会话的绝对有效期与空闲有效期统一延长为 30 天。浏览器不保存或读取明文密码，不新增用户表、密码接口、认证 Provider 或兼容分支；用户主动退出、会话到期、服务端吊销或用户配置变化后仍必须重新认证。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。

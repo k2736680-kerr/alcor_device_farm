@@ -79,6 +79,7 @@
 | DF-055 | 简化设备运行视图并清理历史噪声入口 | completed | DF-054 |
 | DF-056 | 正式数据清理与长期设备非破坏自愈 | completed | DF-055、ADR-0029 |
 | DF-057 | 全仓不可达代码与旧策略清理 | completed | DF-056 |
+| DF-058 | 独立控制台安全保持登录 | completed | DF-057 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -577,6 +578,14 @@
 产出：删除清单与保留理由、持续静态检查配置、全量回归和 `docs/evidence/DF-057/`。不新增兼容实现、第二套 Adapter、业务对象、API、表或状态。
 
 验收：`deadcode -test ./...` 零结果；Staticcheck 排除纯样式 `ST*` 规则后零问题；Console 开启未使用局部变量和参数检查且构建通过；OpenAPI 生成无漂移；Go 全量测试、`go vet`、Console 测试、生产构建和真实三设备冒烟通过。Warm Pool 显式缩容仍可用，健康故障仍不自动删除或补建；正式库继续保持零历史污染，三台 Device ID/Provider ref 不变。
+
+### DF-058 独立控制台安全保持登录
+
+实施：复用现有 PostgreSQL Console Session、HttpOnly/SameSite Cookie、CSRF 双提交校验、Argon2id 配置用户和注销吊销机制，把默认绝对会话期限与空闲期限统一设为 30 天。登录页明确说明只保存安全登录状态、不在浏览器记录明文密码；账号、角色和密码哈希来源不变，不新增表、API、状态或第二套认证实现。
+
+产出：长期会话默认配置、登录页安全提示、配置/前端/认证回归、正式部署验证和 `docs/evidence/DF-058/acceptance.md`。
+
+验收：新登录响应下发 30 天持久 Cookie，数据库 `expires_at` 与配置一致；复用 Cookie 在浏览器重开及超过旧 30 分钟空闲窗口后仍可访问，主动退出后立即失效；浏览器存储、静态资源、日志、证据和 Git 中没有明文密码。Go 全量测试、静态检查、Console 测试和生产构建通过；正式 Server 与 iOS 隧道重建后 Android 和两台 iOS 逐台完成真实 Appium `/source`，历史测试记录再次清零，随后只删除已确认不再使用的部署备份、退出回滚容器和旧 Server 镜像。
 
 ## 12. 单任务完成定义
 

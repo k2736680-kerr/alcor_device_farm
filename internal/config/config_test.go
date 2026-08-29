@@ -36,6 +36,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.STF.Enabled || cfg.STF.Attempts != 3 || cfg.STF.Timeout != 5*time.Second {
 		t.Fatalf("STF defaults = %+v", cfg.STF)
 	}
+	if cfg.Console.SessionMaxAge != 30*24*time.Hour || cfg.Console.SessionIdleTimeout != 30*24*time.Hour {
+		t.Fatalf("Console session defaults = %+v", cfg.Console)
+	}
 }
 
 func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {

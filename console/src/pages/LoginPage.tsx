@@ -60,7 +60,7 @@ export function LoginPage() {
             登录
           </Button>
         </Form>
-          <div className="login-security-note"><SafetyCertificateOutlined /> 登录会话受 CSRF、过期和空闲超时保护</div>
+          <div className="login-security-note"><SafetyCertificateOutlined /> 本浏览器将安全保持登录 30 天，不保存明文密码</div>
         </Card>
       </section>
     </div>

@@ -13,7 +13,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | 组件 | 当前工作区处理 | 新版 Alcor 接入方式 | 禁止跑偏 |
 |---|---|---|---|
 | Device Farm Console | 当前新增可独立使用的设备控制后台；为 operator/admin 编排 Reservation 绑定的 STF 或 Baguette 原生 Web 远控，viewer 保持只读，仍不展示内部连接地址 | Alcor 以同源受控代理嵌入现有 Console；钉钉会话只在 Alcor 校验，Alcor 服务端使用 Service Token 和受控操作者 Header 调用同一设备 API | 不实现 Alcor 评估业务页面，不复制远控，不让浏览器接触 Service/STF Token 或签名 Secret |
-| Console Gateway 与会话 | 当前在 Device Farm Server 新增 `console` Principal、配置用户和 PostgreSQL 短时会话 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表 |
+| Console Gateway 与会话 | Device Farm Server 使用 `console` Principal、配置用户和 PostgreSQL 会话；独立 Console 默认以 HttpOnly/SameSite Cookie 安全保持登录 30 天 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表，不在浏览器保存明文密码 |
 | Eval Console 设备入口 | 设备农场保持独立交付；嵌入模式复用同一前端构建和设备 API | Alcor 一级导航提供“设备农场”及设备域二级菜单，通过认证代理按路由加载 `/console/`；APK 版本作为“应用版本”二级入口，仍由 Alcor 管理 | 不将 Device/Reservation 数据复制到 Alcor，不把 APK 业务索引写入设备农场 |
 | Case、Dataset、Target、Config | 当前不开发 | 由新版 `/api/v1` 和 PostgreSQL/ClickHouse 管理 | 不建临时替代业务表和 API |
 | Run、RunAttempt、Result、Artifact | 当前不开发正式业务模型 | 由独立 Worker、PostgreSQL、ClickHouse、Supabase Storage 管理 | DaFit 报告只作为联调产物 |
