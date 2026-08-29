@@ -78,6 +78,7 @@
 | DF-054 | 设备农场控制台全页面可用性审校 | completed | DF-049、DF-053 |
 | DF-055 | 简化设备运行视图并清理历史噪声入口 | completed | DF-054 |
 | DF-056 | 正式数据清理与长期设备非破坏自愈 | completed | DF-055、ADR-0029 |
+| DF-057 | 全仓不可达代码与旧策略清理 | completed | DF-056 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -568,6 +569,14 @@
 产出：ADR-0029、非破坏恢复实现、容量与自动删除回归、清理前备份和清理清单、三台设备身份/数据保持证据、`docs/evidence/DF-056/`。
 
 验收：Android 因 Agent/STF 短暂失败进入系统隔离后，真实健康恢复必须使用原 Device ID 自动回到 ready；持续失败最多自动 restart 一次且 Device ID、Provider ref、Pool membership 和数据卷不变。restart 失败只隔离；人工隔离不自动解除；Android/iOS 故障设备均不得产生自动 delete/rebuild/reimage 或替代 create。清理后历史业务/健康/审计/命令/已删除设备计数为零，当前三台设备、两台 Host、两类 Pool/Image 配置存在且逐台 Appium `/source` 验证通过。
+
+### DF-057 全仓不可达代码与旧策略清理
+
+实施：从 Server、Host Agent、Harness、Adapter Mock、Console、Docker 构建和部署脚本入口建立引用清单；使用 Go `deadcode -test`、Staticcheck、`go vet`、TypeScript `noUnusedLocals/noUnusedParameters`、Knip 文件扫描和全文引用核对删除不可达实现。重点移除 ADR-0029 已取代且正式历史已清零的 iOS 自动删除补建完成分支与 Console 旧文案、未调用领域构造器/方法、未调用 Repository 查询、未使用 import 和无效控制流。生成的 OpenAPI Client、独立运维脚本、E2E fixture、迁移、回滚和历史证据不因单纯“没有 import”而删除。
+
+产出：删除清单与保留理由、持续静态检查配置、全量回归和 `docs/evidence/DF-057/`。不新增兼容实现、第二套 Adapter、业务对象、API、表或状态。
+
+验收：`deadcode -test ./...` 零结果；Staticcheck 排除纯样式 `ST*` 规则后零问题；Console 开启未使用局部变量和参数检查且构建通过；OpenAPI 生成无漂移；Go 全量测试、`go vet`、Console 测试、生产构建和真实三设备冒烟通过。Warm Pool 显式缩容仍可用，健康故障仍不自动删除或补建；正式库继续保持零历史污染，三台 Device ID/Provider ref 不变。
 
 ## 12. 单任务完成定义
 

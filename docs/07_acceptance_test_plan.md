@@ -313,3 +313,7 @@ DF-053 额外要求：Pool 目标为 2 且一台受管 iOS Simulator 隔离、�
 # DF-056 长期设备非破坏恢复与正式数据清理补充
 
 ADR-0029 取代 DF-053 的自动删除补建验收口径。验收必须证明：系统产生的 Android Agent/STF 隔离可由真实心跳/可见性恢复原 Device；持续故障最多自动 restart 一次，且 restart 前后 Device ID、Provider ref、Pool membership、已安装 App/账号/缓存/文件不变。人工隔离不得自动解除；任何健康隔离都不得产生 delete/rebuild/reimage 或替代 create。iOS inventory 消失或故障只形成容量缺口和告警，不自动删除 CoreSimulator。清理正式库前必须生成可恢复备份并记录保留 ID；清理后 Reservation、Session、健康事件、设备审计、Host Command、provisioning job、幂等/Console Session 和 deleted Device 为零，当前 Host、Pool、Image 与三台 Device 保留并逐台完成真实 Appium Session 和 `/source`。
+
+# DF-057 全仓不可达代码与旧策略清理补充
+
+DF-057 必须同时使用生产入口、测试入口、部署/运维引用和静态调用图判断删除，不得把独立 CLI、迁移、E2E fixture、OpenAPI 生成代码或历史证据误判为死代码。验收保存删除项与保留项清单，并证明 Go deadcode 零结果、Staticcheck 无有效问题、TypeScript 未使用检查零结果、生成代码无漂移和全量测试/构建通过。删除 DF-053 旧完成分支后必须回归管理员显式缩容成功/失败、iOS 故障不自动删除、Android 原机恢复和三台真实设备会话；正式库最终继续为零历史记录。

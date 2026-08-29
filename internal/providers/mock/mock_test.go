@@ -201,15 +201,14 @@ func TestMockProviderCreatesNoBackgroundGoroutines(t *testing.T) {
 func TestMockProviderSupportsIOSComponentHealthAndSharedAppiumEndpoint(t *testing.T) {
 	provider := New(Config{SharedAppiumEndpoint: "http://mac-host.test:4723"})
 	create := func(id, ref string) providers.Snapshot {
-		snapshot, err := provider.Create(context.Background(), providers.CreateRequest{
+		if _, err := provider.Create(context.Background(), providers.CreateRequest{
 			DeviceID: id, HostID: "mac_host_000000000001", Platform: providers.PlatformIOS,
 			DeviceKind: "simulator", ProviderRef: ref, Serial: "UDID-" + ref,
 			Capabilities: map[string]any{"platformName": "iOS", "deviceClass": "phone"},
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatal(err)
 		}
-		snapshot, err = provider.Start(context.Background(), ref)
+		snapshot, err := provider.Start(context.Background(), ref)
 		if err != nil {
 			t.Fatal(err)
 		}

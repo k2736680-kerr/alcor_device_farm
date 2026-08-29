@@ -319,12 +319,9 @@ func (service *Service) ReconcileScaleUp(ctx context.Context) (created, capacity
 			case createErr == nil:
 				created++
 			case errors.Is(createErr, ErrTargetSatisfied):
-				break
 			case errors.Is(createErr, ErrCapacity):
 				capacityMisses++
-				break
 			case errors.Is(createErr, ErrConflict), errors.Is(createErr, ErrInvalidArgument), errors.Is(createErr, ErrNotFound):
-				break
 			default:
 				return created, capacityMisses, createErr
 			}

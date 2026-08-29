@@ -32,13 +32,11 @@ func RestoreSession(id string, status SessionStatus) (*Session, error) {
 	return &Session{state: state}, nil
 }
 
-func (session *Session) ID() string            { return session.state.idValue() }
 func (session *Session) Status() SessionStatus { return session.state.statusValue() }
 func (session *Session) Transition(to SessionStatus, reason string, at time.Time) error {
 	return session.state.transition(to, reason, at)
 }
 func (session *Session) Events() []TransitionEvent { return session.state.eventsCopy() }
-func (session *Session) ClearEvents()              { session.state.clearEvents() }
 
 func validSessionStatus(status SessionStatus) bool {
 	_, ok := sessionTransitions[status]

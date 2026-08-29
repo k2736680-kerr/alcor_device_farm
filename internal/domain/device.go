@@ -54,10 +54,6 @@ type Device struct {
 	events    []TransitionEvent
 }
 
-func NewDevice(id string) (*Device, error) {
-	return RestoreDevice(id, DeviceProvisioning, HealthUnknown)
-}
-
 func RestoreDevice(id string, lifecycle DeviceLifecycleStatus, health HealthStatus) (*Device, error) {
 	state, err := newStateMachine("device", id, "lifecycle_status", lifecycle, validDeviceLifecycleStatus, deviceTransitions)
 	if err != nil {
@@ -123,11 +119,6 @@ func (device *Device) Events() []TransitionEvent {
 	result = append(result, device.events...)
 	sort.SliceStable(result, func(left, right int) bool { return result[left].At.Before(result[right].At) })
 	return result
-}
-
-func (device *Device) ClearEvents() {
-	device.lifecycle.clearEvents()
-	device.events = nil
 }
 
 func validDeviceLifecycleStatus(status DeviceLifecycleStatus) bool {

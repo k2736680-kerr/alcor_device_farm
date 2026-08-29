@@ -26,7 +26,6 @@ func RestorePool(id string, status PoolStatus) (*Pool, error) {
 	return &Pool{state: state}, nil
 }
 
-func (pool *Pool) ID() string         { return pool.state.idValue() }
 func (pool *Pool) Status() PoolStatus { return pool.state.statusValue() }
 func (pool *Pool) Transition(to PoolStatus, reason string, at time.Time) error {
 	return pool.state.transition(to, reason, at)

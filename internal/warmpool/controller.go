@@ -524,7 +524,7 @@ type scaleDownDevice struct {
 func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Result, error) {
 	rows, err := controller.db.Pool().Query(ctx, `SELECT DISTINCT payload->>'device_id'
 		FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'operation_source' IN ('warm_pool_scale_down','ios_auto_replacement')
+		AND payload->>'operation_source'='warm_pool_scale_down'
 		AND status IN ('succeeded','failed','timed_out','canceled')
 		AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
 		ORDER BY payload->>'device_id'`)
@@ -548,16 +548,16 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 	result := Result{}
 	for _, deviceID := range deviceIDs {
 		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
-			var commandID, operationSource, poolID string
+			var commandID string
 			var status domain.CommandStatus
 			var commandResult []byte
 			var errorCode *string
-			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code,payload->>'operation_source',COALESCE(payload->>'pool_id','')
+			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code
 				FROM device_host_commands
-				WHERE command_type='delete' AND payload->>'operation_source' IN ('warm_pool_scale_down','ios_auto_replacement')
+				WHERE command_type='delete' AND payload->>'operation_source'='warm_pool_scale_down'
 				AND payload->>'device_id'=$1 AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
 				ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, deviceID).
-				Scan(&commandID, &status, &commandResult, &errorCode, &operationSource, &poolID); err != nil {
+				Scan(&commandID, &status, &commandResult, &errorCode); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return nil
 				}
@@ -587,9 +587,6 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 				deleted = json.Unmarshal(commandResult, &value) == nil && value.Deleted
 			}
 			eventType, severity, reason := "warm_pool_scale_down_completed", "info", "automatic scale down removed emulator resources"
-			if operationSource == "ios_auto_replacement" {
-				eventType, reason = "ios_auto_replacement_delete_completed", "automatic replacement removed an unavailable iOS Simulator"
-			}
 			if deleted {
 				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 				if err != nil {
@@ -604,12 +601,6 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 					adb_endpoint=NULL,appium_endpoint=NULL,stf_serial=NULL,updated_at=$3 WHERE id=$1`, deviceID, reason, now); err != nil {
 					return err
 				}
-				if operationSource == "ios_auto_replacement" && poolID != "" {
-					if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$3
-						WHERE pool_id=$1 AND device_id=$2 AND enabled`, poolID, deviceID, now); err != nil {
-						return err
-					}
-				}
 				result.DeletesCompleted++
 			} else {
 				code := "EMULATOR_DELETE_FAILED"
@@ -618,10 +609,6 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 				}
 				reason = code + ": automatic scale down could not remove emulator resources"
 				eventType, severity = "warm_pool_scale_down_failed", "error"
-				if operationSource == "ios_auto_replacement" {
-					reason = "IOS_AUTO_REPLACEMENT_DELETE_FAILED: " + code
-					eventType = "ios_auto_replacement_delete_failed"
-				}
 				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 				if err != nil {
 					return err

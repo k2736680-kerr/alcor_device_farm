@@ -26,10 +26,6 @@ type Reservation struct {
 	state stateMachine[ReservationStatus]
 }
 
-func NewReservation(id string) (*Reservation, error) {
-	return RestoreReservation(id, ReservationPending)
-}
-
 func RestoreReservation(id string, status ReservationStatus) (*Reservation, error) {
 	state, err := newStateMachine("device_reservation", id, "status", status, validReservationStatus, reservationTransitions)
 	if err != nil {
@@ -38,13 +34,11 @@ func RestoreReservation(id string, status ReservationStatus) (*Reservation, erro
 	return &Reservation{state: state}, nil
 }
 
-func (reservation *Reservation) ID() string                { return reservation.state.idValue() }
 func (reservation *Reservation) Status() ReservationStatus { return reservation.state.statusValue() }
 func (reservation *Reservation) Transition(to ReservationStatus, reason string, at time.Time) error {
 	return reservation.state.transition(to, reason, at)
 }
 func (reservation *Reservation) Events() []TransitionEvent { return reservation.state.eventsCopy() }
-func (reservation *Reservation) ClearEvents()              { reservation.state.clearEvents() }
 
 func validReservationStatus(status ReservationStatus) bool {
 	_, ok := reservationTransitions[status]

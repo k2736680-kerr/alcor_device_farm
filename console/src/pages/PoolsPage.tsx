@@ -33,7 +33,7 @@ import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, shortID } from '../api/format'
 import { deviceHeadline, deviceModelLabel, deviceSystemLabel, hostLabel } from '../api/describe'
 import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
-import { apiErrorText, durationLabel, responseRequestID } from '../api/presentation'
+import { apiErrorText, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { PageQueryError, ResourcePageHeader } from '../components/ResourcePage'
 

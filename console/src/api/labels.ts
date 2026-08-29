@@ -129,10 +129,6 @@ const healthEventTypeLabels: Record<string, string> = {
   ios_session_drift: 'iOS 会话状态漂移',
   ios_session_cleanup_failed: 'iOS 会话清理失败',
   ios_provider_device_missing: 'iOS 模拟器已从宿主机清单消失',
-  inventory_missing: 'iOS 模拟器已从宿主机清单消失',
-  ios_auto_replacement_queued: 'iOS 模拟器正在自动替换',
-  ios_auto_replacement_delete_completed: '故障 iOS 模拟器已清理',
-  ios_auto_replacement_delete_failed: '故障 iOS 模拟器清理失败',
 }
 
 const auditActionLabels: Record<string, string> = {
@@ -168,8 +164,6 @@ const auditActionLabels: Record<string, string> = {
   fail_ios_appium_session: '标记 iOS 自动化会话失败',
   cleanup_ios_appium_session: '清理 iOS 自动化会话',
   quarantine_ios_session_drift: '隔离 iOS 会话漂移',
-  auto_replace_ios_simulator: '自动替换故障 iOS 模拟器',
-  replace_unhealthy_ios_simulator: '自动替换故障 iOS 模拟器',
 }
 
 const resourceTypeLabels: Record<string, string> = {
@@ -231,7 +225,7 @@ export function healthReasonLabel(value?: string | null): string {
     'management rebuild queued': '已进入人工重建队列',
     'health check failed': '健康检查失败',
     CREATE_RESULT_INVALID: '创建设备返回结果不完整',
-    IOS_SIMULATOR_INVENTORY_MISSING: '宿主机完整清单中已找不到该模拟器，系统将自动替换',
+    IOS_SIMULATOR_INVENTORY_MISSING: '宿主机完整清单中已找不到该模拟器，系统会保留原设备并等待恢复',
   }
   if (exact[value]) {
     return exact[value]
@@ -244,14 +238,8 @@ export function healthReasonLabel(value?: string | null): string {
     const detail = value.slice('EMULATOR_DELETE_FAILED:'.length).trim()
     return /[\u3400-\u9fff]/.test(detail) ? `模拟器删除失败：${detail}` : '模拟器删除失败，请检查宿主机运行资源和代理日志'
   }
-  if (value.startsWith('IOS_AUTO_REPLACEMENT_DELETE_QUEUED')) {
-    return '系统正在清理故障模拟器，完成后会自动补建设备'
-  }
-  if (value.startsWith('IOS_AUTO_REPLACEMENT_DELETE_FAILED:')) {
-    return '故障模拟器自动清理失败，请检查 Mac 宿主机和 CoreSimulator'
-  }
   if (value.startsWith('IOS_PROVIDER_DEVICE_MISSING:')) {
-    return '宿主机完整清单中已找不到该模拟器，系统将自动替换'
+    return '宿主机完整清单中已找不到该模拟器，系统会保留原设备并等待恢复，请检查 Mac 宿主机和 CoreSimulator'
   }
   return /[\u3400-\u9fff]/.test(value) ? value : `系统报告了未识别的状态原因（错误代码：${value}）`
 }

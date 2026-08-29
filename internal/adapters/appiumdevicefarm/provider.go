@@ -2,7 +2,6 @@ package appiumdevicefarm
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -364,41 +363,6 @@ func (client *Client) devices(ctx context.Context) ([]Device, error) {
 	}
 	sort.Slice(devices, func(left, right int) bool { return devices[left].UDID < devices[right].UDID })
 	return devices, nil
-}
-
-func (client *Client) simulatorState(ctx context.Context, udid string) (string, error) {
-	if _, allowed := client.allowUDIDs[udid]; !allowed {
-		return "", providerError(providers.OperationDiscover, "IOS_DEVICE_NOT_ALLOWED", "该 iOS 设备不在宿主机 allowlist 中", false, nil)
-	}
-	output, err := client.commandRunner.Run(ctx, client.xcrunBinary, "simctl", "list", "devices", udid, "-j")
-	if err != nil {
-		return "", providerError(providers.OperationDiscover, "IOS_SIMULATOR_STATE_QUERY_FAILED", "读取 Simulator 实时状态失败", true, err)
-	}
-	var payload struct {
-		Devices map[string][]struct {
-			UDID  string `json:"udid"`
-			State string `json:"state"`
-		} `json:"devices"`
-	}
-	if len(output) == 0 || len(output) > maxResponseBytes || json.Unmarshal(output, &payload) != nil {
-		return "", providerError(providers.OperationDiscover, "IOS_SIMULATOR_STATE_QUERY_FAILED", "Simulator 实时状态响应无效", true, nil)
-	}
-	state := ""
-	for _, runtimeDevices := range payload.Devices {
-		for _, device := range runtimeDevices {
-			if strings.TrimSpace(device.UDID) != udid {
-				continue
-			}
-			if state != "" {
-				return "", providerError(providers.OperationDiscover, "IOS_SIMULATOR_STATE_CONFLICT", "Simulator 实时状态存在重复 UDID", false, nil)
-			}
-			state = strings.TrimSpace(device.State)
-		}
-	}
-	if state == "" {
-		return "", providerError(providers.OperationDiscover, "PROVIDER_DEVICE_NOT_FOUND", "simctl 中不存在该 allowlist Simulator", true, nil)
-	}
-	return state, nil
 }
 
 func (client *Client) snapshot(hostID string, device Device, node NodeHealth, nodeErr error) providers.Snapshot {

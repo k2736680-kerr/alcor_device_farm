@@ -99,17 +99,6 @@ func (CommandRepository) RecoverExpiredLease(ctx context.Context, querier databa
 	return record, nil
 }
 
-func (CommandRepository) Get(ctx context.Context, querier database.Querier, id string) (CommandRecord, error) {
-	record, err := scanCommand(querier.QueryRow(ctx, `SELECT
-        id,host_id,command_type,payload,status,lease_token,lease_expires_at,
-        attempts,max_attempts,idempotency_key,created_at,updated_at,result,error_code,completed_at
-        FROM device_host_commands WHERE id=$1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CommandRecord{}, ErrNotFound
-	}
-	return record, err
-}
-
 func (CommandRepository) ExtendLease(
 	ctx context.Context,
 	querier database.Querier,

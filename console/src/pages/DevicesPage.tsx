@@ -29,7 +29,7 @@ import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, D
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, formatTime, iosSystemVersionLabel, shortID } from '../api/format'
-import { deviceHeadline, deviceModelLabel, hostLabel, hostOSLabel } from '../api/describe'
+import { deviceModelLabel, hostLabel, hostOSLabel } from '../api/describe'
 import {
   deviceKindLabel,
   healthReasonLabel,

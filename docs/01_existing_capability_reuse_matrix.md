@@ -147,6 +147,8 @@ DF-039 的自动化复用结论固定为 Appium 3.6.0、Appium Device Farm 12.0.
 
 DF-056 按 ADR-0029 复用现有健康探针、Agent heartbeat、Host Command、Provider `Restart`、Reservation 真相和 Pool membership。允许新增的只有系统隔离原因判定、原 Device 恢复编排和正式启用前测试历史清理；不得新增第二套 Provider、克隆虚拟机数据、自动执行 `rebuild/reimage/delete`，也不得把 DaFit 的业务 App/Session 重启逻辑迁入设备域。
 
+DF-057 不新增设备能力，只删除经生产入口、测试入口、构建入口和静态调用图共同证明不可达的旧实现。DF-053 的 iOS 自动删除补建完成分支、事件/审计翻译和兼容原因在 ADR-0029 生效且正式历史清零后不再保留；Warm Pool 的管理员显式缩容链路必须继续存在。Go 领域对象只保留实际调用的构造器和事件接口；Console 继续复用 OpenAPI 生成代码、Orval、现有 E2E fixture 和共享资源描述函数，不手改生成文件来伪造精简。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。
