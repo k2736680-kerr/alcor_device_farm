@@ -127,6 +127,8 @@ Appium Device Farm/simctl 发现历史 allowlist 与使用保留名称前缀创�
 - 管理员从本 Pool 选择一台 `ready/healthy` Simulator 作为扩容模板，模板只提供 Mac Host、Runtime ID、iPhone Device Type ID 和显示规格，不复制 App、账号、缓存或 CoreSimulator 数据；
 - 目标增加时，Controller 在 Pool 行锁内重新统计已登记和正在创建的 Simulator，复用 7.3 的受控创建、Host 实时容量预检、幂等和审计链路补足差额；
 - 目标降低时，只选择没有活动 Reservation/Session、没有在途命令且不属于其他 Pool 的最旧空闲 Simulator，复用既有 delete Host Command；占用中的设备等待释放，不强制中断；
+- 受管 Simulator 隔离、停止或不健康时不满足可服务目标；没有活动占用后按 ADR-0028 先走既有 delete Host Command 清理，成功后保持目标不变并创建干净替代设备。删除失败保留隔离并阻断补建，禁止在未知 CoreSimulator 仍存在时无限增加实例；
+- 基础设备被自动淘汰后，`base_device_id` 可继续作为已验证 Host/Runtime/Device Type 的静态模板引用；创建前仍必须用当前 Host 目录、心跳和容量重新校验；
 - 模板缺失、Host 离线/排空、目录变化或容量不足时保留管理员设置的真实目标，并向 Console 返回或展示中文阻塞原因；不得伪造已达到目标，也不得留下半条 Device、membership、command 或 CoreSimulator。
 
 ## 8. 平台中立健康模型

@@ -71,7 +71,7 @@ sequenceDiagram
 启动正常场景：
 
 ```powershell
-$env:DEVICE_FARM_GO='E:\AutoTestTools\Tools\go1.26.5\go\bin\go.exe'
+$env:DEVICE_FARM_GO='D:\AutoTestTools\Tools\go1.26.5\go\bin\go.exe'
 & $env:DEVICE_FARM_GO run ./cmd/device-farm-adapter-mock -scenario happy -pending-polls 2
 ```
 

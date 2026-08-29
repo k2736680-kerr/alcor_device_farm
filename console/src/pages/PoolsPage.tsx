@@ -132,6 +132,44 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     },
   )
   const currentPoolDevices = unwrapPage<Device>(poolDevicesQuery.data)?.total ?? 0
+  const poolStatusQueryOptions = {
+    query: {
+      enabled: Boolean(configPool), refetchInterval: 5_000,
+      refetchOnWindowFocus: true, refetchOnReconnect: true,
+    },
+  }
+  const availablePoolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id, lifecycle_status: 'ready', health_status: 'healthy' },
+    poolStatusQueryOptions,
+  )
+  const reservedPoolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id, lifecycle_status: 'reserved', health_status: 'healthy' },
+    poolStatusQueryOptions,
+  )
+  const busyPoolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id, lifecycle_status: 'busy', health_status: 'healthy' },
+    poolStatusQueryOptions,
+  )
+  const provisioningPoolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id, lifecycle_status: 'provisioning' },
+    poolStatusQueryOptions,
+  )
+  const bootingPoolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id, lifecycle_status: 'booting' },
+    poolStatusQueryOptions,
+  )
+  const recyclingPoolDevicesQuery = useListDevices(
+    { page: 1, page_size: 1, pool_id: configPool?.id, lifecycle_status: 'recycling', health_status: 'healthy' },
+    poolStatusQueryOptions,
+  )
+  const availablePoolDevices = unwrapPage<Device>(availablePoolDevicesQuery.data)?.total ?? 0
+  const inUsePoolDevices = (unwrapPage<Device>(reservedPoolDevicesQuery.data)?.total ?? 0)
+    + (unwrapPage<Device>(busyPoolDevicesQuery.data)?.total ?? 0)
+  const recoveringPoolDevices = (unwrapPage<Device>(provisioningPoolDevicesQuery.data)?.total ?? 0)
+    + (unwrapPage<Device>(bootingPoolDevicesQuery.data)?.total ?? 0)
+    + (unwrapPage<Device>(recyclingPoolDevicesQuery.data)?.total ?? 0)
+  const serviceablePoolDevices = Math.min(currentPoolDevices, availablePoolDevices + inUsePoolDevices + recoveringPoolDevices)
+  const faultedPoolDevices = Math.max(0, currentPoolDevices - serviceablePoolDevices)
   const devicesQuery = useListDevices({ page: 1, page_size: 200 })
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
   const deviceByID = useMemo(() => new Map(devices.map((device) => [device.id, device])), [devices])
@@ -327,13 +365,16 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             <Alert
               showIcon
               style={{ marginBottom: 16 }}
-              type={currentPoolDevices === (desiredDeviceCount ?? configPool.total_target) ? 'success' : 'info'}
-              message={`当前 ${currentPoolDevices} 台，目标 ${(desiredDeviceCount ?? configPool.total_target)} 台`}
-              description={currentPoolDevices < (desiredDeviceCount ?? configPool.total_target)
-                ? scaleUpDescription(configPool, currentPoolDevices, desiredDeviceCount ?? configPool.total_target, poolDevices, baseHost)
-                : currentPoolDevices > (desiredDeviceCount ?? configPool.total_target)
-                  ? `保存后将安全移除 ${currentPoolDevices - (desiredDeviceCount ?? configPool.total_target)} 台空闲设备；使用中的设备会在任务结束后处理。`
-                  : '当前数量与目标一致，无需扩容或缩容。'}
+              type={serviceablePoolDevices === (desiredDeviceCount ?? configPool.total_target) && faultedPoolDevices === 0 ? 'success' : faultedPoolDevices > 0 ? 'warning' : 'info'}
+              message={`目标 ${(desiredDeviceCount ?? configPool.total_target)} 台 · 可服务 ${serviceablePoolDevices} 台 · 可立即使用 ${availablePoolDevices} 台`}
+              description={<Space direction="vertical" size={2}>
+                <span>已登记 {currentPoolDevices} 台，恢复中 {recoveringPoolDevices} 台，故障 {faultedPoolDevices} 台，缺口 {Math.max(0, (desiredDeviceCount ?? configPool.total_target) - serviceablePoolDevices)} 台。</span>
+                <span>{serviceablePoolDevices < (desiredDeviceCount ?? configPool.total_target)
+                  ? scaleUpDescription(configPool, serviceablePoolDevices, desiredDeviceCount ?? configPool.total_target, poolDevices, baseHost)
+                  : serviceablePoolDevices > (desiredDeviceCount ?? configPool.total_target)
+                    ? `保存后将安全移除 ${serviceablePoolDevices - (desiredDeviceCount ?? configPool.total_target)} 台空闲设备；使用中的设备会在任务结束后处理。`
+                    : faultedPoolDevices > 0 ? '系统正在清理故障虚拟设备，成功后会自动补建；清理失败时才需要人工处理。' : '当前可服务容量与目标一致。'}</span>
+              </Space>}
             />
           )}
           <Form.Item

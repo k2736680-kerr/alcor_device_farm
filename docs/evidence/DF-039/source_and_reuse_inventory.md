@@ -5,7 +5,7 @@
 - 核对日期：2026-08-17；
 - Device Farm 基线：`2497c47`，分支 `codex/device-farm-v2`；
 - Android V1：`106e9dd`，Tag `archive/android-baseline-2026-08-17`；
-- 核对仓库：`alcor_device_farm`、`E:/AutoTestTools/Projects/Alcor`、`E:/AutoTestTools/Projects/dafit_auto_platform`。
+- 核对仓库：`alcor_device_farm`、`D:/AutoTestTools/Projects/Alcor`、`D:/AutoTestTools/Projects/dafit_auto_platform`。
 
 ## 2. 上游固定版本
 

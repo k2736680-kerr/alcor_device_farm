@@ -206,20 +206,19 @@ describe('DevicesPage device categories', () => {
     expect(screen.getByText('Android 模拟器')).toBeInTheDocument()
     expect(screen.getByText('Android Docker 模拟器')).toBeInTheDocument()
     expect(screen.getByText('可用')).toBeInTheDocument()
-    expect(screen.getByText('正常')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '可用性' })).toBeInTheDocument()
 
-    await user.click(screen.getByText('隔离设备（1）'))
+    await user.click(screen.getByText('故障（1）'))
     const isolatedSerial = await screen.findByText('emulator-5558')
     const isolatedRow = isolatedSerial.closest('tr')
     expect(isolatedRow).not.toBeNull()
-    expect(within(isolatedRow as HTMLElement).getByText('已隔离')).toBeInTheDocument()
     expect(within(isolatedRow as HTMLElement).getByText('故障')).toBeInTheDocument()
 
     await user.click(screen.getByText('已删除历史（1）'))
     const deletedSerial = await screen.findByText('emulator-5560')
     const deletedRow = deletedSerial.closest('tr')
     expect(deletedRow).not.toBeNull()
-    expect(within(deletedRow as HTMLElement).getByText('已删除')).toBeInTheDocument()
+    expect(within(deletedRow as HTMLElement).getByText('历史记录')).toBeInTheDocument()
     expect(within(deletedRow as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
   })
 
@@ -228,7 +227,7 @@ describe('DevicesPage device categories', () => {
 
     expect(await screen.findByText('emulator-5558')).toBeInTheDocument()
     expect(screen.queryByText('emulator-5554')).not.toBeInTheDocument()
-    expect(screen.getByText('隔离设备（1）').closest('.ant-segmented-item')).toHaveClass('ant-segmented-item-selected')
+    expect(screen.getByText('故障（1）').closest('.ant-segmented-item')).toHaveClass('ant-segmented-item-selected')
   })
 
   it('requires a reason and a second confirmation before deleting an isolated device', async () => {

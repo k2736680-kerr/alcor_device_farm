@@ -19,8 +19,8 @@
    - `docs/adr/0008_single_emulator_acceptance_profile.md`
    - `docs/adr/0009_device_farm_control_console.md`
 2. 开发前必须先搜索以下现有项目，确认没有可直接复用的能力：
-   - `E:/AutoTestTools/Projects/Alcor`
-   - `E:/AutoTestTools/Projects/dafit_auto_platform`
+   - `D:/AutoTestTools/Projects/Alcor`
+   - `D:/AutoTestTools/Projects/dafit_auto_platform`
 3. 本项目只实现设备域。禁止新增新版 Alcor 业务域的 Case、Dataset、Target、Config、Run、RunAttempt、评分、业务报告、Artifact 业务索引和发布门禁。
 4. 禁止在本项目重写 DaFit 已有的 Appium WebDriver 执行、页面对象、元素动作、断言、证据、Runner 和 HTML/JSON 报告。
 5. STF 只通过 Adapter 使用。禁止重写 STF 的远程看屏、设备日志、文件管理、claim、release 和 remoteConnect。

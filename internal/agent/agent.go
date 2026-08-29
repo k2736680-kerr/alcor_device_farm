@@ -289,6 +289,7 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	}
 	capacity, environment := agent.config.Capacity, map[string]any{
 		"provider": agent.config.ProviderType, "host_os": hostOS, "host_arch": runtime.GOARCH,
+		"provider_inventory_complete": err == nil,
 	}
 	for key, value := range agent.config.Environment {
 		environment[key] = value

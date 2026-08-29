@@ -353,6 +353,11 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	if err := controller.reconcileCatalogProvisioningJobs(ctx); err != nil {
 		return result, err
 	}
+	iosReplacements, err := controller.reconcileIOSUnavailable(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.DeletesQueued += iosReplacements.DeletesQueued
 	iosScaleDown, err := controller.reconcileIOSScaleDown(ctx)
 	if err != nil {
 		return result, err
@@ -527,7 +532,7 @@ type scaleDownDevice struct {
 func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Result, error) {
 	rows, err := controller.db.Pool().Query(ctx, `SELECT DISTINCT payload->>'device_id'
 		FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'operation_source'='warm_pool_scale_down'
+		AND payload->>'operation_source' IN ('warm_pool_scale_down','ios_auto_replacement')
 		AND status IN ('succeeded','failed','timed_out','canceled')
 		AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
 		ORDER BY payload->>'device_id'`)
@@ -551,15 +556,16 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 	result := Result{}
 	for _, deviceID := range deviceIDs {
 		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
-			var commandID string
+			var commandID, operationSource, poolID string
 			var status domain.CommandStatus
 			var commandResult []byte
 			var errorCode *string
-			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code FROM device_host_commands
-				WHERE command_type='delete' AND payload->>'operation_source'='warm_pool_scale_down'
+			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code,payload->>'operation_source',COALESCE(payload->>'pool_id','')
+				FROM device_host_commands
+				WHERE command_type='delete' AND payload->>'operation_source' IN ('warm_pool_scale_down','ios_auto_replacement')
 				AND payload->>'device_id'=$1 AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
 				ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, deviceID).
-				Scan(&commandID, &status, &commandResult, &errorCode); err != nil {
+				Scan(&commandID, &status, &commandResult, &errorCode, &operationSource, &poolID); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return nil
 				}
@@ -589,6 +595,9 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 				deleted = json.Unmarshal(commandResult, &value) == nil && value.Deleted
 			}
 			eventType, severity, reason := "warm_pool_scale_down_completed", "info", "automatic scale down removed emulator resources"
+			if operationSource == "ios_auto_replacement" {
+				eventType, reason = "ios_auto_replacement_delete_completed", "automatic replacement removed an unavailable iOS Simulator"
+			}
 			if deleted {
 				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 				if err != nil {
@@ -603,6 +612,12 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 					adb_endpoint=NULL,appium_endpoint=NULL,stf_serial=NULL,updated_at=$3 WHERE id=$1`, deviceID, reason, now); err != nil {
 					return err
 				}
+				if operationSource == "ios_auto_replacement" && poolID != "" {
+					if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$3
+						WHERE pool_id=$1 AND device_id=$2 AND enabled`, poolID, deviceID, now); err != nil {
+						return err
+					}
+				}
 				result.DeletesCompleted++
 			} else {
 				code := "EMULATOR_DELETE_FAILED"
@@ -611,6 +626,10 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 				}
 				reason = code + ": automatic scale down could not remove emulator resources"
 				eventType, severity = "warm_pool_scale_down_failed", "error"
+				if operationSource == "ios_auto_replacement" {
+					reason = "IOS_AUTO_REPLACEMENT_DELETE_FAILED: " + code
+					eventType = "ios_auto_replacement_delete_failed"
+				}
 				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 				if err != nil {
 					return err
@@ -653,6 +672,103 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 		}
 	}
 	return result, nil
+}
+
+// reconcileIOSUnavailable retires disposable managed Simulators before the
+// scale-up pass. Membership stays enabled until Provider deletion succeeds so
+// a leaked CoreSimulator can never be hidden by creating another instance.
+func (controller *Controller) reconcileIOSUnavailable(ctx context.Context) (Result, error) {
+	result := Result{}
+	for {
+		queued := false
+		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+			var deviceID, hostID, poolID, providerRef, lifecycle, health, previousReason string
+			err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,p.id,d.provider_ref,d.lifecycle_status,d.health_status,
+				COALESCE(d.health_reason,'')
+				FROM device_pool_devices pd
+				JOIN device_pools p ON p.id=pd.pool_id
+				JOIN devices d ON d.id=pd.device_id
+				WHERE pd.enabled AND p.platform='ios' AND p.status='active' AND p.total_target>0
+				AND d.platform='ios' AND d.device_kind='simulator' AND d.provider_type='appium_device_farm_ios'
+				AND (d.lifecycle_status='quarantined' OR (d.lifecycle_status='stopped' AND d.health_status<>'healthy'))
+				AND COALESCE(d.health_reason,'') NOT LIKE 'IOS_AUTO_REPLACEMENT_DELETE_FAILED:%'
+				AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
+				AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
+				AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
+				ORDER BY d.updated_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`).
+				Scan(&deviceID, &hostID, &poolID, &providerRef, &lifecycle, &health, &previousReason)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			commandID, err := controller.newID()
+			if err != nil {
+				return err
+			}
+			payload, err := json.Marshal(map[string]any{
+				"operation_source": "ios_auto_replacement", "device_id": deviceID,
+				"host_id": hostID, "pool_id": poolID, "platform": "ios",
+				"device_kind": "simulator", "provider_type": "appium_device_farm_ios",
+				"provider_ref": providerRef, "previous_reason": previousReason,
+			})
+			if err != nil {
+				return err
+			}
+			digest := sha256.Sum256([]byte("ios-auto-replacement\x00" + deviceID))
+			if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
+				(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+				VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload,
+				"ios-auto-replacement-"+hex.EncodeToString(digest[:16])); err != nil {
+				return err
+			}
+			now, err := database.ClockNow(ctx, tx)
+			if err != nil {
+				return err
+			}
+			queuedReason := "IOS_AUTO_REPLACEMENT_DELETE_QUEUED"
+			if previousReason != "" {
+				queuedReason += ": " + previousReason
+			}
+			if _, err := tx.Exec(ctx, `UPDATE devices SET health_reason=$2,updated_at=$3
+				WHERE id=$1 AND lifecycle_status=$4::varchar AND health_status=$5::varchar`,
+				deviceID, queuedReason, now, lifecycle, health); err != nil {
+				return err
+			}
+			eventID, err := controller.newID()
+			if err != nil {
+				return err
+			}
+			eventPayload, _ := json.Marshal(map[string]any{"command_id": commandID, "pool_id": poolID})
+			if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+				(id,device_id,source,event_type,severity,reason,payload,observed_at)
+				VALUES($1,$2,'reconciler','ios_auto_replacement_queued','warning',$3,$4::jsonb,$5)`,
+				eventID, deviceID, queuedReason, eventPayload, now); err != nil {
+				return err
+			}
+			auditID, err := controller.newID()
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events
+				(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+				VALUES($1,'system','system','auto_replace_ios_simulator','device',$2,$3,$4,
+				jsonb_build_object('command_id',$5::text,'pool_id',$6::text,'previous_reason',$7::text))`,
+				auditID, deviceID, "ios-auto-replacement-"+commandID, queuedReason, commandID, poolID, previousReason); err != nil {
+				return err
+			}
+			queued = true
+			return nil
+		})
+		if err != nil {
+			return result, err
+		}
+		if !queued {
+			return result, nil
+		}
+		result.DeletesQueued++
+	}
 }
 
 func (controller *Controller) queueScaleDown(

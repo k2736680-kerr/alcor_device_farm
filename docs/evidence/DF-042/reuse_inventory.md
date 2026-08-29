@@ -4,11 +4,11 @@
 
 ## Alcor
 
-`E:/AutoTestTools/Projects/Alcor` 已有 Android Worker 的 Reserve/WaitActive/Extend/Release、RunAttempt Device Snapshot，以及只允许固定设备 API 路径的服务端 Gateway。DF-042 复用其服务端持证、关联 Header 和固定白名单模式作为未来调用约束；当前没有 iOS Session Grant、Fence 或 XCUITest Executor 可直接复用。本仓库不修改 Alcor。
+`D:/AutoTestTools/Projects/Alcor` 已有 Android Worker 的 Reserve/WaitActive/Extend/Release、RunAttempt Device Snapshot，以及只允许固定设备 API 路径的服务端 Gateway。DF-042 复用其服务端持证、关联 Header 和固定白名单模式作为未来调用约束；当前没有 iOS Session Grant、Fence 或 XCUITest Executor 可直接复用。本仓库不修改 Alcor。
 
 ## DaFit
 
-`E:/AutoTestTools/Projects/dafit_auto_platform/core/driver/appium_session.py` 已实现 Android 业务 WebDriver Session、能力、页面动作和测试生命周期。它不验证 PostgreSQL Reservation，也没有 iOS/XCUITest/Device Farm Fence。DF-042 不复制该文件；Fence 只检查路由能力并透明转发上游 WebDriver 协议。
+`D:/AutoTestTools/Projects/dafit_auto_platform/core/driver/appium_session.py` 已实现 Android 业务 WebDriver Session、能力、页面动作和测试生命周期。它不验证 PostgreSQL Reservation，也没有 iOS/XCUITest/Device Farm Fence。DF-042 不复制该文件；Fence 只检查路由能力并透明转发上游 WebDriver 协议。
 
 ## 本仓库与上游
 

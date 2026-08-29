@@ -110,7 +110,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     { title: '名称', dataIndex: 'name', width: 140 },
     { title: '平台 / 系统', dataIndex: 'host_os', width: 130, render: (value: string) => <Tag color={value === 'macos' ? 'blue' : 'green'}>{value === 'macos' ? 'iOS / macOS' : value === 'linux' ? 'Android / Linux' : value}</Tag> },
     { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
-    { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
+    { title: 'Agent 心跳', dataIndex: 'status', width: 120, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
     { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
     { title: 'CPU', key: 'cpu', width: 160, render: (_, host) => resourceText(host, 'cpu') },
     { title: '内存', key: 'memory', width: 260, render: (_, host) => resourceText(host, 'memory') },

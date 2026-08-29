@@ -4,7 +4,7 @@
 
 DF-038 已于 2026-08-12 在 `10.0.30.171` 的真实 PostgreSQL 16、Linux KVM、Docker Emulator、STF 3.7.9、Appium 3.5.2 和 Host Agent 环境完成验收。设备使用后的数据默认保留；只有显式 rebuild/reimage 恢复干净状态。Phone 创建、已缓存与未缓存镜像编排、基础设备扩容和空闲设备直接删除均通过真实链路。
 
-本任务只建设设备域。开工前已搜索 `E:/AutoTestTools/Projects/Alcor` 和 `E:/AutoTestTools/Projects/dafit_auto_platform`，没有可直接复用的 Phone 创建编排或镜像 Build Agent；实现继续复用 Android SDK、Host Command、Host Agent、Docker Provider、Reservation、STF Adapter 和 Appium 健康链路，没有复制 DaFit Runner、STF 远控或 Alcor 业务对象。
+本任务只建设设备域。开工前已搜索 `D:/AutoTestTools/Projects/Alcor` 和 `D:/AutoTestTools/Projects/dafit_auto_platform`，没有可直接复用的 Phone 创建编排或镜像 Build Agent；实现继续复用 Android SDK、Host Command、Host Agent、Docker Provider、Reservation、STF Adapter 和 Appium 健康链路，没有复制 DaFit Runner、STF 远控或 Alcor 业务对象。
 
 ## 数据库、构建与部署门禁
 

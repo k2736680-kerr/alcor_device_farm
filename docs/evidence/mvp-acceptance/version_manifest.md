@@ -17,7 +17,7 @@
 
 ## DaFit
 
-- 仓库：`E:/AutoTestTools/Projects/dafit_auto_platform`；
+- 仓库：`D:/AutoTestTools/Projects/dafit_auto_platform`；
 - 分支：`main`；
 - Farm 接入 commits：`2ae74ca`、`d211eb2`；
 - 2026-08-06 当前 HEAD：`ca6430c`；

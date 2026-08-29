@@ -307,3 +307,5 @@ docs/evidence/
 # DF-039～DF-046 第二版 iOS 补充
 
 DF-039 只签收设计和真实环境缺口盘点，不用本机 Windows Appium 或 Mock 冒充 iOS 可运行。DF-040～DF-046 必须逐项使用 `docs/09_ios_device_farm_v2_acceptance.md`；只有 E4 Simulator、E5 真机、E6 发布回归对应 Gate 通过后，才能分别宣称控制面、Simulator、真机和第二版整体完成。
+
+DF-053 额外要求：Pool 目标为 2 且一台受管 iOS Simulator 隔离、停止、不健康或从成功的完整 inventory 持续消失时，该设备不得继续满足可服务目标；无活动占用时只排队一个幂等删除命令，删除成功后保持 Pool 目标并自动补建。删除失败不得盲目创建第三台或形成命令/事件风暴，inventory 请求失败不得被解释成全部设备消失。详细用例见 `docs/09_ios_device_farm_v2_acceptance.md` 的 AT-IOS-SIM-016～019。

@@ -24,7 +24,7 @@
 使用 PostgreSQL 17.10 一次性实例执行：
 
 ```powershell
-scripts/verify-migrations.ps1 -PostgresBin E:\AutoTestTools\Tools\PostgreSQL-17.10\pgsql\bin -Port 55433 -RunRepositoryTests
+scripts/verify-migrations.ps1 -PostgresBin D:\AutoTestTools\Tools\PostgreSQL-17.10\pgsql\bin -Port 55433 -RunRepositoryTests
 ```
 
 结果：

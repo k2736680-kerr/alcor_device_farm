@@ -74,6 +74,7 @@
 | DF-050 | 使用 Baguette 替换并清理自写 iOS 远控 | completed | DF-049、ADR-0026 |
 | DF-051 | 修复普通成员远控入口与独立网关可达性 | completed | DF-050 |
 | DF-052 | 修复多设备并存时远控安装目标错配 | completed | DF-051、ADR-0027 |
+| DF-053 | 受管虚拟设备自动淘汰替换与可用性收敛 | completed | DF-048、DF-052、ADR-0028 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -532,6 +533,14 @@
 产出：ADR-0027、Android STF 序列号统一、iOS 多标签页会话隔离、双设备上传目标测试、真实测试环境验证和 `docs/evidence/DF-052/`。
 
 验收：同时打开两台 iOS Simulator 时，分别拖入 Simulator App 包只会向各自 UDID 的 Baguette `/files` 路径发起安装，错误会话不能安装到任一设备；Android STF 入口、claim、远程连接和释放使用同一个 `stf_serial`，不会回退第一台 ADB 设备；上游返回失败时页面不得提示成功；预约结束后安装入口立即失效；正式 Alcor 与正式环境均不改动。
+
+### DF-053 受管虚拟设备自动淘汰替换与可用性收敛
+
+实施：按 ADR-0028 修正 iOS Pool 的容量统计，隔离、停止或不健康 Simulator 不再满足固定目标；Agent 对成功/失败的完整 inventory 明确打标，Server 对完整清单中持续消失的已登记 Simulator 收敛为故障。无活动 Reservation、技术 Session 或在途命令的故障 Simulator 自动复用既有 delete Host Command 清理 CoreSimulator，成功后保留历史记录并按 Pool 原目标创建全新设备；删除失败保留隔离并阻止盲目超建。扩容模板允许在原基础设备淘汰后继续使用已验证的静态 Host/Runtime/Device Type 配置，但每次创建仍重新校验 Host 目录、心跳和容量。Console 以可用、使用中、恢复中、故障表达日常状态，并显示 Pool 目标、已登记、可用、恢复中、故障和缺口；Prometheus 增加平台与 Pool 容量指标和缺口告警。
+
+产出：ADR-0028、inventory 缺失收敛、iOS 自动删除补建 Controller、Pool 容量修正、简化状态展示、平台/Pool 指标与告警、回归测试和 `docs/evidence/DF-053/`。
+
+验收：`total_target=min_ready=2` 且一台 Simulator 进入隔离或从一次成功的完整 inventory 持续消失时，不再显示目标已满足；无占用故障设备只产生一个幂等 delete Command，CoreSimulator 删除成功后自动补建至两台可服务设备且目标不变。删除失败时不创建第三台、不形成命令或事件风暴，并显示明确故障。inventory 请求失败不误删全部设备；基础模板被替换后仍可按其已验证 Runtime/机型补建。Host 页面不把 Agent 在线表述为设备可用，Pool/Device 页面只突出简化可用性。Android、真机、Reservation、Session Fence、STF/Baguette 和 DaFit 回归通过。
 
 ## 12. 单任务完成定义
 

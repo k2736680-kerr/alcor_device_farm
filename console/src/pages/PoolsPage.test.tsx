@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import type { Device, DevicePool, DevicePoolInput } from '../api/generated/models'
+import { sampleDevices } from '../test/handlers'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { server } from '../test/server'
 import { PoolsPage } from './PoolsPage'
@@ -33,6 +34,26 @@ async function openPoolEditor() {
 }
 
 describe('PoolsPage pool capacity', () => {
+  it('does not count an unhealthy busy device as serviceable capacity', async () => {
+    const devices = [sampleDevices[0], { ...sampleDevices[1], health_status: 'unhealthy' as const }]
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      const lifecycle = search.get('lifecycle_status')
+      const health = search.get('health_status')
+      const poolID = search.get('pool_id')
+      const filtered = devices.filter((device) =>
+        (!lifecycle || device.lifecycle_status === lifecycle)
+        && (!health || device.health_status === health)
+        && (!poolID || device.pool_id === poolID))
+      const size = Number(search.get('page_size') ?? 20)
+      return HttpResponse.json({ request_id: 'req_unhealthy_busy', data: { items: filtered.slice(0, size), total: filtered.length, page: 1, page_size: size }, error: null })
+    }))
+
+    await openPoolEditor()
+    expect(screen.getByText('目标 2 台 · 可服务 1 台 · 可立即使用 1 台')).toBeInTheDocument()
+    expect(screen.getByText('已登记 2 台，恢复中 0 台，故障 1 台，缺口 1 台。')).toBeInTheDocument()
+  })
+
   it('updates pool-wide total, warm and concurrency limits without requiring an expansion reason', async () => {
     let submitted: DevicePoolInput | undefined
     server.use(http.put('/api/v1/device-pools/:id', async ({ request }) => {
@@ -41,7 +62,7 @@ describe('PoolsPage pool capacity', () => {
     }))
     const user = await openPoolEditor()
     fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '3' } })
-    expect(screen.getByText('当前 2 台，目标 3 台')).toBeInTheDocument()
+    expect(screen.getByText('目标 3 台 · 可服务 2 台 · 可立即使用 1 台')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() => expect(submitted).toMatchObject({
@@ -61,7 +82,7 @@ describe('PoolsPage pool capacity', () => {
     }))
     const user = await openPoolEditor()
     fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '1' } })
-    expect(screen.getByText('当前 2 台，目标 1 台')).toBeInTheDocument()
+    expect(screen.getByText('目标 1 台 · 可服务 2 台 · 可立即使用 1 台')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '保存设置' }))
     expect(await screen.findByText('缩容时请填写至少 3 个字的调整原因')).toBeInTheDocument()
     expect(submitted).toBeUndefined()

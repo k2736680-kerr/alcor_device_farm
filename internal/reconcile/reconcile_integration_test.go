@@ -183,12 +183,16 @@ func TestIOSDeviceDoesNotUseAndroidProviderOrSTFHealthChain(t *testing.T) {
 func TestIOSSharedAutomationStabilizationDoesNotQuarantineSimulator(t *testing.T) {
 	environment := newEnvironment(t, true)
 	if _, err := environment.db.Pool().Exec(context.Background(), `
+		DELETE FROM device_pool_devices WHERE device_id='device_0000000000001';
+		UPDATE device_pools SET platform='ios' WHERE id='pool_000000000000001';
 		UPDATE device_hosts SET host_type='appium_device_farm_ios',host_os='macos',host_arch='arm64'
 		WHERE id='host_000000000000001';
 		UPDATE devices SET platform='ios',image_id=NULL,device_kind='simulator',provider_type='appium_device_farm_ios',
 			provider_ref='SIM-IOS-1',serial='SIM-IOS-1',lifecycle_status='ready',health_status='degraded',
 			health_reason='agent heartbeat reported degraded',consecutive_failures=0
-		WHERE id='device_0000000000001'`); err != nil {
+		WHERE id='device_0000000000001';
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_0000000000001',true)`); err != nil {
 		t.Fatal(err)
 	}
 	service := reconcile.New(environment.db, nil, nil, 3, 0, 0, testLogger())
@@ -203,6 +207,14 @@ func TestIOSSharedAutomationStabilizationDoesNotQuarantineSimulator(t *testing.T
 	}
 	assertDevice(t, environment.db, "ready", "degraded", 0)
 	assertEvent(t, environment.db, "ios_automation_stabilizing")
+	var events int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id='device_0000000000001' AND event_type='ios_automation_stabilizing'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Fatalf("deduplicated iOS stabilization events=%d", events)
+	}
 }
 
 func TestSTFVisibilityGraceDoesNotConsumeFailureBudgetAfterProvisioning(t *testing.T) {

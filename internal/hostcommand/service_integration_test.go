@@ -437,13 +437,19 @@ func TestIOSHeartbeatRecoversAutomaticSharedAutomationQuarantine(t *testing.T) {
 	db := openTestDatabase(t)
 	seedIOSHost(t, db)
 	if _, err := db.Pool().Exec(context.Background(), `
-		INSERT INTO device_pools(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,base_device_id,status)
-		VALUES('ios_pool_000000000001','iOS 默认池','ios',1800,86400,1,1,0,'ios_device_000000001','active');
 		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
 		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-RECOVER','rebuild','SIM-RECOVER',
-		'http://127.0.0.1:4723','{"platformName":"iOS"}','quarantined','unhealthy',$1,3);
+		'http://127.0.0.1:4723','{"platformName":"iOS"}','quarantined','unhealthy',$1,3)`, domain.AgentReportedUnhealthyReason); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_pools(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,base_device_id,status)
+		VALUES('ios_pool_000000000001','iOS 默认池','ios',1800,86400,1,1,0,'ios_device_000000001','active')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `
 		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
-		VALUES('ios_pool_000000000001','ios_device_000000001',true)`, domain.AgentReportedUnhealthyReason); err != nil {
+		VALUES('ios_pool_000000000001','ios_device_000000001',true)`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -696,6 +702,48 @@ func claimOne(t *testing.T, service *hostcommand.Service) hostcommand.Command {
 		t.Fatalf("claim values=%v err=%v", values, err)
 	}
 	return values[0]
+}
+
+func TestHeartbeatOnlyQuarantinesMissingIOSDeviceAfterCompleteInventory(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+		(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,
+		 lifecycle_status,health_status,last_seen_at)
+		VALUES('ios_device_0000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios',
+		'00000000-0000-0000-0000-000000000001','rebuild','00000000-0000-0000-0000-000000000001','{}',
+		'ready','healthy',clock_timestamp()-interval '1 minute')`); err != nil {
+		t.Fatal(err)
+	}
+	service := hostcommand.New(db)
+	for _, complete := range []bool{false, true} {
+		_, err := service.Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+			AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+			Environment: map[string]any{"provider_inventory_complete": complete}, Devices: []hostcommand.DiscoveredDevice{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lifecycle, health string
+		if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status FROM devices
+			WHERE id='ios_device_0000000001'`).Scan(&lifecycle, &health); err != nil {
+			t.Fatal(err)
+		}
+		if !complete && (lifecycle != "ready" || health != "healthy") {
+			t.Fatalf("incomplete inventory changed device to %s/%s", lifecycle, health)
+		}
+		if complete && (lifecycle != "quarantined" || health != "unhealthy") {
+			t.Fatalf("complete missing inventory left device at %s/%s", lifecycle, health)
+		}
+	}
+	var events int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id='ios_device_0000000001' AND event_type='ios_provider_device_missing'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Fatalf("missing inventory events=%d", events)
+	}
 }
 
 func openTestDatabase(t *testing.T) *database.DB {

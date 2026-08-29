@@ -166,8 +166,34 @@ func (registry *Registry) writeHTTPSamples(output io.Writer) {
 
 func (registry *Registry) writeDatabaseState(ctx context.Context, output io.Writer) error {
 	if err := registry.writeGroups(ctx, output, "device_farm_devices", "Devices by lifecycle and health state.",
-		`SELECT lifecycle_status,health_status,count(*) FROM devices GROUP BY lifecycle_status,health_status ORDER BY lifecycle_status,health_status`,
-		"gauge", []string{"lifecycle_status", "health_status"}); err != nil {
+		`SELECT platform,lifecycle_status,health_status,count(*) FROM devices
+		GROUP BY platform,lifecycle_status,health_status ORDER BY platform,lifecycle_status,health_status`,
+		"gauge", []string{"platform", "lifecycle_status", "health_status"}); err != nil {
+		return err
+	}
+	if err := registry.writeGroups(ctx, output, "device_farm_pool_target", "Configured Device Pool capacity objectives.",
+		`SELECT id,platform,'total',total_target::bigint FROM device_pools WHERE status='active'
+		UNION ALL SELECT id,platform,'min_ready',min_ready::bigint FROM device_pools WHERE status='active'
+		UNION ALL SELECT id,platform,'max_concurrency',max_concurrency::bigint FROM device_pools WHERE status='active'
+		ORDER BY 1,3`, "gauge", []string{"pool_id", "platform", "objective"}); err != nil {
+		return err
+	}
+	if err := registry.writeGroups(ctx, output, "device_farm_pool_devices", "Enabled Pool devices by user-facing availability.",
+		`WITH classified AS (
+			SELECT pd.pool_id,d.id,CASE
+				WHEN d.lifecycle_status='ready' AND d.health_status='healthy' THEN 'available'
+				WHEN d.lifecycle_status IN ('reserved','busy') AND d.health_status='healthy' THEN 'in_use'
+				WHEN d.lifecycle_status IN ('provisioning','booting') OR
+					(d.lifecycle_status='recycling' AND d.health_status='healthy') THEN 'recovering'
+				ELSE 'fault' END AS availability
+			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			WHERE pd.enabled AND d.lifecycle_status<>'deleted'
+		), states(availability) AS (VALUES ('available'),('in_use'),('recovering'),('fault'))
+		SELECT p.id,p.platform,states.availability,count(classified.id)
+		FROM device_pools p CROSS JOIN states
+		LEFT JOIN classified ON classified.pool_id=p.id AND classified.availability=states.availability
+		WHERE p.status='active' GROUP BY p.id,p.platform,states.availability ORDER BY p.id,states.availability`,
+		"gauge", []string{"pool_id", "platform", "availability"}); err != nil {
 		return err
 	}
 	if err := registry.writeGroups(ctx, output, "device_farm_reservations", "Reservations by state.",

@@ -10,7 +10,7 @@
 
 ## 本地归档产物
 
-归档产物保存在 Git 工作区外的 `E:/AutoTestTools/Archives/alcor_device_farm/android-baseline-20260817-106e9dd/`，不纳入仓库：
+归档产物保存在 Git 工作区外的 `D:/AutoTestTools/Archives/alcor_device_farm/android-baseline-20260817-106e9dd/`，不纳入仓库：
 
 | 产物 | 字节数 | SHA-256 |
 |---|---:|---|

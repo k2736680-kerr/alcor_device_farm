@@ -23,6 +23,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | 动态容量扩缩容 | Console 为 Android、iOS 单平台 Pool 设置目标和扩容模板设备；Android 复用基础设备的 Phone、Image 与 runtime profile，iOS 复用模板 Simulator 的 Mac Host、Runtime 与 iPhone Device Type；两者均结合 Host 实际内存、磁盘、槽位与在途预留创建全新实例，并只安全删除空闲设备 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或设备数据 |
 | Android 官方目录、Phone 硬件模板与受控创建 | Console 的四步 Phone 向导提交 `catalog_id`、硬件模板、Pool 和 runtime profile；持久化 provisioning job 自动复用或排队既有镜像准备，验证成功后事务登记 `create` Host Command，Agent 创建后沿既有健康链路收敛 | 新版 Alcor 只选择已可用 Device，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；job 幂等重试不得重复下载、创建设备或增加 Pool 目标；未验证、无 digest 的候选项不得写入 `device_images`；首期不暴露 TV、Wear、Automotive、Desktop、XR |
 | 长期设备与人工删除 | Reservation release 只归还 STF 占用并把 Device 直接恢复为 ready，保留 APK、账号、缓存和数据卷；管理员可删除无活动预约的 ready/quarantined/stopped Device，Server 原子退出 Pool 并降低该 Pool 目标，Agent 复用 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作 | 不允许删除 reserved/busy/recycling；不物理删库；不新增 Docker 直连；只有显式 rebuild/reimage 才恢复出厂 |
+| 受管虚拟设备自愈 | Pool 内确定故障且无活动占用的 iOS Simulator 自动复用 Host Command、Agent 和 CoreSimulator Provider 删除，保留历史 Device 后按原目标创建干净替代设备；删除失败保留隔离并阻断盲目超建 | 新版 Alcor 仍只看到可预约 Device，替换属于设备域内部容量收敛 | 不自动删除真机；不在有 Reservation/Session 时删除；不把 quarantine 记录物理抹除；不复制旧设备数据 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Device Image 生命周期与默认选择 | Console 只展示可用 Image 作为默认选择；管理员可将未被活动设备或 Pool 默认引用的旧 Image 受控停用并查看归档 | 新版 Alcor 只会获得当前可用 Image；历史 Run/Artifact 不由本项目处理 | 不物理删除 Device/Image 审计链；不从 Server/浏览器删除 Registry 或 Docker 数据；切换默认值不重装已有设备 |
@@ -44,6 +45,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - Reconciler、Reaper、健康事件、隔离和重建；
 - 控制台统一 Pool 总目标、按真实资源动态扩容和最旧空闲 Emulator 安全缩容；
 - iOS Pool 使用同一 `total_target/min_ready/max_concurrency` 目标模型；选择健康 Simulator 作为扩容模板后自动创建或安全删除 CoreSimulator，不另建 iOS 容量表；
+- iOS Pool 的故障 Simulator 不满足可用容量；按 ADR-0028 先安全删除受管资源，再使用已验证模板配置补建，删除失败时保留隔离并显式暴露缺口；
 - Host 实际 CPU/内存/磁盘心跳、设备有效运行规格、Server/Agent 双重资源预检和可解释容量结果；
 - 官方稳定 Android System Image 目录同步、后台按需准备、内部缓存、不可变 digest 验证，以及空闲 Emulator 受控重装；
 - Phone 硬件模板搜索、系统镜像选择、完整 runtime profile 与加入 Pool 的受控 Emulator 创建；

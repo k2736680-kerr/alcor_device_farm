@@ -270,6 +270,18 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 				input.SuppressQuarantine = true
 			}
 		}
+		if input.SuppressFailureCount && input.SuppressQuarantine {
+			var recentlyRecorded bool
+			if err := service.db.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_health_events
+				WHERE device_id=$1 AND event_type=$2 AND reason=$3
+				AND observed_at >= clock_timestamp()-interval '1 minute')`,
+				device.ID, input.EventType, input.Reason).Scan(&recentlyRecorded); err != nil {
+				return result, err
+			}
+			if recentlyRecorded {
+				continue
+			}
+		}
 		before := device.Lifecycle
 		if _, err := service.Report(ctx, device.ID, input); err != nil {
 			return result, err

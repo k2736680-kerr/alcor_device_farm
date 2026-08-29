@@ -100,6 +100,10 @@
 | AT-IOS-SIM-013 | P0 | 两个 Controller 并发扩容同一 iOS Pool | Pool 行锁后重新计数，最终不超过目标、无重复 Device/Command/UDID |
 | AT-IOS-SIM-014 | P0 | iOS Pool 缺少扩容模板或 Host 容量不足 | 保留真实目标并显示中文阻塞原因；不创建半条 Device、membership、command 或 CoreSimulator |
 | AT-IOS-SIM-015 | P0 | iOS Pool 缩容且部分 Simulator 使用中 | 不强制中断 Reservation/Session；只删除可安全处理的最旧空闲设备，其余等待释放后收敛 |
+| AT-IOS-SIM-016 | P0 | 目标 2，1 台可用、1 台隔离 | 隔离设备先安全删除，成功后自动补建并恢复两台可服务容量；目标不变、旧数据不复制 |
+| AT-IOS-SIM-017 | P0 | 成功的完整 inventory 持续缺失已登记 Simulator | 超过宽限后自动替换；inventory 请求失败不把空清单当作消失 |
+| AT-IOS-SIM-018 | P0 | 自动替换删除失败 | 保留隔离和明确原因，不补建第三台、不重复排队命令或刷事件 |
+| AT-IOS-SIM-019 | P0 | Pool 基础模板设备被自动替换 | 当前 Host 仍有对应 Runtime/Device Type 和容量时按历史模板补建，否则显示真实阻塞原因 |
 
 ### 4.5 安全、Console 和回归
 

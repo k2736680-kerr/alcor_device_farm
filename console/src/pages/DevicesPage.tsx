@@ -41,25 +41,6 @@ import { apiErrorText, platformLabel, responseRequestID } from '../api/presentat
 import { PageTable } from '../components/PageTable'
 import { useRemoteControl } from '../remote/RemoteControlProvider'
 
-const lifecycleColor: Record<string, string> = {
-  ready: 'green',
-  reserved: 'blue',
-  busy: 'cyan',
-  provisioning: 'orange',
-  booting: 'orange',
-  recycling: 'purple',
-  quarantined: 'red',
-  stopped: 'default',
-  deleted: 'default',
-}
-
-const healthColor: Record<string, string> = {
-  healthy: 'green',
-  degraded: 'orange',
-  unhealthy: 'red',
-  unknown: 'default',
-}
-
 type DeviceAction = 'start' | 'stop' | 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
 type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
 type PlatformView = 'all' | 'android' | 'ios'
@@ -132,9 +113,9 @@ function actionable(device: Device, action: DeviceAction): boolean {
       return (device.platform === 'android' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator')
         || (device.platform === 'ios' && device.device_kind === 'simulator' && device.provider_type === 'appium_device_farm_ios')
     case 'quarantine':
-      return device.lifecycle_status !== 'quarantined'
+      return device.platform !== 'ios' && device.lifecycle_status !== 'quarantined'
     case 'unquarantine':
-      return device.lifecycle_status === 'quarantined'
+      return device.platform !== 'ios' && device.lifecycle_status === 'quarantined'
     case 'delete':
       return device.lifecycle_status === 'ready' || device.lifecycle_status === 'quarantined' || device.lifecycle_status === 'stopped'
     default:
@@ -151,6 +132,21 @@ function iosSystemVersion(device: Device): string {
     if (marker) return `iOS ${marker.replaceAll('-', '.')}`
   }
   return 'iOS（版本待上报）'
+}
+
+function availabilityTag(device: Device) {
+  const detail = `${lifecycleStatusLabel(device.lifecycle_status)} / ${healthStatusLabel(device.health_status)}`
+  if (device.lifecycle_status === 'deleted') return <Tag title={detail}>历史记录</Tag>
+  if (device.lifecycle_status === 'ready' && device.health_status === 'healthy') return <Tag color="green" title={detail}>可用</Tag>
+  if ((device.lifecycle_status === 'reserved' || device.lifecycle_status === 'busy') && device.health_status === 'healthy') {
+    return <Tag color="blue" title={detail}>使用中</Tag>
+  }
+  if (['provisioning', 'booting'].includes(device.lifecycle_status)
+    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')
+    || (device.platform === 'ios' && device.health_reason?.startsWith('IOS_AUTO_REPLACEMENT_DELETE_QUEUED'))) {
+    return <Tag color="processing" title={detail}>恢复中</Tag>
+  }
+  return <Tag color="red" title={detail}>故障</Tag>
 }
 
 function androidCatalogStatus(value: string): string {
@@ -549,8 +545,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
     { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
     { title: '运行方式', dataIndex: 'provider_type', width: 130, render: (value: string) => providerTypeLabel(value) },
-    { title: '设备状态', dataIndex: 'lifecycle_status', width: 110, render: (value: string) => <Tag color={lifecycleColor[value] ?? 'default'}>{lifecycleStatusLabel(value)}</Tag> },
-    { title: '健康状态', dataIndex: 'health_status', width: 110, render: (value: string) => <Tag color={healthColor[value] ?? 'default'}>{healthStatusLabel(value)}</Tag> },
+    { title: '可用性', key: 'availability', width: 110, render: (_, device) => availabilityTag(device) },
     { title: '配置 / 运行组件', dataIndex: 'reimage_status', width: 150, render: (value: string, device) => device.platform === 'ios' ? <Tag>CoreSimulator 已纳管</Tag> : value === 'pending'
       ? <Tag color="processing">正在换镜像</Tag>
       : value === 'failed' ? <Tag color="red" title={device.reimage_error}>上次重装失败</Tag> : <Tag>已生效</Tag> },
@@ -603,7 +598,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           type="info"
           showIcon
           message="这里先显示可用设备"
-          description="使用中、隔离和已删除设备可通过下方分类查看。"
+          description="使用中和恢复中的设备由系统自动收敛；只有自动清理失败时才需要查看故障。"
         />
         <Segmented<PlatformView>
           value={platformView}
@@ -625,7 +620,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           options={[
             { label: `可用设备（${availableCount}）`, value: 'available' },
             { label: `使用中（${busyCount}）`, value: 'busy' },
-            { label: `隔离设备（${quarantinedCount}）`, value: 'quarantined' },
+            { label: `故障（${quarantinedCount}）`, value: 'quarantined' },
             { label: `已删除历史（${deletedCount}）`, value: 'deleted' },
             { label: `全部记录（${allCount}）`, value: 'all' },
           ]}

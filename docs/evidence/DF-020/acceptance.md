@@ -13,7 +13,7 @@ Harness 已覆盖申请、等待、连接信息注入、DaFit 执行、独立报
 - Emulator：Android 16 / API 36 / x86_64，独立 ADB 与 Appium 动态端口；
 - STF：DeviceFarmer/STF 3.7.9；
 - Appium：3.5.2；
-- DaFit：`E:/AutoTestTools/Projects/dafit_auto_platform` 主线 `tools/run_full.py`，未复制 Runner、页面、动作、断言或报告实现；
+- DaFit：`D:/AutoTestTools/Projects/dafit_auto_platform` 主线 `tools/run_full.py`，未复制 Runner、页面、动作、断言或报告实现；
 - 逻辑设备池：`8b97a9e7-ab6c-41ff-bc1e-bd922b829ab3`；
 - 验收日期：2026-08-06。
 

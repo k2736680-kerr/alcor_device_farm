@@ -4,7 +4,7 @@
 
 | 输入 | 作用 | 是否可直接作为新接口依据 |
 |---|---|---|
-| 本地 `E:/AutoTestTools/Projects/Alcor` 的 `master`，commit `1755f5c58e0b20deff2e9c331457c0933fcdc9de` | 当前旧版代码事实和迁移来源 | 否；只能用于理解历史数据和现有执行器 |
+| 本地 `D:/AutoTestTools/Projects/Alcor` 的 `master`，commit `1755f5c58e0b20deff2e9c331457c0933fcdc9de` | 当前旧版代码事实和迁移来源 | 否；只能用于理解历史数据和现有执行器 |
 | `reference/alcor_next_generation_plan.txt` | 正在开发的新版 Alcor 目标 | 是；平台对象、接口、存储、前端和集成边界以此为准 |
 | `reference/app_evaluation_device_farm_design.md` | 设备农场完整功能、状态机、调度、STF/Appium 和真机扩展设计 | 是；设备域内部能力以此为准，但其旧 Alcor 假设被新版方案覆盖 |
 
@@ -40,6 +40,7 @@
 - 控制台设置 Pool 总目标后，由设备域按 Host 实际 CPU、内存、磁盘和设备规格自动扩容或安全缩容；
 - Android 13～16 镜像目录、Image 默认运行规格、Device 规格覆盖和空闲 Emulator 受控重装；
 - 隔离或已停止设备可由 Device Farm 管理员通过设备域 Host Command 受控删除；该动作不创建 Alcor Run/Result，也不绕过目标容量；
+- 受管 iOS Simulator 确定故障且没有活动占用时，可由设备域自动复用相同删除链清理并按 Pool 原目标补建；该自愈不改变 Alcor Reservation/RunAttempt 语义，不产生业务结果；
 - `/api/v1/device-*` 和 `/internal/v1` 的资源化接口方向；
 - 后续接真机只增加 Provider，不重做调度、预约和执行链路。
 - 设备总览、镜像、Host、Pool、Device、Reservation 属于设备域，可以由独立 Device Farm Console 管理；STF 原生 Web 页面按 ADR-0013 由设备域短租约和短时授权受控打开，Console 仍不展示 `remoteConnect` TCP 地址。

@@ -185,12 +185,24 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, requestID
 			return ErrConflict
 		}
 		if !increaseTarget {
-			var current int
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_pool_devices pd
+			var current, unavailable int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE
+					(d.lifecycle_status IN ('provisioning','booting') OR
+					 (d.health_status='healthy' AND d.lifecycle_status IN ('ready','reserved','busy','recycling')))),
+				count(*) FILTER (WHERE d.lifecycle_status IN ('quarantined','stopped') OR
+					(d.lifecycle_status NOT IN ('provisioning','booting','deleted') AND d.health_status<>'healthy'))
+				FROM device_pool_devices pd
 				JOIN devices d ON d.id=pd.device_id
 				WHERE pd.pool_id=$1 AND pd.enabled AND d.platform='ios' AND d.device_kind='simulator'
-				AND d.provider_type='appium_device_farm_ios' AND d.lifecycle_status<>'deleted'`, input.PoolID).Scan(&current); err != nil {
+				AND d.provider_type='appium_device_farm_ios' AND d.lifecycle_status<>'deleted'`, input.PoolID).
+				Scan(&current, &unavailable); err != nil {
 				return err
+			}
+			// A quarantined/stopped resource can still occupy a real CoreSimulator
+			// slot. Wait for the automatic delete to succeed before replacing it,
+			// otherwise a failed cleanup can grow the Host without bound.
+			if unavailable > 0 {
+				return ErrConflict
 			}
 			if current >= totalTarget {
 				return ErrTargetSatisfied
@@ -198,7 +210,7 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, requestID
 		}
 		var registeredSlots, pendingSlots int64
 		if err := tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE lifecycle_status IN ('provisioning','booting'))
-			FROM devices WHERE host_id=$1 AND lifecycle_status NOT IN ('deleted','quarantined')`, input.HostID).
+			FROM devices WHERE host_id=$1 AND lifecycle_status<>'deleted'`, input.HostID).
 			Scan(&registeredSlots, &pendingSlots); err != nil {
 			return err
 		}
@@ -258,7 +270,13 @@ func (service *Service) ReconcileScaleUp(ctx context.Context) (created, capacity
 		AND total_target>(SELECT count(*) FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
 			WHERE pd.pool_id=device_pools.id AND pd.enabled AND d.platform='ios'
 			AND d.device_kind='simulator' AND d.provider_type='appium_device_farm_ios'
-			AND d.lifecycle_status<>'deleted')
+			AND (d.lifecycle_status IN ('provisioning','booting') OR
+				(d.health_status='healthy' AND d.lifecycle_status IN ('ready','reserved','busy','recycling'))))
+		AND NOT EXISTS (SELECT 1 FROM device_pool_devices blocked_pd JOIN devices blocked ON blocked.id=blocked_pd.device_id
+			WHERE blocked_pd.pool_id=device_pools.id AND blocked_pd.enabled AND blocked.platform='ios'
+			AND blocked.device_kind='simulator' AND blocked.provider_type='appium_device_farm_ios'
+			AND (blocked.lifecycle_status IN ('quarantined','stopped') OR
+				(blocked.lifecycle_status NOT IN ('provisioning','booting','deleted') AND blocked.health_status<>'healthy')))
 		ORDER BY id`)
 	if err != nil {
 		return 0, 0, err
@@ -325,8 +343,7 @@ func (service *Service) scaleTemplate(ctx context.Context, poolID string) (Creat
 	err := service.db.Pool().QueryRow(ctx, `SELECT d.host_id,d.capabilities,d.lifecycle_status,d.health_status,
 		d.platform,d.device_kind,d.provider_type
 		FROM device_pools p
-		JOIN device_pool_devices pd ON pd.pool_id=p.id AND pd.device_id=p.base_device_id AND pd.enabled
-		JOIN devices d ON d.id=pd.device_id
+		JOIN devices d ON d.id=p.base_device_id
 		WHERE p.id=$1 AND p.platform='ios' AND p.status='active'`, poolID).
 		Scan(&hostID, &capabilities, &lifecycle, &health, &platform, &kind, &provider)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -335,8 +352,7 @@ func (service *Service) scaleTemplate(ctx context.Context, poolID string) (Creat
 	if err != nil {
 		return CreateInput{}, err
 	}
-	if platform != "ios" || kind != "simulator" || provider != "appium_device_farm_ios" ||
-		health != "healthy" || lifecycle == "deleted" || lifecycle == "quarantined" {
+	if platform != "ios" || kind != "simulator" || provider != "appium_device_farm_ios" {
 		return CreateInput{}, ErrConflict
 	}
 	var values map[string]any

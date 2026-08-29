@@ -91,6 +91,82 @@ func TestIOSScaleDownProtectsReservationsAndUsesIOSDeletePayload(t *testing.T) {
 	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000003' AND enabled`, 1)
 }
 
+func TestIOSUnavailableDeviceIsDeletedThenReplacedWithoutChangingTarget(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSWarmPool(t, db, 2, 2)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='quarantined',
+		health_status='unhealthy',health_reason='IOS_PROVIDER_BUSY_WITHOUT_RESERVATION'
+		WHERE id='ios_device_0000000002'`); err != nil {
+		t.Fatal(err)
+	}
+	generator := sequentialGenerator()
+	controller := warmpool.New(db, generator, nil, iossimulator.New(db, generator))
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 1 || result.DevicesCreated != 0 {
+		t.Fatalf("first replacement result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'operation_source'='ios_auto_replacement'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'platform'='ios'`, 0)
+
+	if result, err = controller.RunOnce(context.Background()); err != nil || result.DeletesQueued != 0 || result.DevicesCreated != 0 {
+		t.Fatalf("pending replacement result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'operation_source'='ios_auto_replacement'`, 1)
+
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"deleted":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete' AND payload->>'operation_source'='ios_auto_replacement'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesCompleted != 1 || result.DevicesCreated != 1 {
+		t.Fatalf("completed replacement result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT total_target FROM device_pools WHERE id='pool_ios_000000000001'`, 2)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE platform='ios' AND lifecycle_status<>'deleted'`, 2)
+	assertCount(t, db, `SELECT count(*) FROM device_pool_devices WHERE device_id='ios_device_0000000002' AND enabled`, 0)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->'capabilities'->>'runtimeId'='com.apple.CoreSimulator.SimRuntime.iOS-26-3'
+		AND payload->'capabilities'->>'deviceTypeId'='com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro'`, 1)
+}
+
+func TestIOSAutoReplacementDeleteFailureBlocksOverbuildAndRetryStorm(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSWarmPool(t, db, 2, 2)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='quarantined',
+		health_status='unhealthy',health_reason='IOS_SESSION_CLEANUP_FAILED'
+		WHERE id='ios_device_0000000002'`); err != nil {
+		t.Fatal(err)
+	}
+	generator := sequentialGenerator()
+	controller := warmpool.New(db, generator, nil, iossimulator.New(db, generator))
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='failed',
+		error_code='SIMULATOR_DELETE_FAILED',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete' AND payload->>'operation_source'='ios_auto_replacement'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete'
+		AND payload->>'operation_source'='ios_auto_replacement'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'platform'='ios'`, 0)
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='ios_device_0000000002'
+		AND lifecycle_status='quarantined' AND health_reason='IOS_AUTO_REPLACEMENT_DELETE_FAILED: SIMULATOR_DELETE_FAILED'`, 1)
+	assertCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id='ios_device_0000000002'
+		AND event_type='ios_auto_replacement_delete_failed'`, 1)
+}
+
 func TestConcurrentControllersCreateConfiguredTargetWithoutOverbuilding(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 2, 2, 2)
@@ -911,8 +987,9 @@ func seedIOSWarmPool(t *testing.T, db *database.DB, target, current int) {
 			t.Fatal(err)
 		}
 	}
+	baseDeviceID := fmt.Sprintf("ios_device_%010d", current)
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools
-		SET base_device_id='ios_device_0000000003' WHERE id='pool_ios_000000000001'`); err != nil {
+		SET base_device_id=$1 WHERE id='pool_ios_000000000001'`, baseDeviceID); err != nil {
 		t.Fatal(err)
 	}
 }

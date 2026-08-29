@@ -2,7 +2,7 @@
 
 ## 范围和复用
 
-本任务仅提供 Phone 硬件模板；Tablet、Wear、TV、Automotive、Desktop 与 XR 未进入本期目录或创建入口。开工前已搜索 `E:/AutoTestTools/Projects/Alcor` 与 `E:/AutoTestTools/Projects/dafit_auto_platform`：两者没有可复用的受控 AVD 模板目录和设备创建编排。本实现复用既有 Host Command、Host Agent、Docker Provider、STF Adapter、Appium 健康探针和 Warm Pool 收敛，不复制 DaFit Runner 或 STF 功能。
+本任务仅提供 Phone 硬件模板；Tablet、Wear、TV、Automotive、Desktop 与 XR 未进入本期目录或创建入口。开工前已搜索 `D:/AutoTestTools/Projects/Alcor` 与 `D:/AutoTestTools/Projects/dafit_auto_platform`：两者没有可复用的受控 AVD 模板目录和设备创建编排。本实现复用既有 Host Command、Host Agent、Docker Provider、STF Adapter、Appium 健康探针和 Warm Pool 收敛，不复制 DaFit Runner 或 STF 功能。
 
 ## 交付与本地验证
 

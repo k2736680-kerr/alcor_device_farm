@@ -26,6 +26,8 @@ import (
 var errorCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,63}$`)
 var hostArchPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
 
+const iosInventoryMissingGrace = 30 * time.Second
+
 var (
 	ErrInvalidArgument        = errors.New("宿主机命令参数无效")
 	ErrNotFound               = errors.New("未找到宿主机命令资源")
@@ -178,6 +180,10 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	if err != nil {
 		return HeartbeatResult{}, ErrInvalidArgument
 	}
+	inventoryComplete, err := reportedInventoryComplete(input.Environment)
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
 	hostOS, hostArch, err := reportedHostIdentity(input.Environment)
 	if err != nil {
 		return HeartbeatResult{}, ErrInvalidArgument
@@ -269,6 +275,11 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 				return err
 			}
 		}
+		if inventoryComplete {
+			if err := service.quarantineMissingIOSDevices(ctx, tx, hostID, seenRefs, now); err != nil {
+				return err
+			}
+		}
 		result = HeartbeatResult{HostID: hostID, Status: string(target), ReceivedAt: now, Devices: len(input.Devices)}
 		return nil
 	})
@@ -280,6 +291,97 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		return HeartbeatResult{}, fmt.Errorf("%w: %s", ErrDeviceIdentityConflict, pgErr.ConstraintName)
 	}
 	return result, err
+}
+
+func reportedInventoryComplete(environment map[string]any) (bool, error) {
+	value, exists := environment["provider_inventory_complete"]
+	if !exists {
+		// Older Agents did not declare whether an empty list was authoritative.
+		// Failing open here prevents an upgrade from deleting every Simulator.
+		return false, nil
+	}
+	complete, ok := value.(bool)
+	if !ok {
+		return false, ErrInvalidArgument
+	}
+	return complete, nil
+}
+
+func (service *Service) quarantineMissingIOSDevices(
+	ctx context.Context,
+	tx pgx.Tx,
+	hostID string,
+	seenRefs map[string]bool,
+	now time.Time,
+) error {
+	rows, err := tx.Query(ctx, `SELECT d.id,d.provider_ref,d.lifecycle_status,d.health_status,
+		COALESCE(d.last_seen_at,d.created_at)
+		FROM devices d
+		WHERE d.host_id=$1 AND d.platform='ios' AND d.device_kind='simulator'
+		AND d.provider_type='appium_device_farm_ios'
+		AND d.lifecycle_status NOT IN ('quarantined','deleted')
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
+			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased'))
+		ORDER BY d.id FOR UPDATE OF d`, hostID)
+	if err != nil {
+		return err
+	}
+	type missingCandidate struct {
+		id, providerRef string
+		lifecycle       domain.DeviceLifecycleStatus
+		health          domain.HealthStatus
+		lastSeen        time.Time
+	}
+	candidates := []missingCandidate{}
+	for rows.Next() {
+		var candidate missingCandidate
+		if err := rows.Scan(&candidate.id, &candidate.providerRef, &candidate.lifecycle, &candidate.health, &candidate.lastSeen); err != nil {
+			rows.Close()
+			return err
+		}
+		if !seenRefs[candidate.providerRef] && now.Sub(candidate.lastSeen) >= iosInventoryMissingGrace {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, candidate := range candidates {
+		reason := "IOS_PROVIDER_DEVICE_MISSING: complete inventory no longer contains the registered Simulator"
+		aggregate, err := domain.RestoreDevice(candidate.id, candidate.lifecycle, candidate.health)
+		if err != nil {
+			return err
+		}
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1`, candidate.id,
+			aggregate.Lifecycle(), aggregate.Health(), reason, now); err != nil {
+			return err
+		}
+		eventID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]any{"host_id": hostID, "inventory_complete": true})
+		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+			(id,device_id,source,event_type,severity,reason,payload,observed_at)
+			VALUES($1,$2,'agent','ios_provider_device_missing','critical',$3,$4::jsonb,$5)`,
+			eventID, candidate.id, reason, payload, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func discoveredCountsAsUsed(device DiscoveredDevice) bool {

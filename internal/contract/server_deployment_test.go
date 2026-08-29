@@ -165,7 +165,8 @@ func TestPrometheusRulesCoverCriticalDeviceFarmFailures(t *testing.T) {
 	for _, required := range []string{
 		"DeviceFarmServerDown", "DeviceFarmDatabaseNotReady", "DeviceFarmAgentHeartbeatStale",
 		"DeviceFarmNoReadyDevice", "DeviceFarmReservationBacklog", "DeviceFarmRecyclingStuck",
-		"DeviceFarmHTTP5xx", "DeviceFarmMetricCollectionError",
+		"DeviceFarmIOSPoolNoAvailableDevice", "DeviceFarmPoolCapacityDeficit",
+		"DeviceFarmHTTP5xx", "DeviceFarmMetricCollectionError", "DeviceFarmBuildUnknown",
 	} {
 		if strings.TrimSpace(alerts[required]) == "" {
 			t.Fatalf("Prometheus rules are missing %q", required)
