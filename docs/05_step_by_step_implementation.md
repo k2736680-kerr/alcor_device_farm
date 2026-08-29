@@ -80,6 +80,7 @@
 | DF-056 | 正式数据清理与长期设备非破坏自愈 | completed | DF-055、ADR-0029 |
 | DF-057 | 全仓不可达代码与旧策略清理 | completed | DF-056 |
 | DF-058 | 独立控制台安全保持登录 | completed | DF-057 |
+| DF-059 | 修复正式控制台密码哈希并完成真实登录验收 | completed | DF-058 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -586,6 +587,14 @@
 产出：长期会话默认配置、登录页安全提示、配置/前端/认证回归、正式部署验证和 `docs/evidence/DF-058/acceptance.md`。
 
 验收：新登录响应下发 30 天持久 Cookie，数据库 `expires_at` 与配置一致；复用 Cookie 在浏览器重开及超过旧 30 分钟空闲窗口后仍可访问，主动退出后立即失效；浏览器存储、静态资源、日志、证据和 Git 中没有明文密码。Go 全量测试、静态检查、Console 测试和生产构建通过；正式 Server 与 iOS 隧道重建后 Android 和两台 iOS 逐台完成真实 Appium `/source`，历史测试记录再次清零，随后只删除已确认不再使用的部署备份、退出回滚容器和旧 Server 镜像。
+
+### DF-059 修复正式控制台密码哈希并完成真实登录验收
+
+实施：纠正 DF-058 只验证会话配置、却沿用旧 Secret 哈希并误判账号可登录的验收遗漏。根据管理员明确指定的密码重新生成 Argon2id 哈希，只替换正式只读 Secret volume 中 `admin` 的 `password_hash`；用户名、显示名和角色不变。重启 Server 清除进程内错误登录限流，并同步重建依附 Server 网络空间的 iOS 隧道。明文不得进入代码、Git、证据、远端临时文件或日志。
+
+产出：正确的正式 Argon2id Secret、真实 HTTPS 登录/当前会话/30 天 Cookie/注销验证、零临时文件与零验证数据、`docs/evidence/DF-059/acceptance.md`。
+
+验收：正式 HTTPS 登录返回 201，使用返回的 Secure/HttpOnly Cookie 查询当前会话返回 200，Cookie 到期时间为 30 天，注销返回 200；验证后 Console Session、Audit Event、Reservation 和 Device Session 均为 0。Secret 文件保持 `0400`、owner `65532:65532`；Server `running/healthy`，iOS 隧道 `running`、restart count 0，4811/4842 实际可达。
 
 ## 12. 单任务完成定义
 
