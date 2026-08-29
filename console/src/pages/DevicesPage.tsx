@@ -2,7 +2,7 @@ import { Alert, App as AntApp, Button, Collapse, Form, Input, InputNumber, Modal
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
   getListDevicePoolsQueryKey,
@@ -43,10 +43,10 @@ import { useRemoteControl } from '../remote/RemoteControlProvider'
 import { PageQueryError, ResourceDetailDrawer, ResourcePageHeader } from '../components/ResourcePage'
 
 type DeviceAction = 'start' | 'stop' | 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
-type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
+type DeviceView = 'available' | 'busy' | 'quarantined'
 type PlatformView = 'all' | 'android' | 'ios'
 
-const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined', 'deleted', 'all']
+const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined']
 
 function deviceViewFromQuery(value: string | null): DeviceView {
   return deviceViews.includes(value as DeviceView) ? value as DeviceView : 'available'
@@ -306,8 +306,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     modal.confirm({
       title: '确认删除这台设备？',
       content: actionState.device.platform === 'ios'
-        ? '系统将通过 Mac 宿主代理关闭并删除 CoreSimulator 虚拟 iPhone，同时把设备转入已删除历史并减少设备池目标数量。'
-        : '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史，同时把所属设备池的目标数量减少一台，不会自动补建。',
+        ? '系统将通过 Mac 宿主代理关闭并删除 CoreSimulator 虚拟 iPhone，同时减少设备池目标数量。删除后不再出现在设备列表，操作仍可在审计中追溯。'
+        : '系统将通过宿主代理清理容器、网络和数据卷，同时把所属设备池的目标数量减少一台，不会自动补建。删除后不再出现在设备列表，操作仍可在审计中追溯。',
       okText: '确认删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -475,7 +475,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       <Space size={4} wrap>
         {role === 'viewer' ? <Typography.Text type="secondary">只读</Typography.Text> : <>
           <Button size="small" onClick={() => setDetailDevice(device)}>详情</Button>
-          <Link to={`/health-events?device_id=${encodeURIComponent(device.id)}`}><Button size="small">健康记录</Button></Link>
         </>}
         {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
           && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
@@ -568,22 +567,17 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const availableCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
   const busyCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'busy' }, deviceQueryOptions)
   const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'quarantined' }, deviceQueryOptions)
-  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'deleted' }, deviceQueryOptions)
-  const allCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter }, deviceQueryOptions)
   const availableCount = unwrapPage<Device>(availableCountQuery.data)?.total ?? 0
   const busyCount = unwrapPage<Device>(busyCountQuery.data)?.total ?? 0
   const quarantinedCount = unwrapPage<Device>(quarantinedCountQuery.data)?.total ?? 0
-  const deletedCount = unwrapPage<Device>(deletedCountQuery.data)?.total ?? 0
-  const allCount = unwrapPage<Device>(allCountQuery.data)?.total ?? 0
   const viewFilter =
     view === 'available' ? { lifecycle_status: 'ready' as const, health_status: 'healthy' as const }
     : view === 'busy' ? { lifecycle_status: 'busy' as const }
     : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
-    : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
     : {}
   const query = useListDevices({ page, page_size: pageSize, ...platformFilter, ...viewFilter }, deviceQueryOptions)
   const result = unwrapPage<Device>(query.data)
-  const supportingQueries = [imagesQuery, hostsQuery, poolsQuery, availableCountQuery, busyCountQuery, quarantinedCountQuery, deletedCountQuery, allCountQuery]
+  const supportingQueries = [imagesQuery, hostsQuery, poolsQuery, availableCountQuery, busyCountQuery, quarantinedCountQuery]
   const supportingError = supportingQueries.find((item) => item.isError)
 
   return (
@@ -591,7 +585,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
         <ResourcePageHeader
           title="Android 与 iOS 设备"
-          description="日常先看可用和故障设备；使用中与恢复中的设备由系统持续收敛。技术标识、运行组件和 Endpoint 只在详情中查看。"
+          description="这里只显示当前可用、使用中和故障设备；已删除资源不再占用日常页面，相关操作仍可在审计中追溯。"
           dataUpdatedAt={query.dataUpdatedAt}
           isFetching={query.isFetching}
           onRefresh={() => void query.refetch()}
@@ -612,8 +606,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <Alert
           type="info"
           showIcon
-          message="这里先显示可用设备"
-          description="使用中和恢复中的设备由系统自动收敛；只有自动清理失败时才需要查看故障。"
+          message="这里只处理当前设备"
+          description="历史删除记录和底层健康事件不进入日常视图；只有自动恢复失败时才需要查看故障。"
         />
         <Segmented<PlatformView>
           value={platformView}
@@ -636,8 +630,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             { label: `可用设备（${availableCount}）`, value: 'available' },
             { label: `使用中（${busyCount}）`, value: 'busy' },
             { label: `故障（${quarantinedCount}）`, value: 'quarantined' },
-            { label: `已删除历史（${deletedCount}）`, value: 'deleted' },
-            { label: `全部记录（${allCount}）`, value: 'all' },
           ]}
           onChange={(nextView) => {
             const nextSearchParams = new URLSearchParams(searchParams)
@@ -825,7 +817,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           {actionState?.action === 'stop' && '停止只关闭空闲的 CoreSimulator，不删除设备和数据。'}
           {actionState?.action === 'rebuild' && (actionState.device.platform === 'ios' ? '重建会关闭、擦除并重新启动 CoreSimulator，UDID 保持不变但设备数据全部清空。' : '重建会销毁并重新拉起设备运行实例，属于危险操作。')}
           {actionState?.action === 'restart' && '重启会中断当前设备上的会话。'}
-          {actionState?.action === 'delete' && (actionState.device.platform === 'ios' ? '删除只允许没有活动预约或会话的受管 Simulator；成功后 CoreSimulator UDID 将消失并保留审计记录。' : '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史，同时把设备池目标数量减少一台，不会自动补建。')}
+          {actionState?.action === 'delete' && (actionState.device.platform === 'ios' ? '删除只允许没有活动预约或会话的受管 Simulator；成功后 CoreSimulator UDID 将消失，设备不再出现在列表中。' : '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源、不再出现在设备列表，同时把设备池目标数量减少一台，不会自动补建。')}
         </Typography.Paragraph>
         <Form<ReasonValues> form={form} layout="vertical" onFinish={submitAction}>
           <Form.Item name="reason" label="操作原因（必填，将写入审计）" rules={[

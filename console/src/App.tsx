@@ -9,7 +9,6 @@ import {
   DatabaseOutlined,
   DesktopOutlined,
   FileSearchOutlined,
-  HeartOutlined,
   LogoutOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
@@ -28,7 +27,6 @@ import { HostsPage } from './pages/HostsPage'
 import { PoolsPage } from './pages/PoolsPage'
 import { DevicesPage } from './pages/DevicesPage'
 import { ReservationsPage } from './pages/ReservationsPage'
-import { HealthEventsPage } from './pages/HealthEventsPage'
 import { AuditPage } from './pages/AuditPage'
 import { consoleDisplayName, roleLabel } from './api/labels'
 import { RemoteControlProvider, useRemoteControl } from './remote/RemoteControlProvider'
@@ -39,7 +37,6 @@ const menuItems: MenuProps['items'] = [
   { key: '/pools', icon: <DatabaseOutlined />, label: <NavLink to="/pools">设备池</NavLink> },
   { key: '/devices', icon: <CloudServerOutlined />, label: <NavLink to="/devices">设备</NavLink> },
   { key: '/reservations', icon: <CalendarOutlined />, label: <NavLink to="/reservations">预约</NavLink> },
-  { key: '/health-events', icon: <HeartOutlined />, label: <NavLink to="/health-events">健康事件</NavLink> },
   { key: '/audit', icon: <FileSearchOutlined />, label: <NavLink to="/audit">操作审计</NavLink> },
 ]
 
@@ -49,7 +46,6 @@ const pageTitles: Record<string, string> = {
   '/pools': '设备池',
   '/devices': '设备',
   '/reservations': '预约',
-  '/health-events': '健康事件',
   '/audit': '操作审计',
 }
 
@@ -180,7 +176,7 @@ function AuthenticatedConsole({
             <Route path="/pools" element={<PoolsPage role={session.user.role} />} />
             <Route path="/devices" element={<DevicesPage role={session.user.role} />} />
             <Route path="/reservations" element={<ReservationsPage role={session.user.role} />} />
-            <Route path="/health-events" element={<HealthEventsPage />} />
+            <Route path="/health-events" element={<Navigate to="/devices?view=quarantined" replace />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

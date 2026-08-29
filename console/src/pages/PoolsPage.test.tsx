@@ -115,6 +115,25 @@ describe('PoolsPage pool capacity', () => {
     }))
   }, 10_000)
 
+  it('can safely empty a pool while keeping the API concurrency value valid', async () => {
+    let submitted: DevicePoolInput | undefined
+    server.use(http.put('/api/v1/device-pools/:id', async ({ request }) => {
+      submitted = await request.json() as DevicePoolInput
+      return poolResponse(submitted)
+    }))
+    const user = await openPoolEditor()
+    fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '0' } })
+    await user.type(screen.getByRole('textbox', { name: '调整原因（缩容时必填并写入审计）' }), '清空故障设备池')
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+    await user.click(await screen.findByRole('button', { name: /确认缩容/ }))
+
+    await waitFor(() => expect(submitted).toMatchObject({
+      total_target: 0,
+      min_ready: 0,
+      max_concurrency: 1,
+    }))
+  }, 10_000)
+
   it('allows an iOS pool target to be edited and submits one unified capacity target', async () => {
     const iosPool: DevicePool = {
       id: 'pool_ios_000000000001', name: 'default-ios', platform: 'ios', default_lease_seconds: 1800,

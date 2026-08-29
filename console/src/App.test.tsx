@@ -25,7 +25,7 @@ describe('App session gate', () => {
 
     expect(await screen.findByText('测试管理员')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '运行概览' })).toBeInTheDocument()
-    expect(screen.getByText('健康事件')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '健康事件' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Android 镜像' })).not.toBeInTheDocument()
     // menu labels also appear as dashboard statistic titles, so expect at least one
     for (const label of ['宿主机', '设备池', '设备', '预约', '操作审计']) {

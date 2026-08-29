@@ -135,7 +135,6 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         </Space>
       ),
     },
-    { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 140, render: (value?: string) => formatTime(value) },
     {
       title: '操作',
       key: 'actions',

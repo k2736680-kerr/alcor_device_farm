@@ -197,7 +197,7 @@ describe('DevicesPage device categories', () => {
     expect(within(row as HTMLElement).queryByRole('button', { name: '删除' })).not.toBeInTheDocument()
   })
 
-  it('defaults to usable devices and separates isolated and deleted records', async () => {
+  it('defaults to usable devices and keeps deleted history out of daily operation', async () => {
     const user = userEvent.setup()
     renderWithProviders(<DevicesPageWithRemoteControl />)
 
@@ -213,17 +213,10 @@ describe('DevicesPage device categories', () => {
     const isolatedRow = isolatedSerial.closest('tr')
     expect(isolatedRow).not.toBeNull()
     expect(within(isolatedRow as HTMLElement).getByText('故障')).toBeInTheDocument()
-
-    await user.click(screen.getByText('已删除历史（1）'))
-    const deletedSerial = await screen.findByText('emulator-5560')
-    const deletedRow = deletedSerial.closest('tr')
-    expect(deletedRow).not.toBeNull()
-    expect(within(deletedRow as HTMLElement).getByText('历史记录')).toBeInTheDocument()
-    expect(within(deletedRow as HTMLElement).getByRole('button', { name: /详\s*情/ })).toBeInTheDocument()
-    expect(within(deletedRow as HTMLElement).getByRole('button', { name: '健康记录' })).toBeInTheDocument()
-    expect(within(deletedRow as HTMLElement).queryByRole('button', { name: '远程连接' })).not.toBeInTheDocument()
-    expect(within(deletedRow as HTMLElement).queryByRole('button', { name: '重建' })).not.toBeInTheDocument()
-    expect(within(deletedRow as HTMLElement).queryByRole('button', { name: '删除' })).not.toBeInTheDocument()
+    expect(screen.queryByText('已删除历史（1）')).not.toBeInTheDocument()
+    expect(screen.queryByText('全部记录（4）')).not.toBeInTheDocument()
+    expect(screen.queryByText('emulator-5560')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '健康记录' })).not.toBeInTheDocument()
   })
 
   it('opens the isolated device list directly from the dashboard link', async () => {

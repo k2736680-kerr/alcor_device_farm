@@ -205,7 +205,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           max_lease_seconds: values.max_lease_seconds,
           total_target: values.device_count,
           min_ready: values.device_count,
-          max_concurrency: values.device_count,
+          max_concurrency: Math.max(1, values.device_count),
           reason: values.reason,
         },
       },

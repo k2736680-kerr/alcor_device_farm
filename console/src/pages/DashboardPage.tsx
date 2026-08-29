@@ -124,7 +124,7 @@ export function DashboardPage() {
 
       <Row gutter={[14, 14]} className="dashboard-lower-grid">
         <Col xs={24} xl={13}>
-          <Card className="dashboard-panel" title="基础设施状态" extra={<Link to="/health-events">查看健康事件</Link>}>
+          <Card className="dashboard-panel" title="基础设施状态" extra={<Link to="/devices?view=quarantined">查看故障设备</Link>}>
             <div className="health-row">
               <div className="health-copy">
                 <span className="health-icon"><CheckCircleFilled /></span>
