@@ -1,8 +1,8 @@
-import { Alert, App as AntApp, Button, Card, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
   getListDevicePoolsQueryKey,
@@ -37,9 +37,10 @@ import {
   lifecycleStatusLabel,
   providerTypeLabel,
 } from '../api/labels'
-import { apiErrorText, platformLabel, responseRequestID } from '../api/presentation'
+import { apiErrorText, detailText, platformLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { useRemoteControl } from '../remote/RemoteControlProvider'
+import { PageQueryError, ResourceDetailDrawer, ResourcePageHeader } from '../components/ResourcePage'
 
 type DeviceAction = 'start' | 'stop' | 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
 type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
@@ -179,6 +180,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [form] = Form.useForm<ReasonValues>()
   const [actionState, setActionState] = useState<ActionState | null>(null)
+  const [detailDevice, setDetailDevice] = useState<Device | null>(null)
   const [reimageDevice, setReimageDevice] = useState<Device | null>(null)
   const [reimageForm] = Form.useForm<ReimageValues>()
   const [createDevice, setCreateDevice] = useState(false)
@@ -467,11 +469,14 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const actionColumn: TableColumnsType<Device>[number] = {
     title: '操作',
     key: 'actions',
-    width: 340,
+    width: 190,
     fixed: 'right',
     render: (_, device) => (
       <Space size={4} wrap>
-        {role === 'viewer' && <Typography.Text type="secondary">只读</Typography.Text>}
+        {role === 'viewer' ? <Typography.Text type="secondary">只读</Typography.Text> : <>
+          <Button size="small" onClick={() => setDetailDevice(device)}>详情</Button>
+          <Link to={`/health-events?device_id=${encodeURIComponent(device.id)}`}><Button size="small">健康记录</Button></Link>
+        </>}
         {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
           && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
           <Button
@@ -517,20 +522,25 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   }
 
   const columns: TableColumnsType<Device> = [
-    { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{platformLabel(value)}</Tag> },
-    { title: '设备型号', width: 170, render: (_, device) => String(device.platform === 'ios' ? iosDeviceModelLabel(device.capabilities) : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-')) },
     {
-      title: '系统版本', width: 190, render: (_, device) => {
+      title: '设备', dataIndex: 'id', width: 240, render: (value: string, device) => (
+        <div className="primary-resource">
+          <Space size={4}><Typography.Text strong>{String(device.platform === 'ios' ? iosDeviceModelLabel(device.capabilities) : (device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? 'Android 模拟器'))}</Typography.Text>{device.is_pool_base && <Tag color="blue">扩容模板</Tag>}</Space>
+          <small><span>{platformLabel(device.platform)}</span> · <span>{device.serial}</span> · <span>{shortID(value)}</span></small>
+        </div>
+      ),
+    },
+    {
+      title: '系统与配置', width: 210, render: (_, device) => {
         if (device.platform === 'ios') {
-          return <Typography.Text>{iosSystemVersion(device)}</Typography.Text>
+          return <Space direction="vertical" size={0}><Typography.Text>{iosSystemVersion(device)}</Typography.Text><Typography.Text type="secondary">CoreSimulator</Typography.Text><Typography.Text type="secondary">按预约建立受控会话</Typography.Text></Space>
         }
         const image = device.image_id ? imageByID.get(device.image_id) : undefined
-        return <Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text>
+        return <Space direction="vertical" size={0}><Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text><Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}</Typography.Text><Typography.Text type="secondary">{device.reimage_status === 'pending' ? '正在应用新配置' : device.reimage_status === 'failed' ? '上次配置失败' : '配置已生效'}</Typography.Text></Space>
       },
     },
     {
-      title: '设备池', dataIndex: 'pool_name', width: 210, render: (value: string | undefined, device) => {
+      title: '设备池', dataIndex: 'pool_name', width: 180, render: (value: string | undefined, device) => {
         const pool = device.pool_id ? poolByID.get(device.pool_id) : undefined
         const defaultImage = pool?.default_image_id ? imageByID.get(pool.default_image_id) : undefined
         return (
@@ -541,19 +551,14 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         )
       },
     },
-    { title: '扩容模板', dataIndex: 'is_pool_base', width: 100, render: (value: boolean | undefined) => value ? <Tag color="blue">扩容模板</Tag> : '-' },
-    { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
-    { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
-    { title: '运行方式', dataIndex: 'provider_type', width: 130, render: (value: string) => providerTypeLabel(value) },
-    { title: '可用性', key: 'availability', width: 110, render: (_, device) => availabilityTag(device) },
-    { title: '配置 / 运行组件', dataIndex: 'reimage_status', width: 150, render: (value: string, device) => device.platform === 'ios' ? <Tag>CoreSimulator 已纳管</Tag> : value === 'pending'
-      ? <Tag color="processing">正在换镜像</Tag>
-      : value === 'failed' ? <Tag color="red" title={device.reimage_error}>上次重装失败</Tag> : <Tag>已生效</Tag> },
-    { title: '设备维护方式', dataIndex: 'lifecycle_mode', width: 120, render: (value: string) => lifecycleModeLabel(value) },
-    { title: '所属宿主机', dataIndex: 'host_id', width: 150, render: (value: string) => shortID(value) },
-    { title: '自动化接入', dataIndex: 'adb_endpoint', width: 180, ellipsis: true, render: (value: string | undefined, device) => device.platform === 'ios' ? '按预约建立受控会话' : (value ?? '-') },
-    { title: '状态说明', dataIndex: 'health_reason', width: 220, ellipsis: true, render: (value?: string) => healthReasonLabel(value) },
-    { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
+    {
+      title: '可用性', key: 'availability', width: 150, render: (_, device) => (
+        <Space direction="vertical" size={2}>
+          {availabilityTag(device)}
+          <Typography.Text className="table-secondary">{healthReasonLabel(device.health_reason)}</Typography.Text>
+        </Space>
+      ),
+    },
     actionColumn,
   ]
 
@@ -576,18 +581,28 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
     : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
     : {}
-  const { data, isLoading } = useListDevices({ page, page_size: pageSize, ...platformFilter, ...viewFilter }, deviceQueryOptions)
-  const result = unwrapPage<Device>(data)
+  const query = useListDevices({ page, page_size: pageSize, ...platformFilter, ...viewFilter }, deviceQueryOptions)
+  const result = unwrapPage<Device>(query.data)
+  const supportingQueries = [imagesQuery, hostsQuery, poolsQuery, availableCountQuery, busyCountQuery, quarantinedCountQuery, deletedCountQuery, allCountQuery]
+  const supportingError = supportingQueries.find((item) => item.isError)
 
   return (
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
-        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Space>
+        <ResourcePageHeader
+          title="Android 与 iOS 设备"
+          description="日常先看可用和故障设备；使用中与恢复中的设备由系统持续收敛。技术标识、运行组件和 Endpoint 只在详情中查看。"
+          dataUpdatedAt={query.dataUpdatedAt}
+          isFetching={query.isFetching}
+          onRefresh={() => void query.refetch()}
+          autoRefreshText="每 5 秒自动更新"
+          actions={role === 'admin' ? <Space>
           <Button type="primary" onClick={openCreateDevice}>新增 Android 模拟器</Button>
           <Button type="primary" onClick={openCreateIOS}>新增 iOS 模拟器</Button>
-        </Space> : undefined} title="Android 与 iOS 设备">
-          <Typography.Text type="secondary">Android 模拟器与 iOS 模拟器都由各自宿主机按需创建；重建或删除会清空对应虚拟设备数据，普通预约释放不会自动清空。</Typography.Text>
-        </Card>
+          </Space> : undefined}
+        />
+        {query.isError && <PageQueryError error={query.error} onRetry={() => void query.refetch()} />}
+        {supportingError && <PageQueryError error={supportingError.error} onRetry={() => void Promise.all(supportingQueries.map((item) => item.refetch()))} />}
         {provisioningState && <Alert
           type={provisioningState.status === 'failed' ? 'error' : provisioningState.status === 'ready' ? 'success' : 'info'}
           showIcon
@@ -638,7 +653,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <PageTable<Device>
           columns={columns}
           dataSource={result?.items}
-          loading={isLoading}
+          loading={query.isLoading}
           total={result?.total ?? 0}
           page={result?.page ?? page}
           pageSize={result?.page_size ?? pageSize}
@@ -646,6 +661,31 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           locale={{ emptyText: '当前分类下没有设备' }}
         />
       </Space>
+      <ResourceDetailDrawer
+        open={detailDevice !== null}
+        title={detailDevice ? `设备详情 · ${detailDevice.serial}` : '设备详情'}
+        onClose={() => setDetailDevice(null)}
+        items={detailDevice ? [
+          { key: 'id', label: '完整设备编号', children: <Typography.Text code copyable>{detailDevice.id}</Typography.Text> },
+          { key: 'serial', label: '设备标识', children: <Typography.Text code copyable>{detailDevice.serial}</Typography.Text> },
+          { key: 'platform', label: '平台与类型', children: `${platformLabel(detailDevice.platform)} · ${deviceKindLabel(detailDevice.device_kind)}` },
+          { key: 'availability', label: '当前可用性', children: availabilityTag(detailDevice) },
+          { key: 'state', label: '内部状态', children: `${lifecycleStatusLabel(detailDevice.lifecycle_status)} / ${healthStatusLabel(detailDevice.health_status)}` },
+          { key: 'reason', label: '状态说明', children: healthReasonLabel(detailDevice.health_reason) },
+          { key: 'pool', label: '设备池', children: detailDevice.pool_name ?? (detailDevice.pool_id ? poolByID.get(detailDevice.pool_id)?.name : '-') ?? '-' },
+          { key: 'host', label: '宿主机编号', children: <Typography.Text code copyable>{detailDevice.host_id}</Typography.Text> },
+          { key: 'provider', label: '运行方式', children: `${providerTypeLabel(detailDevice.provider_type)} · ${lifecycleModeLabel(detailDevice.lifecycle_mode)}` },
+          { key: 'failures', label: '连续失败次数', children: detailDevice.consecutive_failures },
+          { key: 'capabilities', label: '设备能力', children: detailText(detailDevice.capabilities) },
+          { key: 'runtime', label: '生效运行规格', children: detailText(detailDevice.effective_runtime_profile as Record<string, unknown>) },
+          ...(role === 'admin' ? [
+            { key: 'adb', label: 'ADB Endpoint', children: detailDevice.adb_endpoint ?? '-' },
+            { key: 'appium', label: 'Appium Endpoint', children: detailDevice.appium_endpoint ?? '-' },
+          ] : []),
+          { key: 'created', label: '创建时间', children: formatTime(detailDevice.created_at) },
+          { key: 'updated', label: '最后变化', children: formatTime(detailDevice.updated_at) },
+        ] : []}
+      />
       <Modal
         open={createDevice}
         title="新增 Android 模拟器"

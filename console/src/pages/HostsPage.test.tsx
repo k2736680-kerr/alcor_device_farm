@@ -1,7 +1,9 @@
 import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import type { DeviceHost } from '../api/generated/models'
+import { sampleHosts } from '../test/handlers'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { server } from '../test/server'
 import { HostsPage } from './HostsPage'
@@ -40,5 +42,41 @@ describe('HostsPage platform consistency', () => {
     expect(within(androidRow as HTMLElement).getByText('自动化就绪')).toHaveClass('ant-tag-green')
     expect(within(iosRow as HTMLElement).getByText('自动化就绪')).toHaveClass('ant-tag-green')
     expect(screen.queryByRole('columnheader', { name: 'iOS 运行环境' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the internal address out of the main table and shows it in admin details', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<HostsPage />)
+
+    const hostRow = (await screen.findByText('kvm-01')).closest('tr')
+    expect(hostRow).not.toBeNull()
+    expect(within(hostRow as HTMLElement).queryByText('10.0.0.1')).not.toBeInTheDocument()
+    await user.click(within(hostRow as HTMLElement).getByRole('button', { name: /详\s*情/ }))
+
+    const detail = await screen.findByRole('dialog', { name: /宿主机详情/ })
+    expect(within(detail).getByText('内部地址')).toBeInTheDocument()
+    expect(within(detail).getByText('10.0.0.1')).toBeInTheDocument()
+  })
+
+  it('offers a retry and recovers after the host list fails to load', async () => {
+    let attempts = 0
+    server.use(http.get('/api/v1/device-hosts', () => {
+      attempts += 1
+      if (attempts === 1) {
+        return HttpResponse.json({ error: { code: 'TEMPORARY', message: 'temporary failure' } }, { status: 503 })
+      }
+      return HttpResponse.json({
+        request_id: 'req_hosts_retry',
+        data: { items: sampleHosts, total: sampleHosts.length, page: 1, page_size: 20 },
+        error: null,
+      })
+    }))
+    const user = userEvent.setup()
+    renderWithProviders(<HostsPage />)
+
+    expect(await screen.findByText('页面数据加载失败')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /重\s*试/ }))
+    expect(await screen.findByText('kvm-01')).toBeInTheDocument()
+    expect(screen.queryByText('页面数据加载失败')).not.toBeInTheDocument()
   })
 })

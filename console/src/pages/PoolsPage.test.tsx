@@ -34,6 +34,17 @@ async function openPoolEditor() {
 }
 
 describe('PoolsPage pool capacity', () => {
+  it('shows normal capacity directly in the main table', async () => {
+    renderWithProviders(<PoolsPage />)
+
+    const row = (await screen.findByText('default-android')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(screen.getByRole('columnheader', { name: '容量健康' })).toBeInTheDocument()
+    expect(row).not.toBeNull()
+    expect(row).toHaveTextContent('容量正常')
+    expect(row).toHaveTextContent('目标 2 · 可用 1 · 使用中 1 · 恢复中 0')
+  })
+
   it('does not count an unhealthy busy device as serviceable capacity', async () => {
     const devices = [sampleDevices[0], { ...sampleDevices[1], health_status: 'unhealthy' as const }]
     server.use(http.get('/api/v1/devices', ({ request }) => {
@@ -50,6 +61,9 @@ describe('PoolsPage pool capacity', () => {
     }))
 
     await openPoolEditor()
+    expect(screen.getByText('缺口 1 台')).toBeInTheDocument()
+    expect(screen.getByText('故障 1')).toBeInTheDocument()
+    expect(screen.getByText('目标 2 · 可用 1 · 使用中 0 · 恢复中 0')).toBeInTheDocument()
     expect(screen.getByText('目标 2 台 · 可服务 1 台 · 可立即使用 1 台')).toBeInTheDocument()
     expect(screen.getByText('已登记 2 台，恢复中 0 台，故障 1 台，缺口 1 台。')).toBeInTheDocument()
   })

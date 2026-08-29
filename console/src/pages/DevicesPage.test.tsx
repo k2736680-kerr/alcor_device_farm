@@ -219,7 +219,11 @@ describe('DevicesPage device categories', () => {
     const deletedRow = deletedSerial.closest('tr')
     expect(deletedRow).not.toBeNull()
     expect(within(deletedRow as HTMLElement).getByText('历史记录')).toBeInTheDocument()
-    expect(within(deletedRow as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
+    expect(within(deletedRow as HTMLElement).getByRole('button', { name: /详\s*情/ })).toBeInTheDocument()
+    expect(within(deletedRow as HTMLElement).getByRole('button', { name: '健康记录' })).toBeInTheDocument()
+    expect(within(deletedRow as HTMLElement).queryByRole('button', { name: '远程连接' })).not.toBeInTheDocument()
+    expect(within(deletedRow as HTMLElement).queryByRole('button', { name: '重建' })).not.toBeInTheDocument()
+    expect(within(deletedRow as HTMLElement).queryByRole('button', { name: '删除' })).not.toBeInTheDocument()
   })
 
   it('opens the isolated device list directly from the dashboard link', async () => {

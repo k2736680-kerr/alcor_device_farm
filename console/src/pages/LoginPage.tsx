@@ -48,7 +48,7 @@ export function LoginPage() {
         <Card className="login-card" variant="borderless">
           <div className="login-card-kicker">欢迎回来</div>
           <Typography.Title level={2}>设备农场控制台登录</Typography.Title>
-          <Typography.Paragraph type="secondary">使用管理员账户进入设备资源控制台</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">使用设备农场控制台账户登录，权限由服务端角色决定</Typography.Paragraph>
         <Form<LoginValues> layout="vertical" onFinish={onSubmit}>
           <Form.Item name="user_id" label="用户账号" rules={[{ required: true, message: '请输入用户账号' }]}>
             <Input size="large" prefix={<UserOutlined />} autoComplete="username" placeholder="请输入用户账号" />

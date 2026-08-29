@@ -25,10 +25,11 @@ import type { ConsoleRole, DevicePool, Reservation } from '../api/generated/mode
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
-import { ownerTypeLabel, poolStatusLabel, reservationStatusLabel } from '../api/labels'
+import { ownerTypeLabel, poolStatusLabel, reservationFailureLabel, reservationStatusLabel } from '../api/labels'
 import { apiErrorText, durationLabel, platformLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { ReasonActionModal } from '../components/ReasonActionModal'
+import { PageQueryError, ResourceDetailDrawer, ResourcePageHeader } from '../components/ResourcePage'
 
 const statusColor: Record<string, string> = {
   active: 'green',
@@ -37,6 +38,16 @@ const statusColor: Record<string, string> = {
   expired: 'default',
   failed: 'red',
   force_released: 'purple',
+}
+
+function reservationProgress(reservation: Reservation): string {
+  if (reservation.status === 'pending') return '等待设备分配'
+  if (reservation.status === 'active' && reservation.expires_at) {
+    const seconds = Math.max(0, Math.floor((new Date(reservation.expires_at).getTime() - Date.now()) / 1000))
+    return seconds > 0 ? `剩余 ${durationLabel(seconds)}` : '租期已到，等待回收'
+  }
+  if (reservation.status === 'failed') return `失败：${reservationFailureLabel(reservation.failure_code)}`
+  return reservation.released_at ? `结束于 ${formatTime(reservation.released_at)}` : reservationStatusLabel(reservation.status)
 }
 
 interface CreateFormValues {
@@ -54,6 +65,7 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const [createOpen, setCreateOpen] = useState(false)
   const [extendFor, setExtendFor] = useState<Reservation | null>(null)
   const [releaseFor, setReleaseFor] = useState<Reservation | null>(null)
+  const [detailReservation, setDetailReservation] = useState<Reservation | null>(null)
   const [createForm] = useCreateForm()
   const [extendForm] = useExtendForm()
 
@@ -119,16 +131,36 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   }
 
   const columns: TableColumnsType<Reservation> = [
-    { title: '预约编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor[value] ?? 'default'}>{reservationStatusLabel(value)}</Tag> },
-    { title: '预约类型', dataIndex: 'owner_type', width: 110, render: (value: string) => ownerTypeLabel(value) },
-    { title: '预约归属', dataIndex: 'owner_id', width: 170, render: (value: string) => shortID(value) },
-    { title: '平台', dataIndex: 'pool_id', width: 90, render: (value: string) => <Tag color={poolByID.get(value)?.platform === 'ios' ? 'blue' : 'green'}>{platformLabel(poolByID.get(value)?.platform)}</Tag> },
-    { title: '设备池', dataIndex: 'pool_id', width: 190, render: (value: string) => poolByID.get(value)?.name ?? shortID(value) },
-    { title: '设备', dataIndex: 'device_id', width: 150, render: (value?: string) => (value ? shortID(value) : '-') },
-    { title: '租期窗口', dataIndex: 'lease_seconds', width: 120, render: (value: number) => durationLabel(value) },
-    { title: '开始', dataIndex: 'starts_at', width: 160, render: (value?: string) => formatTime(value) },
-    { title: '到期', dataIndex: 'expires_at', width: 160, render: (value?: string) => formatTime(value) },
+    {
+      title: '预约', dataIndex: 'id', width: 200, render: (value: string, reservation) => (
+        <div className="primary-resource">
+          <Typography.Text code>{shortID(value)}</Typography.Text>
+          <small>{ownerTypeLabel(reservation.owner_type)} · {shortID(reservation.owner_id)}</small>
+        </div>
+      ),
+    },
+    {
+      title: '当前状态', dataIndex: 'status', width: 190, render: (value: string, reservation) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={statusColor[value] ?? 'default'}>{reservationStatusLabel(value)}</Tag>
+          <Typography.Text className={['pending', 'active'].includes(value) ? 'remaining-time' : 'record-finished'}>
+            {reservationProgress(reservation)}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: '设备池', dataIndex: 'pool_id', width: 200, render: (value: string) => {
+        const pool = poolByID.get(value)
+        return (
+          <div className="primary-resource">
+            <Typography.Text>{pool?.name ?? shortID(value)}</Typography.Text>
+            <small>{platformLabel(pool?.platform)}</small>
+          </div>
+        )
+      },
+    },
+    { title: '分配设备', dataIndex: 'device_id', width: 150, render: (value?: string) => (value ? <Typography.Text code>{shortID(value)}</Typography.Text> : <Typography.Text type="secondary">尚未分配</Typography.Text>) },
     {
       title: '操作',
       key: 'actions',
@@ -136,6 +168,7 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       fixed: 'right',
       render: (_, reservation) => (
         <Space size={4} wrap>
+          <Button size="small" onClick={() => setDetailReservation(reservation)}>详情</Button>
           {role !== 'viewer' && reservation.status === 'active' && (
             <Button size="small" onClick={() => setExtendFor(reservation)}>续租</Button>
           )}
@@ -144,32 +177,61 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
               {reservation.status === 'pending' ? '取消' : '释放'}
             </Button>
           )}
+          {!['pending', 'active'].includes(reservation.status) && <span className="record-finished">已结束</span>}
         </Space>
       ),
     },
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isLoading } = useListDeviceReservations(
+  const query = useListDeviceReservations(
     { page, page_size: pageSize },
     { query: { refetchInterval: 5_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
   )
-  const result = unwrapPage<Reservation>(data)
+  const result = unwrapPage<Reservation>(query.data)
 
   return (
-    <>
-      <Space style={{ marginBottom: 12 }}>
-        {role !== 'viewer' && <Button type="primary" onClick={() => setCreateOpen(true)}>创建人工预约</Button>}
-        <Typography.Text type="secondary">列表每 5 秒自动刷新，分配成功后状态会变为“使用中”。</Typography.Text>
-      </Space>
+    <Space direction="vertical" size={14} style={{ display: 'flex' }}>
+      <ResourcePageHeader
+        title="设备预约"
+        description="查看设备分配、剩余租期和结束结果。进行中的预约可直接续租或释放，历史记录按最新时间保留用于追溯。"
+        actions={role !== 'viewer' ? <Button type="primary" onClick={() => setCreateOpen(true)}>创建人工预约</Button> : undefined}
+        dataUpdatedAt={query.dataUpdatedAt}
+        isFetching={query.isFetching}
+        onRefresh={() => void query.refetch()}
+        autoRefreshText="每 5 秒自动更新"
+      />
+      {query.isError && <PageQueryError error={query.error} onRetry={() => void query.refetch()} />}
+      {poolsQuery.isError && <PageQueryError error={poolsQuery.error} onRetry={() => void poolsQuery.refetch()} />}
       <PageTable<Reservation>
         columns={columns}
         dataSource={result?.items}
-        loading={isLoading}
+        loading={query.isLoading}
         total={result?.total ?? 0}
         page={result?.page ?? page}
         pageSize={result?.page_size ?? pageSize}
         onPageChange={onPageChange}
+        locale={{ emptyText: '暂无预约记录' }}
+      />
+
+      <ResourceDetailDrawer
+        open={detailReservation !== null}
+        title={detailReservation ? `预约详情 · ${shortID(detailReservation.id)}` : '预约详情'}
+        onClose={() => setDetailReservation(null)}
+        items={detailReservation ? [
+          { key: 'id', label: '完整预约编号', children: <Typography.Text code copyable>{detailReservation.id}</Typography.Text> },
+          { key: 'status', label: '状态', children: reservationProgress(detailReservation) },
+          { key: 'pool', label: '设备池', children: poolByID.get(detailReservation.pool_id)?.name ?? detailReservation.pool_id },
+          { key: 'device', label: '设备编号', children: detailReservation.device_id ? <Typography.Text code copyable>{detailReservation.device_id}</Typography.Text> : '尚未分配' },
+          { key: 'owner', label: '预约归属', children: `${ownerTypeLabel(detailReservation.owner_type)} · ${detailReservation.owner_id || '-'}` },
+          { key: 'lease', label: '初始租期', children: durationLabel(detailReservation.lease_seconds) },
+          { key: 'starts', label: '开始时间', children: formatTime(detailReservation.starts_at) },
+          { key: 'expires', label: '到期时间', children: formatTime(detailReservation.expires_at) },
+          { key: 'released', label: '释放时间', children: formatTime(detailReservation.released_at) },
+          { key: 'failure', label: '失败代码', children: detailReservation.failure_code ?? '-' },
+          { key: 'created', label: '创建时间', children: formatTime(detailReservation.created_at) },
+          { key: 'updated', label: '最后变更', children: formatTime(detailReservation.updated_at) },
+        ] : []}
       />
 
       <Modal
@@ -216,7 +278,7 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         onCancel={() => setReleaseFor(null)}
       />
 
-    </>
+    </Space>
   )
 }
 
@@ -243,16 +305,17 @@ function FormValues({
   poolsLoading: boolean
 }) {
   const selectedPoolID = Form.useWatch('pool_id', form)
-  const selectedPool = pools.find((pool) => pool.id === selectedPoolID)
+  const selectablePools = pools.filter((pool) => pool.status === 'active')
+  const selectedPool = selectablePools.find((pool) => pool.id === selectedPoolID)
   return (
     <Form<CreateFormValues> form={form} layout="vertical" onFinish={onSubmit}>
       <Form.Item name="pool_id" label="设备池" rules={[{ required: true, message: '请选择设备池' }]}>
         <Select
           loading={poolsLoading}
           placeholder="选择设备池"
-          options={pools.map((pool) => ({ value: pool.id, label: `${platformLabel(pool.platform)} · ${pool.name} · ${poolStatusLabel(pool.status)}` }))}
+          options={selectablePools.map((pool) => ({ value: pool.id, label: `${platformLabel(pool.platform)} · ${pool.name} · ${poolStatusLabel(pool.status)}` }))}
           onChange={(poolID) => {
-            const pool = pools.find((item) => item.id === poolID)
+            const pool = selectablePools.find((item) => item.id === poolID)
             if (pool?.default_lease_seconds) form.setFieldValue('lease_seconds', pool.default_lease_seconds)
           }}
         />

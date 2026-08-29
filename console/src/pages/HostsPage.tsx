@@ -13,9 +13,10 @@ import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime, shortID } from '../api/format'
 import { hostStatusLabel, hostTypeLabel } from '../api/labels'
-import { apiErrorText, responseRequestID } from '../api/presentation'
+import { apiErrorText, detailText, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { ReasonActionModal } from '../components/ReasonActionModal'
+import { PageQueryError, ResourceDetailDrawer, ResourcePageHeader } from '../components/ResourcePage'
 
 type HostAction = 'drain' | 'undrain'
 
@@ -76,6 +77,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [actionState, setActionState] = useState<ActionState | null>(null)
+  const [detailHost, setDetailHost] = useState<DeviceHost | null>(null)
 
   const drain = useDrainDeviceHost()
   const undrain = useUndrainDeviceHost()
@@ -106,55 +108,102 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   }
 
   const columns: TableColumnsType<DeviceHost> = [
-    { title: '宿主机编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '名称', dataIndex: 'name', width: 140 },
-    { title: '平台 / 系统', dataIndex: 'host_os', width: 130, render: (value: string) => <Tag color={value === 'macos' ? 'blue' : 'green'}>{value === 'macos' ? 'iOS / macOS' : value === 'linux' ? 'Android / Linux' : value}</Tag> },
-    { title: '类型', dataIndex: 'host_type', width: 130, render: (value: string) => hostTypeLabel(value) },
-    { title: 'Agent 心跳', dataIndex: 'status', width: 120, render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'draining' ? 'orange' : 'default'}>{hostStatusLabel(value)}</Tag> },
-    { title: '排空', dataIndex: 'draining', width: 80, render: (value: boolean) => (value ? <Tag color="orange">是</Tag> : <Tag>否</Tag>) },
-    { title: 'CPU', key: 'cpu', width: 160, render: (_, host) => resourceText(host, 'cpu') },
-    { title: '内存', key: 'memory', width: 260, render: (_, host) => resourceText(host, 'memory') },
-    { title: '宿主机数据盘', key: 'disk', width: 190, render: (_, host) => resourceText(host, 'disk') },
-    { title: '创建规则', key: 'capacity_policy', width: 260, render: (_, host) => capacityPolicy(host) },
-    { title: '自动化就绪', key: 'readiness', width: 150, render: (_, host) => hostReadiness(host) },
-    { title: '地址', dataIndex: 'address', ellipsis: true, render: (value?: string) => value ?? '-' },
-    { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 160, render: (value?: string) => formatTime(value) },
-    { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
+    {
+      title: '宿主机', dataIndex: 'name', width: 200, render: (value: string, host) => (
+        <div className="primary-resource">
+          <Typography.Text strong>{value}</Typography.Text>
+          <small>{host.host_os === 'macos' ? 'iOS / macOS' : 'Android / Linux'} · {hostTypeLabel(host.host_type)}</small>
+          <small>{shortID(host.id)}</small>
+        </div>
+      ),
+    },
+    {
+      title: '运行与调度', key: 'operation', width: 190, render: (_, host) => (
+        <Space size={[4, 4]} wrap>
+          <Tag color={host.status === 'online' ? 'green' : host.status === 'draining' ? 'orange' : 'red'}>{hostStatusLabel(host.status)}</Tag>
+          {host.draining ? <Tag color="orange">暂停接单</Tag> : <Tag color="blue">接受调度</Tag>}
+          {hostReadiness(host)}
+        </Space>
+      ),
+    },
+    {
+      title: '关键容量', key: 'capacity', width: 300, render: (_, host) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text>CPU：<span>{resourceText(host, 'cpu')}</span></Typography.Text>
+          <Typography.Text>内存：<span>{resourceText(host, 'memory')}</span></Typography.Text>
+          <Typography.Text>磁盘：<span>{resourceText(host, 'disk')}</span></Typography.Text>
+        </Space>
+      ),
+    },
+    { title: '最后心跳', dataIndex: 'last_heartbeat_at', width: 140, render: (value?: string) => formatTime(value) },
     {
       title: '操作',
       key: 'actions',
-      width: 140,
+      width: 150,
       fixed: 'right',
-      render: (_, host) => role === 'admin' ? (
-        <Space size={4}>
+      render: (_, host) => (
+        <Space size={4} wrap>
+          <Button size="small" onClick={() => setDetailHost(host)}>详情</Button>
+          {role === 'admin' && <>
           {!host.draining && host.status !== 'maintenance' && (
             <Button size="small" danger onClick={() => setActionState({ host, action: 'drain' })}>排空</Button>
           )}
           {host.draining && (
             <Button size="small" onClick={() => setActionState({ host, action: 'undrain' })}>解除排空</Button>
           )}
+          </>}
         </Space>
-      ) : <Typography.Text type="secondary">只读</Typography.Text>,
+      ),
     },
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isLoading } = useListDeviceHosts(
+  const query = useListDeviceHosts(
     { page, page_size: pageSize },
     { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
   )
-  const result = unwrapPage<DeviceHost>(data)
+  const result = unwrapPage<DeviceHost>(query.data)
 
   return (
-    <>
+    <Space direction="vertical" size={14} style={{ display: 'flex' }}>
+      <ResourcePageHeader
+        title="宿主机"
+        description="查看承载 Android 与 iOS 设备的主机是否在线、是否接受调度，以及当前关键资源是否足够。Agent 在线只代表控制链路正常，不等于设备一定可用。"
+        dataUpdatedAt={query.dataUpdatedAt}
+        isFetching={query.isFetching}
+        onRefresh={() => void query.refetch()}
+        autoRefreshText="每 10 秒自动更新"
+      />
+      {query.isError && <PageQueryError error={query.error} onRetry={() => void query.refetch()} />}
       <PageTable<DeviceHost>
         columns={columns}
         dataSource={result?.items}
-        loading={isLoading}
+        loading={query.isLoading}
         total={result?.total ?? 0}
         page={result?.page ?? page}
         pageSize={result?.page_size ?? pageSize}
         onPageChange={onPageChange}
+        locale={{ emptyText: '尚未登记宿主机' }}
+      />
+      <ResourceDetailDrawer
+        open={detailHost !== null}
+        title={detailHost ? `宿主机详情 · ${detailHost.name}` : '宿主机详情'}
+        onClose={() => setDetailHost(null)}
+        items={detailHost ? [
+          { key: 'id', label: '完整编号', children: <Typography.Text copyable code>{detailHost.id}</Typography.Text> },
+          { key: 'platform', label: '平台与架构', children: `${detailHost.host_os} / ${detailHost.host_arch}` },
+          { key: 'type', label: '宿主机类型', children: hostTypeLabel(detailHost.host_type) },
+          { key: 'status', label: 'Agent 状态', children: hostStatusLabel(detailHost.status) },
+          { key: 'schedule', label: '调度状态', children: detailHost.draining ? '暂停接单（排空中）' : '接受新设备和预约' },
+          ...(role === 'admin' ? [{ key: 'address', label: '内部地址', children: detailHost.address ?? '-' }] : []),
+          { key: 'cpu', label: 'CPU', children: resourceText(detailHost, 'cpu') },
+          { key: 'memory', label: '内存', children: resourceText(detailHost, 'memory') },
+          { key: 'disk', label: '数据盘', children: resourceText(detailHost, 'disk') },
+          { key: 'policy', label: '容量规则', children: capacityPolicy(detailHost) },
+          { key: 'capabilities', label: '能力上报', children: detailText(detailHost.capabilities) },
+          { key: 'heartbeat', label: '最后心跳', children: formatTime(detailHost.last_heartbeat_at) },
+          { key: 'created', label: '登记时间', children: formatTime(detailHost.created_at) },
+        ] : []}
       />
       <ReasonActionModal
         open={actionState !== null}
@@ -165,6 +214,6 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         onSubmit={submitAction}
         onCancel={() => setActionState(null)}
       />
-    </>
+    </Space>
   )
 }

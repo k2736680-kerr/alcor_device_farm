@@ -129,6 +129,7 @@ const healthEventTypeLabels: Record<string, string> = {
   ios_session_drift: 'iOS 会话状态漂移',
   ios_session_cleanup_failed: 'iOS 会话清理失败',
   ios_provider_device_missing: 'iOS 模拟器已从宿主机清单消失',
+  inventory_missing: 'iOS 模拟器已从宿主机清单消失',
   ios_auto_replacement_queued: 'iOS 模拟器正在自动替换',
   ios_auto_replacement_delete_completed: '故障 iOS 模拟器已清理',
   ios_auto_replacement_delete_failed: '故障 iOS 模拟器清理失败',
@@ -168,6 +169,7 @@ const auditActionLabels: Record<string, string> = {
   cleanup_ios_appium_session: '清理 iOS 自动化会话',
   quarantine_ios_session_drift: '隔离 iOS 会话漂移',
   auto_replace_ios_simulator: '自动替换故障 iOS 模拟器',
+  replace_unhealthy_ios_simulator: '自动替换故障 iOS 模拟器',
 }
 
 const resourceTypeLabels: Record<string, string> = {
@@ -201,6 +203,20 @@ export const healthEventTypeLabel = (value?: string | null) => lookup(healthEven
 export const auditActionLabel = (value?: string | null) => lookup(auditActionLabels, value)
 export const resourceTypeLabel = (value?: string | null) => lookup(resourceTypeLabels, value)
 
+export function reservationFailureLabel(value?: string | null): string {
+  if (!value) return '分配未完成'
+  const labels: Record<string, string> = {
+    CAPACITY_UNAVAILABLE: '暂无可用设备容量',
+    DEVICE_CAPACITY_UNAVAILABLE: '暂无可用设备容量',
+    DEVICE_POOL_UNAVAILABLE: '设备池当前不可用',
+    RESERVATION_CANCELED: '预约已取消',
+    STF_CLAIM_FAILED: '远控服务占用设备失败',
+    STF_CLAIM_COMPENSATED: '远控服务占用已撤销',
+    SESSION_ID_GENERATION_FAILED: '设备会话创建失败',
+  }
+  return labels[value] ?? '预约未能完成'
+}
+
 export function healthReasonLabel(value?: string | null): string {
   if (!value) {
     return '-'
@@ -215,6 +231,7 @@ export function healthReasonLabel(value?: string | null): string {
     'management rebuild queued': '已进入人工重建队列',
     'health check failed': '健康检查失败',
     CREATE_RESULT_INVALID: '创建设备返回结果不完整',
+    IOS_SIMULATOR_INVENTORY_MISSING: '宿主机完整清单中已找不到该模拟器，系统将自动替换',
   }
   if (exact[value]) {
     return exact[value]

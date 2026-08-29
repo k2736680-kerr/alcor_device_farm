@@ -75,6 +75,7 @@
 | DF-051 | 修复普通成员远控入口与独立网关可达性 | completed | DF-050 |
 | DF-052 | 修复多设备并存时远控安装目标错配 | completed | DF-051、ADR-0027 |
 | DF-053 | 受管虚拟设备自动淘汰替换与可用性收敛 | completed | DF-048、DF-052、ADR-0028 |
+| DF-054 | 设备农场控制台全页面可用性审校 | completed | DF-049、DF-053 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -541,6 +542,14 @@
 产出：ADR-0028、inventory 缺失收敛、iOS 自动删除补建 Controller、Pool 容量修正、简化状态展示、平台/Pool 指标与告警、回归测试和 `docs/evidence/DF-053/`。
 
 验收：`total_target=min_ready=2` 且一台 Simulator 进入隔离或从一次成功的完整 inventory 持续消失时，不再显示目标已满足；无占用故障设备只产生一个幂等 delete Command，CoreSimulator 删除成功后自动补建至两台可服务设备且目标不变。删除失败时不创建第三台、不形成命令或事件风暴，并显示明确故障。inventory 请求失败不误删全部设备；基础模板被替换后仍可按其已验证 Runtime/机型补建。Host 页面不把 Agent 在线表述为设备可用，Pool/Device 页面只突出简化可用性。Android、真机、Reservation、Session Fence、STF/Baguette 和 DaFit 回归通过。
+
+### DF-054 设备农场控制台全页面可用性审校
+
+实施：在不新增评估业务对象、不复制 STF/Appium/DaFit 能力且不改变设备域状态机的前提下，逐页审校运行概览、Host、Pool、Device、Reservation、健康事件和操作审计。统一页面标题、用途说明、刷新时间、手动刷新、加载失败和空状态；主表只保留日常判断与直接操作字段，把内部编号、Endpoint、原始 payload、完整资源规格和创建信息移入详情。Pool 直接展示目标、可用、使用中、恢复中、故障和缺口；Reservation 默认突出进行中记录并展示剩余时间与失败结果；响应式和嵌入模式保留清晰页面上下文。
+
+产出：Console 共用页面组件、全页面字段与交互优化、响应式样式、组件测试、浏览器验收和 `docs/evidence/DF-054/`。
+
+验收：每个页面都能明确说明用途、显示最近更新时间、手动刷新并在请求失败时给出可重试错误；主表不直接暴露内部 Host 地址和自动化 Endpoint，技术字段可在详情中按权限查看；Pool 容量、Device 可用性、Reservation 剩余时间和故障原因无需横向查找；当前记录与历史记录有清晰入口；桌面、窄屏和 Alcor 嵌入模式可完成主要查看与操作。前端测试、生产构建、Go 全量测试、静态检查和真实浏览器验收通过。
 
 ## 12. 单任务完成定义
 

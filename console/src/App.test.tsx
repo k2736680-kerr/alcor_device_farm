@@ -24,11 +24,11 @@ describe('App session gate', () => {
     renderWithProviders(<App />)
 
     expect(await screen.findByText('测试管理员')).toBeInTheDocument()
-    expect(screen.getByText('仪表盘')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '运行概览' })).toBeInTheDocument()
     expect(screen.getByText('健康事件')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Android 镜像' })).not.toBeInTheDocument()
     // menu labels also appear as dashboard statistic titles, so expect at least one
-    for (const label of ['宿主机', '设备池', '设备', '预约', '审计']) {
+    for (const label of ['宿主机', '设备池', '设备', '预约', '操作审计']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
     expect(screen.getByRole('button', { name: /退出/ })).toBeInTheDocument()
@@ -64,7 +64,7 @@ describe('App session gate', () => {
     await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
     expect(await screen.findByText('正在远控 emulator-5554')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('link', { name: '仪表盘' }))
+    await user.click(screen.getByRole('link', { name: '运行概览' }))
     expect(await screen.findByText('设备运行概览')).toBeInTheDocument()
     expect(screen.getByText('正在远控 emulator-5554')).toBeInTheDocument()
     window.dispatchEvent(new Event('focus'))

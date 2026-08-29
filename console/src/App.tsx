@@ -34,13 +34,13 @@ import { consoleDisplayName, roleLabel } from './api/labels'
 import { RemoteControlProvider, useRemoteControl } from './remote/RemoteControlProvider'
 
 const menuItems: MenuProps['items'] = [
-  { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
+  { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">运行概览</NavLink> },
   { key: '/hosts', icon: <DesktopOutlined />, label: <NavLink to="/hosts">宿主机</NavLink> },
   { key: '/pools', icon: <DatabaseOutlined />, label: <NavLink to="/pools">设备池</NavLink> },
   { key: '/devices', icon: <CloudServerOutlined />, label: <NavLink to="/devices">设备</NavLink> },
   { key: '/reservations', icon: <CalendarOutlined />, label: <NavLink to="/reservations">预约</NavLink> },
   { key: '/health-events', icon: <HeartOutlined />, label: <NavLink to="/health-events">健康事件</NavLink> },
-  { key: '/audit', icon: <FileSearchOutlined />, label: <NavLink to="/audit">审计</NavLink> },
+  { key: '/audit', icon: <FileSearchOutlined />, label: <NavLink to="/audit">操作审计</NavLink> },
 ]
 
 const pageTitles: Record<string, string> = {
@@ -50,7 +50,7 @@ const pageTitles: Record<string, string> = {
   '/devices': '设备',
   '/reservations': '预约',
   '/health-events': '健康事件',
-  '/audit': '审计',
+  '/audit': '操作审计',
 }
 
 export default function App() {
@@ -123,7 +123,7 @@ function AuthenticatedConsole({
 
   return (
     <Layout className={embedded ? 'console-shell console-shell-embedded' : 'console-shell'}>
-      {!embedded && <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={72}>
+      {!embedded && <Layout.Sider className="console-sider" theme="dark" width={232} breakpoint="lg" collapsedWidth={0}>
         {!embedded && <div className="console-brand">
           <div className="console-brand-mark"><CloudServerOutlined /></div>
           <div className="console-brand-copy">

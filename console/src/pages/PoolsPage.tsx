@@ -29,10 +29,11 @@ import {
 import type { ConsoleRole, DevicePool, Device, DeviceHost, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { androidVersionLabel, formatTime, iosDeviceModelLabel, iosVersionLabel, shortID } from '../api/format'
+import { androidVersionLabel, iosDeviceModelLabel, iosVersionLabel, shortID } from '../api/format'
 import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
 import { apiErrorText, durationLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
+import { PageQueryError, ResourcePageHeader } from '../components/ResourcePage'
 
 interface PoolFormValues {
   name: string
@@ -92,6 +93,18 @@ function scaleUpDescription(pool: DevicePool, current: number, target: number, d
     if (reasons.length > 0) return `还需补齐 ${difference} 台，但模板宿主机${reasons.join('、')}；释放资源后自动继续。`
   }
   return `正在按目标自动补齐 ${difference} 台设备；若宿主机资源暂时不足，目标值会保留并在资源恢复后继续。`
+}
+
+function capacityForPool(pool: DevicePool, devices: Device[]) {
+  const members = devices.filter((device) => device.pool_id === pool.id && device.lifecycle_status !== 'deleted')
+  const available = members.filter((device) => device.lifecycle_status === 'ready' && device.health_status === 'healthy').length
+  const inUse = members.filter((device) => ['reserved', 'busy'].includes(device.lifecycle_status) && device.health_status === 'healthy').length
+  const recovering = members.filter((device) => ['provisioning', 'booting'].includes(device.lifecycle_status)
+    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')
+    || (device.platform === 'ios' && device.health_reason?.startsWith('IOS_AUTO_REPLACEMENT_DELETE_QUEUED'))).length
+  const serviceable = available + inUse + recovering
+  const faulted = Math.max(0, members.length - serviceable)
+  return { registered: members.length, available, inUse, recovering, faulted, gap: Math.max(0, pool.total_target - serviceable) }
 }
 
 export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
@@ -269,15 +282,34 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   }
 
   const columns: TableColumnsType<DevicePool> = [
-    { title: '设备池编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: '名称', dataIndex: 'name', width: 180 },
-    { title: '平台', dataIndex: 'platform', width: 90, render: (value: string) => <Tag color={value === 'ios' ? 'blue' : 'green'}>{value === 'ios' ? 'iOS' : 'Android'}</Tag> },
-    { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
-    { title: '默认租期', dataIndex: 'default_lease_seconds', width: 130, render: (value: number) => durationLabel(value) },
-    { title: '最长租期窗口', dataIndex: 'max_lease_seconds', width: 140, render: (value: number) => durationLabel(value) },
-    { title: '目标设备数', dataIndex: 'total_target', width: 110 },
     {
-      title: '扩容配置', dataIndex: 'default_image_id', width: 260,
+      title: '设备池', dataIndex: 'name', width: 220, render: (value: string, pool) => (
+        <div className="primary-resource">
+          <Typography.Text strong>{value}</Typography.Text>
+          <small>{pool.platform === 'ios' ? 'iOS' : 'Android'} · {shortID(pool.id)}</small>
+        </div>
+      ),
+    },
+    {
+      title: '容量健康', key: 'capacity', width: 300, render: (_, pool) => {
+        const capacity = capacityForPool(pool, devices)
+        const healthy = capacity.gap === 0 && capacity.faulted === 0
+        return (
+          <Space direction="vertical" size={3}>
+            <Space>
+              <Tag color={healthy ? 'green' : 'red'}>{healthy ? '容量正常' : `缺口 ${capacity.gap} 台`}</Tag>
+              {capacity.faulted > 0 && <Tag color="red">故障 {capacity.faulted}</Tag>}
+            </Space>
+            <Typography.Text className="table-secondary">
+              目标 {pool.total_target} · 可用 {capacity.available} · 使用中 {capacity.inUse} · 恢复中 {capacity.recovering}
+            </Typography.Text>
+          </Space>
+        )
+      },
+    },
+    { title: '调度状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{poolStatusLabel(value)}</Tag> },
+    {
+      title: '扩容配置', dataIndex: 'default_image_id', width: 240,
       render: (value: string | undefined, pool) => {
         const template = pool.base_device_id ? deviceByID.get(pool.base_device_id) : undefined
         if (pool.platform === 'ios') {
@@ -288,8 +320,6 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         return model ? `${version} · ${String(model)}` : version
       },
     },
-    { title: '扩容模板', dataIndex: 'base_device_id', width: 150, render: (value?: string) => value ? shortID(value) : <Tag>未选择</Tag> },
-    { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
     {
       title: '操作',
       key: 'actions',
@@ -316,28 +346,42 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
-  const { data, isLoading } = useListDevicePools(
+  const query = useListDevicePools(
     { page, page_size: pageSize },
     { query: { refetchInterval: 10_000, refetchOnWindowFocus: true, refetchOnReconnect: true } },
   )
-  const result = unwrapPage<DevicePool>(data)
+  const result = unwrapPage<DevicePool>(query.data)
 
   return (
-    <>
+    <Space direction="vertical" size={14} style={{ display: 'flex' }}>
+      <ResourcePageHeader
+        title="设备池"
+        description="按池查看目标容量是否真正可服务。可用、使用中和恢复中的设备共同满足目标；故障设备不计入容量，系统会自动清理并补建。"
+        dataUpdatedAt={Math.max(query.dataUpdatedAt, devicesQuery.dataUpdatedAt)}
+        isFetching={query.isFetching || devicesQuery.isFetching}
+        onRefresh={() => void Promise.all([query.refetch(), devicesQuery.refetch()])}
+        autoRefreshText="每 10 秒自动更新"
+      />
+      {query.isError && <PageQueryError error={query.error} onRetry={() => void query.refetch()} />}
+      {devicesQuery.isError && <PageQueryError error={devicesQuery.error} onRetry={() => void devicesQuery.refetch()} />}
+      {(unwrapPage<Device>(devicesQuery.data)?.total ?? 0) > devices.length && (
+        <Alert type="warning" showIcon message="设备数量超过当前页面统计范围" description="容量主表暂只统计前 200 台设备；打开单个设备池设置可读取服务端精确数量。" />
+      )}
       <PageTable<DevicePool>
         columns={columns}
         dataSource={result?.items}
-        loading={isLoading}
+        loading={query.isLoading || devicesQuery.isLoading}
         total={result?.total ?? 0}
         page={result?.page ?? page}
         pageSize={result?.page_size ?? pageSize}
         onPageChange={onPageChange}
+        locale={{ emptyText: '尚未创建设备池' }}
       />
 
       <Drawer
         open={configPool !== null}
         title={configPool ? `设备池设置 · ${configPool.name}` : ''}
-        width={640}
+        width="min(640px, 100vw)"
         onClose={() => setConfigPool(null)}
       >
         <Typography.Title level={5}>基本信息</Typography.Title>
@@ -450,7 +494,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         <Typography.Paragraph type="secondary">只列出尚未加入其他设备池、且与当前设备池平台一致的设备。</Typography.Paragraph>
         <DeviceSelect devices={addableDevices} loading={devicesQuery.isFetching} onChange={(id) => setSelectedDevice(id)} />
       </Modal>
-    </>
+    </Space>
   )
 }
 

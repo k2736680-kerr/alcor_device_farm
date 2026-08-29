@@ -43,6 +43,7 @@ const detailKeyLabels: Record<string, string> = {
   catalog_id: '系统目录条目编号',
   command_id: '宿主机命令编号',
   command_type: '宿主机命令类型',
+  consecutive_failures: '连续失败次数',
   data_disk_mb: '设备数据盘（MB）',
   device_id: '设备编号',
   device_type_id: 'iPhone 机型标识',
