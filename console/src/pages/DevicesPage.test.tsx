@@ -242,7 +242,8 @@ describe('DevicesPage device categories', () => {
     const isolatedSerial = await screen.findByText('emulator-5558')
     const isolatedRow = isolatedSerial.closest('tr')
     expect(isolatedRow).not.toBeNull()
-    await user.click(within(isolatedRow as HTMLElement).getByRole('button', { name: /删\s*除/ }))
+    await user.click(within(isolatedRow as HTMLElement).getByRole('button', { name: /更\s*多/ }))
+    await user.click(await screen.findByRole('menuitem', { name: /删\s*除/ }))
     await user.type(screen.getByPlaceholderText('例如：设备无法恢复，确认清理运行资源'), '设备无法恢复，确认删除')
     await user.click(screen.getByRole('button', { name: '下一步' }))
 
@@ -268,7 +269,8 @@ describe('DevicesPage device categories', () => {
 
     const row = (await screen.findByText('emulator-5554')).closest('tr')
     expect(row).not.toBeNull()
-    await user.click(within(row as HTMLElement).getByRole('button', { name: '编辑配置' }))
+    await user.click(within(row as HTMLElement).getByRole('button', { name: /更\s*多/ }))
+    await user.click(await screen.findByRole('menuitem', { name: '编辑配置' }))
     expect(await screen.findByText('重装会清空这台模拟器里的 APK 和全部设备数据')).toBeInTheDocument()
     await user.type(screen.getByPlaceholderText('例如：需要验证 Android 15 兼容性'), '验证不同运行规格')
     await user.click(screen.getByRole('button', { name: '下一步' }))
@@ -375,9 +377,11 @@ describe('DevicesPage device categories', () => {
     expect(within(row as HTMLElement).getByText('按预约建立受控会话')).toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: '远程连接' })).toBeInTheDocument()
     expect(within(row as HTMLElement).queryByRole('button', { name: '编辑配置' })).not.toBeInTheDocument()
-    expect(within(row as HTMLElement).getByRole('button', { name: /停\s*止/ })).toBeInTheDocument()
-    expect(within(row as HTMLElement).getByRole('button', { name: /重\s*建/ })).toBeInTheDocument()
-    expect(within(row as HTMLElement).getByRole('button', { name: /删\s*除/ })).toBeInTheDocument()
+    // 低频与危险操作收进「更多」下拉后，行内只保留下拉入口，菜单项在展开后可见。
+    await userEvent.setup().click(within(row as HTMLElement).getByRole('button', { name: /更\s*多/ }))
+    expect(await screen.findByRole('menuitem', { name: /停\s*止/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /重\s*建/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /删\s*除/ })).toBeInTheDocument()
     expect(screen.queryByText(/Appium|Dashboard|WDA|Session Grant/)).not.toBeInTheDocument()
   })
 

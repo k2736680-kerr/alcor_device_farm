@@ -94,7 +94,7 @@ export function DashboardPage() {
     <div className="dashboard-page">
       <section className="dashboard-hero">
         <div>
-          <div className="dashboard-kicker"><span /> 设备运行状态</div>
+          <div className="dashboard-kicker"><span /> OVERVIEW</div>
           <Typography.Title level={2}>设备运行概览</Typography.Title>
           <Typography.Paragraph>展示 Android 与 iOS 的当前容量、设备处理状态和需要关注的异常。</Typography.Paragraph>
         </div>

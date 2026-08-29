@@ -7,6 +7,8 @@ import { apiErrorText } from '../api/presentation'
 interface ResourcePageHeaderProps {
   title: string
   description: string
+  /** 页面性质小标（Alcor 主平台同款 kicker），资源列表页默认 RESOURCE MANAGEMENT。 */
+  kicker?: string
   actions?: ReactNode
   dataUpdatedAt?: number
   isFetching?: boolean
@@ -17,6 +19,7 @@ interface ResourcePageHeaderProps {
 export function ResourcePageHeader({
   title,
   description,
+  kicker = 'RESOURCE MANAGEMENT',
   actions,
   dataUpdatedAt = 0,
   isFetching,
@@ -26,6 +29,7 @@ export function ResourcePageHeader({
   return (
     <section className="resource-page-header">
       <div className="resource-page-copy">
+        <div className="resource-page-kicker">{kicker}</div>
         <Typography.Title level={3}>{title}</Typography.Title>
         <Typography.Paragraph>{description}</Typography.Paragraph>
         {(autoRefreshText || dataUpdatedAt > 0) && (

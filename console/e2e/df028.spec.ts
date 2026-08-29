@@ -146,7 +146,8 @@ test.describe('DF-028 E3 真实设备 Web 验收', () => {
       return page.getByRole('row', { name: new RegExp(deviceLabel) }).first().innerText()
     }, { timeout: 360_000 }).toContain('ready')
 
-    await deviceRow.getByRole('button', { name: /隔\s*离/ }).click()
+    await deviceRow.getByRole('button', { name: /更\s*多/ }).click()
+    await page.getByRole('menuitem', { name: /隔\s*离/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('DF-028 真实环境隔离验证')
     await page.getByRole('button', { name: '确认执行' }).click()
     await expect(page.getByText(/操作已受理.*请求编号：req_/)).toBeVisible()
@@ -156,7 +157,8 @@ test.describe('DF-028 E3 真实设备 Web 验收', () => {
     await expect(quarantinedRow).toContainText('quarantined')
     await page.screenshot({ path: evidencePath(testInfo.outputPath('device-quarantined.png'), 'device-quarantined.png'), fullPage: true })
 
-    await quarantinedRow.getByRole('button', { name: /解除\s*隔离/ }).click()
+    await quarantinedRow.getByRole('button', { name: /更\s*多/ }).click()
+    await page.getByRole('menuitem', { name: /解除\s*隔离/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('DF-028 真实环境恢复验证')
     await page.getByRole('button', { name: '确认执行' }).click()
     await expect(page.getByText(/操作已受理.*请求编号：req_/)).toBeVisible()

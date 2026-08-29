@@ -1,5 +1,7 @@
-import { Alert, App as AntApp, Button, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Tooltip, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Card, Collapse, Dropdown, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Tooltip, Typography } from 'antd'
+import type { MenuProps } from 'antd'
 import type { TableColumnsType } from 'antd'
+import { DownOutlined } from '@ant-design/icons'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -461,53 +463,54 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     key: 'actions',
     width: 190,
     fixed: 'right',
-    render: (_, device) => (
-      <Space size={4} wrap>
-        {role === 'viewer' ? <Typography.Text type="secondary">只读</Typography.Text> : <>
-          <Button size="small" onClick={() => setDetailDevice(device)}>详情</Button>
-        </>}
-        {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
-          && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
-          <Button
-            type="primary"
-            size="small"
-            loading={remote.isStarting && remote.device?.id === device.id}
-            disabled={remote.device !== null && remote.device.id !== device.id}
-            onClick={() => remote.start(device)}
-          >远程连接</Button>
-        )}
-        {role !== 'viewer' && remote.device?.id === device.id && (
-          <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
-            {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
-          </Button>
-        )}
-        {role === 'admin' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
-          && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status) && device.reimage_status !== 'pending' && (
-          <Button size="small" onClick={() => openReimage(device)}>编辑配置</Button>
-        )}
-        {role !== 'viewer' && actionable(device, 'start') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'start' })}>启动</Button>
-        )}
-        {role !== 'viewer' && actionable(device, 'stop') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'stop' })}>停止</Button>
-        )}
-        {role !== 'viewer' && actionable(device, 'restart') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'restart' })}>重启</Button>
-        )}
-        {role === 'admin' && actionable(device, 'rebuild') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'rebuild' })}>重建</Button>
-        )}
-        {role === 'admin' && actionable(device, 'quarantine') && (
-          <Button size="small" danger onClick={() => setActionState({ device, action: 'quarantine' })}>隔离</Button>
-        )}
-        {role === 'admin' && actionable(device, 'unquarantine') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'unquarantine' })}>解除隔离</Button>
-        )}
-        {role === 'admin' && actionable(device, 'delete') && (
-          <Button size="small" danger onClick={() => setActionState({ device, action: 'delete' })}>删除</Button>
-        )}
-      </Space>
-    ),
+    render: (_, device) => {
+      // 低频与危险操作收进「更多」下拉，常驻按钮只留 详情 / 远程连接 / 挂断。
+      const moreItems: MenuProps['items'] = []
+      if (role === 'admin' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
+        && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status) && device.reimage_status !== 'pending') {
+        moreItems.push({ key: 'reimage', label: '编辑配置' })
+      }
+      if (role !== 'viewer' && actionable(device, 'start')) moreItems.push({ key: 'start', label: '启动' })
+      if (role !== 'viewer' && actionable(device, 'stop')) moreItems.push({ key: 'stop', label: '停止' })
+      if (role !== 'viewer' && actionable(device, 'restart')) moreItems.push({ key: 'restart', label: '重启' })
+      if (role === 'admin' && actionable(device, 'rebuild')) moreItems.push({ key: 'rebuild', label: '重建' })
+      if (role === 'admin' && actionable(device, 'quarantine')) moreItems.push({ key: 'quarantine', label: '隔离', danger: true })
+      if (role === 'admin' && actionable(device, 'unquarantine')) moreItems.push({ key: 'unquarantine', label: '解除隔离' })
+      if (role === 'admin' && actionable(device, 'delete')) moreItems.push({ key: 'delete', label: '删除', danger: true })
+      const onMoreClick: MenuProps['onClick'] = ({ key }) => {
+        if (key === 'reimage') { openReimage(device); return }
+        if (key === 'start' || key === 'stop' || key === 'restart' || key === 'rebuild' || key === 'quarantine' || key === 'unquarantine' || key === 'delete') {
+          setActionState({ device, action: key })
+        }
+      }
+      return (
+        <Space size={4}>
+          {role === 'viewer' ? <Typography.Text type="secondary">只读</Typography.Text> : <>
+            <Button size="small" onClick={() => setDetailDevice(device)}>详情</Button>
+          </>}
+          {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
+            && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
+            <Button
+              type="primary"
+              size="small"
+              loading={remote.isStarting && remote.device?.id === device.id}
+              disabled={remote.device !== null && remote.device.id !== device.id}
+              onClick={() => remote.start(device)}
+            >远程连接</Button>
+          )}
+          {role !== 'viewer' && remote.device?.id === device.id && (
+            <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
+              {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
+            </Button>
+          )}
+          {moreItems.length > 0 && (
+            <Dropdown menu={{ items: moreItems, onClick: onMoreClick }} trigger={['click']}>
+              <Button size="small">更多<DownOutlined /></Button>
+            </Dropdown>
+          )}
+        </Space>
+      )
+    },
   }
 
   const columns: TableColumnsType<Device> = [
@@ -623,39 +626,45 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           message={`设备创建进度：${({ preparing_image: '准备系统镜像', waiting_capacity: '等待宿主机容量', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? '未知状态'}`}
           description={provisioningState.status === 'waiting_capacity' ? `${capacityMessage}（请求编号：${provisioningRequestID}）` : provisioningState.status === 'failed' ? `设备创建没有完成（错误代码：${provisioningState.error_code ?? '未知'}；请求编号：${provisioningRequestID}）。` : `可关闭页面；创建流程由服务端持续执行。（请求编号：${provisioningRequestID}）`}
         />}
-        <Segmented<PlatformView>
-          value={platformView}
-          options={[
-            { label: '全部平台', value: 'all' },
-            { label: 'Android', value: 'android' },
-            { label: 'iOS', value: 'ios' },
-          ]}
-          onChange={(nextPlatform) => {
-            const nextSearchParams = new URLSearchParams(searchParams)
-            if (nextPlatform === 'all') nextSearchParams.delete('platform')
-            else nextSearchParams.set('platform', nextPlatform)
-            setSearchParams(nextSearchParams, { replace: true })
-            onPageChange(1, pageSize)
-          }}
-        />
-        <Segmented<DeviceView>
-          value={view}
-          options={[
-            { label: `可用设备（${availableCount}）`, value: 'available' },
-            { label: `使用中（${busyCount}）`, value: 'busy' },
-            { label: `故障（${quarantinedCount}）`, value: 'quarantined' },
-          ]}
-          onChange={(nextView) => {
-            const nextSearchParams = new URLSearchParams(searchParams)
-            if (nextView === 'available') {
-              nextSearchParams.delete('view')
-            } else {
-              nextSearchParams.set('view', nextView)
-            }
-            setSearchParams(nextSearchParams, { replace: true })
-            onPageChange(1, pageSize)
-          }}
-        />
+        <Card className="filter-card" size="small">
+          <Space wrap size="middle">
+            <span className="filter-label">平台</span>
+            <Segmented<PlatformView>
+              value={platformView}
+              options={[
+                { label: '全部平台', value: 'all' },
+                { label: 'Android', value: 'android' },
+                { label: 'iOS', value: 'ios' },
+              ]}
+              onChange={(nextPlatform) => {
+                const nextSearchParams = new URLSearchParams(searchParams)
+                if (nextPlatform === 'all') nextSearchParams.delete('platform')
+                else nextSearchParams.set('platform', nextPlatform)
+                setSearchParams(nextSearchParams, { replace: true })
+                onPageChange(1, pageSize)
+              }}
+            />
+            <span className="filter-label">状态</span>
+            <Segmented<DeviceView>
+              value={view}
+              options={[
+                { label: `可用设备（${availableCount}）`, value: 'available' },
+                { label: `使用中（${busyCount}）`, value: 'busy' },
+                { label: `故障（${quarantinedCount}）`, value: 'quarantined' },
+              ]}
+              onChange={(nextView) => {
+                const nextSearchParams = new URLSearchParams(searchParams)
+                if (nextView === 'available') {
+                  nextSearchParams.delete('view')
+                } else {
+                  nextSearchParams.set('view', nextView)
+                }
+                setSearchParams(nextSearchParams, { replace: true })
+                onPageChange(1, pageSize)
+              }}
+            />
+          </Space>
+        </Card>
         <PageTable<Device>
           columns={columns}
           dataSource={result?.items}
