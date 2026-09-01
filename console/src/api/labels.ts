@@ -218,6 +218,7 @@ export function healthReasonLabel(value?: string | null): string {
   const exact: Record<string, string> = {
     'STF readiness stabilization is in progress': '正在等待远控服务状态稳定',
     'STF temporarily unavailable': '远控服务暂时不可用',
+    'STF visibility recovered': '远控服务状态已恢复',
     'device is not visible through STF': '远控服务未发现该设备',
     'automatic scale down queued': '已进入自动缩容队列',
     'automatic scale down removed emulator resources': '自动缩容已清理设备运行资源',

@@ -515,7 +515,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
 
   const columns: TableColumnsType<Device> = [
     {
-      title: '设备', dataIndex: 'id', width: 240, render: (value: string, device) => (
+      title: '设备', dataIndex: 'id', width: 240, render: (_, device) => (
         <div className="primary-resource">
           <Space size={4}>
             <Typography.Text strong>{deviceModelLabel(device)}</Typography.Text>
@@ -525,7 +525,13 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
               </Tooltip>
             )}
           </Space>
-          <small><span>{platformLabel(device.platform)}</span> · <span>{device.serial}</span> · <span>{shortID(value)}</span></small>
+          <small>
+            <span>{platformLabel(device.platform)}</span>
+            <span aria-hidden="true"> · </span>
+            <span title={device.platform === 'ios' && device.serial.length > 20 ? '完整模拟器标识请在详情中复制' : undefined}>
+              {device.platform === 'ios' && device.serial.length > 20 ? `模拟器 ${shortID(device.serial)}` : device.serial}
+            </span>
+          </small>
         </div>
       ),
     },
@@ -535,24 +541,25 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           return <Space direction="vertical" size={0}><Typography.Text>{iosSystemVersionLabel(device.capabilities)}</Typography.Text><Typography.Text type="secondary">CoreSimulator</Typography.Text><Typography.Text type="secondary">按预约建立受控会话</Typography.Text></Space>
         }
         const image = device.image_id ? imageByID.get(device.image_id) : undefined
-        return <Space direction="vertical" size={0}><Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text><Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}{image ? ` · ${image.abi} · ${image.resolution}` : ''}</Typography.Text><Typography.Text type="secondary">{device.reimage_status === 'pending' ? '正在应用新配置' : device.reimage_status === 'failed' ? '上次配置失败' : '配置已生效'}</Typography.Text></Space>
+        const configState = device.reimage_status === 'pending'
+          ? '正在应用新配置'
+          : device.reimage_status === 'failed'
+            ? '上次配置失败'
+            : undefined
+        return <Space direction="vertical" size={0}>
+          <Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text>
+          <Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}{image ? ` · ${image.abi}` : ''}</Typography.Text>
+          {configState && <Typography.Text type={device.reimage_status === 'failed' ? 'danger' : 'warning'}>{configState}</Typography.Text>}
+        </Space>
       },
     },
     {
       title: '设备池', dataIndex: 'pool_name', width: 220, render: (value: string | undefined, device) => {
         const pool = device.pool_id ? poolByID.get(device.pool_id) : undefined
         if (!pool) return <Typography.Text type="secondary">未加入设备池</Typography.Text>
-        const defaultImage = pool.default_image_id ? imageByID.get(pool.default_image_id) : undefined
         return (
           <Space direction="vertical" size={0}>
             <Typography.Text>{value ?? pool.name}</Typography.Text>
-            {device.platform === 'android' && (
-              <span className="table-secondary">
-                默认镜像：{defaultImage
-                  ? androidVersionLabel(defaultImage.api_level)
-                  : <Typography.Text type="warning">未设置</Typography.Text>}
-              </span>
-            )}
             {!pool.base_device_id && !device.is_pool_base && (
               <span className="table-secondary">
                 扩容模板：<Typography.Text type="warning">未设置，自动扩容已暂停</Typography.Text>
@@ -568,7 +575,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         return (
           <div className="primary-resource">
             <Typography.Text>{host?.name ?? '未知宿主机'}</Typography.Text>
-            <small>{hostOSLabel(host) || '未上报系统'} · {shortID(value)}</small>
+            <small>{hostOSLabel(host) || '未上报系统'}</small>
           </div>
         )
       },
@@ -577,7 +584,11 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       title: '可用性', key: 'availability', width: 150, render: (_, device) => (
         <Space direction="vertical" size={2}>
           {availabilityTag(device)}
-          <Typography.Text className="table-secondary">{healthReasonLabel(device.health_reason)}</Typography.Text>
+          {device.health_status !== 'healthy' && device.health_reason && (
+            <Typography.Text className="table-secondary" ellipsis={{ tooltip: healthReasonLabel(device.health_reason) }}>
+              {healthReasonLabel(device.health_reason)}
+            </Typography.Text>
+          )}
         </Space>
       ),
     },
