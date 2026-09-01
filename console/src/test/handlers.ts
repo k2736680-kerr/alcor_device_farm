@@ -76,7 +76,7 @@ export const samplePoolImages: DevicePoolImage[] = [
 
 export const sampleDevices: Device[] = [
   {
-    id: 'device_00000000000001', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000001', name: 'DaFit回归-Pixel9-01', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: { apiLevel: 36 },
     pool_id: 'pool_000000000000001', pool_name: 'default-android',
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
@@ -84,7 +84,7 @@ export const sampleDevices: Device[] = [
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
   {
-    id: 'device_00000000000002', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000002', name: 'DaFit回归-Pixel9-02', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5556', lifecycle_mode: 'rebuild', serial: 'emulator-5556', capabilities: {},
     pool_id: 'pool_000000000000001', pool_name: 'default-android',
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
@@ -92,14 +92,14 @@ export const sampleDevices: Device[] = [
     created_at: '2026-08-06T00:01:00Z', updated_at: '2026-08-06T00:01:00Z',
   },
   {
-    id: 'device_00000000000003', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000003', name: '故障设备-Pixel9-03', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5558', lifecycle_mode: 'rebuild', serial: 'emulator-5558', capabilities: {},
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'quarantined', health_status: 'unhealthy', health_reason: 'health check failed', consecutive_failures: 3,
     created_at: '2026-08-06T00:02:00Z', updated_at: '2026-08-06T00:02:00Z',
   },
   {
-    id: 'device_00000000000004', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000004', name: '历史设备-Pixel9-04', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5560', lifecycle_mode: 'rebuild', serial: 'emulator-5560', capabilities: {},
     image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
     lifecycle_status: 'deleted', health_status: 'unhealthy', consecutive_failures: 0,
@@ -206,6 +206,11 @@ export const handlers = [
     )
     const start = (page - 1) * size
     return HttpResponse.json(pageEnvelope(filtered.slice(start, start + size), filtered.length, page, size))
+  }),
+  http.patch('/api/v1/devices/:id', async ({ request, params }) => {
+    const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
+    const input = await request.json() as { name: string }
+    return HttpResponse.json({ request_id: 'req_update_device_name', data: { ...device, name: input.name }, error: null })
   }),
   http.delete('/api/v1/devices/:id', ({ params }) => {
     const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]

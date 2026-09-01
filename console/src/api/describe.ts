@@ -52,11 +52,12 @@ export function deviceSystemLabel(device: Device, imageByID?: ReadonlyMap<string
   return androidVersionLabel((device.capabilities as Record<string, unknown>).apiLevel)
 }
 
-/** `Pixel 9 · Android 14（API 34）` — the shortest string that identifies a device. */
+/** Human name first; model and system remain useful supporting context. */
 export function deviceHeadline(device: Device, lookups: ResourceLookups = {}): string {
   const model = deviceModelLabel(device)
   const system = deviceSystemLabel(device, lookups.imageByID)
-  return system && system !== '-' ? `${model} · ${system}` : model
+  const technical = system && system !== '-' ? `${model} · ${system}` : model
+  return device.name ? `${device.name} · ${technical}` : technical
 }
 
 /** Host name for daily UI. The full identifier belongs in resource details. */
@@ -73,12 +74,12 @@ export function hostOSLabel(host?: DeviceHost): string {
   return host.host_os
 }
 
-/** `Pixel 9 · emulator-5554` for cross references, without exposing an internal id. */
+/** Human-readable device reference; internal IDs remain in details only. */
 export function deviceLabel(deviceID?: string, deviceByID?: ReadonlyMap<string, Device>): string {
   if (!deviceID) return '-'
   const device = deviceByID?.get(deviceID)
   if (!device) return '设备已释放、删除或未加载'
-  return `${deviceModelLabel(device)} · ${device.serial}`
+  return `${device.name} · ${deviceModelLabel(device)} · ${device.serial}`
 }
 
 /** Pool name for daily UI. The full identifier belongs in resource details. */

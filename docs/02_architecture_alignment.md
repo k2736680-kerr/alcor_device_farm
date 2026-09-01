@@ -42,6 +42,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - Host Agent 注册、心跳、命令领取、回报和排空；
 - Docker Emulator 生命周期和 USB Provider 扩展接口；
 - Scheduler、租约、续租、释放、数据库并发约束；
+- Device 的可编辑显示名称和指定设备预约；名称只用于人机识别，引用和并发约束仍使用不可变 ID；`requested_device_id` 只收窄既有 Scheduler 候选集，目标忙碌时 Reservation 保持 pending；
 - Reconciler、Reaper、健康事件、隔离和重建；
 - 控制台统一 Pool 总目标、按真实资源动态扩容和最旧空闲 Emulator 安全缩容；
 - iOS Pool 使用同一 `total_target/min_ready/max_concurrency` 目标模型；选择健康 Simulator 作为扩容模板后自动创建或安全删除 CoreSimulator，不另建 iOS 容量表；

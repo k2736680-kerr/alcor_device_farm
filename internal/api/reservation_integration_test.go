@@ -103,6 +103,31 @@ func TestReservationAPIStoresListsAndReplaysPendingRequest(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-reservations?owner_type=wrong", nil, serviceToken, ""), http.StatusBadRequest)
 }
 
+func TestReservationAPIAcceptsTargetDeviceWithoutLeakingInternalSelector(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	seedReservationDevice(t, environment)
+	response := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"pool_id": "pool_000000000000001", "requested_device_id": "device_0000000000001",
+		"owner_type": "run_attempt", "owner_id": "attempt_000000000777", "lease_seconds": 600,
+		"requested_capabilities": map[string]any{"platformName": "Android"},
+	}, serviceToken, "targeted-api-create-001")
+	assertStatus(t, response, http.StatusCreated)
+	var created reservation.View
+	decodeData(t, response, &created)
+	if created.Status != "pending" || created.DeviceID != nil {
+		t.Fatalf("targeted reservation=%#v", created)
+	}
+	if _, exists := created.RequestedCapabilities["_device_farm_target_device_id"]; exists {
+		t.Fatal("internal target device selector leaked through API")
+	}
+
+	wrongPool := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"pool_id": "pool_000000000000001", "requested_device_id": "device_not_in_this_pool",
+		"owner_type": "run_attempt", "owner_id": "attempt_000000000778", "lease_seconds": 600,
+	}, serviceToken, "targeted-api-create-002")
+	assertStatus(t, wrongPool, http.StatusNotFound)
+}
+
 func TestReservationAPIRejectsDisabledPoolAndExcessLease(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	seedReservationPool(t, environment, "disabled")

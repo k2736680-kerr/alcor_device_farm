@@ -63,7 +63,7 @@
 1. Eval Console 创建 Run；
 2. 独立 Worker 领取 RunAttempt；
 3. Device Farm Adapter 调用 `POST /api/v1/device-reservations`；
-4. 请求携带 `owner_type=run_attempt`、RunAttempt UUID/ULID、幂等键、设备能力和租期；`manual/test_run` 只用于人工调试和 DaFit 联调；
+4. 请求携带 `owner_type=run_attempt`、RunAttempt UUID/ULID、幂等键、设备能力和租期；当用户在 Alcor 选择具体设备时同时携带 `requested_device_id`，设备农场只为该设备分配，使用中则保持 pending 等待释放；`manual/test_run` 只用于人工调试和 DaFit 联调；
 5. 同时透传 `X-Eval-Run-Id`、`X-Eval-Attempt-Id` 和 `traceparent`；
 6. 设备农场返回 reservation、device、UDID、Appium Endpoint 和受控 STF 远控信息；
 7. Worker 执行 Android 自动化，将用例结果写入 Alcor/ClickHouse，将报告和日志上传 Supabase Storage；

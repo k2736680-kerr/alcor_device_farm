@@ -18,6 +18,11 @@ import type { HealthStatus } from './healthStatus';
 
 export interface Device {
   id: Identifier;
+  /**
+   * @minLength 2
+   * @maxLength 40
+   */
+  name: string;
   host_id: Identifier;
   platform: DevicePlatform;
   image_id?: Identifier;

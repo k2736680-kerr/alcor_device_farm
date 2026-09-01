@@ -428,11 +428,11 @@ func (store *Store) RemoveDeviceFromPool(ctx context.Context, poolID, deviceID s
 
 func (store *Store) CreateDevice(ctx context.Context, device management.Device) (management.Device, error) {
 	_, err := store.db.Pool().Exec(ctx, `INSERT INTO devices
-		(id,host_id,platform,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
+		(id,name,host_id,platform,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,
 		 adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		VALUES($1,COALESCE(NULLIF($2,''),'未命名设备'),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		`,
-		device.ID, device.HostID, device.Platform, device.ImageID, device.DeviceKind, device.ProviderType, device.ProviderRef,
+		device.ID, device.Name, device.HostID, device.Platform, device.ImageID, device.DeviceKind, device.ProviderType, device.ProviderRef,
 		device.LifecycleMode, device.Serial, device.STFSerial, device.ADBEndpoint, device.AppiumEndpoint,
 		mustJSON(device.Capabilities), device.LifecycleStatus, device.HealthStatus, device.HealthReason, device.ConsecutiveFailures)
 	if err != nil {
@@ -511,6 +511,27 @@ func (store *Store) ListSchedulableDevices(ctx context.Context, poolID string) (
 
 func (store *Store) GetDevice(ctx context.Context, id string) (management.Device, error) {
 	value, err := scanDevice(store.db.Pool().QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, id))
+	return value, rowError(err)
+}
+
+func (store *Store) UpdateDeviceName(ctx context.Context, device management.Device, audit management.DeviceAudit) (management.Device, error) {
+	var value management.Device
+	err := store.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE devices SET name=$2,updated_at=clock_timestamp() WHERE id=$1`, device.ID, device.Name); err != nil {
+			return err
+		}
+		var err error
+		value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, device.ID))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,$2,$3,$4,'device',$5,$6,$7,jsonb_build_object('name',$8::text))`,
+			audit.ID, audit.ActorType, audit.ActorID, audit.Action, device.ID, audit.RequestID,
+			sensitive.RedactText(audit.Reason), device.Name)
+		return err
+	})
 	return value, rowError(err)
 }
 
@@ -793,7 +814,7 @@ const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_
 const hostSelect = `SELECT id,name,host_type,host_os,host_arch,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
 const poolSelect = `SELECT id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
-const deviceSelect = `SELECT devices.id,devices.host_id,devices.platform,devices.image_id,
+const deviceSelect = `SELECT devices.id,devices.name,devices.host_id,devices.platform,devices.image_id,
     (SELECT pool.id FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
         WHERE membership.device_id=devices.id AND membership.enabled ORDER BY pool.created_at,pool.id LIMIT 1),
     (SELECT pool.name FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
@@ -853,7 +874,7 @@ func scanPoolImage(row rowScanner) (management.PoolImage, error) {
 func scanDevice(row rowScanner) (management.Device, error) {
 	var v management.Device
 	var capabilities, override, effective, pending []byte
-	err := row.Scan(&v.ID, &v.HostID, &v.Platform, &v.ImageID, &v.PoolID, &v.PoolName, &v.IsPoolBase, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
+	err := row.Scan(&v.ID, &v.Name, &v.HostID, &v.Platform, &v.ImageID, &v.PoolID, &v.PoolName, &v.IsPoolBase, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
 		&capabilities, &override, &effective, &v.PendingImageID, &pending, &v.ReimageStatus, &v.ReimageError,
 		&v.LifecycleStatus, &v.HealthStatus, &v.HealthReason, &v.ConsecutiveFailures, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {

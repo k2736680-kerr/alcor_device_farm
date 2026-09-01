@@ -34,6 +34,35 @@ describe('DevicesPage device categories', () => {
     expect(within(row as HTMLElement).queryByText('Android 16（API 36）')).not.toBeInTheDocument()
   })
 
+  it('edits the device name inside the existing details view without a rename action', async () => {
+    const user = userEvent.setup()
+    let submittedName = ''
+    server.use(http.patch('/api/v1/devices/:id', async ({ request, params }) => {
+      expect(params.id).toBe('device_00000000000001')
+      const input = await request.json() as { name: string }
+      submittedName = input.name
+      return HttpResponse.json({
+        request_id: 'req_update_device_name_test',
+        data: { ...sampleDevices[0], name: input.name },
+        error: null,
+      })
+    }))
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+
+    const row = (await screen.findByText('DaFit回归-Pixel9-01')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).queryByRole('button', { name: '改名' })).not.toBeInTheDocument()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: /详\s*情/ }))
+
+    const nameInput = await screen.findByRole('textbox', { name: '设备名称' })
+    await user.clear(nameInput)
+    await user.type(nameInput, 'DaFit专项环境-Pixel9-01')
+    await user.click(screen.getByRole('button', { name: /保\s*存/ }))
+
+    await waitFor(() => expect(submittedName).toBe('DaFit专项环境-Pixel9-01'))
+    expect(await screen.findByText(/设备名称已更新/)).toBeInTheDocument()
+  })
+
   it('keeps the remote session until explicit hangup when the STF tab closes', async () => {
     const user = userEvent.setup()
     let endRequests = 0
@@ -271,7 +300,7 @@ describe('DevicesPage device categories', () => {
     expect(row).not.toBeNull()
     await user.click(within(row as HTMLElement).getByRole('button', { name: /更\s*多/ }))
     await user.click(await screen.findByRole('menuitem', { name: '编辑配置' }))
-    const reimageDialog = await screen.findByRole('dialog', { name: '编辑配置/更换镜像 · Android 模拟器 · Android 14（API 34）' })
+    const reimageDialog = await screen.findByRole('dialog', { name: '编辑配置/更换镜像 · DaFit回归-Pixel9-01 · Android 模拟器 · Android 14（API 34）' })
     expect(within(reimageDialog).queryByText('device_00000000000001')).not.toBeInTheDocument()
     expect(await screen.findByText('重装会清空这台模拟器里的 APK 和全部设备数据')).toBeInTheDocument()
     await user.type(screen.getByPlaceholderText('例如：需要验证 Android 15 兼容性'), '验证不同运行规格')

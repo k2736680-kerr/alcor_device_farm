@@ -735,6 +735,23 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 	return device, nil
 }
 
+func (ReservationRepository) ValidateTargetDeviceInPool(ctx context.Context, querier database.Querier, poolID, deviceID string) error {
+	var exists bool
+	if err := querier.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM devices d
+		JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
+		JOIN device_pools p ON p.id=pd.pool_id AND p.status='active'
+		WHERE pd.pool_id=$1 AND d.id=$2 AND d.lifecycle_status NOT IN ('deleted','stopped','quarantined')
+		  AND p.platform=d.platform
+	)`, poolID, deviceID).Scan(&exists); err != nil {
+		return fmt.Errorf("validate targeted device membership: %w", err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (ReservationRepository) FindActivePoolForDevice(ctx context.Context, querier database.Querier, deviceID string) (string, error) {
 	var poolID string
 	err := querier.QueryRow(ctx, `

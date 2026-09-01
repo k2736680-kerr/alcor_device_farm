@@ -147,7 +147,7 @@ describe('PoolsPage pool capacity', () => {
       created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
     }
     const iosTemplate: Device = {
-      id: 'device_ios_000000001', host_id: 'host_ios_000000000001', platform: 'ios', pool_id: iosPool.id,
+      id: 'device_ios_000000001', name: 'iOS回归-iPhone17Pro-01', host_id: 'host_ios_000000000001', platform: 'ios', pool_id: iosPool.id,
       pool_name: iosPool.name, is_pool_base: true, device_kind: 'simulator', provider_type: 'appium_device_farm_ios',
       provider_ref: '00000000-0000-0000-0000-000000000001', lifecycle_mode: 'rebuild',
       serial: '00000000-0000-0000-0000-000000000001', capabilities: {
@@ -173,7 +173,7 @@ describe('PoolsPage pool capacity', () => {
     renderWithProviders(<PoolsPage />)
     expect(await screen.findByText('default-ios')).toBeInTheDocument()
     // 扩容模板必须先回答“什么机型 + 什么系统”，编号只是补充信息。
-    expect(await screen.findByText('iPhone 17 Pro · iOS 26.3')).toBeInTheDocument()
+    expect(await screen.findByText('iOS回归-iPhone17Pro-01 · iPhone 17 Pro · iOS 26.3')).toBeInTheDocument()
     expect(screen.queryByText('由扩容模板决定')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /配\s*置/ }))
 
@@ -194,7 +194,7 @@ describe('PoolsPage pool capacity', () => {
 
   it('only lists unassigned devices from the same platform when joining a pool', async () => {
     const unassignedAndroid: Device = {
-      id: 'device_android_unassigned', host_id: 'host_000000000000001', platform: 'android',
+      id: 'device_android_unassigned', name: '待分配-Android-01', host_id: 'host_000000000000001', platform: 'android',
       device_kind: 'emulator', provider_type: 'docker_emulator', provider_ref: 'emulator-5570',
       lifecycle_mode: 'rebuild', serial: 'emulator-5570', capabilities: {}, effective_runtime_profile: {},
       reimage_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,

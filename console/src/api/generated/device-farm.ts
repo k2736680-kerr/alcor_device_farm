@@ -41,6 +41,7 @@ import type {
   DeviceHostInputBody,
   DeviceImageInputBody,
   DeviceListSuccessResponse,
+  DeviceNameInputBody,
   DevicePoolImageInputBody,
   DevicePoolInputBody,
   DeviceProvisioningAcceptedResponse,
@@ -4566,6 +4567,117 @@ export function useGetDevice<TData = Awaited<ReturnType<typeof getDevice>>, TErr
 
 
 
+export type updateDeviceNameResponse200 = {
+  data: DeviceSuccessResponse
+  status: 200
+}
+
+export type updateDeviceNameResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type updateDeviceNameResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type updateDeviceNameResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type updateDeviceNameResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type updateDeviceNameResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type updateDeviceNameResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
+export type updateDeviceNameResponseSuccess = (updateDeviceNameResponse200) & {
+  headers: Headers;
+};
+export type updateDeviceNameResponseError = (updateDeviceNameResponse400 | updateDeviceNameResponse401 | updateDeviceNameResponse403 | updateDeviceNameResponse404 | updateDeviceNameResponse500 | updateDeviceNameResponse504) & {
+  headers: Headers;
+};
+
+export type updateDeviceNameResponse = (updateDeviceNameResponseSuccess | updateDeviceNameResponseError)
+
+export const getUpdateDeviceNameUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}`
+}
+
+export const updateDeviceName = async (id: string,
+    deviceNameInputBody: DeviceNameInputBody, options?: RequestInit): Promise<updateDeviceNameResponse> => {
+
+  return deviceFarmFetch<updateDeviceNameResponse>(getUpdateDeviceNameUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deviceNameInputBody,)
+  }
+);}
+
+
+
+
+export const getUpdateDeviceNameMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDeviceName>>, TError,{id: string;data: DeviceNameInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateDeviceName>>, TError,{id: string;data: DeviceNameInputBody}, TContext> => {
+
+const mutationKey = ['updateDeviceName'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateDeviceName>>, {id: string;data: DeviceNameInputBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateDeviceName(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateDeviceNameMutationResult = NonNullable<Awaited<ReturnType<typeof updateDeviceName>>>
+    export type UpdateDeviceNameMutationBody = DeviceNameInputBody
+    export type UpdateDeviceNameMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useUpdateDeviceName = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDeviceName>>, TError,{id: string;data: DeviceNameInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateDeviceName>>,
+        TError,
+        {id: string;data: DeviceNameInputBody},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateDeviceNameMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
 /**
  * Only quarantined or stopped devices without pending or active reservations can be deleted. A device with an existing pending or leased delete command rejects another delete request. Provider resources are removed asynchronously through the Host Agent. The Device record is retained with lifecycle_status=deleted. If the configured pool target is unchanged, the warm pool may create a replacement device.
  */
@@ -7532,15 +7644,10 @@ export type getIntegratedDeviceRemoteControlResponse503 = {
   status: 503
 }
 
-export type getIntegratedDeviceRemoteControlResponse504 = {
-  data: ErrorResponse
-  status: 504
-}
-
 export type getIntegratedDeviceRemoteControlResponseSuccess = (getIntegratedDeviceRemoteControlResponse200) & {
   headers: Headers;
 };
-export type getIntegratedDeviceRemoteControlResponseError = (getIntegratedDeviceRemoteControlResponse401 | getIntegratedDeviceRemoteControlResponse403 | getIntegratedDeviceRemoteControlResponse404 | getIntegratedDeviceRemoteControlResponse503 | getIntegratedDeviceRemoteControlResponse504) & {
+export type getIntegratedDeviceRemoteControlResponseError = (getIntegratedDeviceRemoteControlResponse401 | getIntegratedDeviceRemoteControlResponse403 | getIntegratedDeviceRemoteControlResponse404 | getIntegratedDeviceRemoteControlResponse503) & {
   headers: Headers;
 };
 

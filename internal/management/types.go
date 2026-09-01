@@ -125,6 +125,7 @@ type PoolImage struct {
 
 type Device struct {
 	ID                      string                       `json:"id"`
+	Name                    string                       `json:"name"`
 	HostID                  string                       `json:"host_id"`
 	Platform                string                       `json:"platform"`
 	ImageID                 *string                      `json:"image_id,omitempty"`
@@ -158,6 +159,10 @@ type DeviceReimageInput struct {
 	ImageID        string         `json:"image_id"`
 	RuntimeProfile map[string]any `json:"runtime_profile"`
 	Reason         string         `json:"reason"`
+}
+
+type DeviceNameInput struct {
+	Name string `json:"name"`
 }
 
 type DeviceReimageCapacity struct {
@@ -254,6 +259,7 @@ type Store interface {
 	ListDevices(context.Context, paging.Page, DeviceFilter) ([]Device, int, error)
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
+	UpdateDeviceName(context.Context, Device, DeviceAudit) (Device, error)
 	IsDevicePoolBase(context.Context, string) (bool, error)
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)
 	ReplayDeviceOperation(context.Context, string, string, string, string, string) (Device, bool, error)

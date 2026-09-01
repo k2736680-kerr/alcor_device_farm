@@ -1,0 +1,3 @@
+ALTER TABLE devices
+    DROP CONSTRAINT IF EXISTS ck_devices_name,
+    DROP COLUMN IF EXISTS name;

@@ -83,6 +83,7 @@
 | AT-API-004 | P0 | 相同 Idempotency-Key 重复创建预约 | 返回同一 reservation，不重复占设备 |
 | AT-API-005 | P0 | 非法 UUID/ULID、租期或能力 | 400 和稳定错误码，数据库无脏记录 |
 | AT-API-006 | P1 | OpenAPI 示例和实际响应比对 | Schema 一致，无未记录字段 |
+| AT-API-007 | P0 | 编辑 Device 显示名称 | 详情和所有当前引用显示新名称，不改变 Device ID、Pool membership 或 Reservation 关联 |
 
 ### 4.2 数据库和状态机
 
@@ -109,6 +110,9 @@
 | AT-SCH-008 | P0 | 两个 Reaper 实例同时回收 | 只产生一次终态和清理命令 |
 | AT-SCH-009 | P1 | ready warm 设备正常申请 | 10 秒内获得 active 或返回明确可重试错误 |
 | AT-SCH-010 | P1 | 预约过期 | grace period 后 60 秒内关闭并进入清理 |
+| AT-SCH-011 | P0 | 指定空闲 Device 创建预约 | 只分配该 Device，不从同 Pool 选择其他设备 |
+| AT-SCH-012 | P0 | 指定 Device 正在使用 | 新预约保持 pending；目标释放后自动获得同一 Device，不回退其他空闲设备 |
+| AT-SCH-013 | P0 | 指定 Device 不属于 Pool 或不可调度 | 创建被拒绝且不留下 Reservation |
 
 ### 4.4 Host Agent 和 Docker Emulator
 

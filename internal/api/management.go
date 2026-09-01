@@ -46,6 +46,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 
 	mux.HandleFunc("GET /api/v1/devices", handler.listDevices)
 	mux.HandleFunc("GET /api/v1/devices/{id}", handler.getDevice)
+	mux.HandleFunc("PATCH /api/v1/devices/{id}", handler.updateDeviceName)
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", handler.deleteDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/starts", handler.startDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/stops", handler.stopDevice)
@@ -372,6 +373,18 @@ func (handler *managementHandler) getDevice(writer http.ResponseWriter, request 
 		return
 	}
 	value, err := handler.service.GetDevice(request.Context(), request.PathValue("id"))
+	handler.write(writer, request, http.StatusOK, value, err)
+}
+func (handler *managementHandler) updateDeviceName(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	var input management.DeviceNameInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.UpdateDeviceName(request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID)
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) restartDevice(writer http.ResponseWriter, request *http.Request) {

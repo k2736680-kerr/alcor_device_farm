@@ -596,6 +596,14 @@
 
 验收：正式 HTTPS 登录返回 201，使用返回的 Secure/HttpOnly Cookie 查询当前会话返回 200，Cookie 到期时间为 30 天，注销返回 200；验证后 Console Session、Audit Event、Reservation 和 Device Session 均为 0。Secret 文件保持 `0400`、owner `65532:65532`；Server `running/healthy`，iOS 隧道 `running`、restart count 0，4811/4842 实际可达。
 
+### DF-060 设备可读名称与指定设备排队
+
+实施：为 Device 增加可编辑显示名称，并把编辑入口合入现有设备详情；列表、设备池模板和预约引用以名称为主，完整 ID 只放详情。北向普通预约增加可选 `requested_device_id`，校验目标属于请求 Pool 后复用既有 Scheduler 精确分配；目标使用中时 Reservation 保持 pending，释放后自动调度到同一设备，禁止回退到 Pool 内其他设备。Alcor 通过 Adapter 传递明确 Device，不复制设备或预约数据。
+
+产出：设备名称迁移与管理 API、Console 详情编辑、指定设备预约契约、Scheduler/API/前端测试、正式部署和 `docs/evidence/DF-060/acceptance.md`。
+
+验收：管理员可在设备详情编辑 2～40 字符名称且所有当前设备域引用刷新为新名称；页面没有单独“改名”操作；指定空闲设备只分配该设备；指定使用中设备保持 pending，原预约释放后自动获得该设备；不属于 Pool、已删除/停止/隔离的目标被拒绝；未传目标字段的旧调用继续按 Pool 调度。Go 全量测试、Console 测试和生产构建通过，30.171 部署健康且无活动预约被中断。
+
 ## 12. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：

@@ -26,6 +26,7 @@ import {
   useStartDevice,
   useStopDevice,
   useUnquarantineDevice,
+  useUpdateDeviceName,
 } from '../api/generated/device-farm'
 import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile, IOSSimulatorCatalog } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
@@ -66,6 +67,10 @@ interface ActionState {
 
 interface ReasonValues {
   reason: string
+}
+
+interface DeviceNameValues {
+  name: string
 }
 
 interface ReimageValues extends EmulatorRuntimeProfile {
@@ -172,6 +177,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [form] = Form.useForm<ReasonValues>()
   const [actionState, setActionState] = useState<ActionState | null>(null)
   const [detailDevice, setDetailDevice] = useState<Device | null>(null)
+  const [nameForm] = Form.useForm<DeviceNameValues>()
   const [reimageDevice, setReimageDevice] = useState<Device | null>(null)
   const [reimageForm] = Form.useForm<ReimageValues>()
   const [createDevice, setCreateDevice] = useState(false)
@@ -199,6 +205,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
   const createIOSSimulator = useCreateIOSSimulator()
+  const updateDeviceName = useUpdateDeviceName()
   const imagesQuery = useListDeviceImages({ page: 1, page_size: 200, status: 'ready' })
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 200 })
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
@@ -256,6 +263,24 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }, [queryClient])
+
+  const openDetail = (device: Device) => {
+    setDetailDevice(device)
+    nameForm.setFieldsValue({ name: device.name })
+  }
+
+  const submitName = ({ name }: DeviceNameValues) => {
+    if (!detailDevice) return
+    const nextName = name.trim()
+    updateDeviceName.mutate({ id: detailDevice.id, data: { name: nextName } }, {
+      onSuccess: (data) => {
+        message.success(`设备名称已更新（请求编号：${responseRequestID(data)}）`)
+        setDetailDevice((current) => current ? { ...current, name: nextName } : current)
+        invalidate()
+      },
+      onError: (error) => message.error(`更新失败：${apiErrorText(error)}`),
+    })
+  }
 
   const executeAction = (reason: string) => {
     if (!actionState) {
@@ -486,7 +511,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       return (
         <Space size={4}>
           {role === 'viewer' ? <Typography.Text type="secondary">只读</Typography.Text> : <>
-            <Button size="small" onClick={() => setDetailDevice(device)}>详情</Button>
+            <Button size="small" onClick={() => openDetail(device)}>详情</Button>
           </>}
           {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
             && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
@@ -518,7 +543,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       title: '设备', dataIndex: 'id', width: 240, render: (_, device) => (
         <div className="primary-resource">
           <Space size={4}>
-            <Typography.Text strong>{deviceModelLabel(device)}</Typography.Text>
+            <Typography.Text strong>{device.name}</Typography.Text>
             {device.is_pool_base && (
               <Tooltip title={`该设备是「${device.pool_name ?? '所属设备池'}」的扩容模板，后续自动扩容会沿用它的系统版本和硬件规格`}>
                 <Tag color="blue">扩容模板</Tag>
@@ -526,6 +551,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             )}
           </Space>
           <small>
+            <span>{deviceModelLabel(device)}</span>
+            <span aria-hidden="true"> · </span>
             <span>{platformLabel(device.platform)}</span>
             <span aria-hidden="true"> · </span>
             <span title={device.platform === 'ios' && device.serial.length > 20 ? '完整模拟器标识请在详情中复制' : undefined}>
@@ -689,9 +716,28 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       </Space>
       <ResourceDetailDrawer
         open={detailDevice !== null}
-        title={detailDevice ? `设备详情 · ${detailDevice.serial}` : '设备详情'}
+        title={detailDevice ? `设备详情 · ${detailDevice.name}` : '设备详情'}
         onClose={() => setDetailDevice(null)}
         items={detailDevice ? [
+          {
+            key: 'name',
+            label: '设备名称',
+            children: role === 'admin' ? (
+              <Form<DeviceNameValues> form={nameForm} layout="vertical" onFinish={submitName}>
+                <Form.Item
+                  name="name"
+                  extra="用于运行时选择和日常识别，例如：DaFit回归-Pixel9-01。"
+                  rules={[
+                    { required: true, whitespace: true, message: '请输入设备名称' },
+                    { min: 2, max: 40, message: '名称请保持在 2–40 个字符' },
+                  ]}
+                >
+                  <Input aria-label="设备名称" maxLength={40} showCount placeholder="例如：DaFit回归-Pixel9-01" />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" loading={updateDeviceName.isPending}>保存</Button>
+              </Form>
+            ) : detailDevice.name,
+          },
           { key: 'id', label: '完整设备编号', children: <Typography.Text code copyable>{detailDevice.id}</Typography.Text> },
           { key: 'serial', label: '设备标识', children: <Typography.Text code copyable>{detailDevice.serial}</Typography.Text> },
           { key: 'platform', label: '平台与类型', children: `${platformLabel(detailDevice.platform)} · ${deviceKindLabel(detailDevice.device_kind)}` },

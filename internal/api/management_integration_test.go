@@ -178,6 +178,24 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/devices", nil, serviceToken, ""), http.StatusOK)
+	updatedDeviceResponse := environment.request(t, http.MethodPatch, "/api/v1/devices/"+device.ID,
+		map[string]any{"name": "DaFit专项环境-Pixel9-01"}, serviceToken, "")
+	assertStatus(t, updatedDeviceResponse, http.StatusOK)
+	var updatedDevice management.Device
+	decodeData(t, updatedDeviceResponse, &updatedDevice)
+	if updatedDevice.Name != "DaFit专项环境-Pixel9-01" {
+		t.Fatalf("updated device name=%q", updatedDevice.Name)
+	}
+	assertStatus(t, environment.request(t, http.MethodPatch, "/api/v1/devices/"+device.ID,
+		map[string]any{"name": "x"}, serviceToken, ""), http.StatusBadRequest)
+	var nameAuditCount int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_type='device' AND resource_id=$1 AND action='update_device_name'`, device.ID).Scan(&nameAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if nameAuditCount != 1 {
+		t.Fatalf("device name audit rows=%d", nameAuditCount)
+	}
 	assertPageTotal(t, environment.request(t, http.MethodGet,
 		"/api/v1/devices?lifecycle_status=ready&health_status=healthy", nil, serviceToken, ""), 1)
 	assertPageTotal(t, environment.request(t, http.MethodGet,

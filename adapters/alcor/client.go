@@ -67,6 +67,12 @@ func (client *Client) Reserve(ctx context.Context, input ReserveRequest) (Reserv
 		"owner_id": input.Run.RunAttemptID, "requested_capabilities": capabilities,
 		"lease_seconds": input.LeaseSeconds,
 	}
+	if input.RequestedDeviceID != "" {
+		if !identifierPattern.MatchString(input.RequestedDeviceID) {
+			return Reservation{}, errors.New("RunAttempt 指定设备无效")
+		}
+		payload["requested_device_id"] = input.RequestedDeviceID
+	}
 	var result Reservation
 	err := client.do(ctx, http.MethodPost, "/api/v1/device-reservations", payload, input.IdempotencyKey, input.Run, &result)
 	return result, err

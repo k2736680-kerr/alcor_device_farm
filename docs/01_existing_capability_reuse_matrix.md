@@ -67,6 +67,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -固定目标容量的控制台单点配置、自动扩容和安全缩容；
 -隔离或已停止设备的受控人工删除；删除继续复用既有 Host Command、Host Agent 和 Provider `Delete`，不新增 Server 直连 Docker 的通道；
 -Reservation、Lease、续租和释放；
+-Device 可编辑显示名称，以及由既有 Reservation/Scheduler 锁定明确 Device 的预约；指定设备忙碌时继续复用 pending 队列、数据库锁、释放和下一次调度，不新增第二套队列；
 -Scheduler和数据库并发锁；
 -Reconciler和Reaper；
 -设备健康事件、隔离、恢复和重建；

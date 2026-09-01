@@ -42,6 +42,7 @@ type IDGenerator func() (string, error)
 
 type CreateInput struct {
 	PoolID                string         `json:"pool_id"`
+	RequestedDeviceID     string         `json:"requested_device_id,omitempty"`
 	OwnerType             string         `json:"owner_type"`
 	OwnerID               string         `json:"owner_id"`
 	RequestedCapabilities map[string]any `json:"requested_capabilities,omitempty"`
@@ -139,7 +140,7 @@ func NewService(db *database.DB, generator IDGenerator, controllers ...STFContro
 }
 
 func (service *Service) Create(ctx context.Context, actor audit.Actor, key string, input CreateInput) (View, error) {
-	return service.create(ctx, actor, key, input, "")
+	return service.create(ctx, actor, key, input, strings.TrimSpace(input.RequestedDeviceID))
 }
 
 func (service *Service) CreateForDevice(
@@ -201,6 +202,12 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 		input.RequestedCapabilities = map[string]any{}
 	}
 	if targetDeviceID != "" {
+		if !identifierPattern.MatchString(targetDeviceID) {
+			return View{}, ErrInvalidArgument
+		}
+		if err := service.repo.ValidateTargetDeviceInPool(ctx, service.db.Pool(), input.PoolID, targetDeviceID); err != nil {
+			return View{}, translateRepositoryError(err)
+		}
 		input.RequestedCapabilities[repository.TargetDeviceCapability] = targetDeviceID
 	}
 	id, err := service.newID()
@@ -818,6 +825,9 @@ func validateCreate(actor audit.Actor, key string, input CreateInput) error {
 	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
 		!identifierPattern.MatchString(input.PoolID) || !validOwnerID(input.OwnerType, input.OwnerID) ||
 		!validOwnerType(input.OwnerType) || input.LeaseSeconds < 60 {
+		return ErrInvalidArgument
+	}
+	if input.RequestedDeviceID != "" && !identifierPattern.MatchString(input.RequestedDeviceID) {
 		return ErrInvalidArgument
 	}
 	if input.RequestedCapabilities == nil {

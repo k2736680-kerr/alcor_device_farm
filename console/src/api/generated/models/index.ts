@@ -90,6 +90,8 @@ export * from './deviceLifecycleStatus';
 export * from './deviceListEnvelope';
 export * from './deviceListEnvelopeError';
 export * from './deviceListSuccessResponse';
+export * from './deviceNameInput';
+export * from './deviceNameInputBody';
 export * from './devicePage';
 export * from './devicePageAllOf';
 export * from './devicePlatform';

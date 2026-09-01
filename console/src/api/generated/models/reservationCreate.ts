@@ -12,6 +12,8 @@ import type { ReservationCreateRequestedCapabilities } from './reservationCreate
 
 export interface ReservationCreate {
   pool_id: Identifier;
+  /** Optional exact Device target. If it is currently reserved or busy, the reservation remains pending until that Device becomes ready. */
+  requested_device_id?: Identifier;
   owner_type: OwnerType;
   owner_id: OwnerID;
   requested_capabilities?: ReservationCreateRequestedCapabilities;

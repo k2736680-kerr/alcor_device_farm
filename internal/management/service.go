@@ -524,6 +524,23 @@ func (service *Service) GetDevice(ctx context.Context, id string) (Device, error
 	return service.store.GetDevice(ctx, id)
 }
 
+func (service *Service) UpdateDeviceName(ctx context.Context, id string, input DeviceNameInput, actor audit.Actor, requestID string) (Device, error) {
+	name := strings.TrimSpace(input.Name)
+	if !validDeviceName(name) {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	event, err := service.deviceAudit(actor, requestID, "update_device_name", "device display name updated")
+	if err != nil {
+		return Device{}, err
+	}
+	current.Name = name
+	return service.store.UpdateDeviceName(ctx, current, event)
+}
+
 func (service *Service) ProvisionMockDevice(ctx context.Context, input ProvisionMockDeviceInput) (Device, error) {
 	if service.provider == nil {
 		return Device{}, ErrProviderUnavailable
@@ -1032,6 +1049,18 @@ func (service *Service) deviceAudit(actor audit.Actor, requestID, action, reason
 func validAuditIdentity(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || utf8.RuneCountInString(value) > 128 || sensitive.Contains(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validDeviceName(value string) bool {
+	if utf8.RuneCountInString(value) < 2 || utf8.RuneCountInString(value) > 40 || sensitive.Contains(value) {
 		return false
 	}
 	for _, character := range value {

@@ -220,14 +220,14 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, requestID
 		}
 		displayName := strings.TrimSpace(input.DisplayName)
 		if displayName == "" {
-			displayName = catalogDeviceTypeName(catalog, input.DeviceTypeID)
+			displayName = catalogDeviceTypeName(catalog, input.DeviceTypeID) + "-" + deviceID[len(deviceID)-6:]
 		}
 		deviceCapabilities := map[string]any{"platformName": "iOS", "automationName": "XCUITest", "deviceClass": "phone", "realDevice": false,
 			"runtimeId": input.RuntimeID, "deviceTypeId": input.DeviceTypeID, "model": catalogDeviceTypeName(catalog, input.DeviceTypeID), "deviceName": displayName}
 		placeholder := "pending:" + deviceID
-		if _, err := tx.Exec(ctx, `INSERT INTO devices(id,host_id,platform,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,
-			capabilities,lifecycle_status,health_status) VALUES($1,$2,'ios',NULL,'simulator','appium_device_farm_ios',$3,'rebuild',$3,$4::jsonb,'provisioning','unknown')`,
-			deviceID, input.HostID, placeholder, deviceCapabilities); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO devices(id,name,host_id,platform,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,
+			capabilities,lifecycle_status,health_status) VALUES($1,$2,$3,'ios',NULL,'simulator','appium_device_farm_ios',$4,'rebuild',$4,$5::jsonb,'provisioning','unknown')`,
+			deviceID, displayName, input.HostID, placeholder, deviceCapabilities); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, input.PoolID, deviceID); err != nil {

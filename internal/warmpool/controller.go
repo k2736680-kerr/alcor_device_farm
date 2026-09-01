@@ -1443,10 +1443,11 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return "", "", err
 	}
+	name := "Android设备-" + deviceID[len(deviceID)-6:]
 	if _, err := tx.Exec(ctx, `INSERT INTO devices
-		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,runtime_profile_override,lifecycle_status,health_status)
-		VALUES($1,$2,$3,'emulator','docker_emulator',$4,'clean',$5,$6::jsonb,$7::jsonb,'provisioning','unknown')`,
-		deviceID, hostID, imageID, providerRef, serial, encodedCapabilities, encodedProfile); err != nil {
+		(id,name,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,runtime_profile_override,lifecycle_status,health_status)
+		VALUES($1,$2,$3,$4,'emulator','docker_emulator',$5,'clean',$6,$7::jsonb,$8::jsonb,'provisioning','unknown')`,
+		deviceID, name, hostID, imageID, providerRef, serial, encodedCapabilities, encodedProfile); err != nil {
 		return "", "", err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, poolID, deviceID); err != nil {

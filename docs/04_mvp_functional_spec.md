@@ -188,6 +188,7 @@ active  → force_released
 - `owner_type`：`run_attempt`（新版 Alcor 自动执行）、`manual`（人工调试）或 `test_run`（DaFit 联调）；
 - `owner_id`：UUID/ULID 字符串；
 - `pool_id`；
+- 可选 `requested_device_id`：由 Alcor 的具体设备选择产生，只收窄到该 Pool 的明确 Device；目标正在使用时继续排队，禁止回退到同 Pool 其他设备；
 - required capabilities；
 - lease seconds；
 - `Idempotency-Key`；
@@ -203,6 +204,8 @@ Scheduler 按以下顺序执行：
 6. 失败时执行补偿，关闭预约并按错误类型恢复或隔离设备。
 
 同一个设备任何时刻最多一个 active reservation。相同客户端和幂等键必须返回同一预约，不得重复占用。
+
+Device 另有 2～40 字符的可编辑显示名称。Console 的设备列表、Pool 模板和 Reservation 引用以名称为主，完整 ID 只在详情中保留；改名不改变不可变 ID、Pool membership、Reservation 或 Provider 关联。
 
 ### 4.7 Reaper 与 Reconciler
 

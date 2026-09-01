@@ -179,8 +179,8 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         const device = deviceByID.get(value)
         return (
           <div className="primary-resource">
-            <Typography.Text>{device ? deviceModelLabel(device) : '设备已释放、删除或未加载'}</Typography.Text>
-            <small>{device ? device.serial : '完整编号可在详情中复制'}</small>
+            <Typography.Text>{device ? device.name : '设备已释放、删除或未加载'}</Typography.Text>
+            <small>{device ? `${deviceModelLabel(device)} · ${device.serial}` : '完整编号可在详情中复制'}</small>
           </div>
         )
       },

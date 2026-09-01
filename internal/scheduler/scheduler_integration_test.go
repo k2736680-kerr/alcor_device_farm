@@ -240,6 +240,60 @@ func TestTargetedConsoleReservationAllocatesOnlySelectedDevice(t *testing.T) {
 	}
 }
 
+func TestTargetedRunWaitsForSelectedDeviceAndStartsAfterRelease(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 2)
+	service := reservation.NewService(db, nil)
+	deviceScheduler := scheduler.New(db, nil, nil)
+	targetDeviceID := fmt.Sprintf("device_%019d", 1)
+
+	first, err := service.Create(context.Background(), audit.Service("service"), "targeted-first-run-key", reservation.CreateInput{
+		PoolID: "pool_000000000000001", RequestedDeviceID: targetDeviceID,
+		OwnerType: "run_attempt", OwnerID: "attempt_000000000701", LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAssignment, err := deviceScheduler.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstAssignment.Reservation.DeviceID == nil || *firstAssignment.Reservation.DeviceID != targetDeviceID {
+		t.Fatalf("first assignment device=%v want=%s", firstAssignment.Reservation.DeviceID, targetDeviceID)
+	}
+
+	queued, err := service.Create(context.Background(), audit.Service("service"), "targeted-queued-run-key", reservation.CreateInput{
+		PoolID: "pool_000000000000001", RequestedDeviceID: targetDeviceID,
+		OwnerType: "run_attempt", OwnerID: "attempt_000000000702", LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deviceScheduler.RunOnce(context.Background()); !errors.Is(err, scheduler.ErrCapacityUnavailable) {
+		t.Fatalf("scheduler while target busy error=%v", err)
+	}
+	storedQueued, err := service.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedQueued.Status != "pending" || storedQueued.DeviceID != nil {
+		t.Fatalf("queued targeted reservation=%#v", storedQueued)
+	}
+
+	if _, err := service.Release(context.Background(), audit.Service("service"), "targeted-release-key", first.ID,
+		"targeted-release-request", reservation.ReleaseInput{Reason: "selected device run completed"}); err != nil {
+		t.Fatal(err)
+	}
+	secondAssignment, err := deviceScheduler.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondAssignment.Reservation.ID != queued.ID || secondAssignment.Reservation.DeviceID == nil ||
+		*secondAssignment.Reservation.DeviceID != targetDeviceID {
+		t.Fatalf("queued assignment=%#v want reservation=%s device=%s", secondAssignment.Reservation, queued.ID, targetDeviceID)
+	}
+}
+
 func TestTargetedConsoleReservationRejectsSecondOpenControl(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
