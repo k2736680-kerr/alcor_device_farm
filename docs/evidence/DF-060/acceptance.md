@@ -30,6 +30,13 @@
 - 未传 `requested_device_id` 的旧客户端仍按原设备池逻辑预约。
 - 名称只负责展示和人工识别，内部引用继续使用设备 ID；修改名称后当前页面重新查询最新值，既有运行快照保留创建时名称作为历史兜底。
 
-## 上线约束
+## 30.171 正式部署
 
-部署到 `30.171` 前必须确认没有 active、pending 或 releasing Reservation，备份 PostgreSQL，再执行迁移与 Server 更新。健康检查、宿主机、iOS 隧道、设备名称接口和指定设备预约均需在正式环境复验。
+- 上线前 active、pending、releasing Reservation、开放 Session 和在途 Host Command 均为 0。
+- PostgreSQL 迁移前备份保存在 `/home/kerr/device-farm-backups/device-farm-before-8cd498d-20260901.dump`，SHA-256 为 `b8acc5e1a11b2db8cd2e8ecc0763ee43e44c1e5b1af0cba79ff3aabd8cea9ded`；`pg_restore --list` 验证通过。
+- `000018` 迁移成功，为 4 台已有设备全部回填合法名称。
+- 正式 Server 镜像为 `alcor-device-farm:8cd498d-targeted-device-20260901`，内嵌版本和提交均为 `8cd498d`；原 `97c0d8e` Server 与原 iOS 隧道保留为停止状态的即时回滚容器。
+- Server `/healthz`、`/readyz` 和正式 HTTPS Console 均返回 200；iOS SSH 隧道已按新 Server 网络空间重建，Baguette inventory 可访问。
+- 两台宿主机均为 online、非 draining；4 台长期设备均为 `ready/healthy`，设备列表 API 返回非空名称、平台和所属 Pool。
+
+Alcor 侧改动不随 Device Farm 直接部署，只通过现有 PR 审核上线。
