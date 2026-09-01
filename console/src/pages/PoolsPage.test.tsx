@@ -43,6 +43,8 @@ describe('PoolsPage pool capacity', () => {
     expect(row).not.toBeNull()
     expect(row).toHaveTextContent('容量正常')
     expect(row).toHaveTextContent('目标 2 · 可用 1 · 使用中 1 · 恢复中 0')
+    expect(screen.getByRole('button', { name: /配\s*置/ })).toBeInTheDocument()
+    expect(screen.queryByText(/改名/)).not.toBeInTheDocument()
   })
 
   it('does not count an unhealthy busy device as serviceable capacity', async () => {
@@ -75,12 +77,15 @@ describe('PoolsPage pool capacity', () => {
       return poolResponse(submitted)
     }))
     const user = await openPoolEditor()
+    const nameInput = screen.getByRole('textbox', { name: '设备池显示名称' })
+    await user.clear(nameInput)
+    await user.type(nameInput, 'Android 15-Pixel-回归池')
     fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '3' } })
     expect(screen.getByText('目标 3 台 · 可服务 2 台 · 可立即使用 1 台')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() => expect(submitted).toMatchObject({
-      name: 'default-android',
+      name: 'Android 15-Pixel-回归池',
       total_target: 3,
       min_ready: 3,
       max_concurrency: 3,

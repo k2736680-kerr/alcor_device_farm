@@ -58,7 +58,7 @@ describe('HostsPage platform consistency', () => {
     expect(within(detail).getByText('10.0.0.1')).toBeInTheDocument()
   })
 
-  it('renames a host with a memorable operator-facing name', async () => {
+  it('edits a host name inside its existing details view', async () => {
     let submittedName = ''
     server.use(http.get('/api/v1/device-hosts/:id', () => HttpResponse.json({
       request_id: 'req_host_detail', data: sampleHosts[0], error: null,
@@ -72,9 +72,10 @@ describe('HostsPage platform consistency', () => {
     renderWithProviders(<HostsPage />)
 
     const hostRow = (await screen.findByText('kvm-01')).closest('tr')
-    await user.click(within(hostRow as HTMLElement).getByRole('button', { name: /改\s*名/ }))
-    const dialog = await screen.findByRole('dialog', { name: /修改宿主机名称/ })
-    const input = within(dialog).getByLabelText('宿主机显示名称')
+    expect(within(hostRow as HTMLElement).queryByRole('button', { name: /改\s*名/ })).not.toBeInTheDocument()
+    await user.click(within(hostRow as HTMLElement).getByRole('button', { name: /详\s*情/ }))
+    const dialog = await screen.findByRole('dialog', { name: /宿主机详情/ })
+    const input = within(dialog).getByPlaceholderText('例如：上海测试-KVM-01')
     await user.clear(input)
     await user.type(input, '上海测试-KVM-01')
     await user.click(within(dialog).getByRole('button', { name: /保\s*存/ }))

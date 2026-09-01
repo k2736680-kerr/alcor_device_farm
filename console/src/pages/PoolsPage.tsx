@@ -372,7 +372,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             })
           }}
         >
-          配置 / 改名
+          配置
         </Button>
       ) : <Typography.Text type="secondary">只读</Typography.Text>,
     },

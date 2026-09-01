@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Form, Input, Modal, Space, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Form, Input, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -84,7 +84,6 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const queryClient = useQueryClient()
   const [actionState, setActionState] = useState<ActionState | null>(null)
   const [detailHost, setDetailHost] = useState<DeviceHost | null>(null)
-  const [renamingHost, setRenamingHost] = useState<DeviceHost | null>(null)
   const [nameForm] = Form.useForm<HostNameFormValues>()
 
   const drain = useDrainDeviceHost()
@@ -116,16 +115,16 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     )
   }
 
-  const openRename = (host: DeviceHost) => {
-    setRenamingHost(host)
+  const openDetail = (host: DeviceHost) => {
+    setDetailHost(host)
     nameForm.setFieldsValue({ name: host.name })
   }
 
-  const submitRename = async ({ name }: HostNameFormValues) => {
-    if (!renamingHost) return
+  const submitName = async ({ name }: HostNameFormValues) => {
+    if (!detailHost) return
     let latest: DeviceHost
     try {
-      const response = await getDeviceHost(renamingHost.id)
+      const response = await getDeviceHost(detailHost.id)
       const freshHost = unwrapData<DeviceHost>(response)
       if (!freshHost) throw new Error('未读取到宿主机详情')
       latest = freshHost
@@ -147,8 +146,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     }, {
       onSuccess: (data) => {
         message.success(`宿主机名称已更新（请求编号：${responseRequestID(data)}）`)
-        setRenamingHost(null)
-        nameForm.resetFields()
+        setDetailHost((current) => current?.id === latest.id ? { ...current, name: name.trim() } : current)
         invalidate()
       },
       onError: (error) => message.error(`更新失败：${apiErrorText(error)}`),
@@ -190,8 +188,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       fixed: 'right',
       render: (_, host) => (
         <Space size={4} wrap>
-          <Button size="small" onClick={() => setDetailHost(host)}>详情</Button>
-          {role === 'admin' && <Button size="small" onClick={() => openRename(host)}>改名</Button>}
+          <Button size="small" onClick={() => openDetail(host)}>详情</Button>
           {role === 'admin' && <>
           {!host.draining && host.status !== 'maintenance' && (
             <Button size="small" danger onClick={() => setActionState({ host, action: 'drain' })}>排空</Button>
@@ -238,6 +235,26 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         title={detailHost ? `宿主机详情 · ${detailHost.name}` : '宿主机详情'}
         onClose={() => setDetailHost(null)}
         items={detailHost ? [
+          {
+            key: 'name',
+            label: '宿主机名称',
+            children: role === 'admin' ? (
+              <Form<HostNameFormValues> form={nameForm} layout="vertical" onFinish={submitName}>
+                <Form.Item
+                  name="name"
+                  extra="建议使用“位置/用途 + 系统 + 序号”，例如：上海测试-KVM-01。"
+                  rules={[
+                    { required: true, whitespace: true, message: '请输入宿主机名称' },
+                    { min: 2, max: 40, message: '名称请保持在 2–40 个字符' },
+                    { pattern: /^[\p{L}\p{N}][\p{L}\p{N} ._\-/]*$/u, message: '可使用中英文、数字、空格、短横线和下划线' },
+                  ]}
+                >
+                  <Input maxLength={40} showCount placeholder="例如：上海测试-KVM-01" />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" loading={updateHost.isPending}>保存</Button>
+              </Form>
+            ) : detailHost.name,
+          },
           { key: 'id', label: '完整编号', children: <Typography.Text copyable code>{detailHost.id}</Typography.Text> },
           { key: 'platform', label: '平台与架构', children: `${detailHost.host_os} / ${detailHost.host_arch}` },
           { key: 'type', label: '宿主机类型', children: hostTypeLabel(detailHost.host_type) },
@@ -262,32 +279,6 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         onSubmit={submitAction}
         onCancel={() => setActionState(null)}
       />
-      <Modal
-        open={renamingHost !== null}
-        title={renamingHost ? `修改宿主机名称 · ${renamingHost.name}` : '修改宿主机名称'}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={updateHost.isPending}
-        onOk={() => nameForm.submit()}
-        onCancel={() => { setRenamingHost(null); nameForm.resetFields() }}
-        destroyOnHidden
-      >
-        <Form<HostNameFormValues> form={nameForm} layout="vertical" onFinish={submitRename}>
-          <Form.Item
-            name="name"
-            label="宿主机显示名称"
-            extra="建议使用“位置/用途 + 系统 + 序号”，例如：上海测试-KVM-01、MacMini-iOS-01。这个名称会出现在设备列表和虚拟机创建页。"
-            rules={[
-              { required: true, whitespace: true, message: '请输入宿主机名称' },
-              { min: 2, max: 40, message: '名称请保持在 2–40 个字符' },
-              { pattern: /^[\p{L}\p{N}][\p{L}\p{N} ._\-/]*$/u, message: '可使用中英文、数字、空格、短横线和下划线' },
-            ]}
-          >
-            <Input maxLength={40} showCount placeholder="例如：上海测试-KVM-01" />
-          </Form.Item>
-          {renamingHost?.address && <Typography.Text type="secondary">服务器地址：{renamingHost.address}</Typography.Text>}
-        </Form>
-      </Modal>
     </Space>
   )
 }
