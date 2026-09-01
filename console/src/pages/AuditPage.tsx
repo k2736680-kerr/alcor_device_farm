@@ -11,7 +11,7 @@ import {
 import type { AuditEvent, Device, DeviceHost, DeviceImage, DevicePool } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { formatTime, shortID } from '../api/format'
+import { formatTime } from '../api/format'
 import { auditTargetLabel } from '../api/describe'
 import { actorTypeLabel, auditActionLabel, resourceTypeLabel } from '../api/labels'
 import { detailText } from '../api/presentation'
@@ -40,18 +40,18 @@ export function AuditPage() {
   }), [poolsQuery.data, devicesQuery.data, imagesQuery.data, hostsQuery.data])
   const columns: TableColumnsType<AuditEvent> = [
     {
-      title: '时间 / 请求', dataIndex: 'created_at', width: 200, render: (value: string, event) => (
+      title: '操作时间', dataIndex: 'created_at', width: 200, render: (value: string) => (
         <div className="primary-resource">
           <Typography.Text>{formatTime(value)}</Typography.Text>
-          <small>{shortID(event.request_id)}</small>
+          <small>完整请求编号见详情</small>
         </div>
       ),
     },
     {
-      title: '操作者', dataIndex: 'actor_id', width: 180, render: (value: string, event) => (
+      title: '操作者', dataIndex: 'actor_id', width: 180, render: (_value: string, event) => (
         <div className="primary-resource">
-          <Typography.Text>{shortID(value)}</Typography.Text>
-          <small><Tag color={actorColor[event.actor_type] ?? 'default'}>{actorTypeLabel(event.actor_type)}</Tag></small>
+          <Tag color={actorColor[event.actor_type] ?? 'default'}>{actorTypeLabel(event.actor_type)}</Tag>
+          <small>完整标识见详情</small>
         </div>
       ),
     },
@@ -101,7 +101,8 @@ export function AuditPage() {
         onClose={() => setDetailEvent(null)}
         items={detailEvent ? [
           { key: 'time', label: '操作时间', children: formatTime(detailEvent.created_at) },
-          { key: 'actor', label: '操作者', children: `${actorTypeLabel(detailEvent.actor_type)} · ${detailEvent.actor_id}` },
+          { key: 'actor', label: '操作者类型', children: actorTypeLabel(detailEvent.actor_type) },
+          { key: 'actor_id', label: '完整操作者标识', children: <Typography.Text code copyable>{detailEvent.actor_id}</Typography.Text> },
           { key: 'action', label: '操作内容', children: auditActionLabel(detailEvent.action) },
           { key: 'resource', label: '操作对象', children: `${resourceTypeLabel(detailEvent.resource_type)} · ${auditTargetLabel(detailEvent.resource_type, detailEvent.resource_id, lookups)}` },
           { key: 'resource_id', label: '完整资源编号', children: <Typography.Text code copyable>{detailEvent.resource_id}</Typography.Text> },

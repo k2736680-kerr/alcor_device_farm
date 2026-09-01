@@ -1,17 +1,19 @@
-import { App as AntApp, Button, Space, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Form, Input, Modal, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   getListDeviceHostsQueryKey,
+  getDeviceHost,
   useDrainDeviceHost,
   useListDeviceHosts,
+  useUpdateDeviceHost,
   useUndrainDeviceHost,
 } from '../api/generated/device-farm'
 import type { ConsoleRole, DeviceHost } from '../api/generated/models'
-import { unwrapPage } from '../api/unwrap'
+import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { formatTime, shortID } from '../api/format'
+import { formatTime } from '../api/format'
 import { hostStatusLabel, hostTypeLabel } from '../api/labels'
 import { apiErrorText, detailText, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -19,6 +21,10 @@ import { ReasonActionModal } from '../components/ReasonActionModal'
 import { PageQueryError, ResourceDetailDrawer, ResourcePageHeader } from '../components/ResourcePage'
 
 type HostAction = 'drain' | 'undrain'
+
+interface HostNameFormValues {
+  name: string
+}
 
 interface ActionState {
   host: DeviceHost
@@ -78,9 +84,12 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const queryClient = useQueryClient()
   const [actionState, setActionState] = useState<ActionState | null>(null)
   const [detailHost, setDetailHost] = useState<DeviceHost | null>(null)
+  const [renamingHost, setRenamingHost] = useState<DeviceHost | null>(null)
+  const [nameForm] = Form.useForm<HostNameFormValues>()
 
   const drain = useDrainDeviceHost()
   const undrain = useUndrainDeviceHost()
+  const updateHost = useUpdateDeviceHost()
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDeviceHostsQueryKey() })
@@ -107,13 +116,52 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     )
   }
 
+  const openRename = (host: DeviceHost) => {
+    setRenamingHost(host)
+    nameForm.setFieldsValue({ name: host.name })
+  }
+
+  const submitRename = async ({ name }: HostNameFormValues) => {
+    if (!renamingHost) return
+    let latest: DeviceHost
+    try {
+      const response = await getDeviceHost(renamingHost.id)
+      const freshHost = unwrapData<DeviceHost>(response)
+      if (!freshHost) throw new Error('未读取到宿主机详情')
+      latest = freshHost
+    } catch (error) {
+      message.error(`更新失败：${apiErrorText(error)}`)
+      return
+    }
+    updateHost.mutate({
+      id: latest.id,
+      data: {
+        name: name.trim(),
+        host_type: latest.host_type,
+        host_os: latest.host_os,
+        host_arch: latest.host_arch,
+        address: latest.address,
+        capabilities: latest.capabilities,
+        capacity: latest.capacity,
+      },
+    }, {
+      onSuccess: (data) => {
+        message.success(`宿主机名称已更新（请求编号：${responseRequestID(data)}）`)
+        setRenamingHost(null)
+        nameForm.resetFields()
+        invalidate()
+      },
+      onError: (error) => message.error(`更新失败：${apiErrorText(error)}`),
+    })
+  }
+
   const columns: TableColumnsType<DeviceHost> = [
     {
-      title: '宿主机', dataIndex: 'name', width: 200, render: (value: string, host) => (
+      title: '宿主机', dataIndex: 'name', width: 240, render: (value: string, host) => (
         <div className="primary-resource">
           <Typography.Text strong>{value}</Typography.Text>
-          <small>{host.host_os === 'macos' ? 'iOS / macOS' : 'Android / Linux'} · {hostTypeLabel(host.host_type)}</small>
-          <small>{shortID(host.id)}</small>
+          <small>{host.host_os === 'macos' ? 'macOS / iOS' : 'Linux / Android'} · {host.host_arch}</small>
+          <small>{hostTypeLabel(host.host_type)}</small>
         </div>
       ),
     },
@@ -143,6 +191,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       render: (_, host) => (
         <Space size={4} wrap>
           <Button size="small" onClick={() => setDetailHost(host)}>详情</Button>
+          {role === 'admin' && <Button size="small" onClick={() => openRename(host)}>改名</Button>}
           {role === 'admin' && <>
           {!host.draining && host.status !== 'maintenance' && (
             <Button size="small" danger onClick={() => setActionState({ host, action: 'drain' })}>排空</Button>
@@ -206,13 +255,39 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       />
       <ReasonActionModal
         open={actionState !== null}
-        title={actionState ? `${actionState.action === 'drain' ? '排空' : '解除排空'} · ${shortID(actionState.host.id)}` : ''}
+        title={actionState ? `${actionState.action === 'drain' ? '排空' : '解除排空'} · ${actionState.host.name}` : ''}
         description={actionState?.action === 'drain' ? '排空后不再接受新建设备和新预约；已有预约可以继续运行，结束后可安全维护宿主机。' : '解除排空后宿主机重新接受设备创建和预约调度。'}
         danger={actionState?.action === 'drain'}
         confirmLoading={drain.isPending || undrain.isPending}
         onSubmit={submitAction}
         onCancel={() => setActionState(null)}
       />
+      <Modal
+        open={renamingHost !== null}
+        title={renamingHost ? `修改宿主机名称 · ${renamingHost.name}` : '修改宿主机名称'}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={updateHost.isPending}
+        onOk={() => nameForm.submit()}
+        onCancel={() => { setRenamingHost(null); nameForm.resetFields() }}
+        destroyOnHidden
+      >
+        <Form<HostNameFormValues> form={nameForm} layout="vertical" onFinish={submitRename}>
+          <Form.Item
+            name="name"
+            label="宿主机显示名称"
+            extra="建议使用“位置/用途 + 系统 + 序号”，例如：上海测试-KVM-01、MacMini-iOS-01。这个名称会出现在设备列表和虚拟机创建页。"
+            rules={[
+              { required: true, whitespace: true, message: '请输入宿主机名称' },
+              { min: 2, max: 40, message: '名称请保持在 2–40 个字符' },
+              { pattern: /^[\p{L}\p{N}][\p{L}\p{N} ._\-/]*$/u, message: '可使用中英文、数字、空格、短横线和下划线' },
+            ]}
+          >
+            <Input maxLength={40} showCount placeholder="例如：上海测试-KVM-01" />
+          </Form.Item>
+          {renamingHost?.address && <Typography.Text type="secondary">服务器地址：{renamingHost.address}</Typography.Text>}
+        </Form>
+      </Modal>
     </Space>
   )
 }

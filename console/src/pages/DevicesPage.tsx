@@ -31,7 +31,7 @@ import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, D
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { androidVersionLabel, formatTime, iosSystemVersionLabel, shortID } from '../api/format'
-import { deviceModelLabel, hostLabel, hostOSLabel } from '../api/describe'
+import { deviceHeadline, deviceModelLabel, hostLabel, hostOSLabel } from '../api/describe'
 import {
   deviceKindLabel,
   healthReasonLabel,
@@ -575,7 +575,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         return (
           <div className="primary-resource">
             <Typography.Text>{host?.name ?? '未知宿主机'}</Typography.Text>
-            <small>{hostOSLabel(host) || '未上报系统'}</small>
+            <small>{hostOSLabel(host) || '未上报系统'}{host?.host_arch ? ` · ${host.host_arch}` : ''}</small>
           </div>
         )
       },
@@ -808,7 +808,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             <Select
               loading={hostsQuery.isFetching}
               placeholder={iosHosts.length > 0 ? '选择 Mac 宿主机' : '当前没有可用于创建的 Mac 宿主机'}
-              options={iosHosts.map((host) => ({ value: host.id, label: `${host.name} · ${host.host_arch} · ${shortID(host.id)}` }))}
+              options={iosHosts.map((host) => ({ value: host.id, label: `${host.name}${host.address ? ` · ${host.address}` : ''} · ${host.host_arch}` }))}
               onChange={() => iosForm.setFieldsValue({ runtime_id: undefined, device_type_id: undefined })}
             />
           </Form.Item>}
@@ -842,7 +842,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       </Modal>
       <Modal
         open={actionState !== null}
-        title={actionState ? `${actionTitles[actionState.action]} · ${shortID(actionState.device.id)}` : ''}
+        title={actionState ? `${actionTitles[actionState.action]} · ${deviceHeadline(actionState.device, { imageByID })}` : ''}
         okText={actionState?.action === 'delete' ? '下一步' : '确认执行'}
         cancelText="取消"
         confirmLoading={pending}
@@ -870,7 +870,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       </Modal>
       <Modal
         open={reimageDevice !== null}
-        title={reimageDevice ? `编辑配置/更换镜像 · ${shortID(reimageDevice.id)}` : ''}
+        title={reimageDevice ? `编辑配置/更换镜像 · ${deviceHeadline(reimageDevice, { imageByID })}` : ''}
         okText="下一步"
         cancelText="取消"
         confirmLoading={reimage.isPending}
@@ -903,7 +903,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             ]} /></Form.Item>
           </Space>
           <Typography.Paragraph type="secondary">
-            当前宿主机：{hosts.find((host) => host.id === reimageDevice?.host_id)?.name ?? shortID(reimageDevice?.host_id ?? '')}。页面显示的是配置值，最终容量以提交瞬间服务端重新计算为准。
+            当前宿主机：{hostLabel(reimageDevice?.host_id, hostByID)}。页面显示的是配置值，最终容量以提交瞬间服务端重新计算为准。
           </Typography.Paragraph>
           <Form.Item name="reason" label="修改原因（必填，将写入审计）" rules={[
             { required: true, whitespace: true, message: '请填写修改原因' }, { min: 3, message: '修改原因至少填写 3 个字' },

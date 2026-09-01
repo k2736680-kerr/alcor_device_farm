@@ -25,8 +25,8 @@ import {
 import type { ConsoleRole, Device, DevicePool, Reservation } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { formatTime, shortID } from '../api/format'
-import { deviceLabel, deviceModelLabel } from '../api/describe'
+import { formatTime } from '../api/format'
+import { deviceLabel, deviceModelLabel, poolLabel } from '../api/describe'
 import { ownerTypeLabel, poolStatusLabel, reservationFailureLabel, reservationStatusLabel } from '../api/labels'
 import { apiErrorText, durationLabel, platformLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -83,6 +83,13 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const devices = unwrapPage<Device>(devicesQuery.data)?.items ?? []
   const deviceByID = useMemo(() => new Map(devices.map((device) => [device.id, device])), [devices])
 
+  const reservationResourceLabel = (reservation: Reservation): string => {
+    if (reservation.device_id) {
+      return deviceLabel(reservation.device_id, deviceByID)
+    }
+    return poolLabel(reservation.pool_id, poolByID)
+  }
+
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDeviceReservationsQueryKey() })
   }
@@ -138,10 +145,10 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
 
   const columns: TableColumnsType<Reservation> = [
     {
-      title: '预约', dataIndex: 'id', width: 200, render: (value: string, reservation) => (
+      title: '预约来源', dataIndex: 'id', width: 200, render: (_value: string, reservation) => (
         <div className="primary-resource">
-          <Typography.Text code>{shortID(value)}</Typography.Text>
-          <small>{ownerTypeLabel(reservation.owner_type)} · {shortID(reservation.owner_id)}</small>
+          <Typography.Text>{ownerTypeLabel(reservation.owner_type)}</Typography.Text>
+          <small>创建于 {formatTime(reservation.created_at)}</small>
         </div>
       ),
     },
@@ -160,8 +167,8 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         const pool = poolByID.get(value)
         return (
           <div className="primary-resource">
-            <Typography.Text>{pool?.name ?? shortID(value)}</Typography.Text>
-            <small>{platformLabel(pool?.platform)}</small>
+            <Typography.Text>{pool?.name ?? '设备池已删除或未加载'}</Typography.Text>
+            <small>{pool ? platformLabel(pool.platform) : '完整编号可在详情中复制'}</small>
           </div>
         )
       },
@@ -172,8 +179,8 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         const device = deviceByID.get(value)
         return (
           <div className="primary-resource">
-            <Typography.Text>{device ? deviceModelLabel(device) : '设备已不在当前列表'}</Typography.Text>
-            <small>{device ? device.serial : '请到设备页查询'} · {shortID(value)}</small>
+            <Typography.Text>{device ? deviceModelLabel(device) : '设备已释放、删除或未加载'}</Typography.Text>
+            <small>{device ? device.serial : '完整编号可在详情中复制'}</small>
           </div>
         )
       },
@@ -233,15 +240,17 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
 
       <ResourceDetailDrawer
         open={detailReservation !== null}
-        title={detailReservation ? `预约详情 · ${shortID(detailReservation.id)}` : '预约详情'}
+        title={detailReservation ? `预约详情 · ${poolLabel(detailReservation.pool_id, poolByID)}` : '预约详情'}
         onClose={() => setDetailReservation(null)}
         items={detailReservation ? [
           { key: 'id', label: '完整预约编号', children: <Typography.Text code copyable>{detailReservation.id}</Typography.Text> },
           { key: 'status', label: '状态', children: reservationProgress(detailReservation) },
-          { key: 'pool', label: '设备池', children: poolByID.get(detailReservation.pool_id)?.name ?? detailReservation.pool_id },
+          { key: 'pool', label: '设备池', children: poolLabel(detailReservation.pool_id, poolByID) },
+          { key: 'pool_id', label: '完整设备池编号', children: <Typography.Text code copyable>{detailReservation.pool_id}</Typography.Text> },
           { key: 'device', label: '分配设备', children: detailReservation.device_id
-            ? <Typography.Text code copyable>{deviceLabel(detailReservation.device_id, deviceByID)}（{detailReservation.device_id}）</Typography.Text>
+            ? deviceLabel(detailReservation.device_id, deviceByID)
             : '尚未分配' },
+          ...(detailReservation.device_id ? [{ key: 'device_id', label: '完整设备编号', children: <Typography.Text code copyable>{detailReservation.device_id}</Typography.Text> }] : []),
           { key: 'owner', label: '预约归属', children: `${ownerTypeLabel(detailReservation.owner_type)} · ${detailReservation.owner_id || '-'}` },
           { key: 'lease', label: '初始租期', children: durationLabel(detailReservation.lease_seconds) },
           { key: 'starts', label: '开始时间', children: formatTime(detailReservation.starts_at) },
@@ -271,7 +280,7 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
 
       <Modal
         open={extendFor !== null}
-        title="续租"
+        title={extendFor ? `续租 · ${reservationResourceLabel(extendFor)}` : '续租'}
         okText="续租"
         cancelText="取消"
         confirmLoading={extend.isPending}
@@ -289,7 +298,7 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
 
       <ReasonActionModal
         open={releaseFor !== null}
-        title={releaseFor ? `${releaseFor.status === 'pending' ? '取消' : '释放'}预约 · ${shortID(releaseFor.id)}` : ''}
+        title={releaseFor ? `${releaseFor.status === 'pending' ? '取消' : '释放'}预约 · ${reservationResourceLabel(releaseFor)}` : ''}
         description={releaseFor?.status === 'pending' ? '取消后不再等待设备，操作会写入审计。' : '释放后预约结束；健康设备返回可用状态。设备数据不会因为释放预约而自动清空。'}
         danger={releaseFor?.status === 'pending'}
         confirmLoading={release.isPending}

@@ -30,8 +30,8 @@ import {
 import type { ConsoleRole, DevicePool, Device, DeviceHost, DeviceImage } from '../api/generated/models'
 import { unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { androidVersionLabel, shortID } from '../api/format'
-import { deviceHeadline, deviceModelLabel, deviceSystemLabel, hostLabel } from '../api/describe'
+import { androidVersionLabel } from '../api/format'
+import { deviceHeadline, deviceModelLabel, deviceSystemLabel, hostLabel, hostOSLabel } from '../api/describe'
 import { lifecycleStatusLabel, poolStatusLabel } from '../api/labels'
 import { apiErrorText, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
@@ -66,7 +66,7 @@ function templateOption(device: Device, imageByID: Map<string, DeviceImage>, hos
       <span className="resource-option">
         <span className="resource-option-title">{deviceHeadline(device, { imageByID })}</span>
         <span className="resource-option-meta">
-          {device.serial} · 宿主机 {hostLabel(device.host_id, hostByID)} · {shortID(device.id)}
+          {device.serial} · 宿主机 {hostLabel(device.host_id, hostByID)}
         </span>
       </span>
     ),
@@ -303,7 +303,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       title: '设备池', dataIndex: 'name', width: 220, render: (value: string, pool) => (
         <div className="primary-resource">
           <Typography.Text strong>{value}</Typography.Text>
-          <small>{pool.platform === 'ios' ? 'iOS' : 'Android'} · {shortID(pool.id)}</small>
+          <small>{pool.platform === 'ios' ? 'iOS 模拟器池' : 'Android 模拟器池'} · 目标 {pool.total_target} 台</small>
         </div>
       ),
     },
@@ -346,7 +346,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             )}
             {template && (
               <span className="table-secondary">
-                模板所在宿主机：{hostLabel(template.host_id, hostByID)}
+                宿主机：{hostLabel(template.host_id, hostByID)} · {hostOSLabel(hostByID.get(template.host_id)) || '系统待上报'}
               </span>
             )}
           </Space>
@@ -372,7 +372,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             })
           }}
         >
-          配置
+          配置 / 改名
         </Button>
       ) : <Typography.Text type="secondary">只读</Typography.Text>,
     },
@@ -419,8 +419,17 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       >
         <Typography.Title level={5}>基本信息</Typography.Title>
         <Form<PoolFormValues> form={poolForm} layout="vertical" onFinish={savePool}>
-          <Form.Item name="name" label="设备池名称" extra={configPool?.platform === 'ios' ? '名称只是管理标识；当前用于扩容的 iOS 版本和机型显示在列表“扩容配置”中。' : '名称只是管理标识；当前用于扩容的 Android 版本和机型显示在列表“扩容配置”中。'} rules={[{ required: true, message: '请输入池名称' }]}>
-            <Input maxLength={128} />
+          <Form.Item
+            name="name"
+            label="设备池显示名称"
+            extra="建议使用“平台/系统 + 机型 + 用途”，例如：Android 15-Pixel-回归池、iOS 26-iPhone17Pro-冒烟池。运行中心会直接显示这个名称。"
+            rules={[
+              { required: true, whitespace: true, message: '请输入设备池名称' },
+              { min: 2, max: 40, message: '名称请保持在 2–40 个字符' },
+              { pattern: /^[\p{L}\p{N}][\p{L}\p{N} ._\-/]*$/u, message: '可使用中英文、数字、空格、短横线和下划线' },
+            ]}
+          >
+            <Input maxLength={40} showCount placeholder="例如：Android 15-Pixel-回归池" />
           </Form.Item>
           <Space size={16} wrap>
             <Form.Item name="default_lease_seconds" label="默认租期（秒）" rules={[{ required: true }]}>
@@ -506,7 +515,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             type="success"
             style={{ marginBottom: 12 }}
             message={`扩容将沿用：${deviceModelLabel(baseDevice)} · ${deviceSystemLabel(baseDevice, imageByID)}`}
-            description={`模板设备 ${baseDevice.serial} · 宿主机 ${hostLabel(baseDevice.host_id, hostByID)} · 设备编号 ${baseDevice.id}。只有健康设备才能作为模板；模板被删除或隔离后扩容会暂停，需要重新选择。`}
+            description={`模板设备 ${baseDevice.serial} · 宿主机 ${hostLabel(baseDevice.host_id, hostByID)}。只有健康设备才能作为模板；完整编号可在设备详情中复制。`}
           />
         )}
         {!configPool.base_device_id && (

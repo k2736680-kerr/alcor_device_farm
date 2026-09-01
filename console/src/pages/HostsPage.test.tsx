@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
@@ -56,6 +56,31 @@ describe('HostsPage platform consistency', () => {
     const detail = await screen.findByRole('dialog', { name: /宿主机详情/ })
     expect(within(detail).getByText('内部地址')).toBeInTheDocument()
     expect(within(detail).getByText('10.0.0.1')).toBeInTheDocument()
+  })
+
+  it('renames a host with a memorable operator-facing name', async () => {
+    let submittedName = ''
+    server.use(http.get('/api/v1/device-hosts/:id', () => HttpResponse.json({
+      request_id: 'req_host_detail', data: sampleHosts[0], error: null,
+    })))
+    server.use(http.put('/api/v1/device-hosts/:id', async ({ request }) => {
+      const body = await request.json() as { name: string }
+      submittedName = body.name
+      return HttpResponse.json({ request_id: 'req_rename_host', data: { ...sampleHosts[0], name: body.name }, error: null })
+    }))
+    const user = userEvent.setup()
+    renderWithProviders(<HostsPage />)
+
+    const hostRow = (await screen.findByText('kvm-01')).closest('tr')
+    await user.click(within(hostRow as HTMLElement).getByRole('button', { name: /改\s*名/ }))
+    const dialog = await screen.findByRole('dialog', { name: /修改宿主机名称/ })
+    const input = within(dialog).getByLabelText('宿主机显示名称')
+    await user.clear(input)
+    await user.type(input, '上海测试-KVM-01')
+    await user.click(within(dialog).getByRole('button', { name: /保\s*存/ }))
+
+    await waitFor(() => expect(submittedName).toBe('上海测试-KVM-01'))
+    expect(await screen.findByText(/宿主机名称已更新/)).toBeInTheDocument()
   })
 
   it('offers a retry and recovers after the host list fails to load', async () => {

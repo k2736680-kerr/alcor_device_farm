@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
@@ -54,6 +54,25 @@ describe('ReservationsPage platform wording and lease behavior', () => {
     renderWithProviders(<ReservationsPage />)
 
     await user.click(await screen.findByRole('button', { name: /释\s*放/ }))
+    expect(await screen.findByRole('dialog', { name: '释放预约 · default-android' })).toBeInTheDocument()
+    expect(screen.queryByText('reservation_000000000001')).not.toBeInTheDocument()
     expect(screen.getByText('释放后预约结束；健康设备返回可用状态。设备数据不会因为释放预约而自动清空。')).toBeInTheDocument()
+  })
+
+  it('keeps internal reservation and pool ids in details instead of the daily table', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<ReservationsPage />)
+
+    const poolName = await screen.findByText('default-android')
+    const row = poolName.closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('人工预约')).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByText('reservation_000000000001')).not.toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByText('pool_000000000000001')).not.toBeInTheDocument()
+
+    await user.click(within(row as HTMLElement).getByRole('button', { name: /详\s*情/ }))
+    const detail = await screen.findByRole('dialog', { name: '预约详情 · default-android' })
+    expect(within(detail).getByText('reservation_000000000001')).toBeInTheDocument()
+    expect(within(detail).getByText('pool_000000000000001')).toBeInTheDocument()
   })
 })

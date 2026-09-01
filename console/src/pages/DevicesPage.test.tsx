@@ -271,6 +271,8 @@ describe('DevicesPage device categories', () => {
     expect(row).not.toBeNull()
     await user.click(within(row as HTMLElement).getByRole('button', { name: /更\s*多/ }))
     await user.click(await screen.findByRole('menuitem', { name: '编辑配置' }))
+    const reimageDialog = await screen.findByRole('dialog', { name: '编辑配置/更换镜像 · Android 模拟器 · Android 14（API 34）' })
+    expect(within(reimageDialog).queryByText('device_00000000000001')).not.toBeInTheDocument()
     expect(await screen.findByText('重装会清空这台模拟器里的 APK 和全部设备数据')).toBeInTheDocument()
     await user.type(screen.getByPlaceholderText('例如：需要验证 Android 15 兼容性'), '验证不同运行规格')
     await user.click(screen.getByRole('button', { name: '下一步' }))
