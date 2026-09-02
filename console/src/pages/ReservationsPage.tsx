@@ -61,7 +61,7 @@ interface ExtendFormValues {
   additional_seconds: number
 }
 
-export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
+export function ReservationsPage({ role = 'admin', userID = 'admin' }: { role?: ConsoleRole; userID?: string }) {
   const { message } = AntApp.useApp()
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
@@ -130,8 +130,15 @@ export function ReservationsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     if (!releaseFor) {
       return
     }
+    const ownedManualReservation = releaseFor.owner_type === 'manual' && releaseFor.owner_id === userID
     release.mutate(
-      { id: releaseFor.id, data: { reason } },
+      {
+        id: releaseFor.id,
+        data: {
+          reason,
+          ...(role === 'admin' && !ownedManualReservation ? { force: true } : {}),
+        },
+      },
       {
         onSuccess: (data) => {
           message.success(`${releaseFor.status === 'pending' ? '预约已取消' : '预约已释放'}（请求编号：${responseRequestID(data)}）`)

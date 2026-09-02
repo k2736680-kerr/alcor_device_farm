@@ -414,7 +414,15 @@ func (service *Service) Release(
 	if err != nil {
 		return View{}, translateRepositoryError(err)
 	}
-	if current.ClientID != clientID {
+	// A manual reservation may be created through Alcor's trusted service
+	// gateway on behalf of a Console user. In that case the persisted
+	// idempotency client is "service", while the authenticated Console actor is
+	// still the reservation owner. Treat that as an ordinary owner release.
+	// Cross-owner releases remain limited to the explicit force path, whose API
+	// authorization only permits Console administrators (or a trusted service).
+	ownedByActor := current.ClientID == clientID ||
+		(actor.Type == audit.ActorConsole && current.OwnerType == "manual" && current.OwnerID == actor.ID)
+	if !ownedByActor && !input.Force {
 		return View{}, ErrForbidden
 	}
 	if current.Status == domain.ReservationActive {
@@ -802,7 +810,11 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	if deviceState.Lifecycle() != domain.DeviceQuarantined {
+	// Reconciler/Host heartbeats may have already restored the device to ready
+	// before the reservation is closed. Device transitions are intentionally
+	// strict, so avoid an invalid ready -> ready transition and keep release and
+	// Reaper retries idempotent.
+	if lifecycle := deviceState.Lifecycle(); lifecycle != domain.DeviceQuarantined && lifecycle != domain.DeviceReady {
 		if err := deviceState.Transition(domain.DeviceReady, "reservation released; device data retained", now); err != nil {
 			return repository.ReservationRecord{}, err
 		}

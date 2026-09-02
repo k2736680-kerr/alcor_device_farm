@@ -75,4 +75,40 @@ describe('ReservationsPage platform wording and lease behavior', () => {
     expect(within(detail).getByText('reservation_000000000001')).toBeInTheDocument()
     expect(within(detail).getByText('pool_000000000000001')).toBeInTheDocument()
   })
+
+  it('asks the backend to force release a reservation owned by another client when an admin releases it', async () => {
+    const user = userEvent.setup()
+    let releaseBody: unknown
+    server.use(http.post('/api/v1/device-reservations/:id/releases', async ({ request }) => {
+      releaseBody = await request.json()
+      return HttpResponse.json({ request_id: 'req_force_release', data: { ...sampleReservations[0], status: 'force_released' }, error: null })
+    }))
+
+    renderWithProviders(<ReservationsPage role="admin" userID="admin-user" />)
+
+    await user.click(await screen.findByRole('button', { name: /释\s*放/ }))
+    const dialog = await screen.findByRole('dialog', { name: '释放预约 · default-android' })
+    await user.type(within(dialog).getByRole('textbox'), '管理员清理平台预约')
+    await user.click(within(dialog).getByRole('button', { name: /确\s*认/ }))
+
+    expect(releaseBody).toEqual({ reason: '管理员清理平台预约', force: true })
+  })
+
+  it('uses a normal release for the current Console owner', async () => {
+    const user = userEvent.setup()
+    let releaseBody: unknown
+    server.use(http.post('/api/v1/device-reservations/:id/releases', async ({ request }) => {
+      releaseBody = await request.json()
+      return HttpResponse.json({ request_id: 'req_owner_release', data: { ...sampleReservations[0], status: 'released' }, error: null })
+    }))
+
+    renderWithProviders(<ReservationsPage role="admin" userID="alcor-user-01" />)
+
+    await user.click(await screen.findByRole('button', { name: /释\s*放/ }))
+    const dialog = await screen.findByRole('dialog', { name: '释放预约 · default-android' })
+    await user.type(within(dialog).getByRole('textbox'), '本人结束远控预约')
+    await user.click(within(dialog).getByRole('button', { name: /确\s*认/ }))
+
+    expect(releaseBody).toEqual({ reason: '本人结束远控预约' })
+  })
 })

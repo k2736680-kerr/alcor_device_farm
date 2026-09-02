@@ -578,7 +578,10 @@ func (ReservationRepository) CloseActive(
 			-- administrator-managed emulator data or queue a factory rebuild.
 			lifecycle_status=CASE WHEN lifecycle_status='quarantined' THEN lifecycle_status ELSE 'ready' END,
 			updated_at=$2::timestamptz
-		WHERE id=$1 AND lifecycle_status IN ('busy','reserved','quarantined')`, deviceID, closedAt)
+		-- Host/Reconciler may already have converged an overdue device to ready.
+		-- Updating ready to ready is deliberate here: the affected-row check must
+		-- still prove that the bound device exists before the reservation closes.
+		WHERE id=$1 AND lifecycle_status IN ('ready','busy','reserved','quarantined')`, deviceID, closedAt)
 	if err != nil {
 		return ReservationRecord{}, fmt.Errorf("release retained device: %w", err)
 	}

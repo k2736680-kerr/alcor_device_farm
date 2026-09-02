@@ -175,7 +175,7 @@ function AuthenticatedConsole({
             <Route path="/hosts" element={<HostsPage role={session.user.role} />} />
             <Route path="/pools" element={<PoolsPage role={session.user.role} />} />
             <Route path="/devices" element={<DevicesPage role={session.user.role} />} />
-            <Route path="/reservations" element={<ReservationsPage role={session.user.role} />} />
+            <Route path="/reservations" element={<ReservationsPage role={session.user.role} userID={session.user.id} />} />
             <Route path="/health-events" element={<Navigate to="/devices?view=quarantined" replace />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

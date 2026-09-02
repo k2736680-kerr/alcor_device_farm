@@ -12,6 +12,7 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reaper"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/reservation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/scheduler"
@@ -102,6 +103,52 @@ func TestForceReleaseWritesReasonedAudit(t *testing.T) {
 	if action != "force_release_device_reservation" || reason != "operator stopped unsafe session" {
 		t.Fatalf("audit action=%s reason=%s", action, reason)
 	}
+}
+
+func TestConsoleOwnerCanReleaseManualReservationCreatedThroughService(t *testing.T) {
+	db := openTestDatabase(t)
+	service, active := seedActiveReservation(t, db, "console-owner")
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations
+		SET owner_type='manual',owner_id='admin-user' WHERE id=$1`, active.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Release(context.Background(), audit.Console("other-user"), "console-denied-key", active.ID,
+		"request_console_denied", reservation.ReleaseInput{Reason: "attempt another owner release"}); !errors.Is(err, reservation.ErrForbidden) {
+		t.Fatalf("cross-owner normal release error=%v", err)
+	}
+
+	value, err := service.Release(context.Background(), audit.Console("admin-user"), "console-release-key", active.ID,
+		"request_console_release", reservation.ReleaseInput{Reason: "manual remote control ended"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Status != domain.ReservationReleased {
+		t.Fatalf("console owner release status=%s", value.Status)
+	}
+	assertStateCounts(t, db, active.ID, "released")
+}
+
+func TestReaperClosesReservationWhenDeviceIsAlreadyReady(t *testing.T) {
+	db := openTestDatabase(t)
+	service, active := seedActiveReservation(t, db, "already-ready")
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='ready' WHERE id=$1`, *active.DeviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_reservations
+		SET starts_at=clock_timestamp()-interval '700 seconds',expires_at=clock_timestamp()-interval '31 seconds'
+		WHERE id=$1`, active.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := reaper.New(service, 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	value, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Status != domain.ReservationExpired {
+		t.Fatalf("reaped status=%s", value.Status)
+	}
+	assertStateCounts(t, db, active.ID, "expired")
 }
 
 func TestTwoReapersCloseExpiredReservationOnce(t *testing.T) {
