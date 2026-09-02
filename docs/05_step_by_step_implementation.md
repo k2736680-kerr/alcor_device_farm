@@ -81,6 +81,8 @@
 | DF-057 | 全仓不可达代码与旧策略清理 | completed | DF-056 |
 | DF-058 | 独立控制台安全保持登录 | completed | DF-057 |
 | DF-059 | 修复正式控制台密码哈希并完成真实登录验收 | completed | DF-058 |
+| DF-060 | 设备可读名称与指定设备排队 | completed | DF-059 |
+| DF-061 | 修复跨入口挂断与过期预约回收 | completed | DF-060 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -603,6 +605,14 @@
 产出：设备名称迁移与管理 API、Console 详情编辑、指定设备预约契约、Scheduler/API/前端测试、正式部署和 `docs/evidence/DF-060/acceptance.md`。
 
 验收：管理员可在设备详情编辑 2～40 字符名称且所有当前设备域引用刷新为新名称；页面没有单独“改名”操作；指定空闲设备只分配该设备；指定使用中设备保持 pending，原预约释放后自动获得该设备；不属于 Pool、已删除/停止/隔离的目标被拒绝；未传目标字段的旧调用继续按 Pool 调度。Go 全量测试、Console 测试和生产构建通过，30.171 部署健康且无活动预约被中断。
+
+### DF-061 修复跨入口挂断与过期预约回收
+
+实施：修复 Alcor 服务入口代用户创建人工预约后，独立 Console 因 `client_id` 不同而无法由同一用户挂断的问题；管理员跨预约归属释放时由 Console 显式提交 `force=true`，继续复用既有权限和强制释放审计。修复 Host/Reconciler 已把设备恢复为 `ready` 后，Release/Reaper 重复执行 `ready -> ready` 并因数据库受影响行检查失败而让预约永久保持 active 的问题。不得放宽非本人普通释放、operator/viewer 强制释放或设备状态机的其他边界。
+
+产出：Reservation Service/Repository 幂等收敛修复、管理员 Console 释放参数、PostgreSQL 集成测试、Console 组件测试、30.171 正式备份与真实远控申请/挂断回归，以及 `docs/evidence/DF-061/acceptance.md`。
+
+验收：同一 Console 用户可释放由 Alcor 可信网关代建的 manual Reservation；非本人普通释放仍返回 forbidden；管理员跨归属释放进入 `force_released` 并记录 `force_release_device_reservation`；过期 active Reservation 即使绑定设备已是 `ready`，Reaper 仍关闭 Session、把 Reservation 置为 expired 并保持设备 `ready/healthy`。Go 全量测试、`go vet`、Console 全量测试和生产构建通过；正式卡住预约自动收敛，新增 Android 远控申请/连接/明确挂断完整通过，STF 与 iOS 隧道无回归。
 
 ## 12. 单任务完成定义
 
