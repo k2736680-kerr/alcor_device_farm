@@ -1,12 +1,26 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	providerdocker "github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker"
 )
+
+type componentRunnerFunc func(context.Context) error
+
+func (run componentRunnerFunc) Run(ctx context.Context) error { return run(ctx) }
+
+func TestRunComponentsTreatsMissingIOSFenceAsNil(t *testing.T) {
+	want := errors.New("runtime stopped")
+	err := runComponents(context.Background(), componentRunnerFunc(func(context.Context) error { return want }), nil)
+	if !errors.Is(err, want) {
+		t.Fatalf("runComponents() error=%v, want %v", err, want)
+	}
+}
 
 func TestAgentConcurrencyDefaultsToSingleSlotAndSupportsConfiguration(t *testing.T) {
 	t.Setenv("DEVICE_FARM_AGENT_CONCURRENCY", "")

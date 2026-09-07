@@ -195,7 +195,7 @@ func defaultIOSDataRoot() string {
 
 type componentRunner interface{ Run(context.Context) error }
 
-func runComponents(ctx context.Context, runtime componentRunner, fence componentRunner) error {
+func runComponents(ctx context.Context, runtime componentRunner, fence *iossessionfence.Server) error {
 	if fence == nil {
 		return runtime.Run(ctx)
 	}
