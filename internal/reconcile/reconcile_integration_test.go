@@ -473,6 +473,43 @@ func TestPersistentSystemQuarantineQueuesOnlyNonDestructiveRestart(t *testing.T)
 	}
 }
 
+func TestIdleBootingUnhealthyDeviceQueuesOnlyNonDestructiveRestart(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET
+		lifecycle_status='booting',health_status='unhealthy' WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil || result.RestartsQueued != 1 {
+		t.Fatalf("self-healing result=%+v error=%v", result, err)
+	}
+	var providerRef string
+	var restartCommands, destructiveCommands int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT provider_ref FROM devices
+		WHERE id='device_0000000000001'`).Scan(&providerRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT
+		count(*) FILTER (WHERE command_type='restart' AND payload->>'operation_source'='self_healing'),
+		count(*) FILTER (WHERE command_type IN ('delete','rebuild','create'))
+		FROM device_host_commands WHERE payload->>'device_id'='device_0000000000001'`).Scan(&restartCommands, &destructiveCommands); err != nil {
+		t.Fatal(err)
+	}
+	if providerRef == "" || restartCommands != 1 || destructiveCommands != 0 {
+		t.Fatalf("provider_ref=%q restart commands=%d destructive commands=%d", providerRef, restartCommands, destructiveCommands)
+	}
+	if result, err = service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 0 {
+		t.Fatalf("duplicate self-healing result=%+v error=%v", result, err)
+	}
+}
+
 func TestAutomaticHostMaintenanceUsesRecoveryGraceBeforeQuarantine(t *testing.T) {
 	environment := newEnvironment(t, true)
 	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_hosts SET status='maintenance',

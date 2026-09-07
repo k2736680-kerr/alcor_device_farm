@@ -28,12 +28,13 @@ type containerSpec struct {
 }
 
 type container struct {
-	ID     string
-	Name   string
-	Image  string
-	State  string
-	Labels map[string]string
-	Ports  map[int]int
+	ID        string
+	Name      string
+	Image     string
+	State     string
+	OOMKilled bool
+	Labels    map[string]string
+	Ports     map[int]int
 }
 
 type imageMetadata struct {

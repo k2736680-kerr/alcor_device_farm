@@ -224,7 +224,7 @@ func TestAgentKeepsReadyEmulatorWhenSTFRegistrationIsTemporarilyUnavailable(t *t
 
 func TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady(t *testing.T) {
 	booting := providers.Snapshot{State: providers.StateRunning, Health: providers.Health{Online: true}}
-	if providerLifecycle(booting) != "booting" || providerHealth(booting) != "unknown" {
+	if providerLifecycle(booting) != "booting" || providerHealth(booting) != "unhealthy" {
 		t.Fatalf("booting lifecycle=%s health=%s", providerLifecycle(booting), providerHealth(booting))
 	}
 	ready := providers.Snapshot{State: providers.StateRunning, Health: providers.Health{

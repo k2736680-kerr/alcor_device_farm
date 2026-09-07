@@ -147,7 +147,7 @@ func (client *Client) Release(ctx context.Context, serial string) error {
 	var response operationResponse
 	if err := client.request(ctx, http.MethodDelete, "/api/v1/user/devices/"+url.PathEscape(serial), nil, "STF_RELEASE_FAILED", &response); err != nil {
 		var typed *Error
-		if errors.As(err, &typed) && typed.StatusCode == http.StatusForbidden && client.deviceIsNotUsing(ctx, serial) {
+		if errors.As(err, &typed) && typed.StatusCode == http.StatusForbidden && client.deviceHasNoActiveUsage(ctx, serial) {
 			return nil
 		}
 		return err
@@ -159,20 +159,20 @@ func (client *Client) Release(ctx context.Context, serial string) error {
 }
 
 // STF 3.7.9 returns 403 "Not owned by you" when a repeated release reaches a
-// device that is already free. Only accept that response after inventory
-// confirms the same device is not in use; a 403 for a device claimed by
-// another user must remain an error.
-func (client *Client) deviceIsNotUsing(ctx context.Context, serial string) bool {
+// device that is already free or no longer present. Only an online device that
+// is still marked as used can retain a meaningful claim; its 403 must remain
+// an error because another user may own it.
+func (client *Client) deviceHasNoActiveUsage(ctx context.Context, serial string) bool {
 	devices, err := client.Inventory(ctx)
 	if err != nil {
 		return false
 	}
 	for _, device := range devices {
 		if device.Serial == serial {
-			return !device.Using
+			return !device.Present || !device.Using
 		}
 	}
-	return false
+	return true
 }
 
 func (client *Client) RemoteConnect(ctx context.Context, serial string) (RemoteConnection, error) {

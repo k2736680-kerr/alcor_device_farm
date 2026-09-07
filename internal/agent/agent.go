@@ -861,6 +861,9 @@ func providerHealth(snapshot providers.Snapshot) string {
 	if snapshot.Ready() {
 		return "healthy"
 	}
+	if snapshot.State == providers.StateRunning {
+		return "unhealthy"
+	}
 	if len(snapshot.Health.Components) > 0 {
 		for _, status := range snapshot.Health.Components {
 			if status == providers.ProbeFailed {
@@ -869,10 +872,7 @@ func providerHealth(snapshot providers.Snapshot) string {
 		}
 		return "unknown"
 	}
-	if snapshot.State != providers.StateRunning || snapshot.Health.Online {
-		return "unknown"
-	}
-	return "unhealthy"
+	return "unknown"
 }
 
 func snapshotResult(snapshot providers.Snapshot) map[string]any {

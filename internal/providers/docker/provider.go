@@ -351,6 +351,9 @@ func (provider *Provider) find(ctx context.Context, operation providers.Operatio
 
 func (provider *Provider) inspectContainerHealth(ctx context.Context, value container) (providers.Health, error) {
 	health := providers.Health{Platform: providers.PlatformAndroid, Online: value.State == "running"}
+	if value.OOMKilled {
+		return health, providerError(providers.OperationInspectHealth, "EMULATOR_OOM_KILLED", "emulator container was OOM-killed", true, nil)
+	}
 	if !health.Online {
 		return health, providerError(providers.OperationInspectHealth, "DEVICE_NOT_RUNNING", "emulator container is not running", true, nil)
 	}

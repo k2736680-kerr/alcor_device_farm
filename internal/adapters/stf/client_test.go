@@ -130,7 +130,10 @@ func TestClientRejectsUnsafeConfigurationAndTreatsDeleteNotFoundAsReleased(t *te
 }
 
 func TestClientTreatsForbiddenReleaseAsIdempotentOnlyWhenInventoryIsFree(t *testing.T) {
+	var present atomic.Bool
 	var using atomic.Bool
+	var missing atomic.Bool
+	present.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.Method + " " + request.URL.Path {
 		case "DELETE /api/v1/user/devices/host:32771":
@@ -139,9 +142,13 @@ func TestClientTreatsForbiddenReleaseAsIdempotentOnlyWhenInventoryIsFree(t *test
 				"success": false, "description": "You cannot release this device. Not owned by you",
 			})
 		case "GET /api/v1/devices":
-			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{
-				"serial": "host:32771", "present": true, "ready": true, "using": using.Load(),
-			}}})
+			devices := []map[string]any{}
+			if !missing.Load() {
+				devices = append(devices, map[string]any{
+					"serial": "host:32771", "present": present.Load(), "ready": present.Load(), "using": using.Load(),
+				})
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": devices})
 		default:
 			http.NotFound(writer, request)
 		}
@@ -161,6 +168,16 @@ func TestClientTreatsForbiddenReleaseAsIdempotentOnlyWhenInventoryIsFree(t *test
 	var typed *Error
 	if !errors.As(err, &typed) || typed.StatusCode != http.StatusForbidden || typed.Code != "STF_RELEASE_FAILED" {
 		t.Fatalf("claimed-device release error=%#v", err)
+	}
+
+	present.Store(false)
+	if err := client.Release(context.Background(), "host:32771"); err != nil {
+		t.Fatalf("absent-device release error=%v", err)
+	}
+
+	missing.Store(true)
+	if err := client.Release(context.Background(), "host:32771"); err != nil {
+		t.Fatalf("missing-device release error=%v", err)
 	}
 }
 

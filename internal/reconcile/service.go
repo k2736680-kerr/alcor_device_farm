@@ -343,7 +343,8 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 }
 
 func schedulableLifecycle(lifecycle domain.DeviceLifecycleStatus) bool {
-	return lifecycle == domain.DeviceReady || lifecycle == domain.DeviceReserved || lifecycle == domain.DeviceBusy
+	return lifecycle == domain.DeviceBooting || lifecycle == domain.DeviceReady ||
+		lifecycle == domain.DeviceReserved || lifecycle == domain.DeviceBusy
 }
 
 func recoverDeviceLifecycle(device *domain.Device, assignmentTarget, reason string, now time.Time) error {

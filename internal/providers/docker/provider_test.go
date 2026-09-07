@@ -82,6 +82,34 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	}
 }
 
+func TestDockerProviderReportsOOMKilledBeforeADBProbe(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-oom")
+	if _, err := provider.Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), request.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	name, _, _ := resourceNames(request.ProviderRef)
+	value := engine.containers[name]
+	value.OOMKilled = true
+	engine.containers[name] = value
+
+	health, err := provider.InspectHealth(context.Background(), request.ProviderRef)
+	if providers.ErrorCode(err) != "EMULATOR_OOM_KILLED" || !health.Online || health.Ready() {
+		t.Fatalf("health=%#v error=%v code=%s", health, err, providers.ErrorCode(err))
+	}
+	discovered, err := provider.Discover(context.Background(), request.HostID)
+	if err != nil || len(discovered) != 1 || discovered[0].Ready() {
+		t.Fatalf("discovered=%#v error=%v", discovered, err)
+	}
+}
+
 func TestDockerProviderVerifiesConfiguredImageDigest(t *testing.T) {
 	engine := newFakeBackend()
 	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})

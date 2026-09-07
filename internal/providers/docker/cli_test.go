@@ -34,14 +34,14 @@ func TestCLIBackendCreatesContainerWithKVMResourceLimitsAndRandomADBPort(t *test
 	}
 }
 
-func TestCLIBackendInspectDecodesPublishedPortAndLabels(t *testing.T) {
-	runner := &recordingRunner{output: `[{"Id":"abc","Name":"/alcor-df-device","Config":{"Image":"android:2026.08","Labels":{"io.alcor.device-farm.managed":"true"}},"State":{"Status":"running"},"NetworkSettings":{"Ports":{"5555/tcp":[{"HostPort":"32771"}],"4723/tcp":[{"HostPort":"32772"}]}}}]`}
+func TestCLIBackendInspectDecodesPublishedPortLabelsAndOOMState(t *testing.T) {
+	runner := &recordingRunner{output: `[{"Id":"abc","Name":"/alcor-df-device","Config":{"Image":"android:2026.08","Labels":{"io.alcor.device-farm.managed":"true"}},"State":{"Status":"running","OOMKilled":true},"NetworkSettings":{"Ports":{"5555/tcp":[{"HostPort":"32771"}],"4723/tcp":[{"HostPort":"32772"}]}}}]`}
 	client := newCLIBackend("docker", runner)
 	value, err := client.InspectContainer(context.Background(), "alcor-df-device")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Name != "alcor-df-device" || value.State != "running" || value.Ports[5555] != 32771 || value.Ports[4723] != 32772 || value.Labels[labelManaged] != "true" {
+	if value.Name != "alcor-df-device" || value.State != "running" || !value.OOMKilled || value.Ports[5555] != 32771 || value.Ports[4723] != 32772 || value.Labels[labelManaged] != "true" {
 		t.Fatalf("container=%#v", value)
 	}
 }
