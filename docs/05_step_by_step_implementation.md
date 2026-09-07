@@ -83,6 +83,7 @@
 | DF-059 | 修复正式控制台密码哈希并完成真实登录验收 | completed | DF-058 |
 | DF-060 | 设备可读名称与指定设备排队 | completed | DF-059 |
 | DF-061 | 修复跨入口挂断与过期预约回收 | completed | DF-060 |
+| DF-062 | 修复 Emulator OOM 后的幽灵占用与原机恢复 | completed | DF-061、ADR-0029 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -613,6 +614,14 @@
 产出：Reservation Service/Repository 幂等收敛修复、管理员 Console 释放参数、PostgreSQL 集成测试、Console 组件测试、30.171 正式备份与真实远控申请/挂断回归，以及 `docs/evidence/DF-061/acceptance.md`。
 
 验收：同一 Console 用户可释放由 Alcor 可信网关代建的 manual Reservation；非本人普通释放仍返回 forbidden；管理员跨归属释放进入 `force_released` 并记录 `force_release_device_reservation`；过期 active Reservation 即使绑定设备已是 `ready`，Reaper 仍关闭 Session、把 Reservation 置为 expired 并保持设备 `ready/healthy`。Go 全量测试、`go vet`、Console 全量测试和生产构建通过；正式卡住预约自动收敛，新增 Android 远控申请/连接/明确挂断完整通过，STF 与 iOS 隧道无回归。
+
+### DF-062 修复 Emulator OOM 后的幽灵占用与原机恢复
+
+实施：延续 ADR-0029 的非破坏恢复约束，补齐 Docker `State.OOMKilled` 解析与 Provider 错误分类；Agent 将仍在运行但未通过 ADB、启动或 Appium 完整检查的 Emulator 上报为 `booting/unhealthy`，并把运行时 `docker` 映射为设备域 `docker_emulator`。Reconciler 对没有 create/rebuild 在途命令的空闲 `booting/unhealthy` 设备累计失败并隔离，随后只复用既有 restart Host Command。STF 对 inventory 已不存在或 `present=false` 的设备把重复 release 视为幂等完成，仍拒绝释放 `present=true && using=true` 的真实占用。修复 Docker 模式没有 iOS Session Fence 时 typed nil 被误执行造成的 Agent panic。
+
+产出：OOM 状态解析、Agent/Reconciler 健康收敛、STF 幽灵占用释放、Docker Agent 启动兼容回归、30.171 正式 Server/Agent 部署和 Android 真实 Appium 验收，以及 `docs/evidence/DF-062/acceptance.md`。未新增 API、表、migration、配置或自动 delete/rebuild/reimage/create。
+
+验收：正式过期 Reservation 和 Session 自动关闭；同一 Android Device ID、Provider ref、Pool membership、容器与数据卷保持不变；系统只产生一次 `operation_source=self_healing` 的 restart，破坏性命令为零。重启后 Docker `OOMKilled=false`，ADB、Android boot、STF 与 Appium `/source` 均通过，设备最终为 `ready/healthy`，开放 Reservation、Session 和在途 Host Command 均为零。Go 全量测试、`go vet`、真实 PostgreSQL Reconciler 集成测试和正式部署检查通过。
 
 ## 12. 单任务完成定义
 
