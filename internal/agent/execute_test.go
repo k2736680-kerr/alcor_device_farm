@@ -235,6 +235,15 @@ func TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady(t *testing.T) {
 	}
 }
 
+func TestHeartbeatUsesDomainProviderTypeForDocker(t *testing.T) {
+	if got := heartbeatProviderType(" Docker "); got != "docker_emulator" {
+		t.Fatalf("heartbeat provider type=%q", got)
+	}
+	if got := heartbeatProviderType("appium_device_farm_ios"); got != "appium_device_farm_ios" {
+		t.Fatalf("iOS heartbeat provider type=%q", got)
+	}
+}
+
 func TestAgentCreatePassesCapabilitiesAndPreservesProviderRetryability(t *testing.T) {
 	client := &completionClient{}
 	provider := &createFailureProvider{}

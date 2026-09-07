@@ -277,7 +277,7 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 		}
 		devices = append(devices, hostcommand.DiscoveredDevice{
 			ProviderRef: snapshot.ProviderRef, Serial: snapshot.Connection.Serial,
-			Platform: string(snapshot.Platform), DeviceKind: snapshot.DeviceKind, ProviderType: agent.config.ProviderType,
+			Platform: string(snapshot.Platform), DeviceKind: snapshot.DeviceKind, ProviderType: heartbeatProviderType(agent.config.ProviderType),
 			LifecycleStatus: providerLifecycle(snapshot), HealthStatus: providerHealth(snapshot),
 			Connection: connection, Capabilities: snapshot.Capabilities, Components: components,
 			RuntimeProfile: runtimeProfile,
@@ -847,6 +847,12 @@ func providerErrorRetryable(err error) bool {
 		return providerError.Retryable
 	}
 	return true
+}
+func heartbeatProviderType(providerType string) string {
+	if strings.EqualFold(strings.TrimSpace(providerType), "docker") {
+		return "docker_emulator"
+	}
+	return strings.ToLower(strings.TrimSpace(providerType))
 }
 func providerLifecycle(snapshot providers.Snapshot) string {
 	if snapshot.State == providers.StateRunning {
