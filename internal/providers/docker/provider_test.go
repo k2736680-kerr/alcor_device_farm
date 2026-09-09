@@ -98,7 +98,7 @@ func TestDockerProviderRestartWithProfilePreservesDataVolume(t *testing.T) {
 	}
 	_, _, volume := resourceNames(created.ProviderRef)
 	engine.volumes[volume]["restored-data"] = "keep"
-	profile := request.RuntimeProfile
+	profile := runtimeprofile.Default()
 	profile.ContainerMemoryMB = 7168
 	profile.GuestMemoryMB = 6144
 	if _, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile); err != nil {
