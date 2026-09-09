@@ -198,6 +198,22 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceRecycling {
 			continue
 		}
+		// A host reboot can leave an Android emulator reported as stopped/unknown
+		// even though its pool still requires the slot. This state is not
+		// schedulable and used to be skipped forever, requiring an operator to
+		// click Restart manually. Queue a non-destructive restart for managed
+		// pool devices; an explicit administrator Stop remains respected.
+		if device.Lifecycle == domain.DeviceStopped && device.Platform == "android" &&
+			device.HostStatus == domain.HostOnline && !device.OperationInFlight && !device.DeletionInFlight {
+			queued, err := service.queueUnexpectedStoppedRestart(ctx, device.ID)
+			if err != nil {
+				return result, err
+			}
+			if queued {
+				result.RestartsQueued++
+			}
+			continue
+		}
 		if device.Lifecycle == domain.DeviceQuarantined {
 			if device.Platform != "android" || !domain.IsSystemRecoverableHealthReason(device.HealthReason) {
 				continue
@@ -365,25 +381,49 @@ func recoverDeviceLifecycle(device *domain.Device, assignmentTarget, reason stri
 }
 
 func (service *Service) queueSelfHealingRestart(ctx context.Context, deviceID string) (bool, error) {
+	return service.queueRestart(ctx, deviceID, false)
+}
+
+func (service *Service) queueUnexpectedStoppedRestart(ctx context.Context, deviceID string) (bool, error) {
+	return service.queueRestart(ctx, deviceID, true)
+}
+
+func (service *Service) queueRestart(ctx context.Context, deviceID string, allowStopped bool) (bool, error) {
 	queued := false
 	err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
-		var hostID, providerRef, platform, healthReason string
+		var hostID, providerRef, platform, healthReason, latestManagementAction string
 		var lifecycle domain.DeviceLifecycleStatus
 		var health domain.HealthStatus
+		lifecyclePredicate := "d.lifecycle_status='quarantined'"
+		if allowStopped {
+			lifecyclePredicate = "d.lifecycle_status IN ('quarantined','stopped')"
+		}
 		err := tx.QueryRow(ctx, `SELECT d.host_id,d.provider_ref,d.platform,d.lifecycle_status,d.health_status,
-			COALESCE(d.health_reason,'') FROM devices d JOIN device_hosts h ON h.id=d.host_id
-			WHERE d.id=$1 AND d.lifecycle_status='quarantined' AND h.status='online' AND NOT h.draining
+			COALESCE(d.health_reason,''),COALESCE((SELECT c.command_type FROM device_host_commands c
+				WHERE c.payload->>'device_id'=d.id AND c.payload->>'operation_source'='management'
+				AND c.command_type IN ('stop','start','restart') AND c.status='succeeded'
+				ORDER BY c.completed_at DESC NULLS LAST,c.id DESC LIMIT 1),'')
+			FROM devices d JOIN device_hosts h ON h.id=d.host_id
+			WHERE d.id=$1 AND `+lifecyclePredicate+` AND h.status='online' AND NOT h.draining
+			AND EXISTS (SELECT 1 FROM device_pool_devices pd JOIN device_pools p ON p.id=pd.pool_id
+				WHERE pd.device_id=d.id AND pd.enabled AND p.platform='android' AND p.status='active' AND p.total_target>0)
 			AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
 			AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
 			AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
-			FOR UPDATE OF d`, deviceID).Scan(&hostID, &providerRef, &platform, &lifecycle, &health, &healthReason)
+			FOR UPDATE OF d`, deviceID).Scan(&hostID, &providerRef, &platform, &lifecycle, &health, &healthReason, &latestManagementAction)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if platform != "android" || (healthReason != domain.AgentReportedUnhealthyReason && !domain.IsSTFFailureReason(healthReason)) {
+		if platform != "android" {
+			return nil
+		}
+		if lifecycle == domain.DeviceQuarantined && (healthReason != domain.AgentReportedUnhealthyReason && !domain.IsSTFFailureReason(healthReason)) {
+			return nil
+		}
+		if lifecycle == domain.DeviceStopped && (!allowStopped || latestManagementAction == "stop") {
 			return nil
 		}
 		now, err := database.ClockNow(ctx, tx)
@@ -404,12 +444,19 @@ func (service *Service) queueSelfHealingRestart(ctx context.Context, deviceID st
 			return err
 		}
 		reason := "系统健康检查持续失败，非破坏重启原设备"
+		if lifecycle == domain.DeviceStopped {
+			reason = "活动设备池中的 Android 模拟器意外停止，系统自动非破坏重启原设备"
+		}
 		if aggregate.Health() != domain.HealthUnknown {
 			if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
 				return err
 			}
 		}
-		if err := aggregate.Transition(domain.DeviceProvisioning, reason, now); err != nil {
+		targetLifecycle := domain.DeviceProvisioning
+		if lifecycle == domain.DeviceStopped {
+			targetLifecycle = domain.DeviceBooting
+		}
+		if err := aggregate.Transition(targetLifecycle, reason, now); err != nil {
 			return err
 		}
 		commandID, err := service.newID()
