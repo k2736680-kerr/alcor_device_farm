@@ -390,6 +390,15 @@ func (service *Service) queueSelfHealingRestart(ctx context.Context, deviceID st
 		if err != nil {
 			return err
 		}
+		var runtimeProfileJSON []byte
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(d.runtime_profile_override,i.resource_config,'{}'::jsonb)
+			FROM devices d LEFT JOIN device_images i ON i.id=d.image_id WHERE d.id=$1`, deviceID).Scan(&runtimeProfileJSON); err != nil {
+			return err
+		}
+		runtimeProfile := map[string]any{}
+		if err := json.Unmarshal(runtimeProfileJSON, &runtimeProfile); err != nil {
+			return err
+		}
 		aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 		if err != nil {
 			return err
@@ -408,7 +417,8 @@ func (service *Service) queueSelfHealingRestart(ctx context.Context, deviceID st
 			return err
 		}
 		payload, _ := json.Marshal(map[string]any{"operation_source": "self_healing", "operation_state": string(aggregate.Lifecycle()),
-			"device_id": deviceID, "host_id": hostID, "provider_ref": providerRef, "previous_reason": healthReason})
+			"device_id": deviceID, "host_id": hostID, "provider_ref": providerRef, "previous_reason": healthReason,
+			"runtime_profile": runtimeProfile})
 		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
 			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
 			VALUES($1,$2,'restart',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload, "self-heal-restart-"+commandID); err != nil {

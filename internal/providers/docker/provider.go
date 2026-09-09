@@ -151,6 +151,10 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 }
 
 func (provider *Provider) create(ctx context.Context, request providers.CreateRequest, generation int) (providers.Snapshot, error) {
+	return provider.createWithOptions(ctx, request, generation, false)
+}
+
+func (provider *Provider) createWithOptions(ctx context.Context, request providers.CreateRequest, generation int, preserveResources bool) (providers.Snapshot, error) {
 	if request.RuntimeProfile == (runtimeprofile.Profile{}) {
 		request.RuntimeProfile = runtimeprofile.Default()
 	}
@@ -175,8 +179,10 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 	if !errors.Is(err, errNotFound) {
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot inspect existing emulator", true, err)
 	}
-	if err := provider.delete(ctx, request.ProviderRef); err != nil {
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot clean stale emulator resources", true, err)
+	if !preserveResources {
+		if err := provider.delete(ctx, request.ProviderRef); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot clean stale emulator resources", true, err)
+		}
 	}
 
 	capabilities, err := json.Marshal(request.Capabilities)
@@ -240,6 +246,38 @@ func (provider *Provider) Stop(ctx context.Context, providerRef string) (provide
 
 func (provider *Provider) Restart(ctx context.Context, providerRef string) (providers.Snapshot, error) {
 	return provider.changeState(ctx, providers.OperationRestart, providerRef, provider.backend.RestartContainer)
+}
+
+// RestartWithProfile replaces only the container while retaining its network
+// and data volume, so a changed runtime profile can be applied non-destructively.
+func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef string, profile runtimeprofile.Profile) (providers.Snapshot, error) {
+	value, err := provider.find(ctx, providers.OperationRestart, providerRef)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
+	request, generation, err := requestFromContainer(value)
+	if err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "DOCKER_METADATA_INVALID", "cannot read emulator metadata", false, err)
+	}
+	if err := profile.Validate(); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "INVALID_RUNTIME_PROFILE", err.Error(), false, err)
+	}
+	request.RuntimeProfile = profile
+	if err := provider.backend.RemoveContainer(ctx, value.Name); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot replace emulator container", true, err)
+	}
+	created, err := provider.createWithOptions(ctx, request, generation+1, true)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
+	if err := provider.backend.StartContainer(ctx, created.ProviderRef); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot start replaced emulator container", true, err)
+	}
+	value, err = provider.backend.InspectContainer(ctx, created.ProviderRef)
+	if err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_INSPECT_FAILED", "cannot inspect replaced emulator", true, err)
+	}
+	return provider.snapshot(value)
 }
 
 func (provider *Provider) Rebuild(ctx context.Context, providerRef string) (providers.Snapshot, error) {

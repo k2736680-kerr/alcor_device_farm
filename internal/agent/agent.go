@@ -404,7 +404,19 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		}
 	case "restart":
 		var snapshot providers.Snapshot
-		snapshot, err = agent.provider.Restart(ctx, providerRef)
+		if rawProfile := mapValue(command.Payload, "runtime_profile"); len(rawProfile) > 0 {
+			if profile, parseErr := runtimeprofile.Parse(rawProfile); parseErr != nil {
+				err = parseErr
+			} else if restartable, ok := agent.provider.(interface {
+				RestartWithProfile(context.Context, string, runtimeprofile.Profile) (providers.Snapshot, error)
+			}); ok {
+				snapshot, err = restartable.RestartWithProfile(ctx, providerRef, profile)
+			} else {
+				snapshot, err = agent.provider.Restart(ctx, providerRef)
+			}
+		} else {
+			snapshot, err = agent.provider.Restart(ctx, providerRef)
+		}
 		if err == nil {
 			snapshot, err = agent.waitReady(ctx, snapshot)
 		}

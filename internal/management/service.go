@@ -772,7 +772,8 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 		IdempotencyKey: commandKey, MaxAttempts: 3,
 		Payload: map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
 			"request_hash": requestHash,
-			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
+			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
+			"runtime_profile": current.EffectiveRuntimeProfile},
 		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
 	})
 }
