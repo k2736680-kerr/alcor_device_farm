@@ -56,6 +56,8 @@ else
 fi
 git -C "$source_dir" apply --check "$script_dir/patches/upstream.patch"
 git -C "$source_dir" apply "$script_dir/patches/upstream.patch"
+git -C "$source_dir" apply --check "$script_dir/patches/non_destructive_start.patch"
+git -C "$source_dir" apply "$script_dir/patches/non_destructive_start.patch"
 git -C "$source_dir" apply --check "$script_dir/../android16/uiautomator2-preinstall.patch"
 git -C "$source_dir" apply "$script_dir/../android16/uiautomator2-preinstall.patch"
 
