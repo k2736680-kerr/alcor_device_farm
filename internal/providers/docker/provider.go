@@ -272,10 +272,11 @@ func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef st
 	if err != nil {
 		return providers.Snapshot{}, err
 	}
-	if err := provider.backend.StartContainer(ctx, created.ProviderRef); err != nil {
+	name, _, _ := resourceNames(created.ProviderRef)
+	if err := provider.backend.StartContainer(ctx, name); err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot start replaced emulator container", true, err)
 	}
-	value, err = provider.backend.InspectContainer(ctx, created.ProviderRef)
+	value, err = provider.backend.InspectContainer(ctx, name)
 	if err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_INSPECT_FAILED", "cannot inspect replaced emulator", true, err)
 	}
