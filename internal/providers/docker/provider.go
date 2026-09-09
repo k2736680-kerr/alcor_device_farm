@@ -199,12 +199,14 @@ func (provider *Provider) createWithOptions(ctx context.Context, request provide
 		labelGeneration: strconv.Itoa(generation), labelCapabilities: string(capabilities), labelRuntimeProfile: string(encodedProfile),
 	}
 	resourceLabels := map[string]string{labelManaged: "true", labelProviderRef: request.ProviderRef, labelHostID: request.HostID}
-	if err := provider.backend.CreateNetwork(ctx, networkName, resourceLabels); err != nil {
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator network", true, err)
-	}
-	if err := provider.backend.CreateVolume(ctx, volumeName, resourceLabels); err != nil {
-		provider.cleanup(request.ProviderRef)
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
+	if !preserveResources {
+		if err := provider.backend.CreateNetwork(ctx, networkName, resourceLabels); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator network", true, err)
+		}
+		if err := provider.backend.CreateVolume(ctx, volumeName, resourceLabels); err != nil {
+			provider.cleanup(request.ProviderRef)
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
+		}
 	}
 	environment := cloneStringMap(provider.config.Environment)
 	graphics, renderDevice, err := provider.resolveGraphics(request.RuntimeProfile.Graphics)

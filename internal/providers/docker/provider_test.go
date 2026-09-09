@@ -82,6 +82,37 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	}
 }
 
+func TestDockerProviderRestartWithProfilePreservesDataVolume(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	_, _, volume := resourceNames(created.ProviderRef)
+	engine.volumes[volume]["restored-data"] = "keep"
+	profile := request.RuntimeProfile
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	if _, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile); err != nil {
+		t.Fatal(err)
+	}
+	if engine.volumes[volume]["restored-data"] != "keep" {
+		t.Fatal("profile restart removed the existing data volume")
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 6144") {
+		t.Fatalf("emulator args=%q", got)
+	}
+}
+
 func TestDockerProviderReportsOOMKilledBeforeADBProbe(t *testing.T) {
 	engine := newFakeBackend()
 	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
