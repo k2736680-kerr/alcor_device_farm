@@ -24,6 +24,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | Android 官方目录、Phone 硬件模板与受控创建 | Console 的四步 Phone 向导提交 `catalog_id`、硬件模板、Pool 和 runtime profile；持久化 provisioning job 自动复用或排队既有镜像准备，验证成功后事务登记 `create` Host Command，Agent 创建后沿既有健康链路收敛 | 新版 Alcor 只选择已可用 Device，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；job 幂等重试不得重复下载、创建设备或增加 Pool 目标；未验证、无 digest 的候选项不得写入 `device_images`；首期不暴露 TV、Wear、Automotive、Desktop、XR |
 | 长期设备与人工删除 | Reservation release 只归还 STF 占用并把 Device 直接恢复为 ready，保留 APK、账号、缓存和数据卷；管理员可删除无活动预约的 ready/quarantined/stopped Device，Server 原子退出 Pool 并降低该 Pool 目标，Agent 复用 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作 | 不允许删除 reserved/busy/recycling；不物理删库；不新增 Docker 直连；只有显式 rebuild/reimage 才恢复出厂 |
 | 长期虚拟设备自愈 | 已登记且未显式删除的 Emulator/Simulator 始终占用 Pool 登记容量；系统隔离优先重探原机，Android 持续故障且空闲时最多复用一次非破坏 `restart` Host Command，iOS 故障保留原 Simulator 等待恢复或人工处理 | 新版 Alcor 只看到当前可预约 Device；故障恢复属于设备域内部状态收敛 | 不因健康异常自动 delete/rebuild/reimage 或补建替代设备；不自动解除人工隔离；不清空 APK、账号、缓存、文件或数据卷 |
+| Android CPU/内存无损改配 | Console 只提交容器/Guest CPU 和内存；Server 复用动态容量与持久化 `restart` Host Command，Agent 复用 `RestartWithProfile` 保留数据卷替换容器并完成 ADB/STF/Appium 健康验证 | 新版 Alcor 仍只读取改配完成后的 Device 有效规格，不感知 Docker 实现 | 不接受 Image、数据盘、图形或任意参数；不提前提交目标规格；不把重启描述为热更新；失败只恢复旧规格一次 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Device Image 生命周期与默认选择 | Console 只展示可用 Image 作为默认选择；管理员可将未被活动设备或 Pool 默认引用的旧 Image 受控停用并查看归档 | 新版 Alcor 只会获得当前可用 Image；历史 Run/Artifact 不由本项目处理 | 不物理删除 Device/Image 审计链；不从 Server/浏览器删除 Registry 或 Docker 数据；切换默认值不重装已有设备 |
@@ -53,6 +54,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 - Android Studio 式创建向导、自动镜像准备、每 Pool 基础设备和基于其配置的干净扩容；
 - 持久化创建任务在宿主机容量不足时保存结构化 CPU、内存、磁盘或设备名额缺口，保持可重试并在容量恢复后自动继续；Console 必须即时显示中文原因，不得静默等待；
 - Reservation 释放后的数据保留，以及不经缩容配置的管理员直接删除；
+- Android Emulator 容器/Guest CPU 和内存的受控无损改配、失败恢复与异步状态；镜像、数据盘和图形模式仍走破坏性 reimage；
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；

@@ -79,7 +79,7 @@ export const sampleDevices: Device[] = [
     id: 'device_00000000000001', name: 'DaFit回归-Pixel9-01', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: { apiLevel: 36 },
     pool_id: 'pool_000000000000001', pool_name: 'default-android',
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
@@ -87,21 +87,21 @@ export const sampleDevices: Device[] = [
     id: 'device_00000000000002', name: 'DaFit回归-Pixel9-02', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5556', lifecycle_mode: 'rebuild', serial: 'emulator-5556', capabilities: {},
     pool_id: 'pool_000000000000001', pool_name: 'default-android',
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'busy', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:01:00Z', updated_at: '2026-08-06T00:01:00Z',
   },
   {
     id: 'device_00000000000003', name: '故障设备-Pixel9-03', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5558', lifecycle_mode: 'rebuild', serial: 'emulator-5558', capabilities: {},
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'quarantined', health_status: 'unhealthy', health_reason: 'health check failed', consecutive_failures: 3,
     created_at: '2026-08-06T00:02:00Z', updated_at: '2026-08-06T00:02:00Z',
   },
   {
     id: 'device_00000000000004', name: '历史设备-Pixel9-04', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5560', lifecycle_mode: 'rebuild', serial: 'emulator-5560', capabilities: {},
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'deleted', health_status: 'unhealthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:03:00Z', updated_at: '2026-08-06T00:03:00Z',
   },
@@ -219,6 +219,10 @@ export const handlers = [
   http.post('/api/v1/devices/:id/reimages', ({ params }) => {
     const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
     return HttpResponse.json({ request_id: 'req_reimage_device', data: { ...device, lifecycle_status: 'provisioning', reimage_status: 'pending' }, error: null }, { status: 202 })
+  }),
+  http.post('/api/v1/devices/:id/runtime-profile-updates', ({ params }) => {
+    const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
+    return HttpResponse.json({ request_id: 'req_runtime_profile_update', data: { ...device, lifecycle_status: 'provisioning', runtime_profile_update_status: 'pending' }, error: null }, { status: 202 })
   }),
   http.post('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_start', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'connecting', url: undefined }, error: null,

@@ -826,7 +826,7 @@ func (service *Service) ReimageDeviceAudited(ctx context.Context, id string, inp
 	if err != nil {
 		return Device{}, ErrInvalidArgument
 	}
-	capacityResult, err := service.store.CheckDeviceReimageCapacity(ctx, current, currentProfile, targetProfile, targetImage.ID)
+	capacityResult, err := service.store.CheckDeviceReplacementCapacity(ctx, current, currentProfile, targetProfile, targetImage.ID)
 	if err != nil {
 		return Device{}, err
 	}
@@ -873,6 +873,83 @@ func (service *Service) ReimageDeviceAudited(ctx context.Context, id string, inp
 		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
 		RequireNoActiveReservation: true, RequireNoActiveCommand: true, Reimage: true,
 		PendingImageID: targetImage.ID, PendingRuntimeProfile: targetProfile.Map(),
+	})
+}
+
+func (service *Service) UpdateDeviceRuntimeProfileAudited(ctx context.Context, id string, input DeviceRuntimeProfileUpdateInput, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "update_device_runtime_profile", input.Reason)
+	if err != nil {
+		return Device{}, err
+	}
+	if len(strings.TrimSpace(idempotencyKey)) < 8 {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	requestHash := operationStructuredRequestHash("runtime_profile_update", current.ID, input)
+	commandKey := operationCommandKey("runtime-profile-update", event.ActorID, idempotencyKey)
+	if replayed, found, replayErr := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "restart", requestHash); replayErr != nil {
+		return Device{}, replayErr
+	} else if found {
+		return replayed, nil
+	}
+	if current.Platform != "android" || current.DeviceKind != "emulator" || current.ProviderType != "docker_emulator" || current.ImageID == nil {
+		return Device{}, ErrInvalidArgument
+	}
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped && current.LifecycleStatus != domain.DeviceQuarantined {
+		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceProvisioning)}
+	}
+	currentProfile, err := runtimeprofile.Parse(current.EffectiveRuntimeProfile)
+	if err != nil {
+		return Device{}, ErrInvalidArgument
+	}
+	targetValues := currentProfile.Map()
+	targetValues["container_cpu_cores"] = input.ContainerCPUCores
+	targetValues["container_memory_mb"] = input.ContainerMemoryMB
+	targetValues["guest_cpu_cores"] = input.GuestCPUCores
+	targetValues["guest_memory_mb"] = input.GuestMemoryMB
+	targetProfile, err := runtimeprofile.Parse(targetValues)
+	if err != nil || targetProfile == currentProfile {
+		return Device{}, ErrInvalidArgument
+	}
+	capacityResult, err := service.store.CheckDeviceReplacementCapacity(ctx, current, currentProfile, targetProfile, *current.ImageID)
+	if err != nil {
+		return Device{}, err
+	}
+	if !capacityResult.Fits {
+		return Device{}, &CapacityError{Result: capacityResult}
+	}
+
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
+	if err != nil {
+		return Device{}, err
+	}
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, input.Reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceProvisioning, input.Reason, time.Now().UTC()); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	payload := map[string]any{
+		"operation_source": "management", "operation_kind": "runtime_profile_update", "operation_state": current.LifecycleStatus,
+		"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
+		"runtime_profile": targetProfile.Map(), "rollback": map[string]any{"runtime_profile": currentProfile.Map()},
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: "restart", IdempotencyKey: commandKey, MaxAttempts: 1,
+		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true, RuntimeProfileUpdate: true,
+		PendingRuntimeProfile: targetProfile.Map(),
 	})
 }
 

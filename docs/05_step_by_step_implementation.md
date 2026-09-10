@@ -623,6 +623,16 @@
 
 验收：正式过期 Reservation 和 Session 自动关闭；同一 Android Device ID、Provider ref、Pool membership、容器与数据卷保持不变；系统只产生一次 `operation_source=self_healing` 的 restart，破坏性命令为零。重启后 Docker `OOMKilled=false`，ADB、Android boot、STF 与 Appium `/source` 均通过，设备最终为 `ready/healthy`，开放 Reservation、Session 和在途 Host Command 均为零。Go 全量测试、`go vet`、真实 PostgreSQL Reconciler 集成测试和正式部署检查通过。
 
+### DF-063 Android CPU 和内存无损改配
+
+状态：completed。
+
+实施：按 ADR-0030 新增只接受容器/Android CPU 和内存的受控 Device API。Server 复用动态容量、PostgreSQL Host Command、幂等和审计；Agent 复用 Docker Provider `RestartWithProfile` 保留数据卷替换容器，并在 ADB、STF、Appium 全部健康后提交有效规格。目标失败时用同一数据卷恢复旧规格一次。Console 将“调整 CPU/内存”与“更换镜像/重建数据”分开；镜像、数据盘和图形模式继续走清空数据的 reimage。
+
+产出：ADR-0030、migration、OpenAPI、Management/Agent/Host Command 编排、Console 分流、自动化测试、`10.0.30.171` 真实 Linux KVM 验收和 `docs/evidence/DF-063/acceptance.md`。
+
+验收：纯 CPU/内存修改不删除数据卷，Device ID、Pool membership、APK、应用数据和文件保持；Docker 限额与 Android Guest 参数更新；使用中、存在在途命令、非法规格或容量不足时在替换前拒绝；目标失败恢复旧规格，恢复失败隔离；镜像或数据盘修改仍明确清空；Go 全量测试、静态检查、Console 测试和生产构建通过，正式 Server/Agent/Console 发布后设备回到 `ready/healthy`。
+
 ## 12. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：

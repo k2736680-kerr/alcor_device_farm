@@ -678,6 +678,13 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 				return err
 			}
 		}
+		if operation.RuntimeProfileUpdate {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET pending_image_id=NULL,pending_runtime_profile=$2,
+				runtime_profile_update_status='pending',runtime_profile_update_error=NULL,updated_at=clock_timestamp() WHERE id=$1`,
+				operation.Device.ID, mustJSON(operation.PendingRuntimeProfile)); err != nil {
+				return err
+			}
+		}
 		value, err = scanDevice(tx.QueryRow(ctx, deviceSelect+` WHERE devices.id=$1`, operation.Device.ID))
 		if err != nil {
 			return err
@@ -711,7 +718,7 @@ func (store *Store) QueueDeviceOperation(ctx context.Context, operation manageme
 	return value, normalize(err)
 }
 
-func (store *Store) CheckDeviceReimageCapacity(ctx context.Context, device management.Device, current, target runtimeprofile.Profile, imageID string) (capacity.Result, error) {
+func (store *Store) CheckDeviceReplacementCapacity(ctx context.Context, device management.Device, current, target runtimeprofile.Profile, imageID string) (capacity.Result, error) {
 	var capacityRaw, usedRaw, pendingRaw []byte
 	var status domain.HostStatus
 	var draining, imageCached bool
@@ -824,6 +831,7 @@ const deviceSelect = `SELECT devices.id,devices.name,devices.host_id,devices.pla
     devices.lifecycle_mode,devices.serial,devices.stf_serial,devices.adb_endpoint,devices.appium_endpoint,devices.capabilities,
     devices.runtime_profile_override,COALESCE(devices.runtime_profile_override,device_image.resource_config,'{}'::jsonb),
     devices.pending_image_id,devices.pending_runtime_profile,devices.reimage_status,devices.reimage_error,
+    devices.runtime_profile_update_status,devices.runtime_profile_update_error,
     devices.lifecycle_status,devices.health_status,devices.health_reason,devices.consecutive_failures,devices.created_at,devices.updated_at
     FROM devices LEFT JOIN device_images device_image ON device_image.id=devices.image_id`
 
@@ -876,6 +884,7 @@ func scanDevice(row rowScanner) (management.Device, error) {
 	var capabilities, override, effective, pending []byte
 	err := row.Scan(&v.ID, &v.Name, &v.HostID, &v.Platform, &v.ImageID, &v.PoolID, &v.PoolName, &v.IsPoolBase, &v.DeviceKind, &v.ProviderType, &v.ProviderRef, &v.LifecycleMode, &v.Serial, &v.STFSerial, &v.ADBEndpoint, &v.AppiumEndpoint,
 		&capabilities, &override, &effective, &v.PendingImageID, &pending, &v.ReimageStatus, &v.ReimageError,
+		&v.RuntimeProfileUpdateStatus, &v.RuntimeProfileUpdateError,
 		&v.LifecycleStatus, &v.HealthStatus, &v.HealthReason, &v.ConsecutiveFailures, &v.CreatedAt, &v.UpdatedAt)
 	if err == nil {
 		err = json.Unmarshal(capabilities, &v.Capabilities)

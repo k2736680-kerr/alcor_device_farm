@@ -91,6 +91,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -已验证 Device Image 的受控停用、默认隐藏和设备池默认镜像选择；复用既有 Image 状态机、Pool Image 关系、设备域审计和 Console，不物理删除历史 Device/Image，也不新增镜像仓库实现；
 -Phone 硬件模板目录和受控创建向导；硬件模板只描述 Android SDK `avdmanager` 可识别的 Phone Profile，创建仍复用既有 Host Command、Host Agent、Docker Emulator Provider、容量预检和 ADB/STF/Appium 健康链路；
 -长期设备保留、Pool 基础设备和直接删除；复用现有 Reservation/STF release、Device 状态机、Warm Pool、Host Command 与 Docker Provider，不新增业务设备快照、Appium 执行或 Docker 直连；
+-Android Emulator 的 CPU/内存无损改配；复用现有 `RestartWithProfile`、持久化 Host Command、容量预检、健康门禁和设备域审计，只新增受控 API、异步状态与 Console 分流，不接受镜像、数据盘或任意容器参数；
 -仅用于端到端证明的DaFit Harness。
 
 ## 5. 名称相近但职责不同的能力
@@ -105,6 +106,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 | STF 原生 Web 远控 | STF 原生 Web 页面 | 按 ADR-0013 由 Console 编排短租约和短时 Web 登录后打开 STF 原生单设备页；不展示 `remoteConnect` TCP 地址，也不实现画面流、触控、日志或文件协议 |
 | 动态容量预检 | Docker/cgroup 与 Host 操作系统资源 | Docker 和操作系统只提供事实；设备农场根据已登记设备、在途命令和每台有效规格做调度预留，不复制容器运行时 |
 | Emulator 运行规格和重装 | Android Emulator/Docker 参数 | Console 只保存、校验并编排 CPU、内存、分辨率、GPU 与镜像选择；实际创建、删除和启动仍由既有 Host Agent/Provider 完成 |
+| Emulator CPU/内存无损改配 | Docker 容器限制和 Android Emulator 启动参数 | Server 只编排允许的四个资源字段，Agent 复用 Provider 保留数据卷替换容器；不实现 Docker、Emulator、Appium 或 STF 能力 |
 
 ## 6. 开发审查规则
 
@@ -151,6 +153,8 @@ DF-056 按 ADR-0029 复用现有健康探针、Agent heartbeat、Host Command、
 DF-057 不新增设备能力，只删除经生产入口、测试入口、构建入口和静态调用图共同证明不可达的旧实现。DF-053 的 iOS 自动删除补建完成分支、事件/审计翻译和兼容原因在 ADR-0029 生效且正式历史清零后不再保留；Warm Pool 的管理员显式缩容链路必须继续存在。Go 领域对象只保留实际调用的构造器和事件接口；Console 继续复用 OpenAPI 生成代码、Orval、现有 E2E fixture 和共享资源描述函数，不手改生成文件来伪造精简。
 
 DF-058 复用既有 `device_console_sessions`、HttpOnly/SameSite Cookie、CSRF 校验、Argon2id 用户文件和注销吊销链路，只把控制台会话的绝对有效期与空闲有效期统一延长为 30 天。浏览器不保存或读取明文密码，不新增用户表、密码接口、认证 Provider 或兼容分支；用户主动退出、会话到期、服务端吊销或用户配置变化后仍必须重新认证。
+
+DF-063 按 ADR-0030 复用现有 Docker Provider `RestartWithProfile`、Host Command、Server/Agent 双重容量预检、ADB/STF/Appium 健康门禁和设备域审计。允许新增的只有四字段资源更新 API、持久化处理状态、失败恢复编排和 Console 操作分流；不得接受镜像、数据盘、图形、显示或任意 Docker/Emulator 参数，不得直接访问 Docker Socket，也不得复制 DaFit 执行能力。
 
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 

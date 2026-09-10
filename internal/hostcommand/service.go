@@ -792,12 +792,13 @@ func (service *Service) RecoverExpiredOnce(ctx context.Context) (Command, error)
 }
 
 type managementOperationResult struct {
-	Platform         string `json:"platform"`
-	State            string `json:"state"`
-	Generation       int    `json:"generation"`
-	ReimageApplied   bool   `json:"reimage_applied"`
-	RollbackRestored bool   `json:"rollback_restored"`
-	Connection       struct {
+	Platform                    string `json:"platform"`
+	State                       string `json:"state"`
+	Generation                  int    `json:"generation"`
+	ReimageApplied              bool   `json:"reimage_applied"`
+	RuntimeProfileUpdateApplied bool   `json:"runtime_profile_update_applied"`
+	RollbackRestored            bool   `json:"rollback_restored"`
+	Connection                  struct {
 		Serial         string `json:"serial"`
 		ProviderID     string `json:"provider_id"`
 		ADBEndpoint    string `json:"adb_endpoint"`
@@ -831,6 +832,7 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	deviceID := commandPayloadString(payload, "device_id")
 	providerRef := commandPayloadString(payload, "provider_ref")
 	expectedState := domain.DeviceLifecycleStatus(commandPayloadString(payload, "operation_state"))
+	operationKind := commandPayloadString(payload, "operation_kind")
 	if len(deviceID) < 16 || providerRef == "" || expectedState == "" {
 		return ErrInvalidArgument
 	}
@@ -844,8 +846,10 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		}
 		return err
 	}
+	runtimeProfileHeartbeatAdvanced := operationKind == "runtime_profile_update" && expectedState == domain.DeviceProvisioning &&
+		(lifecycle == domain.DeviceBooting || lifecycle == domain.DeviceReady || lifecycle == domain.DeviceQuarantined)
 	if lifecycle != expectedState && !(record.CommandType == "rebuild" &&
-		expectedState == domain.DeviceProvisioning && lifecycle == domain.DeviceBooting) {
+		expectedState == domain.DeviceProvisioning && lifecycle == domain.DeviceBooting) && !runtimeProfileHeartbeatAdvanced {
 		return nil
 	}
 	now, err := database.ClockNow(ctx, tx)
@@ -855,8 +859,11 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if record.CommandType == "delete" {
 		return service.reconcileManagementDelete(ctx, tx, record, deviceID, lifecycle, health, now)
 	}
-	if commandPayloadString(payload, "operation_kind") == "reimage" {
+	if operationKind == "reimage" {
 		return service.reconcileManagementReimage(ctx, tx, record, payload, deviceID, lifecycle, health, now)
+	}
+	if operationKind == "runtime_profile_update" {
+		return service.reconcileManagementRuntimeProfileUpdate(ctx, tx, record, payload, deviceID, lifecycle, health, now)
 	}
 	if record.CommandType == "stop" {
 		return service.reconcileManagementStop(ctx, tx, record, deviceID, lifecycle, health, now)
@@ -939,6 +946,119 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if err != nil {
 		return err
 	}
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
+	return err
+}
+
+func (service *Service) reconcileManagementRuntimeProfileUpdate(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
+	payload map[string]any, deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
+	var result managementOperationResult
+	resultValid := json.Unmarshal(record.Result, &result) == nil && validManagementOperationResult(result)
+	applied := record.Status == domain.CommandSucceeded && resultValid && result.RuntimeProfileUpdateApplied
+	restored := record.Status == domain.CommandFailed && resultValid && result.RollbackRestored
+	code := ""
+	if record.ErrorCode != nil {
+		code = *record.ErrorCode
+	}
+	if code == "" && !applied {
+		code = "RUNTIME_PROFILE_UPDATE_FAILED"
+	}
+	reason := "management runtime profile update applied"
+	if restored {
+		reason = code + ": target failed; previous runtime profile was restored"
+	}
+	if !applied && !restored {
+		reason = code + ": target and previous runtime profile restore did not produce a healthy device"
+	}
+
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if applied || restored {
+		if aggregate.Health() != domain.HealthHealthy {
+			if err := aggregate.UpdateHealth(domain.HealthHealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceProvisioning, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceProvisioning {
+			if err := aggregate.Transition(domain.DeviceBooting, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceBooting {
+			if err := aggregate.Transition(domain.DeviceReady, reason, now); err != nil {
+				return err
+			}
+		} else if aggregate.Lifecycle() != domain.DeviceReady {
+			return nil
+		}
+		if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
+			return err
+		}
+		if applied {
+			targetProfile, marshalErr := json.Marshal(mapValue(payload, "runtime_profile"))
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err := tx.Exec(ctx, `UPDATE devices SET runtime_profile_override=$2,pending_runtime_profile=NULL,
+				runtime_profile_update_status='idle',runtime_profile_update_error=NULL,
+				serial=$3,adb_endpoint=$4,appium_endpoint=$5,
+				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+				lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,last_seen_at=$10,updated_at=$10
+				WHERE id=$1 AND lifecycle_status=$11`, deviceID, targetProfile, result.Connection.Serial,
+				result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET pending_runtime_profile=NULL,
+				runtime_profile_update_status='failed',runtime_profile_update_error=$2,
+				serial=$3,adb_endpoint=$4,appium_endpoint=$5,
+				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+				lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,last_seen_at=$10,updated_at=$10
+				WHERE id=$1 AND lifecycle_status=$11`, deviceID, reason, result.Connection.Serial,
+				result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				return err
+			}
+		}
+	} else {
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET pending_runtime_profile=NULL,
+			runtime_profile_update_status='failed',runtime_profile_update_error=$2,
+			lifecycle_status=$3,health_status=$4,health_reason=$2,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,
+			deviceID, reason, aggregate.Lifecycle(), aggregate.Health(), now, lifecycle); err != nil {
+			return err
+		}
+	}
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	severity, eventType := "info", "device_runtime_profile_update_succeeded"
+	if !applied {
+		severity, eventType = "error", "device_runtime_profile_update_failed"
+	}
+	eventPayload, _ := json.Marshal(map[string]any{"command_id": record.ID, "command_type": record.CommandType,
+		"rollback_restored": restored, "error_code": code})
 	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
 		(id,device_id,source,event_type,severity,reason,payload,observed_at)
 		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)

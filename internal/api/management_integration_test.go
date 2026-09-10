@@ -589,6 +589,124 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	}
 }
 
+func TestDeviceRuntimeProfileUpdateCommitsOnlyAfterSuccessAndReconcilesRollback(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	ctx := context.Background()
+	hostID, imageID, deviceID := "host_profile_update_001", "image_profile_update_01", "device_profile_update_1"
+	oldProfile := `{"container_cpu_cores":4,"container_memory_mb":5120,"guest_cpu_cores":4,"guest_memory_mb":4096,"data_disk_mb":4096,"width":1080,"height":2400,"density_dpi":420,"vm_heap_mb":512,"graphics":"auto"}`
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_hosts
+		(id,name,host_type,capacity,used_capacity,status,draining,last_heartbeat_at)
+		VALUES($1,'profile-update-host','docker_emulator',
+		'{"resource_model":"dynamic_v1","cpu_cores":16,"memory_total_mb":16384,"memory_available_mb":11000,"disk_total_mb":200000,"disk_available_mb":100000,"device_slots":2,"collected_at":"2099-01-01T00:00:00Z"}',
+		'{"cpu_cores":4,"memory_mb":5120,"data_disk_mb":4096,"device_slots":1}','online',false,clock_timestamp())`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_images
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status)
+		VALUES($1,'android-profile','registry.example/alcor/android-emulator:api36',
+		'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',36,'x86_64','1080x2400',$2,'ready')`, imageID, oldProfile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
+		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status,last_seen_at)
+		VALUES($1,$2,$3,'emulator','docker_emulator','provider-profile-update','rebuild','serial-profile-update',
+		'{"platformName":"Android","apiLevel":36,"appiumUdid":"emulator-5554"}','ready','healthy',clock_timestamp())`, deviceID, hostID, imageID); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidBody := map[string]any{"container_cpu_cores": 4, "container_memory_mb": 6144, "guest_cpu_cores": 4,
+		"guest_memory_mb": 4096, "graphics": "software", "reason": "不能通过无损入口修改图形模式"}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", invalidBody, serviceToken, "profile-invalid-0001"), http.StatusBadRequest)
+
+	body := map[string]any{"container_cpu_cores": 4, "container_memory_mb": 6144, "guest_cpu_cores": 4,
+		"guest_memory_mb": 4096, "reason": "双设备并行时调整内存"}
+	response := environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0001")
+	assertStatus(t, response, http.StatusAccepted)
+	var pending management.Device
+	decodeData(t, response, &pending)
+	if pending.RuntimeProfileUpdateStatus != "pending" || pending.ReimageStatus != "idle" ||
+		int(pending.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 5120 ||
+		int(pending.PendingRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("pending update exposed target as effective: %#v", pending)
+	}
+	replay := environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0001")
+	assertStatus(t, replay, http.StatusAccepted)
+
+	commands, err := environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 2})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("claim=%#v err=%v", commands, err)
+	}
+	target := commands[0].Payload["runtime_profile"].(map[string]any)
+	rollback := commands[0].Payload["rollback"].(map[string]any)["runtime_profile"].(map[string]any)
+	if commands[0].CommandType != "restart" || commands[0].Payload["operation_kind"] != "runtime_profile_update" ||
+		int(target["container_memory_mb"].(float64)) != 6144 || int(target["data_disk_mb"].(float64)) != 4096 ||
+		int(rollback["container_memory_mb"].(float64)) != 5120 {
+		t.Fatalf("command=%#v", commands[0])
+	}
+	result := map[string]any{"runtime_profile_update_applied": true, "generation": 2,
+		"connection": map[string]any{"serial": "10.0.0.1:31001", "adb_endpoint": "10.0.0.1:31001", "appium_endpoint": "http://10.0.0.1:32001", "appium_udid": "emulator-5554"},
+		"health":     map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true}}
+	// Heartbeats may observe the old container disappearing before the Agent
+	// completes the replacement command. A successful result remains
+	// authoritative and must recover that transient quarantine atomically.
+	if _, err := environment.db.Pool().Exec(ctx, `UPDATE devices SET lifecycle_status='quarantined',health_status='unhealthy' WHERE id=$1`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "succeeded", Result: result}); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || applied.LifecycleStatus != "ready" || applied.HealthStatus != "unhealthy" ||
+		applied.RuntimeProfileUpdateStatus != "idle" || applied.PendingRuntimeProfile != nil ||
+		int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("applied=%#v err=%v", applied, err)
+	}
+
+	body["container_memory_mb"], body["guest_memory_mb"], body["reason"] = 7168, 5120, "验证目标失败后恢复旧规格"
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0002"), http.StatusAccepted)
+	commands, err = environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("rollback claim=%#v err=%v", commands, err)
+	}
+	result["runtime_profile_update_applied"], result["rollback_restored"] = false, true
+	if _, err := environment.db.Pool().Exec(ctx, `UPDATE devices SET lifecycle_status='ready',health_status='healthy' WHERE id=$1`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "failed", Result: result,
+		Error: &hostcommand.CompletionError{Code: "RUNTIME_PROFILE_TARGET_FAILED", Message: "target failed; old profile restored"}}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || restored.RuntimeProfileUpdateStatus != "failed" || restored.RuntimeProfileUpdateError == nil ||
+		restored.LifecycleStatus != "ready" || int(restored.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("restored=%#v err=%v", restored, err)
+	}
+
+	body["container_memory_mb"], body["reason"] = 8192, "验证目标和恢复都失败时隔离"
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0003"), http.StatusAccepted)
+	commands, err = environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("failed rollback claim=%#v err=%v", commands, err)
+	}
+	result["rollback_restored"] = false
+	if _, err := environment.db.Pool().Exec(ctx, `UPDATE devices SET lifecycle_status='quarantined',health_status='unhealthy' WHERE id=$1`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "failed", Result: result,
+		Error: &hostcommand.CompletionError{Code: "RUNTIME_PROFILE_ROLLBACK_FAILED", Message: "target and rollback failed"}}); err != nil {
+		t.Fatal(err)
+	}
+	quarantined, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || quarantined.LifecycleStatus != "quarantined" || quarantined.HealthStatus != "unhealthy" ||
+		quarantined.RuntimeProfileUpdateStatus != "failed" || quarantined.PendingRuntimeProfile != nil ||
+		int(quarantined.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("quarantined=%#v err=%v", quarantined, err)
+	}
+}
+
 func TestImageRetirementAndPoolDefaultSelection(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	ctx := context.Background()

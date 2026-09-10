@@ -238,6 +238,10 @@
 | AT-IMG-002 | P0 | 未选择其他版本时提高 Pool 目标 | 新设备全部使用默认 Android 16，不因目录中有四个 Image 而每版常驻一台 |
 | AT-RIM-001 | P0 | 空闲 Device 从 Android 16 重装为其他版本 | 同一 Device ID/Pool membership，旧数据清空，成功后原子更新 Image、规格和 Endpoint |
 | AT-RIM-002 | P0 | 重装目标启动或健康失败 | 尝试恢复旧配置一次；恢复成功保持旧 Image，恢复失败隔离，所有结果可审计 |
+| AT-RPU-001 | P0 | 空闲 Android Emulator 调整容器/Guest CPU 和内存 | 保留原数据卷替换容器；Device ID、Pool membership、APK、应用数据和文件不变；Docker/Guest 新规格和 ADB、STF、Appium 健康后原子生效 |
+| AT-RPU-002 | P0 | CPU/内存目标启动失败 | 使用同一数据卷恢复旧规格一次；恢复成功保持旧有效规格并记录失败，恢复失败隔离 |
+| AT-RPU-003 | P0 | 忙碌、在途命令、非法字段或容量不足时改配 | 替换容器前拒绝，不修改当前/待应用规格，不删除数据卷；API 不能接受 Image、数据盘、图形或任意参数 |
+| AT-RPU-004 | P0 | Console 分别修改 CPU/内存与 Image/数据盘 | CPU/内存提示短暂中断和保留数据；Image/数据盘继续二次确认清空并调用 reimage；混合修改不走无损路径 |
 
 ## 5. 非功能指标
 

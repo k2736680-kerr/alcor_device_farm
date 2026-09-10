@@ -661,7 +661,9 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),
 		d.consecutive_failures,h.status,
 		EXISTS (SELECT 1 FROM device_host_commands c
-			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
+			WHERE c.payload->>'device_id'=d.id
+			AND (c.command_type IN ('create','rebuild','reimage') OR
+				(c.command_type='restart' AND c.payload->>'operation_kind'='runtime_profile_update'))
 			AND c.status IN ('pending','leased')),
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type='delete'

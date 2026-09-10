@@ -360,6 +360,28 @@ func TestSTFReadinessStabilizationBlocksSchedulingUntilGraceExpires(t *testing.T
 	}
 }
 
+func TestRuntimeProfileUpdateInFlightBlocksHealthReconcile(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices
+		SET lifecycle_status='provisioning',health_status='unknown',health_reason=NULL
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	commandService := hostcommand.New(environment.db)
+	if _, err := commandService.Create(context.Background(), "host_000000000000001", "restart", map[string]any{
+		"operation_source": "management", "operation_kind": "runtime_profile_update",
+		"device_id": "device_0000000000001", "provider_ref": "mock-reconcile-device", "operation_state": "provisioning",
+	}, 1, "runtime-profile-update-in-flight"); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, environment.provider, nil, 1, 0, 0, testLogger())
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil || result.DevicesChecked != 0 || result.DevicesQuarantined != 0 || result.RestartsQueued != 0 {
+		t.Fatalf("reconcile result=%+v error=%v", result, err)
+	}
+	assertDevice(t, environment.db, "provisioning", "unknown", 0)
+}
+
 func TestRecoveredSTFVisibilityClearsReconcilerFailureBeforeQuarantine(t *testing.T) {
 	environment := newEnvironment(t, true)
 	visibility := &sequenceVisibility{failures: 1}

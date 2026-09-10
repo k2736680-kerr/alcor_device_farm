@@ -1,15 +1,73 @@
 diff --git a/cli/src/device/emulator.py b/cli/src/device/emulator.py
 --- a/cli/src/device/emulator.py
 +++ b/cli/src/device/emulator.py
-@@ -175,8 +175,10 @@ class Emulator(Device):
+@@ -75,13 +75,47 @@ class Emulator(Device):
+             self.form_field[Device.FORM_EMU_ADDITIONAL_ARGS]: self.additional_args
+         })
+ 
++    def _ensure_avd_reference(self) -> None:
++        avd_home = os.getenv("ANDROID_AVD_HOME", os.path.join(os.path.expanduser("~"), ".android", "avd"))
++        os.makedirs(avd_home, exist_ok=True)
++        reference_path = os.path.join(avd_home, f"{self.name}.ini")
++        with open(reference_path, 'w') as reference:
++            reference.write("avd.ini.encoding=UTF-8\n")
++            reference.write(f"path={self.path_emulator}\n")
++            reference.write(f"target=android-{self.api_level}\n")
++
++    def _remove_stale_avd_locks(self) -> None:
++        expected_name = f"@{self.name}".encode()
++        for process_id in os.listdir("/proc"):
++            if not process_id.isdigit():
++                continue
++            try:
++                with open(os.path.join("/proc", process_id, "cmdline"), "rb") as command_file:
++                    command = command_file.read()
++            except (FileNotFoundError, PermissionError, ProcessLookupError):
++                continue
++            if b"qemu-system" in command and expected_name in command:
++                raise RuntimeError(f"emulator '{self.name}' is already running")
++
++        removed = 0
++        for root, _, files in os.walk(self.path_emulator):
++            for file_name in files:
++                if not file_name.endswith(".lock"):
++                    continue
++                os.remove(os.path.join(root, file_name))
++                removed += 1
++        if removed:
++            self.logger.info(f"Removed {removed} stale AVD lock file(s)")
++
+     def is_initialized(self) -> bool:
+         import re
+         if os.path.exists(self.path_emulator_config):
+             self.logger.info("Config file exists")
++            expected_device = self.device.lower().replace(" ", "_")
+             with open(self.path_emulator_config, 'r') as f:
+-                if any(re.match(r'hw\.device\.name ?= ?{}'.format(self.device), line) for line in f):
++                if any(re.match(r'hw\.device\.name ?= ?{}'.format(re.escape(expected_device)), line) for line in f):
+                     self.logger.info("Selected device is already created")
++                    self._ensure_avd_reference()
+                     return True
+                 else:
+                     self.logger.info("Selected device is not created")
+@@ -142,6 +176,7 @@ class Emulator(Device):
+             subprocess.check_call(creation_cmd, shell=True)
+             self._add_skin()
+             self._use_override_config()
++            self._ensure_avd_reference()
+             self.logger.info(f"{self.device_type} is created!")
+ 
+     def change_permission(self) -> None:
+@@ -175,8 +210,11 @@ class Emulator(Device):
      def deploy(self):
          self.logger.info(f"Deploying the {self.device_type}")
-
+ 
++        self._remove_stale_avd_locks()
          basic_cmd = "emulator @{n}".format(n=self.name)
          basic_args = "-gpu swiftshader_indirect -accel on -writable-system -verbose"
 -        wipe_arg = "-wipe-data" if not self.is_initialized() else ""
 +        # Persistent devices retain user data across start/restart. Destructive
 +        # reset is performed only by the explicit rebuild/reimage lifecycle.
 +        wipe_arg = ""
-
+ 
          start_cmd = f"{basic_cmd} {basic_args} {wipe_arg} {self.additional_args}"

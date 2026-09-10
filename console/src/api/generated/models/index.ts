@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.5.0
+ * OpenAPI spec version: 2.6.0
  */
 
 export * from './aPIError';
@@ -132,6 +132,9 @@ export * from './deviceProvisioningSuccessResponse';
 export * from './deviceReimageInput';
 export * from './deviceReimageInputBody';
 export * from './deviceReimageStatus';
+export * from './deviceRuntimeProfileUpdateInput';
+export * from './deviceRuntimeProfileUpdateInputBody';
+export * from './deviceRuntimeProfileUpdateStatus';
 export * from './deviceSuccessResponse';
 export * from './discoveredDevice';
 export * from './discoveredDeviceCapabilities';

@@ -404,7 +404,9 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		}
 	case "restart":
 		var snapshot providers.Snapshot
-		if rawProfile := mapValue(command.Payload, "runtime_profile"); len(rawProfile) > 0 {
+		if stringValue(command.Payload, "operation_kind") == "runtime_profile_update" {
+			result, err = agent.updateRuntimeProfile(ctx, command.Payload)
+		} else if rawProfile := mapValue(command.Payload, "runtime_profile"); len(rawProfile) > 0 {
 			if profile, parseErr := runtimeprofile.Parse(rawProfile); parseErr != nil {
 				err = parseErr
 			} else if restartable, ok := agent.provider.(interface {
@@ -417,13 +419,13 @@ func (agent *Agent) execute(parent context.Context, command hostcommand.Command)
 		} else {
 			snapshot, err = agent.provider.Restart(ctx, providerRef)
 		}
-		if err == nil {
+		if err == nil && result == nil {
 			snapshot, err = agent.waitReady(ctx, snapshot)
 		}
-		if err == nil {
+		if err == nil && result == nil {
 			err = agent.registerSTF(ctx, snapshot)
 		}
-		if err == nil {
+		if err == nil && result == nil {
 			result = snapshotResult(snapshot)
 		}
 	case "rebuild":
@@ -582,6 +584,73 @@ func (agent *Agent) reimage(ctx context.Context, payload map[string]any) (map[st
 	}
 	return result, &providers.Error{Operation: providers.OperationRebuild, Code: "REIMAGE_ROLLBACK_FAILED",
 		Message: "目标镜像启动失败，恢复原镜像也失败", Retryable: false, Cause: errors.Join(targetErr, err)}
+}
+
+func (agent *Agent) updateRuntimeProfile(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	targetProfile, err := profileFromPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	rollbackProfile, err := runtimeprofile.Parse(mapValue(mapValue(payload, "rollback"), "runtime_profile"))
+	if err != nil {
+		return nil, err
+	}
+	restartable, ok := agent.provider.(interface {
+		RestartWithProfile(context.Context, string, runtimeprofile.Profile) (providers.Snapshot, error)
+	})
+	if !ok {
+		return nil, &providers.Error{Operation: providers.OperationRestart, Code: "RUNTIME_PROFILE_UPDATE_UNSUPPORTED", Message: "当前设备 Provider 不支持保留数据调整运行规格", Retryable: false}
+	}
+	providerRef := stringValue(payload, "provider_ref")
+	agent.resourceMu.Lock()
+	if err := agent.preflightReplacement(ctx, providerRef, targetProfile); err != nil {
+		agent.resourceMu.Unlock()
+		return nil, err
+	}
+	target, targetErr := restartable.RestartWithProfile(ctx, providerRef, targetProfile)
+	agent.resourceMu.Unlock()
+	providerRollbackStarted := providers.ErrorCode(targetErr) == "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED"
+	if targetErr == nil {
+		target, targetErr = agent.waitReady(ctx, target)
+	}
+	if targetErr == nil {
+		targetErr = agent.registerSTF(ctx, target)
+	}
+	if targetErr == nil {
+		result := snapshotResult(target)
+		result["runtime_profile_update_applied"] = true
+		return result, nil
+	}
+
+	rollbackContext, cancelRollback := context.WithTimeout(context.WithoutCancel(ctx), agent.config.CommandTimeout)
+	defer cancelRollback()
+	var restored providers.Snapshot
+	var rollbackErr error
+	if providerRollbackStarted {
+		restored = target
+	} else {
+		agent.resourceMu.Lock()
+		restored, rollbackErr = restartable.RestartWithProfile(rollbackContext, providerRef, rollbackProfile)
+		agent.resourceMu.Unlock()
+	}
+	if rollbackErr == nil {
+		restored, rollbackErr = agent.waitReady(rollbackContext, restored)
+	}
+	if rollbackErr == nil {
+		rollbackErr = agent.registerSTF(rollbackContext, restored)
+	}
+	if rollbackErr == nil {
+		result := snapshotResult(restored)
+		result["runtime_profile_update_applied"] = false
+		result["rollback_restored"] = true
+		result["target_error_code"] = providerErrorCode(targetErr)
+		return result, &providers.Error{Operation: providers.OperationRestart, Code: "RUNTIME_PROFILE_TARGET_FAILED",
+			Message: "目标运行规格启动失败，已恢复原规格并保留设备数据", Retryable: false, Cause: targetErr}
+	}
+	result := map[string]any{"runtime_profile_update_applied": false, "rollback_restored": false,
+		"target_error_code": providerErrorCode(targetErr), "rollback_error_code": providerErrorCode(rollbackErr)}
+	return result, &providers.Error{Operation: providers.OperationRestart, Code: "RUNTIME_PROFILE_ROLLBACK_FAILED",
+		Message: "目标运行规格启动失败，恢复原规格也失败", Retryable: false, Cause: errors.Join(targetErr, rollbackErr)}
 }
 
 func (agent *Agent) preflightReplacement(ctx context.Context, providerRef string, requested runtimeprofile.Profile) error {

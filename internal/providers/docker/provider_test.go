@@ -107,9 +107,72 @@ func TestDockerProviderRestartWithProfilePreservesDataVolume(t *testing.T) {
 	if engine.volumes[volume]["restored-data"] != "keep" {
 		t.Fatal("profile restart removed the existing data volume")
 	}
+	if engine.syncCalls != 1 || engine.stopCalls != 1 {
+		t.Fatalf("profile restart sync calls=%d stop calls=%d", engine.syncCalls, engine.stopCalls)
+	}
 	name, _, _ := resourceNames(created.ProviderRef)
 	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 6144") {
 		t.Fatalf("emulator args=%q", got)
+	}
+}
+
+func TestDockerProviderKeepsExistingContainerWhenDataFlushFails(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile-sync-failure")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	engine.syncFailure = true
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	_, err = provider.RestartWithProfile(context.Background(), created.ProviderRef, profile)
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_DATA_FLUSH_FAILED" {
+		t.Fatalf("error=%v code=%s", err, providers.ErrorCode(err))
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if engine.containers[name].State != "running" || engine.stopCalls != 0 {
+		t.Fatalf("container=%#v stop calls=%d", engine.containers[name], engine.stopCalls)
+	}
+}
+
+func TestDockerProviderRestoresPreviousContainerWhenProfileReplacementCannotBeCreated(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile-create-failure")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	_, _, volume := resourceNames(created.ProviderRef)
+	engine.volumes[volume]["account-and-cache"] = "keep"
+	engine.createFailures = 1
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	restored, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile)
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED" {
+		t.Fatalf("error=%v code=%s", err, providers.ErrorCode(err))
+	}
+	if restored.ProviderRef != created.ProviderRef || engine.volumes[volume]["account-and-cache"] != "keep" {
+		t.Fatalf("restored=%#v volume=%#v", restored, engine.volumes[volume])
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 4096") {
+		t.Fatalf("restored emulator args=%q", got)
 	}
 }
 
@@ -365,6 +428,10 @@ type fakeBackend struct {
 	nextADBPort    int
 	nextAppiumPort int
 	images         map[string]imageMetadata
+	createFailures int
+	syncCalls      int
+	stopCalls      int
+	syncFailure    bool
 }
 
 func newFakeBackend() *fakeBackend {
@@ -402,6 +469,10 @@ func (engine *fakeBackend) CreateVolume(_ context.Context, name string, labels m
 }
 
 func (engine *fakeBackend) CreateContainer(_ context.Context, spec containerSpec) error {
+	if engine.createFailures > 0 {
+		engine.createFailures--
+		return errors.New("injected container creation failure")
+	}
 	if _, exists := engine.containers[spec.Name]; exists {
 		return errors.New("container exists")
 	}
@@ -457,6 +528,7 @@ func (engine *fakeBackend) StopContainer(_ context.Context, name string) error {
 	}
 	value.State = "exited"
 	engine.containers[name] = value
+	engine.stopCalls++
 	return nil
 }
 
@@ -483,8 +555,15 @@ func (engine *fakeBackend) RemoveVolumes(_ context.Context, labels map[string]st
 	return nil
 }
 
-func (*fakeBackend) Exec(_ context.Context, _ string, args ...string) (string, error) {
+func (engine *fakeBackend) Exec(_ context.Context, _ string, args ...string) (string, error) {
 	last := args[len(args)-1]
+	if last == "sync" {
+		engine.syncCalls++
+		if engine.syncFailure {
+			return "", errors.New("injected data flush failure")
+		}
+		return "", nil
+	}
 	if last == "get-state" {
 		return "device", nil
 	}

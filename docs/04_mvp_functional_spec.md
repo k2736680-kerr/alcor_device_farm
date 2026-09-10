@@ -168,7 +168,7 @@ MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行�
 - 系统健康隔离先重探原设备，恢复后使用同一 Device ID、Provider 资源和数据卷回到可用；持续失败且空闲时最多自动执行一次非破坏 restart，失败后保留隔离等待人工；
 - 管理员可对没有活动预约的 `quarantined/stopped` Device 发起人工删除；必须填写原因、携带幂等键并二次确认，复用同一 delete Host Command。成功后退出 Pool、清空 Endpoint 并标记 `deleted`，失败保持 `quarantined/unhealthy`；
 - 缩容是最终一致的：占用中的最旧设备先等待释放，不能为立即达到数字而强制中断 Reservation。
-- 管理员可对空闲 Emulator 选择 Android 13～16 Image 并修改 CPU、内存、数据盘、分辨率和 GPU 模式；该操作会清空设备数据并通过 Host Command 重装，成功前不改变当前 Image/规格，失败时恢复或隔离。
+- 管理员可对空闲 Emulator 单独调整容器/Android CPU 和内存；该操作通过保留数据卷的 Host Command 重启，成功前不改变当前有效规格，失败时恢复旧规格或隔离。Image、数据盘、分辨率和 GPU 模式仍通过清空设备数据的 reimage 修改。
 
 后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。
 
@@ -339,6 +339,7 @@ DF-034 将契约版本提升为 `1.5.0`，新增 Device 当前/有效/待应用�
 - `POST /api/v1/devices/:id/restarts`
 - `POST /api/v1/devices/:id/rebuilds`
 - `POST /api/v1/devices/:id/reimages`
+- `POST /api/v1/devices/:id/runtime-profile-updates`
 - `POST /api/v1/devices/:id/quarantines`
 - `DELETE /api/v1/devices/:id/quarantines`
 

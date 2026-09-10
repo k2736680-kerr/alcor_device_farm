@@ -12,6 +12,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
@@ -155,6 +156,68 @@ func TestReimageRollbackGetsFreshDeadlineAfterTargetTimeout(t *testing.T) {
 		provider.currentImage != "previous_image_001" || provider.currentCapabilities["apiLevel"] != 35 {
 		t.Fatalf("result=%#v error=%v current image=%q capabilities=%#v", result, err, provider.currentImage, provider.currentCapabilities)
 	}
+}
+
+func TestRuntimeProfileUpdateRestoresPreviousProfileAfterTargetFailure(t *testing.T) {
+	provider := &runtimeProfileUpdateProvider{}
+	runtime := &Agent{config: Config{CommandTimeout: time.Second}, provider: provider}
+	result, err := runtime.updateRuntimeProfile(context.Background(), runtimeProfileUpdatePayload())
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_TARGET_FAILED" || result["rollback_restored"] != true || provider.calls != 2 {
+		t.Fatalf("result=%#v error=%v calls=%d", result, err, provider.calls)
+	}
+	if provider.profiles[0].ContainerMemoryMB != 6144 || provider.profiles[1].ContainerMemoryMB != 5120 {
+		t.Fatalf("profiles=%#v", provider.profiles)
+	}
+}
+
+func TestRuntimeProfileUpdateUsesProviderStartedRollbackOnlyOnce(t *testing.T) {
+	provider := &runtimeProfileUpdateProvider{rollbackAlreadyStarted: true}
+	runtime := &Agent{config: Config{CommandTimeout: time.Second}, provider: provider}
+	result, err := runtime.updateRuntimeProfile(context.Background(), runtimeProfileUpdatePayload())
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_TARGET_FAILED" || result["rollback_restored"] != true || provider.calls != 1 {
+		t.Fatalf("result=%#v error=%v calls=%d", result, err, provider.calls)
+	}
+}
+
+func runtimeProfileUpdatePayload() map[string]any {
+	target := runtimeprofile.Default()
+	target.ContainerMemoryMB = 6144
+	target.GuestMemoryMB = 5120
+	previous := runtimeprofile.Default()
+	return map[string]any{
+		"provider_ref": "emulator-profile", "runtime_profile": target.Map(),
+		"rollback": map[string]any{"runtime_profile": previous.Map()},
+	}
+}
+
+type runtimeProfileUpdateProvider struct {
+	providers.Provider
+	calls                  int
+	rollbackAlreadyStarted bool
+	profiles               []runtimeprofile.Profile
+}
+
+func (provider *runtimeProfileUpdateProvider) RestartWithProfile(_ context.Context, providerRef string, profile runtimeprofile.Profile) (providers.Snapshot, error) {
+	provider.calls++
+	provider.profiles = append(provider.profiles, profile)
+	snapshot := providers.Snapshot{DeviceID: "device-profile", HostID: "host-profile", Platform: providers.PlatformAndroid,
+		ProviderRef: providerRef, State: providers.StateRunning, Generation: provider.calls + 1, RuntimeProfile: profile}
+	if provider.calls == 1 {
+		if provider.rollbackAlreadyStarted {
+			return snapshot, &providers.Error{Operation: providers.OperationRestart, Code: "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED", Message: "old container restored"}
+		}
+		return providers.Snapshot{}, &providers.Error{Operation: providers.OperationRestart, Code: "EMULATOR_OPERATION_FAILED", Message: "target failed"}
+	}
+	return snapshot, nil
+}
+
+func (*runtimeProfileUpdateProvider) InspectHealth(context.Context, string) (providers.Health, error) {
+	return providers.Health{Online: true, ADBOnline: true, BootCompleted: true, AppiumHealthy: true}, nil
+}
+
+func (*runtimeProfileUpdateProvider) GetConnectionInfo(context.Context, string) (providers.ConnectionInfo, error) {
+	return providers.ConnectionInfo{Serial: "serial-profile", ADBEndpoint: "127.0.0.1:5555",
+		AppiumEndpoint: "http://127.0.0.1:4723", AppiumUDID: "emulator-5554"}, nil
 }
 
 type rollbackDeadlineProvider struct {

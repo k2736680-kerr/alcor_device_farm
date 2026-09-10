@@ -153,7 +153,7 @@ describe('PoolsPage pool capacity', () => {
       serial: '00000000-0000-0000-0000-000000000001', capabilities: {
         runtimeId: 'com.apple.CoreSimulator.SimRuntime.iOS-26-3',
         deviceTypeId: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', model: 'iPhone 17 Pro',
-      }, effective_runtime_profile: {}, reimage_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy',
+      }, effective_runtime_profile: {}, reimage_status: 'idle', runtime_profile_update_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy',
       consecutive_failures: 0, created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
     }
     let submitted: DevicePoolInput | undefined
@@ -197,7 +197,7 @@ describe('PoolsPage pool capacity', () => {
       id: 'device_android_unassigned', name: '待分配-Android-01', host_id: 'host_000000000000001', platform: 'android',
       device_kind: 'emulator', provider_type: 'docker_emulator', provider_ref: 'emulator-5570',
       lifecycle_mode: 'rebuild', serial: 'emulator-5570', capabilities: {}, effective_runtime_profile: {},
-      reimage_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
+      reimage_status: 'idle', runtime_profile_update_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
       created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
     }
     const assignedAndroid: Device = { ...unassignedAndroid, id: 'device_android_assigned', serial: 'emulator-5572', pool_id: 'pool_other', pool_name: '其他池' }

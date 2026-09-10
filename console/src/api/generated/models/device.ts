@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.5.0
+ * OpenAPI spec version: 2.6.0
  */
 import type { Identifier } from './identifier';
 import type { DevicePlatform } from './devicePlatform';
@@ -13,6 +13,7 @@ import type { DeviceLifecycleMode } from './deviceLifecycleMode';
 import type { DeviceCapabilities } from './deviceCapabilities';
 import type { EmulatorRuntimeProfile } from './emulatorRuntimeProfile';
 import type { DeviceReimageStatus } from './deviceReimageStatus';
+import type { DeviceRuntimeProfileUpdateStatus } from './deviceRuntimeProfileUpdateStatus';
 import type { DeviceLifecycleStatus } from './deviceLifecycleStatus';
 import type { HealthStatus } from './healthStatus';
 
@@ -48,6 +49,8 @@ export interface Device {
   pending_runtime_profile?: EmulatorRuntimeProfile;
   reimage_status: DeviceReimageStatus;
   reimage_error?: string;
+  runtime_profile_update_status: DeviceRuntimeProfileUpdateStatus;
+  runtime_profile_update_error?: string;
   lifecycle_status: DeviceLifecycleStatus;
   health_status: HealthStatus;
   health_reason?: string;

@@ -53,6 +53,7 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 	mux.HandleFunc("POST /api/v1/devices/{id}/restarts", handler.restartDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/rebuilds", handler.rebuildDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/reimages", handler.reimageDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/runtime-profile-updates", handler.updateDeviceRuntimeProfile)
 	mux.HandleFunc("POST /api/v1/devices/{id}/quarantines", handler.quarantineDevice)
 	mux.HandleFunc("DELETE /api/v1/devices/{id}/quarantines", handler.unquarantineDevice)
 }
@@ -411,6 +412,18 @@ func (handler *managementHandler) reimageDevice(writer http.ResponseWriter, requ
 		return
 	}
 	value, err := handler.service.ReimageDeviceAudited(request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
+	handler.write(writer, request, http.StatusAccepted, value, err)
+}
+func (handler *managementHandler) updateDeviceRuntimeProfile(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	var input management.DeviceRuntimeProfileUpdateInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.UpdateDeviceRuntimeProfileAudited(request.Context(), request.PathValue("id"), input,
 		requestActor(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
 	handler.write(writer, request, http.StatusAccepted, value, err)
 }

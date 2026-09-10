@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 2.5.0
+  version: 2.6.0
   x-contract-status: frozen
   x-contract-frozen-at: 2026-08-18
   x-platform-semantics: Case/Run/RunAttempt
@@ -896,6 +896,26 @@ paths:
         "500": {$ref: "#/components/responses/ServerError"}
         "503": {$ref: "#/components/responses/Error"}
         "504": {$ref: "#/components/responses/Error"}
+  /api/v1/devices/{id}/runtime-profile-updates:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: updateDeviceRuntimeProfile
+      description: Replaces an idle Docker Emulator container with new container and Android guest CPU/memory settings while preserving its network and data volume. The effective profile changes only after ADB, Android boot, Appium and STF readiness succeed; one rollback to the previous profile is attempted on failure.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/DeviceRuntimeProfileUpdateInput"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
   /api/v1/devices/{id}/remote-control:
     parameters: [{$ref: "#/components/parameters/ResourceID"}]
     post:
@@ -1231,6 +1251,11 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceReimageInput"}
+    DeviceRuntimeProfileUpdateInput:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/DeviceRuntimeProfileUpdateInput"}
     DeviceNameInput:
       required: true
       content:
@@ -2177,7 +2202,7 @@ components:
     Device:
       type: object
       additionalProperties: false
-      required: [id, name, host_id, platform, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, effective_runtime_profile, reimage_status, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
+      required: [id, name, host_id, platform, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, effective_runtime_profile, reimage_status, runtime_profile_update_status, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string, minLength: 2, maxLength: 40}
@@ -2205,6 +2230,8 @@ components:
         pending_runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         reimage_status: {type: string, enum: [idle, pending, failed]}
         reimage_error: {type: string}
+        runtime_profile_update_status: {type: string, enum: [idle, pending, failed]}
+        runtime_profile_update_error: {type: string}
         lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
         health_status: {$ref: "#/components/schemas/HealthStatus"}
         health_reason: {type: string}
@@ -2327,6 +2354,20 @@ components:
           minLength: 3
           maxLength: 500
           description: Required audit reason. The operation erases all APKs and device data.
+    DeviceRuntimeProfileUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [container_cpu_cores, container_memory_mb, guest_cpu_cores, guest_memory_mb, reason]
+      properties:
+        container_cpu_cores: {type: number, format: double, minimum: 1, maximum: 64}
+        container_memory_mb: {type: integer, format: int64, minimum: 2048, maximum: 262144}
+        guest_cpu_cores: {type: integer, minimum: 1, maximum: 32}
+        guest_memory_mb: {type: integer, format: int64, minimum: 1536, maximum: 261632}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Required audit reason. The operation restarts the emulator while preserving its data volume.
     DeviceNameInput:
       type: object
       additionalProperties: false

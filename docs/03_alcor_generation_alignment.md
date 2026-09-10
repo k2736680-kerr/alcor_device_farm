@@ -40,6 +40,7 @@
 - 控制台设置 Pool 总目标后，由设备域按 Host 实际 CPU、内存、磁盘和设备规格自动扩容或安全缩容；
 - Android 13～16 镜像目录、Image 默认运行规格、Device 规格覆盖和空闲 Emulator 受控重装；
 - 隔离或已停止设备可由 Device Farm 管理员通过设备域 Host Command 受控删除；该动作不创建 Alcor Run/Result，也不绕过目标容量；
+- Android CPU/内存无损改配属于 Device 管理运维动作，只更新设备域有效规格；新版 Alcor 不新增对应业务对象，也不感知 Host Command、Docker 容器或数据卷；
 - 受管 iOS Simulator 确定故障且没有活动占用时，可由设备域自动复用相同删除链清理并按 Pool 原目标补建；该自愈不改变 Alcor Reservation/RunAttempt 语义，不产生业务结果；
 - `/api/v1/device-*` 和 `/internal/v1` 的资源化接口方向；
 - 后续接真机只增加 Provider，不重做调度、预约和执行链路。

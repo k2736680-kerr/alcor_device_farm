@@ -134,6 +134,21 @@ func TestIOSRemoteControlDoesNotAddHostWindowCommands(t *testing.T) {
 	}
 }
 
+func TestDeviceRuntimeProfileUpdateMigrationContract(t *testing.T) {
+	root := filepath.Join("..", "..", "migrations")
+	up := readFile(t, filepath.Join(root, "000019_device_runtime_profile_update.up.sql"))
+	down := readFile(t, filepath.Join(root, "000019_device_runtime_profile_update.down.sql"))
+	for _, expected := range []string{
+		`ADD\s+COLUMN\s+runtime_profile_update_status`,
+		`ADD\s+COLUMN\s+runtime_profile_update_error`,
+		`CREATE\s+INDEX\s+ix_devices_runtime_profile_update_pending`,
+		`runtime_profile_update_status\s*=\s*'pending'`,
+	} {
+		assertSQLContains(t, up, expected)
+	}
+	assertSQLContains(t, down, `DROP\s+COLUMN\s+IF\s+EXISTS\s+runtime_profile_update_status`)
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)

@@ -211,7 +211,7 @@ func (provider *Provider) createWithOptions(ctx context.Context, request provide
 	environment := cloneStringMap(provider.config.Environment)
 	graphics, renderDevice, err := provider.resolveGraphics(request.RuntimeProfile.Graphics)
 	if err != nil {
-		provider.cleanup(request.ProviderRef)
+		provider.cleanupCreateFailure(ctx, request.ProviderRef, preserveResources)
 		return providers.Snapshot{}, err
 	}
 	applyRuntimeEnvironment(environment, request.RuntimeProfile, graphics)
@@ -227,15 +227,24 @@ func (provider *Provider) createWithOptions(ctx context.Context, request provide
 		Labels: labels, Environment: environment,
 	})
 	if err != nil {
-		provider.cleanup(request.ProviderRef)
+		provider.cleanupCreateFailure(ctx, request.ProviderRef, preserveResources)
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator container", true, err)
 	}
 	created, err := provider.backend.InspectContainer(ctx, name)
 	if err != nil {
-		provider.cleanup(request.ProviderRef)
+		provider.cleanupCreateFailure(ctx, request.ProviderRef, preserveResources)
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot inspect created emulator", true, err)
 	}
 	return provider.snapshot(created)
+}
+
+func (provider *Provider) cleanupCreateFailure(ctx context.Context, providerRef string, preserveResources bool) {
+	if !preserveResources {
+		provider.cleanup(providerRef)
+		return
+	}
+	name, _, _ := resourceNames(providerRef)
+	_ = provider.backend.RemoveContainer(ctx, name)
 }
 
 func (provider *Provider) Start(ctx context.Context, providerRef string) (providers.Snapshot, error) {
@@ -264,13 +273,33 @@ func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef st
 	if err := profile.Validate(); err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "INVALID_RUNTIME_PROFILE", err.Error(), false, err)
 	}
+	if value.State == "running" {
+		if _, err := provider.backend.Exec(ctx, value.Name, provider.adbArgs("shell", "sync")...); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "RUNTIME_PROFILE_DATA_FLUSH_FAILED", "cannot flush emulator data before replacing its container", false, err)
+		}
+		if err := provider.backend.StopContainer(ctx, value.Name); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot stop emulator before replacing its container", true, err)
+		}
+	}
 	request.RuntimeProfile = profile
 	if err := provider.backend.RemoveContainer(ctx, value.Name); err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot replace emulator container", true, err)
 	}
 	created, err := provider.createWithOptions(ctx, request, generation+1, true)
 	if err != nil {
-		return providers.Snapshot{}, err
+		targetErr := err
+		restored, restoreErr := provider.createWithOptions(ctx, requestFromProfile(request, value), generation+1, true)
+		if restoreErr != nil {
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "RUNTIME_PROFILE_ROLLBACK_FAILED", "cannot restore the previous emulator container after target creation failed", false, errors.Join(targetErr, restoreErr))
+		}
+		name, _, _ := resourceNames(restored.ProviderRef)
+		if restoreErr = provider.backend.StartContainer(ctx, name); restoreErr == nil {
+			value, restoreErr = provider.backend.InspectContainer(ctx, name)
+			if restoreErr == nil {
+				restored, restoreErr = provider.snapshot(value)
+			}
+		}
+		return restored, providerError(providers.OperationRestart, "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED", "target container creation failed and the previous container was restored", false, errors.Join(targetErr, restoreErr))
 	}
 	name, _, _ := resourceNames(created.ProviderRef)
 	if err := provider.backend.StartContainer(ctx, name); err != nil {
@@ -281,6 +310,14 @@ func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef st
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_INSPECT_FAILED", "cannot inspect replaced emulator", true, err)
 	}
 	return provider.snapshot(value)
+}
+
+func requestFromProfile(request providers.CreateRequest, previous container) providers.CreateRequest {
+	previousRequest, _, err := requestFromContainer(previous)
+	if err == nil {
+		return previousRequest
+	}
+	return request
 }
 
 func (provider *Provider) Rebuild(ctx context.Context, providerRef string) (providers.Snapshot, error) {

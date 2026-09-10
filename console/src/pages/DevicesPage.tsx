@@ -27,6 +27,7 @@ import {
   useStopDevice,
   useUnquarantineDevice,
   useUpdateDeviceName,
+  useUpdateDeviceRuntimeProfile,
 } from '../api/generated/device-farm'
 import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile, IOSSimulatorCatalog } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
@@ -75,6 +76,14 @@ interface DeviceNameValues {
 
 interface ReimageValues extends EmulatorRuntimeProfile {
   image_id: string
+  reason: string
+}
+
+interface RuntimeProfileUpdateValues {
+  container_cpu_cores: number
+  container_memory_mb: number
+  guest_cpu_cores: number
+  guest_memory_mb: number
   reason: string
 }
 
@@ -180,6 +189,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [nameForm] = Form.useForm<DeviceNameValues>()
   const [reimageDevice, setReimageDevice] = useState<Device | null>(null)
   const [reimageForm] = Form.useForm<ReimageValues>()
+  const [runtimeProfileDevice, setRuntimeProfileDevice] = useState<Device | null>(null)
+  const [runtimeProfileForm] = Form.useForm<RuntimeProfileUpdateValues>()
   const [createDevice, setCreateDevice] = useState(false)
   const [createForm] = Form.useForm<CreateDeviceValues>()
   const [createStep, setCreateStep] = useState(0)
@@ -200,6 +211,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const restart = useRestartDevice()
   const rebuild = useRebuildDevice()
   const reimage = useReimageDevice()
+  const updateRuntimeProfile = useUpdateDeviceRuntimeProfile()
   const provision = useCreateDeviceProvisioning()
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
@@ -352,6 +364,38 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     })
   }
 
+  const openRuntimeProfileUpdate = (device: Device) => {
+    const profile = device.effective_runtime_profile ?? {}
+    setRuntimeProfileDevice(device)
+    runtimeProfileForm.setFieldsValue({
+      reason: '',
+      container_cpu_cores: profile.container_cpu_cores ?? 4,
+      container_memory_mb: profile.container_memory_mb ?? 5120,
+      guest_cpu_cores: profile.guest_cpu_cores ?? 4,
+      guest_memory_mb: profile.guest_memory_mb ?? 4096,
+    })
+  }
+
+  const submitRuntimeProfileUpdate = (values: RuntimeProfileUpdateValues) => {
+    if (!runtimeProfileDevice) return
+    modal.confirm({
+      title: '确认调整 CPU/内存并重启？',
+      content: '模拟器会短暂中断并以新规格重新启动，数据卷不会重建；已安装应用、账号、缓存和设备文件都会保留。',
+      okText: '确认调整并重启',
+      cancelText: '取消',
+      onOk: () => updateRuntimeProfile.mutate({ id: runtimeProfileDevice.id, data: { ...values, reason: values.reason.trim() } }, {
+        onSuccess: (data) => {
+          message.success(`CPU/内存调整任务已受理（请求编号：${responseRequestID(data)}）`)
+          setRuntimeProfileDevice(null)
+          invalidate()
+        },
+        onError: (error) => {
+          message.error(`CPU/内存调整被拒绝：${apiErrorText(error)}`)
+        },
+      }),
+    })
+  }
+
   const submitReimage = (values: ReimageValues) => {
     if (!reimageDevice) return
     const { image_id, reason, ...runtime_profile } = values
@@ -492,8 +536,10 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       // 低频与危险操作收进「更多」下拉，常驻按钮只留 详情 / 远程连接 / 挂断。
       const moreItems: MenuProps['items'] = []
       if (role === 'admin' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
-        && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status) && device.reimage_status !== 'pending') {
-        moreItems.push({ key: 'reimage', label: '编辑配置' })
+        && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status)
+        && device.reimage_status !== 'pending' && device.runtime_profile_update_status !== 'pending') {
+        moreItems.push({ key: 'runtime-profile', label: '调整 CPU/内存' })
+        moreItems.push({ key: 'reimage', label: '更换镜像/重建数据', danger: true })
       }
       if (role !== 'viewer' && actionable(device, 'start')) moreItems.push({ key: 'start', label: '启动' })
       if (role !== 'viewer' && actionable(device, 'stop')) moreItems.push({ key: 'stop', label: '停止' })
@@ -503,6 +549,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       if (role === 'admin' && actionable(device, 'unquarantine')) moreItems.push({ key: 'unquarantine', label: '解除隔离' })
       if (role === 'admin' && actionable(device, 'delete')) moreItems.push({ key: 'delete', label: '删除', danger: true })
       const onMoreClick: MenuProps['onClick'] = ({ key }) => {
+        if (key === 'runtime-profile') { openRuntimeProfileUpdate(device); return }
         if (key === 'reimage') { openReimage(device); return }
         if (key === 'start' || key === 'stop' || key === 'restart' || key === 'rebuild' || key === 'quarantine' || key === 'unquarantine' || key === 'delete') {
           setActionState({ device, action: key })
@@ -568,15 +615,20 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           return <Space direction="vertical" size={0}><Typography.Text>{iosSystemVersionLabel(device.capabilities)}</Typography.Text><Typography.Text type="secondary">CoreSimulator</Typography.Text><Typography.Text type="secondary">按预约建立受控会话</Typography.Text></Space>
         }
         const image = device.image_id ? imageByID.get(device.image_id) : undefined
-        const configState = device.reimage_status === 'pending'
-          ? '正在应用新配置'
-          : device.reimage_status === 'failed'
-            ? '上次配置失败'
-            : undefined
+        const configState = device.runtime_profile_update_status === 'pending'
+          ? '正在调整 CPU/内存'
+          : device.runtime_profile_update_status === 'failed'
+            ? '上次 CPU/内存调整失败'
+            : device.reimage_status === 'pending'
+              ? '正在更换镜像/重建数据'
+              : device.reimage_status === 'failed'
+                ? '上次镜像/数据重建失败'
+                : undefined
+        const configFailed = device.runtime_profile_update_status === 'failed' || device.reimage_status === 'failed'
         return <Space direction="vertical" size={0}>
           <Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text>
           <Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}{image ? ` · ${image.abi}` : ''}</Typography.Text>
-          {configState && <Typography.Text type={device.reimage_status === 'failed' ? 'danger' : 'warning'}>{configState}</Typography.Text>}
+          {configState && <Typography.Text type={configFailed ? 'danger' : 'warning'}>{configState}</Typography.Text>}
         </Space>
       },
     },
@@ -915,8 +967,40 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         </Form>
       </Modal>
       <Modal
+        open={runtimeProfileDevice !== null}
+        title={runtimeProfileDevice ? `调整 CPU/内存 · ${deviceHeadline(runtimeProfileDevice, { imageByID })}` : ''}
+        okText="下一步"
+        cancelText="取消"
+        confirmLoading={updateRuntimeProfile.isPending}
+        onCancel={() => setRuntimeProfileDevice(null)}
+        onOk={() => runtimeProfileForm.submit()}
+        width={640}
+        destroyOnHidden
+      >
+        <Alert type="info" showIcon message="应用新规格需要重启模拟器，已安装应用、账号、缓存和设备文件会保留" style={{ marginBottom: 16 }} />
+        <Typography.Paragraph type="secondary">
+          只允许没有预约、没有其他处理中操作的设备调整。服务端会按宿主机最新资源重新计算容量；新规格启动失败时会用同一数据卷恢复旧规格。
+        </Typography.Paragraph>
+        <Form<RuntimeProfileUpdateValues> form={runtimeProfileForm} layout="vertical" onFinish={submitRuntimeProfileUpdate}>
+          <Space wrap align="start">
+            <Form.Item name="container_cpu_cores" label="容器 CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={64} step={0.5} /></Form.Item>
+            <Form.Item name="container_memory_mb" label="容器内存 MB" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={512} /></Form.Item>
+            <Form.Item name="guest_cpu_cores" label="Android CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
+            <Form.Item name="guest_memory_mb" label="Android 内存 MB" rules={[{ required: true }]}><InputNumber min={1536} max={261632} step={512} /></Form.Item>
+          </Space>
+          <Typography.Paragraph type="secondary">
+            当前宿主机：{hostLabel(runtimeProfileDevice?.host_id, hostByID)}。16 GB 宿主机运行两台时，建议每台容器 4608 MB、Android 3584 MB，并为系统和管理服务保留余量。
+          </Typography.Paragraph>
+          <Form.Item name="reason" label="调整原因（必填，将写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写调整原因' }, { min: 3, message: '调整原因至少填写 3 个字' },
+          ]}>
+            <Input.TextArea rows={3} maxLength={200} placeholder="例如：为双设备并行运行释放宿主机内存" />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
         open={reimageDevice !== null}
-        title={reimageDevice ? `编辑配置/更换镜像 · ${deviceHeadline(reimageDevice, { imageByID })}` : ''}
+        title={reimageDevice ? `更换镜像/重建数据 · ${deviceHeadline(reimageDevice, { imageByID })}` : ''}
         okText="下一步"
         cancelText="取消"
         confirmLoading={reimage.isPending}
@@ -925,7 +1009,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         width={720}
         destroyOnHidden
       >
-        <Alert type="warning" showIcon message="重装会清空这台模拟器里的 APK 和全部设备数据" style={{ marginBottom: 16 }} />
+        <Alert type="warning" showIcon message="更换镜像、数据盘或图形模式会清空这台模拟器里的 APK 和全部设备数据" style={{ marginBottom: 16 }} />
         <Typography.Paragraph type="secondary">
           只允许没有预约、没有其他处理中操作的空闲设备修改。提交时服务端会按宿主机最新 CPU、内存和磁盘重新计算；空间不足会直接拒绝，不会先删除旧设备。
         </Typography.Paragraph>
@@ -935,14 +1019,27 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
               value: image.id, label: `${image.name} · Android API ${image.api_level} · ${image.abi}`,
             }))} onChange={(imageID) => {
               const image = images.find((item) => item.id === imageID)
-              if (image?.resource_config) reimageForm.setFieldsValue(image.resource_config)
+              if (image?.resource_config) reimageForm.setFieldsValue({
+                data_disk_mb: image.resource_config.data_disk_mb,
+                image_disk_mb: image.resource_config.image_disk_mb,
+                width: image.resource_config.width,
+                height: image.resource_config.height,
+                density_dpi: image.resource_config.density_dpi,
+                vm_heap_mb: image.resource_config.vm_heap_mb,
+                graphics: image.resource_config.graphics,
+              })
             }} />
           </Form.Item>
+          <Form.Item name="container_cpu_cores" hidden><InputNumber /></Form.Item>
+          <Form.Item name="container_memory_mb" hidden><InputNumber /></Form.Item>
+          <Form.Item name="guest_cpu_cores" hidden><InputNumber /></Form.Item>
+          <Form.Item name="guest_memory_mb" hidden><InputNumber /></Form.Item>
+          <Form.Item name="image_disk_mb" hidden><InputNumber /></Form.Item>
+          <Form.Item name="width" hidden><InputNumber /></Form.Item>
+          <Form.Item name="height" hidden><InputNumber /></Form.Item>
+          <Form.Item name="density_dpi" hidden><InputNumber /></Form.Item>
+          <Form.Item name="vm_heap_mb" hidden><InputNumber /></Form.Item>
           <Space wrap align="start">
-            <Form.Item name="container_cpu_cores" label="容器 CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={64} step={0.5} /></Form.Item>
-            <Form.Item name="container_memory_mb" label="容器内存 MB" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={512} /></Form.Item>
-            <Form.Item name="guest_cpu_cores" label="Android CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
-            <Form.Item name="guest_memory_mb" label="Android 内存 MB" rules={[{ required: true }]}><InputNumber min={1536} max={261632} step={512} /></Form.Item>
             <Form.Item name="data_disk_mb" label="设备数据盘 MB" rules={[{ required: true }]}><InputNumber min={2048} max={1048576} step={1024} /></Form.Item>
             <Form.Item name="graphics" label="图形加速" rules={[{ required: true }]}><Select style={{ width: 130 }} options={[
               { value: 'auto', label: '自动' }, { value: 'host', label: '宿主机 GPU' }, { value: 'software', label: '软件渲染' },
@@ -951,8 +1048,8 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           <Typography.Paragraph type="secondary">
             当前宿主机：{hostLabel(reimageDevice?.host_id, hostByID)}。页面显示的是配置值，最终容量以提交瞬间服务端重新计算为准。
           </Typography.Paragraph>
-          <Form.Item name="reason" label="修改原因（必填，将写入审计）" rules={[
-            { required: true, whitespace: true, message: '请填写修改原因' }, { min: 3, message: '修改原因至少填写 3 个字' },
+          <Form.Item name="reason" label="重建原因（必填，将写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写重建原因' }, { min: 3, message: '重建原因至少填写 3 个字' },
           ]}>
             <Input.TextArea rows={3} maxLength={200} placeholder="例如：需要验证 Android 15 兼容性" />
           </Form.Item>

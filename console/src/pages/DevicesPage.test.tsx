@@ -282,7 +282,43 @@ describe('DevicesPage device categories', () => {
     expect(await screen.findByText(/删除任务已受理/)).toBeInTheDocument()
   })
 
-  it('edits an idle emulator only after warning that APK and device data are erased', async () => {
+  it('updates CPU and memory through the non-destructive endpoint after confirming data is preserved', async () => {
+    const user = userEvent.setup()
+    let submitted: Record<string, unknown> | undefined
+    server.use(http.post('/api/v1/devices/:id/runtime-profile-updates', async ({ request, params }) => {
+      expect(params.id).toBe('device_00000000000001')
+      submitted = await request.json() as Record<string, unknown>
+      return HttpResponse.json({ request_id: 'req_runtime_profile_test', data: {
+        ...sampleDevices[0], lifecycle_status: 'provisioning', runtime_profile_update_status: 'pending',
+      }, error: null }, { status: 202 })
+    }))
+    renderWithProviders(<DevicesPageWithRemoteControl />)
+
+    const row = (await screen.findByText('emulator-5554')).closest('tr')
+    expect(row).not.toBeNull()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: /更\s*多/ }))
+    await user.click(await screen.findByRole('menuitem', { name: '调整 CPU/内存' }))
+    const dialog = await screen.findByRole('dialog', { name: '调整 CPU/内存 · DaFit回归-Pixel9-01 · Android 模拟器 · Android 14（API 34）' })
+    expect(within(dialog).getByText(/已安装应用、账号、缓存和设备文件会保留/)).toBeInTheDocument()
+    const containerMemory = within(dialog).getByRole('spinbutton', { name: '容器内存 MB' })
+    await user.clear(containerMemory)
+    await user.type(containerMemory, '6144')
+    await user.type(within(dialog).getByPlaceholderText('例如：为双设备并行运行释放宿主机内存'), '调整双设备运行内存')
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+
+    expect((await screen.findAllByText('确认调整 CPU/内存并重启？')).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '确认调整并重启' }))
+    await waitFor(() => expect(submitted).toEqual({
+      container_cpu_cores: 4,
+      container_memory_mb: 6144,
+      guest_cpu_cores: 4,
+      guest_memory_mb: 4096,
+      reason: '调整双设备运行内存',
+    }))
+    expect(await screen.findByText(/CPU\/内存调整任务已受理/)).toBeInTheDocument()
+  })
+
+  it('reimages an idle emulator only after warning that APK and device data are erased', async () => {
     const user = userEvent.setup()
     let reimageRequests = 0
     server.use(http.post('/api/v1/devices/:id/reimages', async ({ request, params }) => {
@@ -290,7 +326,7 @@ describe('DevicesPage device categories', () => {
       expect(params.id).toBe('device_00000000000001')
       expect(body.image_id).toBe('image_00000000000001')
       expect(body.runtime_profile.container_memory_mb).toBe(5120)
-      expect(body.reason).toBe('验证不同运行规格')
+      expect(body.reason).toBe('验证不同系统镜像')
       reimageRequests += 1
       return HttpResponse.json({ request_id: 'req_reimage_test', data: { ...sampleDevices[0], lifecycle_status: 'provisioning', reimage_status: 'pending' }, error: null }, { status: 202 })
     }))
@@ -299,11 +335,12 @@ describe('DevicesPage device categories', () => {
     const row = (await screen.findByText('emulator-5554')).closest('tr')
     expect(row).not.toBeNull()
     await user.click(within(row as HTMLElement).getByRole('button', { name: /更\s*多/ }))
-    await user.click(await screen.findByRole('menuitem', { name: '编辑配置' }))
-    const reimageDialog = await screen.findByRole('dialog', { name: '编辑配置/更换镜像 · DaFit回归-Pixel9-01 · Android 模拟器 · Android 14（API 34）' })
+    await user.click(await screen.findByRole('menuitem', { name: '更换镜像/重建数据' }))
+    const reimageDialog = await screen.findByRole('dialog', { name: '更换镜像/重建数据 · DaFit回归-Pixel9-01 · Android 模拟器 · Android 14（API 34）' })
     expect(within(reimageDialog).queryByText('device_00000000000001')).not.toBeInTheDocument()
-    expect(await screen.findByText('重装会清空这台模拟器里的 APK 和全部设备数据')).toBeInTheDocument()
-    await user.type(screen.getByPlaceholderText('例如：需要验证 Android 15 兼容性'), '验证不同运行规格')
+    expect(within(reimageDialog).queryByRole('spinbutton', { name: '容器内存 MB' })).not.toBeInTheDocument()
+    expect(await screen.findByText('更换镜像、数据盘或图形模式会清空这台模拟器里的 APK 和全部设备数据')).toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('例如：需要验证 Android 15 兼容性'), '验证不同系统镜像')
     await user.click(screen.getByRole('button', { name: '下一步' }))
     expect((await screen.findAllByText('确认更换镜像并重装？')).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: '确认清空并重装' }))

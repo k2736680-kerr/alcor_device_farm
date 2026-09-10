@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Alcor Device Farm API
  * Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份， internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
- * OpenAPI spec version: 2.5.0
+ * OpenAPI spec version: 2.6.0
  */
 import {
   useMutation,
@@ -49,6 +49,7 @@ import type {
   DeviceProvisioningListSuccessResponse,
   DeviceProvisioningSuccessResponse,
   DeviceReimageInputBody,
+  DeviceRuntimeProfileUpdateInputBody,
   DeviceSuccessResponse,
   ErrorResponse,
   ForbiddenResponse,
@@ -7500,6 +7501,130 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getCreateIOSSessionGrantMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+
+/**
+ * Replaces an idle Docker Emulator container with new container and Android guest CPU/memory settings while preserving its network and data volume. The effective profile changes only after ADB, Android boot, Appium and STF readiness succeed; one rollback to the previous profile is attempted on failure.
+ */
+export type updateDeviceRuntimeProfileResponse202 = {
+  data: DeviceAcceptedResponse
+  status: 202
+}
+
+export type updateDeviceRuntimeProfileResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type updateDeviceRuntimeProfileResponse401 = {
+  data: UnauthorizedResponse
+  status: 401
+}
+
+export type updateDeviceRuntimeProfileResponse403 = {
+  data: ForbiddenResponse
+  status: 403
+}
+
+export type updateDeviceRuntimeProfileResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type updateDeviceRuntimeProfileResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+
+export type updateDeviceRuntimeProfileResponse500 = {
+  data: ServerErrorResponse
+  status: 500
+}
+
+export type updateDeviceRuntimeProfileResponse503 = {
+  data: ErrorResponse
+  status: 503
+}
+
+export type updateDeviceRuntimeProfileResponse504 = {
+  data: ErrorResponse
+  status: 504
+}
+
+export type updateDeviceRuntimeProfileResponseSuccess = (updateDeviceRuntimeProfileResponse202) & {
+  headers: Headers;
+};
+export type updateDeviceRuntimeProfileResponseError = (updateDeviceRuntimeProfileResponse400 | updateDeviceRuntimeProfileResponse401 | updateDeviceRuntimeProfileResponse403 | updateDeviceRuntimeProfileResponse404 | updateDeviceRuntimeProfileResponse409 | updateDeviceRuntimeProfileResponse500 | updateDeviceRuntimeProfileResponse503 | updateDeviceRuntimeProfileResponse504) & {
+  headers: Headers;
+};
+
+export type updateDeviceRuntimeProfileResponse = (updateDeviceRuntimeProfileResponseSuccess | updateDeviceRuntimeProfileResponseError)
+
+export const getUpdateDeviceRuntimeProfileUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/devices/${id}/runtime-profile-updates`
+}
+
+export const updateDeviceRuntimeProfile = async (id: string,
+    deviceRuntimeProfileUpdateInputBody: DeviceRuntimeProfileUpdateInputBody, options?: RequestInit): Promise<updateDeviceRuntimeProfileResponse> => {
+
+  return deviceFarmFetch<updateDeviceRuntimeProfileResponse>(getUpdateDeviceRuntimeProfileUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deviceRuntimeProfileUpdateInputBody,)
+  }
+);}
+
+
+
+
+export const getUpdateDeviceRuntimeProfileMutationOptions = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDeviceRuntimeProfile>>, TError,{id: string;data: DeviceRuntimeProfileUpdateInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateDeviceRuntimeProfile>>, TError,{id: string;data: DeviceRuntimeProfileUpdateInputBody}, TContext> => {
+
+const mutationKey = ['updateDeviceRuntimeProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateDeviceRuntimeProfile>>, {id: string;data: DeviceRuntimeProfileUpdateInputBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateDeviceRuntimeProfile(id,data,requestOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateDeviceRuntimeProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateDeviceRuntimeProfile>>>
+    export type UpdateDeviceRuntimeProfileMutationBody = DeviceRuntimeProfileUpdateInputBody
+    export type UpdateDeviceRuntimeProfileMutationError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse
+
+    export const useUpdateDeviceRuntimeProfile = <TError = ErrorResponse | UnauthorizedResponse | ForbiddenResponse | ServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDeviceRuntimeProfile>>, TError,{id: string;data: DeviceRuntimeProfileUpdateInputBody}, TContext>, request?: SecondParameter<typeof deviceFarmFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateDeviceRuntimeProfile>>,
+        TError,
+        {id: string;data: DeviceRuntimeProfileUpdateInputBody},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateDeviceRuntimeProfileMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
