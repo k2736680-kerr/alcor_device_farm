@@ -76,7 +76,7 @@ function templateOption(device: Device, imageByID: Map<string, DeviceImage>, hos
 function templateHostDescription(host?: DeviceHost): string {
   if (!host) return '尚未读取到扩容模板所在宿主机。'
   if (host.status !== 'online') return `模板宿主机“${host.name}”当前离线，恢复在线后才会继续扩容。`
-  if (host.draining) return `模板宿主机“${host.name}”正在排空，解除排空后才会继续扩容。`
+  if (host.draining) return `模板宿主机“${host.name}”已暂停接收任务，恢复接收后才会继续扩容。`
   const capacity = host.capacity as Record<string, unknown>
   const memory = numeric(capacity.memory_available_mb)
   const disk = numeric(capacity.disk_available_mb)
@@ -92,7 +92,7 @@ function scaleUpDescription(pool: DevicePool, current: number, target: number, d
   if (!pool.base_device_id) return '扩容前请先在下方选择一台健康的扩容模板。'
   if (!host) return `计划补齐 ${difference} 台设备，正在等待扩容模板所在宿主机的状态。`
   if (host.status !== 'online') return `计划补齐 ${difference} 台设备，但模板宿主机当前离线；恢复在线后自动继续。`
-  if (host.draining) return `计划补齐 ${difference} 台设备，但模板宿主机正在排空；解除排空后自动继续。`
+  if (host.draining) return `计划补齐 ${difference} 台设备，但模板宿主机已暂停接收任务；恢复接收后自动继续。`
   if (pool.platform === 'ios') {
     const capacity = host.capacity as Record<string, unknown>
     const pending = devices.filter((device) => device.host_id === host.id && ['provisioning', 'booting'].includes(device.lifecycle_status)).length

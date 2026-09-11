@@ -1,16 +1,17 @@
-import { App as AntApp, Button, Form, Input, Space, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Form, Input, Modal, Select, Space, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   getListDeviceHostsQueryKey,
   getDeviceHost,
+  useCreateDeviceHost,
   useDrainDeviceHost,
   useListDeviceHosts,
   useUpdateDeviceHost,
   useUndrainDeviceHost,
 } from '../api/generated/device-farm'
-import type { ConsoleRole, DeviceHost } from '../api/generated/models'
+import type { ConsoleRole, DeviceHost, DeviceHostInputHostOs, DeviceHostInputHostType } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
 import { formatTime } from '../api/format'
@@ -24,6 +25,14 @@ type HostAction = 'drain' | 'undrain'
 
 interface HostNameFormValues {
   name: string
+}
+
+interface HostCreateFormValues {
+  name: string
+  host_os: DeviceHostInputHostOs
+  host_type: DeviceHostInputHostType
+  host_arch: string
+  address?: string
 }
 
 interface ActionState {
@@ -84,11 +93,15 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const queryClient = useQueryClient()
   const [actionState, setActionState] = useState<ActionState | null>(null)
   const [detailHost, setDetailHost] = useState<DeviceHost | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createdHost, setCreatedHost] = useState<DeviceHost | null>(null)
   const [nameForm] = Form.useForm<HostNameFormValues>()
+  const [createForm] = Form.useForm<HostCreateFormValues>()
 
   const drain = useDrainDeviceHost()
   const undrain = useUndrainDeviceHost()
   const updateHost = useUpdateDeviceHost()
+  const createHost = useCreateDeviceHost()
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: getListDeviceHostsQueryKey() })
@@ -104,7 +117,7 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       { id: host.id, data: { reason } },
       {
         onSuccess: (data) => {
-          message.success(`${action === 'drain' ? '排空' : '解除排空'}已受理（请求编号：${responseRequestID(data)}）`)
+          message.success(`${action === 'drain' ? '暂停接收任务' : '恢复接收任务'}已受理（请求编号：${responseRequestID(data)}）`)
           setActionState(null)
           invalidate()
         },
@@ -118,6 +131,30 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
   const openDetail = (host: DeviceHost) => {
     setDetailHost(host)
     nameForm.setFieldsValue({ name: host.name })
+  }
+
+  const submitCreate = (values: HostCreateFormValues) => {
+    createHost.mutate({
+      data: {
+        name: values.name.trim(),
+        host_os: values.host_os,
+        host_type: values.host_type,
+        host_arch: values.host_arch.trim(),
+        address: values.address?.trim() || undefined,
+        capabilities: {},
+        capacity: { resource_model: 'dynamic_v1', device_slots: 1 },
+      },
+    }, {
+      onSuccess: (response) => {
+        const host = unwrapData<DeviceHost>(response)
+        if (host) setCreatedHost(host)
+        setCreateOpen(false)
+        createForm.resetFields()
+        message.success(`宿主机登记成功（请求编号：${responseRequestID(response)}）`)
+        invalidate()
+      },
+      onError: (error) => message.error(`宿主机登记失败：${apiErrorText(error)}`),
+    })
   }
 
   const submitName = async ({ name }: HostNameFormValues) => {
@@ -188,13 +225,13 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
       fixed: 'right',
       render: (_, host) => (
         <Space size={4} wrap>
-          <Button size="small" onClick={() => openDetail(host)}>详情</Button>
+          <Button size="small" onClick={() => openDetail(host)}>主机详情</Button>
           {role === 'admin' && <>
           {!host.draining && host.status !== 'maintenance' && (
-            <Button size="small" danger onClick={() => setActionState({ host, action: 'drain' })}>排空</Button>
+            <Button size="small" danger onClick={() => setActionState({ host, action: 'drain' })}>暂停接收任务</Button>
           )}
           {host.draining && (
-            <Button size="small" onClick={() => setActionState({ host, action: 'undrain' })}>解除排空</Button>
+            <Button size="small" onClick={() => setActionState({ host, action: 'undrain' })}>恢复接收任务</Button>
           )}
           </>}
         </Space>
@@ -213,11 +250,12 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
     <Space direction="vertical" size={14} style={{ display: 'flex' }}>
       <ResourcePageHeader
         title="宿主机"
-        description="查看承载 Android 与 iOS 设备的主机是否在线、是否接受调度，以及当前关键资源是否足够。Agent 在线只代表控制链路正常，不等于设备一定可用。"
+        description="这里管理承载 Android 与 iOS 设备的服务器。主机在线只代表 Agent 控制链路正常；设备是否可用，还要看设备健康状态。暂停接收任务用于维护前逐步腾空主机，不会中断已有预约。"
         dataUpdatedAt={query.dataUpdatedAt}
         isFetching={query.isFetching}
         onRefresh={() => void query.refetch()}
         autoRefreshText="每 10 秒自动更新"
+        actions={role === 'admin' ? <Button type="primary" onClick={() => setCreateOpen(true)}>登记宿主机</Button> : undefined}
       />
       {query.isError && <PageQueryError error={query.error} onRetry={() => void query.refetch()} />}
       <PageTable<DeviceHost>
@@ -230,6 +268,57 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         onPageChange={onPageChange}
         locale={{ emptyText: '尚未登记宿主机' }}
       />
+      <Modal
+        open={createOpen}
+        title="登记宿主机"
+        okText="登记"
+        cancelText="取消"
+        confirmLoading={createHost.isPending}
+        onCancel={() => { setCreateOpen(false); createForm.resetFields() }}
+        onOk={() => void createForm.submit()}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary">先登记设备域信息，Agent 安装和连接仍在目标服务器执行。Agent Token 不会显示在浏览器中。</Typography.Paragraph>
+        <Form<HostCreateFormValues>
+          form={createForm}
+          layout="vertical"
+          initialValues={{ host_os: 'linux', host_type: 'docker_emulator', host_arch: 'amd64' }}
+          onFinish={submitCreate}
+        >
+          <Form.Item name="name" label="宿主机名称" rules={[{ required: true, whitespace: true, message: '请输入宿主机名称' }, { min: 2, max: 128, message: '名称请保持在 2–128 个字符' }]}>
+            <Input placeholder="例如：上海测试-KVM-02" maxLength={128} />
+          </Form.Item>
+          <Space style={{ display: 'flex' }} align="start">
+            <Form.Item name="host_os" label="操作系统" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Select options={[{ value: 'linux', label: 'Linux' }, { value: 'macos', label: 'macOS' }, { value: 'windows', label: 'Windows' }]} />
+            </Form.Item>
+            <Form.Item name="host_type" label="宿主机能力" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Select options={[{ value: 'docker_emulator', label: 'Android Docker 模拟器' }, { value: 'appium_device_farm_ios', label: 'iOS Appium Host' }, { value: 'usb_android', label: 'Android 真机' }, { value: 'hybrid', label: '混合' }]} />
+            </Form.Item>
+          </Space>
+          <Space style={{ display: 'flex' }} align="start">
+            <Form.Item name="host_arch" label="架构" rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.-]+$/, message: '只能使用字母、数字、点、下划线和短横线' }]} style={{ flex: 1 }}>
+              <Input placeholder="amd64 或 arm64" />
+            </Form.Item>
+            <Form.Item name="address" label="内网地址" style={{ flex: 1 }}>
+              <Input placeholder="例如：10.0.30.172" />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Modal>
+      <Modal
+        open={createdHost !== null}
+        title="宿主机已登记"
+        footer={<Button type="primary" onClick={() => setCreatedHost(null)}>知道了</Button>}
+        onCancel={() => setCreatedHost(null)}
+      >
+        {createdHost && <>
+          <Typography.Paragraph>先在目标服务器安装并启动 Host Agent，再等待心跳变为“在线”。</Typography.Paragraph>
+          <Typography.Paragraph>Host ID：<Typography.Text code copyable>{createdHost.id}</Typography.Text></Typography.Paragraph>
+          <Typography.Paragraph>控制面 Agent 地址：<Typography.Text code copyable>http://10.0.80.220:18182</Typography.Text></Typography.Paragraph>
+          <Typography.Paragraph type="secondary">安装时只在目标服务器的受控 Secret 文件中填写 Agent Token；不要把 Token 粘贴到浏览器、聊天记录或 Git。</Typography.Paragraph>
+        </>}
+      </Modal>
       <ResourceDetailDrawer
         open={detailHost !== null}
         title={detailHost ? `宿主机详情 · ${detailHost.name}` : '宿主机详情'}
@@ -258,22 +347,22 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           { key: 'id', label: '完整编号', children: <Typography.Text copyable code>{detailHost.id}</Typography.Text> },
           { key: 'platform', label: '平台与架构', children: `${detailHost.host_os} / ${detailHost.host_arch}` },
           { key: 'type', label: '宿主机类型', children: hostTypeLabel(detailHost.host_type) },
-          { key: 'status', label: 'Agent 状态', children: hostStatusLabel(detailHost.status) },
-          { key: 'schedule', label: '调度状态', children: detailHost.draining ? '暂停接单（排空中）' : '接受新设备和预约' },
+          { key: 'status', label: '连接状态', children: hostStatusLabel(detailHost.status) },
+          { key: 'schedule', label: '调度状态', children: detailHost.draining ? '暂停接收任务中' : '接受新设备和预约' },
           ...(role === 'admin' ? [{ key: 'address', label: '内部地址', children: detailHost.address ?? '-' }] : []),
           { key: 'cpu', label: 'CPU', children: resourceText(detailHost, 'cpu') },
           { key: 'memory', label: '内存', children: resourceText(detailHost, 'memory') },
           { key: 'disk', label: '数据盘', children: resourceText(detailHost, 'disk') },
           { key: 'policy', label: '容量规则', children: capacityPolicy(detailHost) },
-          { key: 'capabilities', label: '能力上报', children: detailText(detailHost.capabilities) },
-          { key: 'heartbeat', label: '最后心跳', children: formatTime(detailHost.last_heartbeat_at) },
+          { key: 'capabilities', label: '主机能力', children: detailText(detailHost.capabilities) },
+          { key: 'heartbeat', label: '最近在线更新时间', children: formatTime(detailHost.last_heartbeat_at) },
           { key: 'created', label: '登记时间', children: formatTime(detailHost.created_at) },
         ] : []}
       />
       <ReasonActionModal
         open={actionState !== null}
-        title={actionState ? `${actionState.action === 'drain' ? '排空' : '解除排空'} · ${actionState.host.name}` : ''}
-        description={actionState?.action === 'drain' ? '排空后不再接受新建设备和新预约；已有预约可以继续运行，结束后可安全维护宿主机。' : '解除排空后宿主机重新接受设备创建和预约调度。'}
+        title={actionState ? `${actionState.action === 'drain' ? '暂停接收任务' : '恢复接收任务'} · ${actionState.host.name}` : ''}
+        description={actionState?.action === 'drain' ? '暂停后，这台主机不再接收新设备创建和新预约；已有预约不会被中断。等设备和预约自然结束后，再进行升级、重启或下线维护。' : '恢复后，这台主机重新参与设备创建和预约调度。确认主机和 Agent 已经稳定，再恢复接收任务。'}
         danger={actionState?.action === 'drain'}
         confirmLoading={drain.isPending || undrain.isPending}
         onSubmit={submitAction}

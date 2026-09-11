@@ -107,6 +107,8 @@ DF-065 增加 18182 仅供 Host Agent 使用的私网 API 端口。该端口不�
 
 DF-066 只交付设备域控制面的 iOS 连接部署包：固定版本、非 root SSH 隧道与独立 HTTPS Gateway。它不新增 Alcor 的 Case、Dataset、Target、Config、Run、RunAttempt、结果、评分、报告或 Artifact 索引，也不改变新版 Worker/Device Farm Adapter 契约。220 预发布的 18181 只在明确启用 iOS 时代理 Server 内部 8081；171、NPS 和正式流量保持不变。
 
+DF-067 只把既有设备域 Host 创建能力接入 Device Farm Console，帮助管理员登记未来新增的 Linux/macOS 宿主机并按现有安装脚本接入 Agent。它不新增 Alcor 业务对象、Worker 任务分发、数据库或凭证分发机制；Agent Token 仍只存在受控 Secret，浏览器只看到 Host 登记结果和脱敏安装步骤。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；

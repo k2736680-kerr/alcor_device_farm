@@ -902,7 +902,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         />
         <Steps current={iosCreateStep} size="small" style={{ marginBottom: 20 }} items={[{ title: '选择 Mac' }, { title: '选择系统与机型' }, { title: '设备池与审计' }]} />
         <Form<CreateIOSSimulatorValues> form={iosForm} layout="vertical" onFinish={() => submitCreateIOS(iosForm.getFieldsValue(true) as CreateIOSSimulatorValues)}>
-          {iosCreateStep === 0 && <Form.Item name="host_id" label="可用 Mac 宿主机" rules={[{ required: true, message: '请选择在线且未排空的 Mac 宿主机' }]}>
+          {iosCreateStep === 0 && <Form.Item name="host_id" label="可用 Mac 宿主机" rules={[{ required: true, message: '请选择在线且可接收任务的 Mac 宿主机' }]}>
             <Select
               loading={hostsQuery.isFetching}
               placeholder={iosHosts.length > 0 ? '选择 Mac 宿主机' : '当前没有可用于创建的 Mac 宿主机'}

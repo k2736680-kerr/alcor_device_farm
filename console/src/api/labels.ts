@@ -61,7 +61,7 @@ const hostTypeLabels: Record<string, string> = {
 const hostStatusLabels: Record<string, string> = {
   online: '在线',
   offline: '离线',
-  draining: '排空中',
+  draining: '暂停接收任务中',
   maintenance: '维护中',
 }
 

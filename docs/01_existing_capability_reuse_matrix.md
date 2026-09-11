@@ -162,6 +162,8 @@ DF-065 的瞬时切换准备复用现有 Agent 内部 API、Host heartbeat、Pos
 
 DF-066 的控制面 iOS 隧道与 HTTPS Gateway 复用现有 Server iOS Gateway、Baguette 原生 Web UI、SSH 受控通道和 Nginx TLS 代理；允许新增的只有固定版本、非 root 的 SSH tunnel sidecar、220 专用 iOS TLS Gateway、证书/隧道 Secret 挂载模板以及只读部署验证和回滚脚本。隧道只把 Server 网络命名空间的 4811 转发到 Mac Fence 4811、4842 转发到 Mac Baguette 8421，不复制 Baguette、STF、Appium 或 iOS 协议实现，不访问 Docker Socket。Server 的 8081 仅在 Compose 内部暴露，18181 由独立 TLS Gateway 对外提供；预发布验证不得改变 171、NPS 或正式流量。
 
+DF-067 的多宿主机接入复用既有 `POST /api/v1/device-hosts`、Host Agent heartbeat、`scripts/install-device-host-agent.sh` 和 220 的 18182 私网入口；允许新增的只有 Console 的宿主机登记表单、登记后的安全安装提示和文档化接入检查。不得新增 Host 数据库或第二套 Agent 注册协议，不在浏览器返回 Agent Token，不由 Server 通过 SSH/Docker Socket 推送或执行远端命令。Agent 仍主动连接控制面并以 Host ID/Agent Token 完成认证，新增 Host 的平台、地址和容量继续由既有 Host API 与心跳收敛。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。
