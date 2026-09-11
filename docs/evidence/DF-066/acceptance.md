@@ -31,6 +31,7 @@
 | 18180 `/readyz`、18182 `/readyz` | 通过，均返回 200 |
 | disabled 回滚演练 | 通过，iOS 容器停止、18181 关闭，18180/18182 保持健康；随后恢复 iOS profile |
 | 171 Server/Agent/STF/隧道 | 通过，171 端口和容器保持 running，Agent service active |
+| 正式切换前只读 readiness | 通过；220 健康检查、未认证 401、18182、171:18080 均可达，脚本未修改 Agent/NPS |
 
 ## 保护边界
 
