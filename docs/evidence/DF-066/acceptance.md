@@ -1,6 +1,6 @@
 # DF-066 控制面 iOS 隧道与 HTTPS Gateway 部署包
 
-状态：进行中（部署代码和 220 预发布静态验证通过，已发现并修正 Baguette 远端端口映射，尚未启用 iOS profile 或切换正式流量）。
+状态：通过（220 预发布 iOS profile 已真实启动、验证并完成 disabled 回滚演练；未切换 171 正式流量）。
 
 ## 本轮完成
 
@@ -26,11 +26,16 @@
 | 171/220 隧道密钥 SHA-256 对齐 | 通过 |
 | Mac `127.0.0.1:8421/simulators.json`（经 220 临时 tunnel） | 通过，HTTP 200，3942 字节 |
 | 220 隔离 TLS Gateway 握手（iOS 功能关闭） | 通过 TLS，HTTP 502 符合关闭状态；未开启 Server 8081，因此未期待 401 |
+| 220 正式预发布 iOS profile 启动 | 通过，Server/tunnel/Gateway 均 healthy，restart count 0 |
+| 18181 HTTPS 未认证 `/`、`/simulators.json` | 通过，均返回 401 |
+| 18180 `/readyz`、18182 `/readyz` | 通过，均返回 200 |
+| disabled 回滚演练 | 通过，iOS 容器停止、18181 关闭，18180/18182 保持健康；随后恢复 iOS profile |
+| 171 Server/Agent/STF/隧道 | 通过，171 端口和容器保持 running，Agent service active |
 
 ## 保护边界
 
-本轮只上传了 220 预部署目录的 Compose、tunnel/gateway 配置和验证脚本，并构建了 tunnel 镜像；没有执行 `docker compose up`、没有重启 220 现有 Server/Gateway/PostgreSQL，没有修改 171 正式服务、Host Agent、STF、模拟器或 NPS，也没有导入生产数据库。220 当前运行容器仍保留旧配置，待维护窗口明确启用 DF-066 时再按 profile 重建。
+本轮在明确的预发布验证范围内重建了 220 Server，并启动了 iOS tunnel/Gateway；未停止或修改 171 正式服务、Host Agent、STF、模拟器或 NPS，也没有导入生产数据库。完成 disabled 回滚演练后，220 已恢复 iOS profile 运行状态。
 
 ## 尚未签收
 
-正式签收还需要在明确的下一阶段窗口中使用 `--profile ios` 启动 sidecar/Gateway，并同时启用 220 Server 的 iOS 配置，真实验证 18181 未认证请求 401。当前已补齐 220 的 Mac SSH 主机参数但没有启动服务；验证后保持 iOS 开关和正式流量策略不变，另行决定是否发布。
+正式生产切换仍未执行：171 Agent URL、NPS 后端和生产数据库都保持原状。以后如要正式切换，仍需单独维护窗口、生产备份、Agent URL 切换和 NPS 变更确认。

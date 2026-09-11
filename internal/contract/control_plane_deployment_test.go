@@ -121,8 +121,11 @@ func TestControlPlaneIOSPredeploymentCheckIsReadOnly(t *testing.T) {
 	raw := string(content)
 	for _, required := range []string{
 		"iOS gateway origin must use HTTPS",
+		"/^  device-farm-server:$/",
+		"found && /^  [A-Za-z0-9_.-]+:$/ { exit }",
 		"Baguette simulators.json reachable through the shared Server namespace",
-		"expected unauthenticated iOS gateway request to return 401",
+		"expected unauthenticated iOS gateway $path to return 401",
+		"iOS TLS gateway rejects unauthenticated requests",
 		"no Agent, NPS, database or 171 service was changed",
 	} {
 		if !strings.Contains(raw, required) {

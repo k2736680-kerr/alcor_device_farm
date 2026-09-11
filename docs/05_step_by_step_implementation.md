@@ -87,7 +87,7 @@
 | DF-063 | Android CPU 和内存无损改配 | completed | DF-062、ADR-0030 |
 | DF-064 | 220 控制面预部署与独立数据库隔离 | completed | DF-063、ADR-0031 |
 | DF-065 | 控制面瞬时切换准备与 Agent 端点 | completed | DF-064、ADR-0032 |
-| DF-066 | 控制面 iOS 隧道与 HTTPS Gateway 部署包 | in_progress | DF-065、ADR-0033 |
+| DF-066 | 控制面 iOS 隧道与 HTTPS Gateway 部署包 | completed | DF-065、ADR-0033 |
 
 ## 3. 阶段 A：工程和契约基础
 
