@@ -35,6 +35,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | macOS Host Agent + CoreSimulator + Appium Device Farm / iOS | ADR-0021/0022 保留发现、技术 busy、健康和明确 UDID 自动化 Session 路由；ADR-0024 管理 CoreSimulator 生命周期；ADR-0026 以 Baguette Adapter 挂载原生人工远控 | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant；人工远控使用 Reservation 绑定的 Baguette 签名 Gateway | 不在 Docker 中伪造 iOS，不控制或暴露 macOS 桌面，不接受任意命令/Runtime ID/Device Type ID，不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不自动下载 Runtime，不公开 Mac/Fence/Appium/WDA/Baguette 回环地址或自研远控页面 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
+| 控制面预部署与数据库隔离 | 220 以同级 `/data/stacks/alcor-device-farm` 独立 Compose 项目运行 Device Farm Server、Console 和专用 PostgreSQL；数据库仅在项目网络内暴露，预部署使用 18180/18181 | 新版 Alcor 通过稳定设备 API/Adapter 接入；正式切换前不要求 Alcor 或 171 Agent 改配 | 不复用 220 现有 PostgreSQL、`alcor` 数据库、共享 Schema/账号/卷，不修改 171 正式服务，不把模拟器迁到 220 |
 
 ## 3. 当前必须实现的设备域
 

@@ -1,0 +1,81 @@
+# 220 控制面预部署
+
+本目录用于把 Device Farm 控制面预部署到 `10.0.80.220`，不切换现有评估后台，也不修改 `10.0.30.171` 的正式 Server、STF 或模拟器。
+
+## 目录与隔离
+
+正式预部署目录固定为：
+
+```text
+/data/stacks/alcor-device-farm/
+├── compose.yaml
+├── server.env
+├── postgres.env
+├── postgres-data/
+├── backups/
+├── gateway/nginx.conf
+├── secrets/console-users.yaml
+├── secrets/tls.crt
+├── secrets/tls.key
+└── source/
+```
+
+它与现有 `/data/stacks/mongodb` 同级，但拥有独立 Compose 项目、网络、PostgreSQL 数据目录、数据库账号、备份目录和容器资源限制。不会复用现有 PostgreSQL 5432、`alcor` 数据库或现有 Docker 卷。
+
+## 预部署端口
+
+| 地址 | 用途 | 预部署策略 |
+|---|---|---|
+| `https://10.0.80.220:18180` | Device Farm Server/Console | 独立 TLS 网关；预部署证书可先自签，正式切换前替换为内网证书 |
+| `10.0.80.220:18181` | iOS Gateway | 预留，不改变现有 171 服务 |
+| Compose 内部 `postgres:5432` | Device Farm PostgreSQL | 不发布到宿主机，不允许外部访问 |
+| `10.0.30.171:7100` | 现有 STF | 预部署 Server 只读连接，正式切换前不迁移 |
+
+不要使用 220 上已有评估后台的 `18080`，也不要把 RethinkDB `28015` 或 ADB `5037/5038` 暴露到办公网。
+
+## 部署流程
+
+在部署机准备源码快照后，将 `source/`、`compose.yaml`、`server.env`、`postgres.env` 和 `secrets/console-users.yaml` 放到上述目录。真实 Token、数据库密码和 Console Argon2id 哈希只放在远端未纳入 Git 的文件中。
+
+```sh
+cd /data/stacks/alcor-device-farm
+chmod 600 server.env postgres.env secrets/console-users.yaml
+chown 70:70 postgres-data
+chown 65532:65532 backups secrets/console-users.yaml
+chmod 700 postgres-data backups
+chmod 755 . secrets
+chmod 400 secrets/console-users.yaml
+chmod 400 secrets/tls.key
+chmod 444 secrets/tls.crt
+chown 101:101 secrets/tls.key secrets/tls.crt
+docker compose --env-file postgres.env --env-file server.env config
+docker compose --env-file postgres.env --env-file server.env build
+docker compose --env-file postgres.env --env-file server.env up -d postgres
+```
+
+首次初始化独立数据库后，在 Server 容器中执行内置 migration，再启动 Server：
+
+```sh
+docker compose --env-file postgres.env --env-file server.env run --rm \
+  --entrypoint /usr/local/bin/apply-device-farm-migrations.sh device-farm-server --fresh
+docker compose --env-file postgres.env --env-file server.env up -d device-farm-server device-farm-gateway
+```
+
+发布镜像会内置 migration runner、备份脚本和设备域 migration；执行前仍必须先做数据库备份和 `--check-config`。预部署配置中的 STF 默认关闭，待取得现有 171 的 API Token 后再单独启用，避免把未知凭证写入部署包。
+
+## 预部署验收
+
+必须通过：
+
+- `docker compose config` 无明文生产凭证输出；
+- `postgres` 健康，数据库只存在设备域表；
+- Server `/healthz`、`/readyz`、`/metrics` 通过；
+- `GET /console/` 可访问，未认证请求被拒绝；
+- 220 能读取 171 的 STF API，但不访问 RethinkDB；
+- 现有评估后台的 18080、5432、8008、8880、8888 服务保持不变；
+- Server/Console/PostgreSQL 任一预部署容器重启后状态可恢复；
+- 预部署失败时只删除本项目容器、网络和目录，不执行全局 Docker 清理。
+
+## 正式切换原则
+
+预部署和正式切换分开。切换前不改 171 Agent 的 Server URL，不停止 171 Server，不切换评估后台入口。正式切换时只需要：停止旧设备农场 Server、保留 171 Host Agent/Emulator/STF、切换 Agent 指向 220、验证心跳和设备状态，再开放 220 控制面入口。切换脚本必须先做备份、健康检查和可回滚检查。

@@ -84,6 +84,8 @@
 | DF-060 | 设备可读名称与指定设备排队 | completed | DF-059 |
 | DF-061 | 修复跨入口挂断与过期预约回收 | completed | DF-060 |
 | DF-062 | 修复 Emulator OOM 后的幽灵占用与原机恢复 | completed | DF-061、ADR-0029 |
+| DF-063 | Android CPU 和内存无损改配 | completed | DF-062、ADR-0030 |
+| DF-064 | 220 控制面预部署与独立数据库隔离 | completed | DF-063、ADR-0031 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -632,6 +634,16 @@
 产出：ADR-0030、migration、OpenAPI、Management/Agent/Host Command 编排、Console 分流、自动化测试、`10.0.30.171` 真实 Linux KVM 验收和 `docs/evidence/DF-063/acceptance.md`。
 
 验收：纯 CPU/内存修改不删除数据卷，Device ID、Pool membership、APK、应用数据和文件保持；Docker 限额与 Android Guest 参数更新；使用中、存在在途命令、非法规格或容量不足时在替换前拒绝；目标失败恢复旧规格，恢复失败隔离；镜像或数据盘修改仍明确清空；Go 全量测试、静态检查、Console 测试和生产构建通过，正式 Server/Agent/Console 发布后设备回到 `ready/healthy`。
+
+### DF-064 220 控制面预部署与独立数据库隔离
+
+状态：completed。
+
+实施：按 ADR-0031 在 `10.0.80.220` 的 `/data/stacks/alcor-device-farm`（与现有服务同级）部署独立 Compose 项目。项目只包含 Device Farm Server、Console 和专用 PostgreSQL；数据库不发布宿主机端口，不复用 220 现有 PostgreSQL 或 `alcor` 数据库。预部署只监听 18180/18181，继续保持 171 正式 Server、Agent、STF、模拟器和评估后台不变；STF Token 未配置前保持适配器关闭。内置 migration、健康检查、备份和回滚入口，所有凭证只写远端 0600 文件。
+
+产出：控制面 Compose 部署包、独立数据库初始化、对齐文档、ADR-0031、`docs/evidence/DF-064/acceptance.md`。
+
+验收：本地 Go 测试/静态检查和 Compose 配置检查通过；220 预部署 PostgreSQL 健康且只含设备域 migration 表；220 现有 PostgreSQL、评估后台 18080 和 171 全部保持不变；Server `/healthz`、`/readyz`、`/metrics` 与 `/console/` 可访问且未认证请求被拒绝；预部署容器重启后状态可恢复；证据脱敏且不含 Token/密码；正式切换前不得改 Agent 指向。通过后单独提交简洁中文 commit。
 
 ## 12. 单任务完成定义
 

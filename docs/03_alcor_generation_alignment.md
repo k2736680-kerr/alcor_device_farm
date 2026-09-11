@@ -97,6 +97,12 @@ DF-056 只改变设备域内部的健康收敛和运维数据：系统自动隔�
 
 DF-058 只调整独立 Device Farm Console 的设备域技术会话期限，不改变 Alcor 钉钉会话、Service Token、角色边界或设备 API。浏览器继续只持有 HttpOnly/SameSite Cookie 和非 HttpOnly CSRF 双提交 Cookie，不保存明文账号密码；Alcor 同源代理模式仍以 Alcor 会话为准，不复制这套独立 Console 登录。
 
+## 5.4 控制面预部署与切换边界
+
+控制面预部署属于设备域运维交付，不改变新版 Alcor 的业务对象、数据库或 Worker 边界。`10.0.80.220` 只运行独立 Device Farm Server/Console 和独立 PostgreSQL；预部署目录为 `/data/stacks/alcor-device-farm`，与既有服务同级但不共享 PostgreSQL 实例、账号、Schema、数据目录或 Docker 卷。模拟器、Host Agent、STF 和 KVM 仍由 `10.0.30.171` 及后续 Host 承担。
+
+预部署阶段只监听 220 的 18180/18181，不切换 171 Agent，不停止 171 正式服务，不迁移 STF/RethinkDB。正式切换必须单独执行备份、健康检查、Agent 指向变更、心跳/设备验证和可回滚确认；失败时只回滚设备域 Server/Agent 指向，不触碰 Alcor 评估数据库或业务服务。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；

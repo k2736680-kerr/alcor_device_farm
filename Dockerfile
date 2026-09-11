@@ -27,12 +27,17 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /out/device-farm-server ./cmd/device-farm-server
 
 FROM ${RUNTIME_IMAGE}
-RUN apk add --no-cache ca-certificates && \
+RUN apk add --no-cache ca-certificates postgresql17-client && \
     addgroup -S -g 65532 devicefarm && adduser -S -D -H -u 65532 -G devicefarm devicefarm
 COPY --from=builder /out/device-farm-server /usr/local/bin/device-farm-server
 COPY scripts/check-server-deployment.sh /usr/local/bin/check-server-deployment.sh
 COPY scripts/device-farm-server-entrypoint.sh /usr/local/bin/device-farm-server-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/device-farm-server /usr/local/bin/check-server-deployment.sh /usr/local/bin/device-farm-server-entrypoint.sh
+COPY scripts/apply-device-farm-migrations.sh /usr/local/bin/apply-device-farm-migrations.sh
+COPY scripts/backup-device-farm.sh /usr/local/bin/backup-device-farm.sh
+COPY migrations /opt/alcor-device-farm/migrations
+RUN chmod 0755 /usr/local/bin/device-farm-server /usr/local/bin/check-server-deployment.sh /usr/local/bin/device-farm-server-entrypoint.sh /usr/local/bin/apply-device-farm-migrations.sh /usr/local/bin/backup-device-farm.sh && \
+    chmod 0755 /opt/alcor-device-farm/migrations
+ENV DEVICE_FARM_MIGRATION_DIR=/opt/alcor-device-farm/migrations
 USER 65532:65532
 EXPOSE 8080 8081
 ENTRYPOINT ["/usr/local/bin/device-farm-server-entrypoint.sh"]

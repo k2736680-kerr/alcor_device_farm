@@ -156,6 +156,8 @@ DF-058 复用既有 `device_console_sessions`、HttpOnly/SameSite Cookie、CSRF 
 
 DF-063 按 ADR-0030 复用现有 Docker Provider `RestartWithProfile`、Host Command、Server/Agent 双重容量预检、ADB/STF/Appium 健康门禁和设备域审计。允许新增的只有四字段资源更新 API、持久化处理状态、失败恢复编排和 Console 操作分流；不得接受镜像、数据盘、图形、显示或任意 Docker/Emulator 参数，不得直接访问 Docker Socket，也不得复制 DaFit 执行能力。
 
+DF-064 的控制面部署复用现有 Server、Console、PostgreSQL migration、健康检查和备份脚本；允许新建的只有同级 Compose 部署目录、独立 PostgreSQL 实例、预部署端口和切换/回滚证据。禁止复用 220 现有 PostgreSQL 的 `alcor` 数据库、账号、Schema 或卷，禁止把 STF、RethinkDB、模拟器和 Docker Socket 搬到控制面，禁止新增 Alcor 业务表或第二套业务数据库。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。

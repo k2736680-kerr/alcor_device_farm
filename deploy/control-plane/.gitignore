@@ -1,0 +1,8 @@
+server.env
+postgres.env
+source/
+postgres-data/
+backups/
+secrets/*
+!secrets/.gitkeep
+*.sha256
