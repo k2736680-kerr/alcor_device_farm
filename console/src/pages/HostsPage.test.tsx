@@ -143,7 +143,7 @@ describe('HostsPage platform consistency', () => {
     const result = await screen.findByRole('dialog', { name: '宿主机已登记' })
     expect(within(result).getByText('host_new_000000000000001')).toBeInTheDocument()
     expect(within(result).getByText('http://10.0.80.220:18182')).toBeInTheDocument()
-    expect(within(result).getByText(/DEVICE_FARM_SECURITY_AGENT_TOKEN=从受控Secret注入/)).toBeInTheDocument()
+    expect(within(result).getByText(/安全令牌=从受控 Secret 注入/)).toBeInTheDocument()
     expect(within(result).queryByText(/sk-[A-Za-z0-9]{12,}|eyJ[A-Za-z0-9_-]{20,}/)).not.toBeInTheDocument()
   })
 

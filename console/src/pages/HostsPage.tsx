@@ -330,10 +330,10 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
             </>
           )}
           <Typography.Paragraph>
-            <Typography.Text code copyable>{`DEVICE_FARM_AGENT_SERVER_URL=http://10.0.80.220:18182\nDEVICE_FARM_AGENT_HOST_ID=${createdHost.id}\nDEVICE_FARM_SECURITY_AGENT_TOKEN=从受控Secret注入`}</Typography.Text>
+            <Typography.Text code copyable>{`DEVICE_FARM_AGENT_SERVER_URL=http://10.0.80.220:18182\nDEVICE_FARM_AGENT_HOST_ID=${createdHost.id}\n安全令牌=从受控 Secret 注入`}</Typography.Text>
           </Typography.Paragraph>
           <Typography.Paragraph>3. {createdHost.host_os === 'linux' ? '执行 systemctl restart alcor-device-host-agent' : '启动或重启本机 Host Agent'}，然后回到这里等待连接状态变为“在线”、自动化状态变为“就绪”。</Typography.Paragraph>
-          <Typography.Paragraph type="secondary">安装时只在目标服务器的受控 Secret 文件中填写 Agent Token；不要把 Token 粘贴到浏览器、聊天记录或 Git。</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">安装时只在目标服务器的受控 Secret 文件中填写宿主机安全令牌；不要把令牌粘贴到浏览器、聊天记录或 Git。</Typography.Paragraph>
         </>}
       </Modal>
       <ResourceDetailDrawer

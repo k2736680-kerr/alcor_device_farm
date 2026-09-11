@@ -90,6 +90,7 @@
 | DF-066 | 控制面 iOS 隧道与 HTTPS Gateway 部署包 | completed | DF-065、ADR-0033 |
 | DF-067 | 控制台宿主机登记与 Agent 引导 | completed | DF-066、ADR-0034 |
 | DF-068 | 宿主机接入安装引导与预检 | completed | DF-067、ADR-0035 |
+| DF-069 | 控制台本地 E2E 启动与发布前回归 | completed | DF-068、ADR-0036 |
 
 ## 3. 阶段 A：工程和契约基础
 

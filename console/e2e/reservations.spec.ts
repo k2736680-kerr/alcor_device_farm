@@ -22,14 +22,14 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await page.locator('.ant-modal').getByRole('button', { name: /创\s*建/ }).click()
     await expect(page.getByText(/预约已创建.*请求编号：req_/)).toBeVisible()
 
-    // 列表出现 pending，并在轮询下变为 active（调度器 provider-free 分配预置设备）
-    await expect(page.getByRole('row', { name: /active/ }).first()).toBeVisible({ timeout: 20_000 })
+    // 列表出现“等待设备”，并在轮询下变为“使用中”（调度器 provider-free 分配预置设备）
+    await expect(page.getByRole('row', { name: /使用中/ }).first()).toBeVisible({ timeout: 20_000 })
 
     // 刷新后必须重新读取 Server 真相，不能依靠浏览器内的乐观状态。
     await page.reload()
-    const activeRow = page.getByRole('row', { name: /active/ }).first()
+    const activeRow = page.getByRole('row', { name: /使用中/ }).first()
     await expect(activeRow).toBeVisible()
-    await expect(activeRow).toContainText('admin')
+    await expect(activeRow).toContainText('人工预约')
 
     // remoteConnect 返回的是 TCP ADB 地址，不是浏览器页面；控制台不得把它伪装成 Web 远控入口。
     await expect(activeRow.getByRole('button', { name: 'STF 远控' })).toHaveCount(0)
@@ -39,7 +39,7 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await page.locator('.ant-modal').getByLabel('设备池').click()
     await page.locator('.ant-select-dropdown').getByText(/e2e-pool/).click()
     await page.locator('.ant-modal').getByRole('button', { name: /创\s*建/ }).click()
-    const pendingRow = page.getByRole('row', { name: /pending/ }).first()
+    const pendingRow = page.getByRole('row', { name: /等待设备/ }).first()
     await expect(pendingRow).toBeVisible()
     await expect(pendingRow.getByRole('button', { name: /续\s*租/ })).toHaveCount(0)
     await pendingRow.getByRole('button', { name: /取\s*消/ }).click()
@@ -54,7 +54,7 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     await expect(page.getByText(/租期窗口已延长.*请求编号：req_/)).toBeVisible()
 
     // 释放
-    await page.getByRole('row', { name: /active/ }).first().getByRole('button', { name: /释\s*放/ }).click()
+    await page.getByRole('row', { name: /使用中/ }).first().getByRole('button', { name: /释\s*放/ }).click()
     await page.getByLabel('操作原因（必填，将写入审计）').fill('e2e 验证完成')
     await page.getByRole('button', { name: '确认执行' }).click()
     await expect(page.getByText(/预约已释放.*请求编号：req_/)).toBeVisible()
@@ -62,8 +62,8 @@ test.describe('设备农场控制台预约流程 E2E', () => {
     // 审计留痕
     await page.getByRole('link', { name: '审计' }).first().click()
     await expect(page.getByRole('table')).toBeVisible()
-    await expect(page.getByText('release_device_reservation').first()).toBeVisible()
-    await expect(page.getByText('cancel_pending_device_reservation').first()).toBeVisible()
+    await expect(page.getByText('释放预约').first()).toBeVisible()
+    await expect(page.getByText('取消等待中的预约').first()).toBeVisible()
     await expect(page.getByText('e2e 验证完成').first()).toBeVisible()
 
     // 验收结束主动撤销浏览器会话，不把技术会话留给清理任务兜底。

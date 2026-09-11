@@ -26,6 +26,7 @@ test.describe('设备农场控制台 E2E', () => {
     await page.getByRole('button', { name: '下一步' }).click()
     await expect(page.getByLabel('Android 系统版本')).toBeVisible()
     await expect(page.getByText(/共 \d+ 条/)).toBeVisible()
+    await page.locator('.ant-modal').getByRole('button', { name: /取\s*消/ }).click()
 
     // 5. 退出登录回到登录页
     await page.getByRole('button', { name: /退出/ }).click()

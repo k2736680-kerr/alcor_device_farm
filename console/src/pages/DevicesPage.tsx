@@ -837,7 +837,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <Steps current={createStep} size="small" style={{ marginBottom: 20 }} items={[{ title: '选择 Phone' }, { title: '选择 Android' }, { title: '选择设备池' }, { title: '高级配置' }]} />
         <Form<CreateDeviceValues> form={createForm} layout="vertical" onFinish={submitCreateDevice}>
           <Form.Item name="hardware_profile_id" hidden rules={[{ required: true, message: '请选择 Phone 模板' }]}><Input /></Form.Item>
-          <Form.Item name="catalog_id" hidden rules={[{ required: true, message: '请选择 Android 版本' }]}><Input /></Form.Item>
           {createStep === 0 && <>
             <Input.Search placeholder="搜索 Pixel 或 Phone 型号" value={profileSearch} onChange={(event) => setProfileSearch(event.target.value)} style={{ marginBottom: 12 }} />
             <Table<AndroidHardwareProfile> size="small" loading={hardwareQuery.isFetching} rowKey="id" pagination={{ pageSize: 8 }} dataSource={filteredHardwareProfiles} rowSelection={{ type: 'radio', selectedRowKeys: [createForm.getFieldValue('hardware_profile_id')].filter(Boolean), onChange: (keys) => {
