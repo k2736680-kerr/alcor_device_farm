@@ -659,7 +659,7 @@
 
 ### DF-066 控制面 iOS 隧道与 HTTPS Gateway 部署包
 
-状态：in_progress。
+状态：completed。
 
 实施：按 ADR-0033 为 220 下一阶段预发布增加固定版本、非 root 的 SSH tunnel sidecar 和独立 Nginx TLS Gateway。Server 8081 只在 Compose 内部暴露，18181 由 TLS Gateway 对外提供；隧道与 Server 共用网络命名空间并只挂载只读证书、私钥和 known_hosts。部署代码、验证脚本和证据只用于后续切换准备，不代表已发布到 171，也不修改 NPS、正式 Agent URL 或正式数据库。
 
