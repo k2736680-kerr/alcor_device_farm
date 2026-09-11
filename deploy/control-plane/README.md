@@ -81,7 +81,7 @@ docker compose --profile ios --env-file postgres.env --env-file server.env up -d
   device-farm-server device-farm-ios-tunnel device-farm-ios-gateway
 ```
 
-Server 的 8081 不再直接映射宿主机；18181 只由独立 Nginx TLS Gateway 暴露。Tunnel 与 Server 共用网络命名空间，使 Server 继续通过 `127.0.0.1:4811/4842` 访问 Mac 上的 Session Fence 和 Baguette。部署代码可以提前准备，但是否启用 iOS profile、切 Agent 和改 NPS 都是以后单独确认的动作。
+Server 的 8081 不再直接映射宿主机；18181 只由独立 Nginx TLS Gateway 暴露。Tunnel 与 Server 共用网络命名空间，使 Server 通过 `127.0.0.1:4811` 访问 Mac Session Fence，并通过 `127.0.0.1:4842` 转发到 Mac 的 Baguette `127.0.0.1:8421`。部署代码可以提前准备，但是否启用 iOS profile、切 Agent 和改 NPS 都是以后单独确认的动作。
 
 发布镜像会内置 migration runner、备份脚本和设备域 migration；执行前仍必须先做数据库备份和 `--check-config`。预部署配置中的 STF 默认关闭，待取得现有 171 的 API Token 后再单独启用，避免把未知凭证写入部署包。
 

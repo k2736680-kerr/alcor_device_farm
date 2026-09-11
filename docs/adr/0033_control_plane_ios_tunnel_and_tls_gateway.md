@@ -8,7 +8,7 @@
 
 ## 决策
 
-1. 新增固定版本的非 root SSH tunnel sidecar，使用只读 Secret 目录，通过本地转发把 220 Server 网络命名空间内的 `127.0.0.1:4811`、`127.0.0.1:4842` 连接到 Mac/Baguette 回环端口。
+1. 新增固定版本的非 root SSH tunnel sidecar，使用只读 Secret 目录，通过本地转发把 220 Server 网络命名空间内的 `127.0.0.1:4811` 连接到 Mac Session Fence 的 `127.0.0.1:4811`，把 `127.0.0.1:4842` 连接到 Mac Baguette 的 `127.0.0.1:8421`。
 2. 隧道使用 `network_mode: service:device-farm-server`，因此 Server 可通过 `127.0.0.1` 访问隧道；隧道不挂载 Docker Socket，不使用 privileged，丢弃全部 Linux capabilities。
 3. Server 的 8081 只使用 Compose `expose`，不直接发布宿主机端口。独立 Nginx Gateway 绑定 220 的 18181，以 TLS 终止后代理到 `device-farm-server:8081`。
 4. 证书、私钥、SSH 私钥和 known_hosts 只通过未纳入 Git 的 Secret 文件挂载；示例配置只包含占位符。

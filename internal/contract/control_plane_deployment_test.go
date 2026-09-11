@@ -83,7 +83,7 @@ func TestControlPlanePredeploymentStaysIsolatedAndTLSOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"StrictHostKeyChecking=yes", "-L 4811:127.0.0.1:4811", "-L 4842:127.0.0.1:4842"} {
+	for _, required := range []string{"StrictHostKeyChecking=yes", "-L 4811:127.0.0.1:4811", "-L 4842:127.0.0.1:8421"} {
 		if !strings.Contains(string(tunnelEntrypoint), required) {
 			t.Fatalf("control-plane iOS tunnel entrypoint is missing %q", required)
 		}
