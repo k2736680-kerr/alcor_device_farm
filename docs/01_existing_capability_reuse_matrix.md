@@ -160,6 +160,8 @@ DF-064 的控制面部署复用现有 Server、Console、PostgreSQL migration、
 
 DF-065 的瞬时切换准备复用现有 Agent 内部 API、Host heartbeat、PostgreSQL custom backup、Console HTTPS Gateway 和 iOS Gateway；允许新增的只有 220 专用 Agent 内网端口、切换环境模板、只读 readiness 脚本和回滚清单。禁止在准备阶段修改 171 Agent/NPS、复制 STF 数据、双 Server 写同一数据库或把 Agent 端口加入公网转发。
 
+DF-066 的控制面 iOS 隧道与 HTTPS Gateway 复用现有 Server iOS Gateway、Baguette 原生 Web UI、SSH 受控通道和 Nginx TLS 代理；允许新增的只有固定版本、非 root 的 SSH tunnel sidecar、220 专用 iOS TLS Gateway、证书/隧道 Secret 挂载模板以及只读部署验证和回滚脚本。隧道只转发 Mac 回环的 4811/4842 到同一 Server 网络命名空间，不复制 Baguette、STF、Appium 或 iOS 协议实现，不访问 Docker Socket。Server 的 8081 仅在 Compose 内部暴露，18181 由独立 TLS Gateway 对外提供；预发布验证不得改变 171、NPS 或正式流量。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。

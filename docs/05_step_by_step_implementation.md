@@ -87,6 +87,7 @@
 | DF-063 | Android CPU 和内存无损改配 | completed | DF-062、ADR-0030 |
 | DF-064 | 220 控制面预部署与独立数据库隔离 | completed | DF-063、ADR-0031 |
 | DF-065 | 控制面瞬时切换准备与 Agent 端点 | completed | DF-064、ADR-0032 |
+| DF-066 | 控制面 iOS 隧道与 HTTPS Gateway 部署包 | in_progress | DF-065、ADR-0033 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -655,6 +656,18 @@
 产出：ADR-0032、切换配置模板、只读 readiness 脚本、回滚清单和 `docs/evidence/DF-065/acceptance.md`。
 
 验收：220 的 18182 只绑定内网且可被 readiness 检查访问；18180 HTTPS、18181 预留入口和独立 PostgreSQL 健康；脚本不会停止服务、修改 Agent 或 NPS；明确生产切换前仍缺少生产数据库备份、Host Agent 认证 Token 对齐、STF Token、iOS Baguette 隧道和 NPS 配置确认。通过后单独提交简洁中文 commit。
+
+### DF-066 控制面 iOS 隧道与 HTTPS Gateway 部署包
+
+状态：in_progress。
+
+实施：按 ADR-0033 为 220 下一阶段预发布增加固定版本、非 root 的 SSH tunnel sidecar 和独立 Nginx TLS Gateway。Server 8081 只在 Compose 内部暴露，18181 由 TLS Gateway 对外提供；隧道与 Server 共用网络命名空间并只挂载只读证书、私钥和 known_hosts。部署代码、验证脚本和证据只用于后续切换准备，不代表已发布到 171，也不修改 NPS、正式 Agent URL 或正式数据库。
+
+依赖：DF-065、ADR-0033。
+
+产出：固定版本 tunnel Dockerfile、iOS TLS Gateway 配置、Compose Secret 挂载模板、server.env 示例、只读验证脚本和 `docs/evidence/DF-066/`。
+
+验收：`docker compose config` 通过；Server 不再直接映射 18181；tunnel 使用 `network_mode: service:device-farm-server`、非 root、只读 Secret、无 Docker Socket；Baguette `simulators.json` 链路可通过真实 Mac 隧道访问；18181 TLS 握手和未认证 API 401 通过；关闭 iOS 开关后可回滚到 disabled；220、171 和 NPS 均未切换。通过后单独提交简洁中文 commit。
 
 ## 12. 单任务完成定义
 

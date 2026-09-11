@@ -93,6 +93,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `deploy` | STF、Agent、模拟器和设备服务部署 | 独立部署细节对 Alcor Adapter 不可见 |
 | `console` | Device Farm Console 源码、页面测试和构建配置 | 后续可由 Eval Console 链接、嵌入或复用设备域模块；继续调用稳定设备 API |
 | `harness/dafit` | Alcor 接入前真实联调；运行期间按 ADR-0023 周期续约、结束后立即释放 | 不进入 Eval Console 或 Run 业务模型，不复制 DaFit Runner |
+| 控制面 iOS 隧道与 TLS Gateway | 220 预部署的 iOS 远控入口 | 固定版本 SSH tunnel sidecar 与独立 Nginx TLS Gateway；18181 只提供 HTTPS iOS Gateway，Server 8081 仅 Compose 内部可达，18182 仍是 Host Agent 私网 API；不改变 171/NPS，不新增业务对象 |
 
 新版方案未确定设备农场最终是否与 Alcor 合仓，因此当前目录不预设迁入旧 `eval_server/internal/devicefarm`，也不预设永远不能合仓。第六阶段只以稳定 API 契约作为必需边界。
 

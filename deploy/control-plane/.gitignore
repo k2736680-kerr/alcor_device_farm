@@ -6,4 +6,12 @@ postgres-data/
 backups/
 secrets/*
 !secrets/.gitkeep
+!secrets/ios-tunnel/
+!secrets/ios-tunnel/.gitkeep
+!secrets/ios-gateway-public-tls/
+!secrets/ios-gateway-public-tls/.gitkeep
+secrets/ios-tunnel/*
+!secrets/ios-tunnel/.gitkeep
+secrets/ios-gateway-public-tls/*
+!secrets/ios-gateway-public-tls/.gitkeep
 *.sha256
