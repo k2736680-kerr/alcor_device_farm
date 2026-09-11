@@ -86,6 +86,7 @@
 | DF-062 | 修复 Emulator OOM 后的幽灵占用与原机恢复 | completed | DF-061、ADR-0029 |
 | DF-063 | Android CPU 和内存无损改配 | completed | DF-062、ADR-0030 |
 | DF-064 | 220 控制面预部署与独立数据库隔离 | completed | DF-063、ADR-0031 |
+| DF-065 | 控制面瞬时切换准备与 Agent 端点 | completed | DF-064、ADR-0032 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -644,6 +645,16 @@
 产出：控制面 Compose 部署包、独立数据库初始化、对齐文档、ADR-0031、`docs/evidence/DF-064/acceptance.md`。
 
 验收：本地 Go 测试/静态检查和 Compose 配置检查通过；220 预部署 PostgreSQL 健康且只含设备域 migration 表；220 现有 PostgreSQL、评估后台 18080 和 171 全部保持不变；Server `/healthz`、`/readyz`、`/metrics` 与 `/console/` 可访问且未认证请求被拒绝；预部署容器重启后状态可恢复；证据脱敏且不含 Token/密码；正式切换前不得改 Agent 指向。通过后单独提交简洁中文 commit。
+
+### DF-065 控制面瞬时切换准备与 Agent 端点
+
+状态：completed。
+
+实施：为 220 Server 预留 `18182` Host Agent 私网 API；新增切换环境模板和只读 readiness 检查，明确 18180 控制台、18181 iOS Gateway、18182 Agent API 的边界。准备阶段不修改 171 Agent/NPS，不迁移 STF/RethinkDB，不导入生产数据库；切换窗口才执行生产 custom dump、独立库导入、Agent URL 切换、心跳/设备验证和 NPS 后端切换。
+
+产出：ADR-0032、切换配置模板、只读 readiness 脚本、回滚清单和 `docs/evidence/DF-065/acceptance.md`。
+
+验收：220 的 18182 只绑定内网且可被 readiness 检查访问；18180 HTTPS、18181 预留入口和独立 PostgreSQL 健康；脚本不会停止服务、修改 Agent 或 NPS；明确生产切换前仍缺少生产数据库备份、Host Agent 认证 Token 对齐、STF Token、iOS Baguette 隧道和 NPS 配置确认。通过后单独提交简洁中文 commit。
 
 ## 12. 单任务完成定义
 

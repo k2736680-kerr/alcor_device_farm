@@ -9,6 +9,14 @@ import (
 
 func TestControlPlanePredeploymentStaysIsolatedAndTLSOnly(t *testing.T) {
 	root := filepath.Join("..", "..", "deploy", "control-plane")
+	ignored, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ignored), "cutover.env") {
+		t.Fatal("control-plane cutover.env must stay outside Git")
+	}
+
 	content, err := os.ReadFile(filepath.Join(root, "compose.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -18,6 +26,7 @@ func TestControlPlanePredeploymentStaysIsolatedAndTLSOnly(t *testing.T) {
 		"alcor-device-farm-control-plane", "postgres:17.5-alpine", "./postgres-data:/var/lib/postgresql/data",
 		"./backups:/var/backups/device-farm", "device-farm-gateway", "nginx:1.29.1-alpine",
 		"./secrets/tls.crt", "./secrets/tls.key", "${DEVICE_FARM_HTTP_PORT:-18180}:8443",
+		"${DEVICE_FARM_AGENT_HTTP_PORT:-18182}:8080",
 		"read_only: true", "no-new-privileges:true", "cap_drop:", "- ALL",
 	} {
 		if !strings.Contains(raw, required) {
@@ -40,6 +49,29 @@ func TestControlPlanePredeploymentStaysIsolatedAndTLSOnly(t *testing.T) {
 	for _, required := range []string{"listen 8443 ssl", "TLSv1.2 TLSv1.3", "proxy_pass http://device-farm-server:8080", "X-Forwarded-Proto https"} {
 		if !strings.Contains(rawNginx, required) {
 			t.Fatalf("control-plane TLS gateway is missing %q", required)
+		}
+	}
+}
+
+func TestCutoverReadinessCheckIsPortableAndReadOnly(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "..", "scripts", "verify-control-plane-cutover-readiness.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(content)
+	for _, required := range []string{
+		"control plane origin must use HTTPS",
+		"*[!A-Za-z0-9._-]*",
+		"expected unauthenticated device API to return 401",
+		"production backup not supplied; import remains a cutover-step",
+	} {
+		if !strings.Contains(raw, required) {
+			t.Fatalf("cutover readiness check is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"docker compose down", "systemctl ", "sed -i", "DEVICE_FARM_CUTOVER_CONFIRM=1"} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("cutover readiness check contains mutating command %q", forbidden)
 		}
 	}
 }

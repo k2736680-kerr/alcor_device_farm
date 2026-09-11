@@ -54,6 +54,7 @@ services:
       - "8080"
     ports:
       - "${DEVICE_FARM_BIND_ADDRESS:-127.0.0.1}:${DEVICE_FARM_IOS_GATEWAY_PORT:-18181}:8081"
+      - "${DEVICE_FARM_BIND_ADDRESS:-127.0.0.1}:${DEVICE_FARM_AGENT_HTTP_PORT:-18182}:8080"
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777

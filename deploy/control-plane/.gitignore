@@ -1,5 +1,6 @@
 server.env
 postgres.env
+cutover.env
 source/
 postgres-data/
 backups/

@@ -158,6 +158,8 @@ DF-063 按 ADR-0030 复用现有 Docker Provider `RestartWithProfile`、Host Com
 
 DF-064 的控制面部署复用现有 Server、Console、PostgreSQL migration、健康检查和备份脚本；允许新建的只有同级 Compose 部署目录、独立 PostgreSQL 实例、预部署端口和切换/回滚证据。禁止复用 220 现有 PostgreSQL 的 `alcor` 数据库、账号、Schema 或卷，禁止把 STF、RethinkDB、模拟器和 Docker Socket 搬到控制面，禁止新增 Alcor 业务表或第二套业务数据库。
 
+DF-065 的瞬时切换准备复用现有 Agent 内部 API、Host heartbeat、PostgreSQL custom backup、Console HTTPS Gateway 和 iOS Gateway；允许新增的只有 220 专用 Agent 内网端口、切换环境模板、只读 readiness 脚本和回滚清单。禁止在准备阶段修改 171 Agent/NPS、复制 STF 数据、双 Server 写同一数据库或把 Agent 端口加入公网转发。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。

@@ -36,6 +36,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
 | 控制面预部署与数据库隔离 | 220 以同级 `/data/stacks/alcor-device-farm` 独立 Compose 项目运行 Device Farm Server、Console 和专用 PostgreSQL；数据库仅在项目网络内暴露，预部署使用 18180/18181 | 新版 Alcor 通过稳定设备 API/Adapter 接入；正式切换前不要求 Alcor 或 171 Agent 改配 | 不复用 220 现有 PostgreSQL、`alcor` 数据库、共享 Schema/账号/卷，不修改 171 正式服务，不把模拟器迁到 220 |
+| 瞬时切换端点 | 220 预留 18182 作为 Host Agent 私网 API；18180 保持 HTTPS 控制台入口，18181 保持 iOS Gateway | 171/未来 Host Agent 在维护窗口切换主动连接地址；NPS 只代理浏览器/iOS 入口 | 不把 18182 暴露公网，不让两个 Server 同时写同一数据库，不在准备阶段复制生产 STF/RethinkDB |
 
 ## 3. 当前必须实现的设备域
 

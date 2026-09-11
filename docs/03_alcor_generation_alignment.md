@@ -103,6 +103,8 @@ DF-058 只调整独立 Device Farm Console 的设备域技术会话期限，不�
 
 预部署阶段只监听 220 的 18180/18181，不切换 171 Agent，不停止 171 正式服务，不迁移 STF/RethinkDB。正式切换必须单独执行备份、健康检查、Agent 指向变更、心跳/设备验证和可回滚确认；失败时只回滚设备域 Server/Agent 指向，不触碰 Alcor 评估数据库或业务服务。
 
+DF-065 增加 18182 仅供 Host Agent 使用的私网 API 端口。该端口不经过 NPS，不提供浏览器入口；生产数据库导入、Host Agent 认证 Token 对齐、STF/iOS Secret、Baguette 隧道和 NPS 后端切换仍属于单独维护窗口。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；

@@ -28,6 +28,7 @@
 |---|---|---|
 | `https://10.0.80.220:18180` | Device Farm Server/Console | 独立 TLS 网关；预部署证书可先自签，正式切换前替换为内网证书 |
 | `10.0.80.220:18181` | iOS Gateway | 预留，不改变现有 171 服务 |
+| `10.0.80.220:18182` | Host Agent 内网 API | 只给 171/未来 Host Agent 使用，不接 NPS、不提供浏览器访问 |
 | Compose 内部 `postgres:5432` | Device Farm PostgreSQL | 不发布到宿主机，不允许外部访问 |
 | `10.0.30.171:7100` | 现有 STF | 预部署 Server 只读连接，正式切换前不迁移 |
 
@@ -78,4 +79,17 @@ docker compose --env-file postgres.env --env-file server.env up -d device-farm-s
 
 ## 正式切换原则
 
-预部署和正式切换分开。切换前不改 171 Agent 的 Server URL，不停止 171 Server，不切换评估后台入口。正式切换时只需要：停止旧设备农场 Server、保留 171 Host Agent/Emulator/STF、切换 Agent 指向 220、验证心跳和设备状态，再开放 220 控制面入口。切换脚本必须先做备份、健康检查和可回滚检查。
+预部署和正式切换分开。切换前不改 171 Agent 的 Server URL，不停止 171 Server，不切换评估后台入口。正式切换时只需要：停止旧设备农场 Server、保留 171 Host Agent/Emulator/STF、切换 Agent 指向 220:18182、验证心跳和设备状态，再把 NPS/控制台入口指向 220:18180。切换脚本必须先做备份、健康检查和可回滚检查。18182 不应加入公网或 NPS 转发。
+
+维护窗口前复制模板并运行只读检查；`cutover.env` 已被 Git 忽略，不得把真实路径、校验值或 Secret 写回示例文件：
+
+```sh
+cp deploy/control-plane/cutover.env.example deploy/control-plane/cutover.env
+chmod 600 deploy/control-plane/cutover.env
+set -a
+. deploy/control-plane/cutover.env
+set +a
+scripts/verify-control-plane-cutover-readiness.sh
+```
+
+检查通过只代表入口和回滚基础可用。正式切换前仍需生成并校验生产备份、对齐 Host Agent 认证 Token、注入 STF/iOS Secret、建立 Baguette 隧道；完成 Agent 心跳与设备验证后才修改 NPS。
