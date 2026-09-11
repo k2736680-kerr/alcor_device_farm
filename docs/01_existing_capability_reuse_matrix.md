@@ -164,6 +164,8 @@ DF-066 的控制面 iOS 隧道与 HTTPS Gateway 复用现有 Server iOS Gateway�
 
 DF-067 的多宿主机接入复用既有 `POST /api/v1/device-hosts`、Host Agent heartbeat、`scripts/install-device-host-agent.sh` 和 220 的 18182 私网入口；允许新增的只有 Console 的宿主机登记表单、登记后的安全安装提示和文档化接入检查。不得新增 Host 数据库或第二套 Agent 注册协议，不在浏览器返回 Agent Token，不由 Server 通过 SSH/Docker Socket 推送或执行远端命令。Agent 仍主动连接控制面并以 Host ID/Agent Token 完成认证，新增 Host 的平台、地址和容量继续由既有 Host API 与心跳收敛。
 
+DF-068 只补充登记完成后的分平台安装引导与本机预检清单；Linux 复用现有 `scripts/install-device-host-agent.sh`/systemd，iOS 复用 `deploy/ios-host/host-agent.env.example`。允许新增的只有 Console 脱敏配置步骤、复制按钮和文档验收，不生成或传输真实 Token，不由控制面远程安装或启动 Agent。
+
 ADR-0024 进一步确认：动态虚拟 iPhone 必须复用 Xcode CoreSimulator。允许新建的是目录校验、Host Command 编排、幂等身份和状态收敛，不是自研 iOS 虚拟机。Runtime/Device Type 必须来自 Host 上报与部署 allowlist 的交集；Server、Console 和调用方均不能提交任意 `simctl` 参数。
 
 无法回答或没有更新本矩阵时，不进入编码。

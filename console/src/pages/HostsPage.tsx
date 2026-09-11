@@ -313,9 +313,26 @@ export function HostsPage({ role = 'admin' }: { role?: ConsoleRole }) {
         onCancel={() => setCreatedHost(null)}
       >
         {createdHost && <>
-          <Typography.Paragraph>先在目标服务器安装并启动 Host Agent，再等待心跳变为“在线”。</Typography.Paragraph>
+          <Typography.Paragraph>接下来只需要在目标服务器本机安装并启动 Host Agent；控制台不会远程登录或代替你执行命令。</Typography.Paragraph>
           <Typography.Paragraph>Host ID：<Typography.Text code copyable>{createdHost.id}</Typography.Text></Typography.Paragraph>
           <Typography.Paragraph>控制面 Agent 地址：<Typography.Text code copyable>http://10.0.80.220:18182</Typography.Text></Typography.Paragraph>
+          {createdHost.host_os === 'linux' ? (
+            <>
+              <Typography.Paragraph>1. 在 Linux 服务器的项目目录执行：</Typography.Paragraph>
+              <Typography.Paragraph><Typography.Text code copyable>sudo ./scripts/install-device-host-agent.sh</Typography.Text></Typography.Paragraph>
+              <Typography.Paragraph>2. 编辑 <Typography.Text code>/etc/alcor-device-farm/host-agent.env</Typography.Text>，至少填写下面三项：</Typography.Paragraph>
+            </>
+          ) : (
+            <>
+              <Typography.Paragraph>1. 在 macOS 宿主机复制并保护配置模板：</Typography.Paragraph>
+              <Typography.Paragraph><Typography.Text code copyable>deploy/ios-host/host-agent.env.example</Typography.Text></Typography.Paragraph>
+              <Typography.Paragraph>2. 按现有 macOS Host Agent 启动方式加载该配置，再填写下面三项：</Typography.Paragraph>
+            </>
+          )}
+          <Typography.Paragraph>
+            <Typography.Text code copyable>{`DEVICE_FARM_AGENT_SERVER_URL=http://10.0.80.220:18182\nDEVICE_FARM_AGENT_HOST_ID=${createdHost.id}\nDEVICE_FARM_SECURITY_AGENT_TOKEN=从受控Secret注入`}</Typography.Text>
+          </Typography.Paragraph>
+          <Typography.Paragraph>3. {createdHost.host_os === 'linux' ? '执行 systemctl restart alcor-device-host-agent' : '启动或重启本机 Host Agent'}，然后回到这里等待连接状态变为“在线”、自动化状态变为“就绪”。</Typography.Paragraph>
           <Typography.Paragraph type="secondary">安装时只在目标服务器的受控 Secret 文件中填写 Agent Token；不要把 Token 粘贴到浏览器、聊天记录或 Git。</Typography.Paragraph>
         </>}
       </Modal>

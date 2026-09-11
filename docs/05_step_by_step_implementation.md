@@ -89,6 +89,7 @@
 | DF-065 | 控制面瞬时切换准备与 Agent 端点 | completed | DF-064、ADR-0032 |
 | DF-066 | 控制面 iOS 隧道与 HTTPS Gateway 部署包 | completed | DF-065、ADR-0033 |
 | DF-067 | 控制台宿主机登记与 Agent 引导 | completed | DF-066、ADR-0034 |
+| DF-068 | 宿主机接入安装引导与预检 | completed | DF-067、ADR-0035 |
 
 ## 3. 阶段 A：工程和契约基础
 

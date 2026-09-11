@@ -109,6 +109,8 @@ DF-066 只交付设备域控制面的 iOS 连接部署包：固定版本、非 r
 
 DF-067 只把既有设备域 Host 创建能力接入 Device Farm Console，帮助管理员登记未来新增的 Linux/macOS 宿主机并按现有安装脚本接入 Agent。它不新增 Alcor 业务对象、Worker 任务分发、数据库或凭证分发机制；Agent Token 仍只存在受控 Secret，浏览器只看到 Host 登记结果和脱敏安装步骤。
 
+DF-068 只把登记后的 Agent 本机安装、配置和 readiness 预检步骤呈现给管理员；不把安装动作、Token 或远程执行权限放进浏览器，也不改变新版 Worker/Device Farm Adapter 边界。
+
 ## 6. 接入前检查点
 
 1. 获取新版 Alcor 实际开发分支 commit，而不是继续使用本地旧 master 推断；
