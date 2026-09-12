@@ -4,6 +4,24 @@ set -eu
 : "${DEVICE_FARM_IOS_GATEWAY_ORIGIN:?set DEVICE_FARM_IOS_GATEWAY_ORIGIN}"
 : "${DEVICE_FARM_CONTROL_PLANE_DIR:?set DEVICE_FARM_CONTROL_PLANE_DIR}"
 
+configured_public_url=$(sed -n 's/^DEVICE_FARM_IOS_REMOTE_CONTROL_PUBLIC_URL=//p' \
+  "$DEVICE_FARM_CONTROL_PLANE_DIR/server.env" | head -n 1)
+if [ -z "$configured_public_url" ]; then
+  echo "server.env must set DEVICE_FARM_IOS_REMOTE_CONTROL_PUBLIC_URL" >&2
+  exit 2
+fi
+
+normalize_origin() {
+  printf '%s' "$1" | sed 's#/*$##'
+}
+
+if [ "$(normalize_origin "$configured_public_url")" != "$(normalize_origin "$DEVICE_FARM_IOS_GATEWAY_ORIGIN")" ]; then
+  echo "iOS gateway origin does not match DEVICE_FARM_IOS_REMOTE_CONTROL_PUBLIC_URL" >&2
+  echo "configured=$(normalize_origin "$configured_public_url")" >&2
+  echo "checked=$(normalize_origin "$DEVICE_FARM_IOS_GATEWAY_ORIGIN")" >&2
+  exit 1
+fi
+
 case "$DEVICE_FARM_IOS_GATEWAY_ORIGIN" in
   https://*) ;;
   *) echo "iOS gateway origin must use HTTPS" >&2; exit 2 ;;
