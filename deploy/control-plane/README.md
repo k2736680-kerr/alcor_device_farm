@@ -42,6 +42,20 @@
 
 在部署机准备源码快照后，将 `source/`、`compose.yaml`、`server.env`、`postgres.env` 和 `secrets/console-users.yaml` 放到上述目录。真实 Token、数据库密码和 Console Argon2id 哈希只放在远端未纳入 Git 的文件中。
 
+## 开机自动恢复与重启边界
+
+220 必须安装仓库提供的 `alcor-device-farm-control-plane.service`。它在 Docker 启动并且网络就绪后执行一次完整的 `docker compose --profile ios up -d`，确保使用 `network_mode: service:device-farm-server` 的 iOS tunnel 重新绑定当前 Server 容器，而不是只依赖 Docker 的单容器 `unless-stopped` 重启策略：
+
+```sh
+install -m 0644 alcor-device-farm-control-plane.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now alcor-device-farm-control-plane.service
+systemctl is-enabled alcor-device-farm-control-plane.service
+systemctl status --no-pager alcor-device-farm-control-plane.service
+```
+
+该单元停止时只停止本项目 Compose 服务，不删除卷、镜像或数据库。验证主机重启恢复时，必须确认该单元为 `active (exited)`，并确认 PostgreSQL、Server、两个 Gateway 和 iOS tunnel 均为 `healthy`；不能只看容器是否存在。171 的 Android Emulator 由已启用的 Host Agent 管理，Mac 的 Host Agent/Baguette 由 `KeepAlive`、`RunAtLoad` 的 LaunchAgent 管理，均不由 220 通过 SSH 远程启动。
+
 ```sh
 cd /data/stacks/alcor-device-farm
 chmod 600 server.env postgres.env secrets/console-users.yaml

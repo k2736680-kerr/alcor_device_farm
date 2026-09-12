@@ -40,6 +40,12 @@
 - Server、tunnel、Gateway 重建后均为 healthy；Android 15-1、iPhone17-1、iPhone17-2 均为 `ready/healthy`。
 - 两台 iOS 均完成真实远控回归：API 状态到 `connected`，入口返回 302、会话 Cookie 正常，带 Cookie 跳转后的 Baguette 模拟器页面返回 200；测试预约全部释放。
 
+## 重启恢复加固（2026-09-12）
+
+- 220 已安装并启用 `alcor-device-farm-control-plane.service`。Docker/网络就绪后，该单元重新执行完整 `docker compose --profile ios up -d`，修复 iOS tunnel 对旧 Server 网络命名空间的绑定风险；`systemctl is-enabled` 为 `enabled`，受控重启后单元为 `active (exited)`。
+- 受控编排重启后，PostgreSQL、Server、iOS tunnel、iOS Gateway 和控制台 Gateway 均重新进入 `healthy`；`18181` 和 NPS `18444` 均返回预期未认证 `401`，`8880` 返回 `200`。
+- 220 旧 Alcor Supervisor 的 `alcor-server` 已从 `autostart=false` 修正为 `autostart=true` 并重新加载；`8880` 现在会随主机启动自动拉起。171 Host Agent 为 systemd `enabled/active`，Mac Host Agent 与 Baguette LaunchAgent 均为 `KeepAlive + RunAtLoad`。
+
 ## 保护边界
 
 本轮在明确的预发布验证范围内重建了 220 Server，并启动了 iOS tunnel/Gateway；未停止或修改 171 正式服务、Host Agent、STF、模拟器或 NPS，也没有导入生产数据库。完成 disabled 回滚演练后，220 已恢复 iOS profile 运行状态。
