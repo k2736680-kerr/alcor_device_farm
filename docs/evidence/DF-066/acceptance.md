@@ -33,6 +33,13 @@
 | 171 Server/Agent/STF/隧道 | 通过，171 端口和容器保持 running，Agent service active |
 | 正式切换前只读 readiness | 通过；220 健康检查、未认证 401、18182、171:18080 均可达，脚本未修改 Agent/NPS |
 
+## 运行期入口故障修复（2026-09-12）
+
+- 发现 `DEVICE_FARM_IOS_REMOTE_CONTROL_PUBLIC_URL` 指向 `https://ios-farm.test.moyoung.com`，该域名解析到不可用的 `47.106.38.230`，TLS 握手失败；220 的 iOS Gateway、隧道和 Baguette 本身正常。
+- 220 已备份 `server.env`，将入口改为可达的 `https://10.0.80.220:18181`；同时清空错误地与当前值相同的 `*_PREVIOUS_TOKEN`，避免 Server 重启后配置校验失败。
+- Server、tunnel、Gateway 重建后均为 healthy；Android 15-1、iPhone17-1、iPhone17-2 均为 `ready/healthy`。
+- 两台 iOS 均完成真实远控回归：API 状态到 `connected`，入口返回 302、会话 Cookie 正常，带 Cookie 跳转后的 Baguette 模拟器页面返回 200；测试预约全部释放。
+
 ## 保护边界
 
 本轮在明确的预发布验证范围内重建了 220 Server，并启动了 iOS tunnel/Gateway；未停止或修改 171 正式服务、Host Agent、STF、模拟器或 NPS，也没有导入生产数据库。完成 disabled 回滚演练后，220 已恢复 iOS profile 运行状态。
