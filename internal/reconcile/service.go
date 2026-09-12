@@ -410,6 +410,28 @@ func (service *Service) queueRestart(ctx context.Context, deviceID string, allow
 			AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
 			AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
 			AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
+			-- A persistent incident gets at most one automatic, non-destructive
+			-- restart.  A later incident is eligible only after a healthy heartbeat
+			-- was observed after that restart, or an operator explicitly released
+			-- the quarantine.  Without this fence, a transient STF/Agent flap can
+			-- enqueue a restart every reconciliation cycle.
+			AND NOT EXISTS (
+				SELECT 1
+				FROM device_host_commands previous
+				WHERE previous.id=(
+					SELECT latest.id FROM device_host_commands latest
+					WHERE latest.payload->>'device_id'=d.id
+					  AND latest.payload->>'operation_source'='self_healing'
+					  AND latest.command_type='restart'
+					  AND latest.status IN ('succeeded','failed','timed_out')
+					ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1)
+				AND COALESCE(d.last_seen_at,d.created_at) <= COALESCE(previous.completed_at,previous.updated_at)
+				AND NOT EXISTS (
+					SELECT 1 FROM device_audit_events reset
+					WHERE reset.resource_type='device' AND reset.resource_id=d.id
+					  AND reset.action='unquarantine_device'
+					  AND reset.created_at > previous.created_at)
+			)
 			FOR UPDATE OF d`, deviceID).Scan(&hostID, &providerRef, &platform, &lifecycle, &health, &healthReason, &latestManagementAction)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

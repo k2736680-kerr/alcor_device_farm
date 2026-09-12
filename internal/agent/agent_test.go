@@ -23,6 +23,18 @@ type fakeClient struct {
 	lastHeartbeat hostcommand.HeartbeatInput
 }
 
+type registrarSpy struct {
+	mu        sync.Mutex
+	endpoints []string
+}
+
+func (spy *registrarSpy) Register(_ context.Context, endpoint string) error {
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+	spy.endpoints = append(spy.endpoints, endpoint)
+	return nil
+}
+
 func (client *fakeClient) Heartbeat(_ context.Context, _ string, input hostcommand.HeartbeatInput) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -271,6 +283,39 @@ func TestAgentHeartbeatIncludesHostReadinessAndDoesNotChargeIOSAsAndroidEmulator
 		len(client.lastHeartbeat.Devices) != 1 || len(client.lastHeartbeat.Devices[0].RuntimeProfile) != 0 ||
 		client.lastHeartbeat.Devices[0].Platform != "ios" || client.lastHeartbeat.Devices[0].Connection["adb_endpoint"] != nil {
 		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
+	}
+}
+
+func TestAgentRegistersAndroidEndpointBeforeHealthIsReady(t *testing.T) {
+	provider := providermock.New(providermock.Config{Scenario: providermock.Scenario{AppiumUnhealthy: true}})
+	request := providers.CreateRequest{DeviceID: "device_000000000000001", HostID: "host_000000000000001",
+		ImageID: "image_000000000000001", ProviderRef: "emulator-device-1"}
+	if _, err := provider.Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), request.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	registrar := &registrarSpy{}
+	runtime, err := agent.New(agent.Config{HostID: request.HostID, ProviderType: "docker",
+		HeartbeatInterval: 5 * time.Millisecond, LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second, STFADBRegistrar: registrar},
+		&fakeClient{}, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	registrar.mu.Lock()
+	defer registrar.mu.Unlock()
+	if len(registrar.endpoints) == 0 || registrar.endpoints[0] == "" {
+		t.Fatalf("unhealthy Android endpoint was not registered: %+v", registrar.endpoints)
 	}
 }
 

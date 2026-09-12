@@ -210,6 +210,37 @@ func TestHeartbeatPreservesProvisioningStateDuringInFlightRebuild(t *testing.T) 
 	}
 }
 
+func TestHeartbeatPreservesProvisioningStateDuringRuntimeProfileUpdate(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "old-serial",
+		nil, nil, "provisioning", "unknown")
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_host_commands
+		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES('command_000000000002','host_000000000000001','restart',
+		'{"device_id":"device_0000000000001","provider_ref":"container-1","operation_kind":"runtime_profile_update"}','pending',1,'heartbeat-runtime-profile-in-flight')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "new-serial",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+				"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health, serial string
+	var lastSeen *time.Time
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,last_seen_at
+		FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial, &lastSeen); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "provisioning" || health != "unknown" || serial != "new-serial" || lastSeen == nil {
+		t.Fatalf("lifecycle=%s health=%s serial=%s last_seen=%v", lifecycle, health, serial, lastSeen)
+	}
+}
+
 func TestHeartbeatMayReuseConnectionIdentityFromQuarantinedPoolExitRecord(t *testing.T) {
 	db := openTestDatabase(t)
 	seedHost(t, db)

@@ -257,7 +257,13 @@ func (agent *Agent) sendHeartbeat(ctx context.Context) error {
 	}
 	devices := make([]hostcommand.DiscoveredDevice, 0, len(snapshots))
 	for _, snapshot := range snapshots {
-		if snapshot.Platform == providers.PlatformAndroid && snapshot.Ready() && agent.registrar != nil {
+		// Register every discovered Android endpoint, including devices that are
+		// still booting or whose health probe is temporarily stale.  A restart
+		// can change the host port; waiting for Ready here would leave STF
+		// connected to the old port forever because the health probe itself uses
+		// the STF ADB server.
+		if snapshot.Platform == providers.PlatformAndroid && agent.registrar != nil &&
+			strings.TrimSpace(snapshot.Connection.ADBEndpoint) != "" {
 			if err := agent.registrar.Register(ctx, snapshot.Connection.ADBEndpoint); err != nil {
 				agent.logger.Warn("STF ADB Endpoint 注册失败", "provider_ref", snapshot.ProviderRef, "error", err)
 			}

@@ -408,7 +408,9 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 	var current discoveredDeviceState
 	err := tx.QueryRow(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,d.health_reason,
 		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
-			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased')),
+			AND (c.command_type IN ('create','rebuild','delete') OR
+				(c.command_type='restart' AND c.payload->>'operation_kind'='runtime_profile_update'))
+			AND c.status IN ('pending','leased')),
 		COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
 			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
 			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),

@@ -495,6 +495,48 @@ func TestPersistentSystemQuarantineQueuesOnlyNonDestructiveRestart(t *testing.T)
 	}
 }
 
+func TestPersistentSystemQuarantineDoesNotQueueSecondRestartWithoutRecovery(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET health_status='unhealthy'
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result, err := service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 1 {
+		t.Fatalf("first self-healing result=%+v error=%v", result, err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_host_commands
+		SET status='succeeded',completed_at=clock_timestamp(),updated_at=clock_timestamp(),
+		result='{"state":"running"}'::jsonb
+		WHERE payload->>'device_id'='device_0000000000001' AND payload->>'operation_source'='self_healing'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices
+		SET lifecycle_status='quarantined',health_status='unhealthy',health_reason='device is not visible through STF',
+		last_seen_at=(SELECT completed_at FROM device_host_commands
+			WHERE payload->>'device_id'='device_0000000000001' AND payload->>'operation_source'='self_healing'
+			ORDER BY created_at DESC LIMIT 1)
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 0 {
+		t.Fatalf("second self-healing result=%+v error=%v", result, err)
+	}
+	var restartCommands int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_host_commands
+		WHERE payload->>'device_id'='device_0000000000001' AND payload->>'operation_source'='self_healing'`).Scan(&restartCommands); err != nil {
+		t.Fatal(err)
+	}
+	if restartCommands != 1 {
+		t.Fatalf("self-healing restart commands=%d", restartCommands)
+	}
+}
+
 func TestIdleBootingUnhealthyDeviceQueuesOnlyNonDestructiveRestart(t *testing.T) {
 	environment := newEnvironment(t, true)
 	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET
