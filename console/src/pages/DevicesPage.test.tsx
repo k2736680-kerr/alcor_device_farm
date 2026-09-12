@@ -378,7 +378,7 @@ describe('DevicesPage device categories', () => {
 
     await user.click(await screen.findByRole('button', { name: '新增 Android 模拟器' }))
     await user.click(screen.getByRole('button', { name: '下一步' }))
-    expect(await screen.findByLabelText('Android 系统版本')).toHaveValue('catalog_00000000000001')
+    expect(await screen.findByText(/Android 16 \/ API 36 · Google APIs · x86_64 · 已缓存可用/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '下一步' }))
     await user.click(screen.getByRole('button', { name: '下一步' }))
     await user.click(screen.getByRole('button', { name: '创建设备' }))
@@ -404,7 +404,7 @@ describe('DevicesPage device categories', () => {
 
     await user.click(await screen.findByRole('button', { name: '新增 Android 模拟器' }))
     await user.click(screen.getByRole('button', { name: '下一步' }))
-    expect(await screen.findByLabelText('Android 系统版本')).toHaveValue('catalog_00000000000001')
+    expect(await screen.findByText(/Android 16 \/ API 36 · Google APIs · x86_64 · 已缓存可用/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '下一步' }))
     await user.click(screen.getByLabelText('Android 设备池'))
 

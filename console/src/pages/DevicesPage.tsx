@@ -3,7 +3,7 @@ import type { MenuProps } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { DownOutlined } from '@ant-design/icons'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
@@ -509,7 +509,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     initializeIOSCreateForm(true)
   }, [createIOS, defaultIOSHostID, defaultIOSPoolID])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!createDevice || createForm.getFieldValue('catalog_id') || catalog.length === 0) return
     createForm.setFieldValue('catalog_id', defaultAndroidCatalogID(catalog))
   }, [catalog, createDevice, createForm])
@@ -847,15 +847,17 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           </>}
           {createStep === 1 && <>
             <Typography.Paragraph type="secondary">Android 系统列表已经收进新增设备流程。未缓存版本也可选择，服务端会继续完成“准备系统镜像 → 创建模拟器 → ADB → STF → Appium”，无需保持此页面开启。</Typography.Paragraph>
-            <Form.Item name="catalog_id" label="Android 系统版本" rules={[{ required: true, message: '请选择 Android 系统版本' }]}>
-              <Select
-                showSearch
-                optionFilterProp="label"
-                loading={catalogQuery.isFetching}
-                placeholder={catalog.length > 0 ? '选择 Android 系统版本' : '当前没有可选的 Android 系统版本'}
-                options={catalog.map((image) => ({ value: image.id, label: androidCatalogOptionLabel(image) }))}
-              />
-            </Form.Item>
+            {catalog.length === 0 ? <Typography.Text type="secondary">正在加载 Android 系统目录…</Typography.Text> : (
+              <Form.Item name="catalog_id" label="Android 系统版本" rules={[{ required: true, message: '请选择 Android 系统版本' }]}>
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  loading={catalogQuery.isFetching}
+                  placeholder="选择 Android 系统版本"
+                  options={catalog.map((image) => ({ value: image.id, label: androidCatalogOptionLabel(image) }))}
+                />
+              </Form.Item>
+            )}
           </>}
           {createStep === 2 && <Form.Item name="pool_id" label="Android 设备池" rules={[{ required: true, message: '请选择活动的 Android 设备池' }]}>
             <Select loading={poolsQuery.isFetching} placeholder={androidPools.length > 0 ? '选择 Android 设备池' : '当前没有活动的 Android 设备池'} options={androidPools.map((pool) => ({ value: pool.id, label: `${pool.name} · 目标 ${pool.total_target} · ${pool.base_device_id ? '已设置扩容模板' : '待设置扩容模板'}` }))} />
