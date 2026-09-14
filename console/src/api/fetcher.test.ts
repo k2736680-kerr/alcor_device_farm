@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_REQUEST_TIMEOUT_MS, DeviceFarmAPIError, deviceFarmFetch } from './fetcher'
+import { DEFAULT_REQUEST_TIMEOUT_MS, DeviceFarmAPIError, deviceFarmFetch, fetchAlcorEmbeddedSession } from './fetcher'
 
 describe('deviceFarmFetch', () => {
   afterEach(() => {
@@ -42,14 +42,15 @@ describe('deviceFarmFetch', () => {
     await rejection
   })
 
-  it('keeps the original URL even when embedded in an iframe', async () => {
-    // 控制台现在构建在 Device Farm server 自身上，无论直接访问还是嵌入 iframe，
-    // 浏览器的 origin 都是 Device Farm 自身，不需要任何代理翻译。
-    // 之前曾假设 Alcor 后端提供 `/api/v2/device-farm/proxy/` 代理，但实际未就绪，
-    // 导致所有写操作（POST）被静默吞掉。
+  it('translates Device Farm API paths when embedded in the Alcor iframe', async () => {
+    // Alcor 在 8880 上以同源 iframe 嵌入控制台，并只暴露两个受控代理前缀：
+    //   北向 API       → /api/v2/device-farm/proxy/api/v1/*
+    //   控制台自身 API → /api/v2/device-farm/console/api/v1/*
+    // 若不翻译，8880 上 /api/v1/* 返回 404、/console/api/v1/* 被 SPA fallback
+    // 当成静态资源返回 text/html，控制台会误判为未登录并弹出登录页。
     const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
     Object.defineProperty(window, 'top', { configurable: true, value: {} })
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response(JSON.stringify({ request_id: 'req_embedded', data: {}, error: null }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -58,8 +59,94 @@ describe('deviceFarmFetch', () => {
 
     try {
       await deviceFarmFetch('/api/v1/devices/device-1/runtime-profile-updates', { method: 'POST' })
-      const [url] = fetchMock.mock.calls[0]
-      expect(url).toBe('/api/v1/devices/device-1/runtime-profile-updates')
+      expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/device-farm/proxy/api/v1/devices/device-1/runtime-profile-updates')
+
+      await deviceFarmFetch('/console/api/v1/session', { method: 'GET' })
+      expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/device-farm/console/api/v1/session')
+    } finally {
+      if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
+    }
+  })
+
+  it('keeps the original URL when not embedded and outside the Alcor proxy path', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ request_id: 'req_direct', data: {}, error: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    await deviceFarmFetch('/api/v1/device-pools', { method: 'GET' })
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/device-pools')
+  })
+
+  it('translates when the Alcor proxy marker is present in the current pathname', async () => {
+    const url = new URL(window.location.href)
+    url.pathname = '/api/v2/device-farm/console/devices'
+    window.history.replaceState({}, '', url)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ request_id: 'req_marker', data: {}, error: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    try {
+      await deviceFarmFetch('/api/v1/device-pools', { method: 'GET' })
+      expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/device-farm/proxy/api/v1/device-pools')
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
+  })
+
+  it('does not call the Alcor session endpoint when opened directly', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ request_id: 'req', data: null, error: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    const session = await fetchAlcorEmbeddedSession()
+
+    expect(session).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reads the embedded session from the Alcor proxy when inside the iframe', async () => {
+    const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
+    Object.defineProperty(window, 'top', { configurable: true, value: {} })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { user: { id: 'u-1', display_name: '张三', role: 'admin' }, expires_at: '2099-12-31T23:59:59Z' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    try {
+      const session = await fetchAlcorEmbeddedSession()
+      expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/device-farm/session')
+      expect(session?.user.role).toBe('admin')
+      expect(session?.expires_at).toBe('2099-12-31T23:59:59Z')
+    } finally {
+      if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
+    }
+  })
+
+  it('returns null instead of throwing when the embedded session is rejected', async () => {
+    const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
+    Object.defineProperty(window, 'top', { configurable: true, value: {} })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    try {
+      await expect(fetchAlcorEmbeddedSession()).resolves.toBeNull()
     } finally {
       if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
     }

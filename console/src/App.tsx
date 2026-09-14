@@ -13,13 +13,16 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   getGetConsoleSessionQueryKey,
   useDeleteConsoleSession,
   useGetConsoleSession,
 } from './api/generated/device-farm'
 import { unwrapData } from './api/unwrap'
+import { fetchAlcorEmbeddedSession } from './api/fetcher'
+import type { AlcorEmbeddedSession } from './api/fetcher'
+import { ConsoleRole } from './api/generated/models'
 import type { ConsoleSession } from './api/generated/models'
 import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
@@ -65,6 +68,24 @@ export default function App() {
   const session = unwrapData<ConsoleSession>(data)
   const currentTitle = pageTitles[location.pathname] ?? '设备农场管理'
   const embedded = window.self !== window.top
+  // 被 Alcor 嵌入时不走设备农场自己的 console 会话（那份 401 会误弹登录页），
+  // 改由 Alcor 的会话端点决定身份与角色（见 fetchAlcorEmbeddedSession 注释）。
+  const [alcorSession, setAlcorSession] = useState<AlcorEmbeddedSession | null>(null)
+  const [alcorSessionResolved, setAlcorSessionResolved] = useState(false)
+
+  useEffect(() => {
+    if (!embedded) {
+      setAlcorSessionResolved(true)
+      return
+    }
+    const controller = new AbortController()
+    void fetchAlcorEmbeddedSession(controller.signal).then((value) => {
+      if (controller.signal.aborted) return
+      setAlcorSession(value)
+      setAlcorSessionResolved(true)
+    })
+    return () => controller.abort()
+  }, [embedded])
 
   useEffect(() => {
     if (embedded) {
@@ -72,11 +93,36 @@ export default function App() {
     }
   }, [embedded, location.pathname])
 
-  if (isPending) {
+  if (isPending || !alcorSessionResolved) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
         <Spin size="large" />
       </div>
+    )
+  }
+
+  // 嵌入模式：Alcor 会话是唯一判据，拿不到才回退登录页（属真正的异常）。
+  if (embedded) {
+    if (!alcorSession) {
+      return <LoginPage />
+    }
+    const alcorRole = alcorSession.user.role
+    const role: ConsoleSession['user']['role'] =
+      alcorRole === 'admin' ? ConsoleRole.admin : alcorRole === 'viewer' ? ConsoleRole.viewer : ConsoleRole.operator
+    return (
+      <RemoteControlProvider>
+        <AuthenticatedConsole
+          currentTitle={currentTitle}
+          displayName={consoleDisplayName(alcorSession.user.display_name)}
+          logoutPending={false}
+          onLogout={() => window.parent.postMessage({ type: 'alcor-device-farm-logout' }, window.location.origin)}
+          session={{
+            user: { id: alcorSession.user.id, display_name: alcorSession.user.display_name, role },
+            expires_at: alcorSession.expires_at,
+          }}
+          embedded
+        />
+      </RemoteControlProvider>
     )
   }
 
