@@ -370,6 +370,34 @@ func TestCleanupFailureKeepsReservationActiveAndQuarantinesDevice(t *testing.T) 
 	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_sessions WHERE id=$1 AND appium_session_ended_at IS NULL`, testDeviceSession, 1)
 }
 
+func TestQuarantineIsIdempotent(t *testing.T) {
+	db := openIOSSessionTestDatabase(t)
+	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)
+	service := New(db, testAgentToken)
+	payload := map[string]any{"host_id": testHostID, "cleanup_failed": true}
+	if err := service.quarantine(context.Background(), testDeviceID, testReservation,
+		"ios_session_cleanup_failed", "IOS_SESSION_CLEANUP_FAILED", payload); err != nil {
+		t.Fatal(err)
+	}
+	// 第二次隔离同一设备不应追加健康事件，也不应继续累加连续失败计数。
+	if err := service.quarantine(context.Background(), testDeviceID, testReservation,
+		"ios_session_cleanup_failed", "IOS_SESSION_CLEANUP_FAILED", payload); err != nil {
+		t.Fatal(err)
+	}
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM device_health_events WHERE device_id=$1
+		AND event_type='ios_session_cleanup_failed'`, testDeviceID, 1)
+	var failures int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT consecutive_failures FROM devices WHERE id=$1`,
+		testDeviceID).Scan(&failures); err != nil {
+		t.Fatal(err)
+	}
+	if failures != 1 {
+		t.Fatalf("consecutive_failures=%d want=1", failures)
+	}
+	assertIOSSessionCount(t, db, `SELECT count(*) FROM devices WHERE id=$1
+		AND lifecycle_status='quarantined'`, testDeviceID, 1)
+}
+
 func TestDatabaseRejectsDuplicateGrantAndActiveAppiumSessionPerDevice(t *testing.T) {
 	db := openIOSSessionTestDatabase(t)
 	seedActiveIOSReservation(t, db, "http://127.0.0.1:4810", false)

@@ -70,6 +70,12 @@ func (service *Service) quarantine(ctx context.Context, deviceID, reservationID,
 		if err := tx.QueryRow(ctx, `SELECT lifecycle_status,health_status FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&lifecycle, &health); err != nil {
 			return err
 		}
+		// 隔离是幂等操作。设备已处于 quarantined 时不再重复写入健康事件、审计或
+		// 累加连续失败计数；否则 fence 短暂不可达时，后台 Reaper 会每秒重试失败
+		// 的 iOS 会话清理，单设备即可刷出每小时数千条 device_health_events。
+		if lifecycle == domain.DeviceQuarantined {
+			return nil
+		}
 		now, err := database.ClockNow(ctx, tx)
 		if err != nil {
 			return err
