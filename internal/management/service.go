@@ -911,8 +911,13 @@ func (service *Service) UpdateDeviceRuntimeProfileAudited(ctx context.Context, i
 	targetValues["guest_cpu_cores"] = input.GuestCPUCores
 	targetValues["guest_memory_mb"] = input.GuestMemoryMB
 	targetProfile, err := runtimeprofile.Parse(targetValues)
-	if err != nil || targetProfile == currentProfile {
+	if err != nil {
 		return Device{}, ErrInvalidArgument
+	}
+	// 幂等：目标 profile 与当前完全相同，视为成功操作返回当前状态即可，
+	// 不触发重启也不报错。控制台重复点"确认调整"或两次填了相同数值都应通过。
+	if reflect.DeepEqual(targetProfile.Map(), currentProfile.Map()) {
+		return current, nil
 	}
 	capacityResult, err := service.store.CheckDeviceReplacementCapacity(ctx, current, currentProfile, targetProfile, *current.ImageID)
 	if err != nil {
