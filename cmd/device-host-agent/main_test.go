@@ -77,12 +77,15 @@ func TestSplitCSVRemovesEmptyUDIDs(t *testing.T) {
 }
 
 func TestDockerEnvironmentEnablesAppiumAndDisablesBuiltInVNC(t *testing.T) {
-	values := dockerEnvironment(" Pixel 9 ")
+	values := dockerEnvironment(" Pixel 9 ", "")
 	if values["EMULATOR_DEVICE"] != "Pixel 9" || values["WEB_VNC"] != "false" || values["WEB_LOG"] != "false" || values["APPIUM"] != "true" || values["USER_BEHAVIOR_ANALYTICS"] != "false" {
 		t.Fatalf("docker environment=%#v", values)
 	}
-	values = dockerEnvironment(" ")
+	values = dockerEnvironment(" ", "--allow-insecure chromedriver_autodownload")
 	if _, exists := values["EMULATOR_DEVICE"]; exists {
 		t.Fatalf("empty emulator device must not be injected: %#v", values)
+	}
+	if values["APPIUM_ADDITIONAL_ARGS"] != "--allow-insecure chromedriver_autodownload" {
+		t.Fatalf("appium additional args=%q", values["APPIUM_ADDITIONAL_ARGS"])
 	}
 }

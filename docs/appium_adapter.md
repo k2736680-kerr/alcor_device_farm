@@ -43,7 +43,13 @@ Appium 超时、拒绝连接、重定向、非 2xx、非法 JSON 或缺少 `valu
 ```text
 DEVICE_FARM_DOCKER_APPIUM_PORT=4723
 DEVICE_FARM_APPIUM_HEALTH_TIMEOUT=5s
+# 可选：把额外参数传给 docker-android 的 Appium 进程
+DEVICE_FARM_DOCKER_APPIUM_ADDITIONAL_ARGS=--allow-insecure chromedriver_autodownload
 ```
+
+当 Android 镜像内 Chrome 版本与预置 ChromeDriver 不一致时，可开启上述自动匹配下载。
+Host Agent 会在创建或重建容器时把它注入为 `APPIUM_ADDITIONAL_ARGS`；自动下载依赖容器
+访问 npm/GitHub 等上游。若网络不可用，应改为在镜像中预置匹配驱动。
 
 `DEVICE_FARM_DOCKER_BIND_ADDRESS` 同时控制 ADB 和 Appium Host 端口绑定。默认 `127.0.0.1`；如果 Server、STF 或 DaFit Worker 位于其他主机，只能改为设备内网地址或受防火墙保护的 `0.0.0.0`，禁止公网暴露。
 

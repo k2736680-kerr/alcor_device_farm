@@ -45,6 +45,7 @@ func main() {
 	dockerKVMDevice := flag.String("docker-kvm-device", envOr("DEVICE_FARM_DOCKER_KVM_DEVICE", "/dev/kvm"), "KVM 设备路径")
 	dockerADBPort := flag.Int("docker-adb-port", envInt("DEVICE_FARM_DOCKER_ADB_PORT", 5555), "模拟器容器暴露的 ADB 端口")
 	dockerAppiumPort := flag.Int("docker-appium-port", envInt("DEVICE_FARM_DOCKER_APPIUM_PORT", 4723), "模拟器容器暴露的 Appium 端口")
+	dockerAppiumAdditionalArgs := flag.String("docker-appium-additional-args", strings.TrimSpace(os.Getenv("DEVICE_FARM_DOCKER_APPIUM_ADDITIONAL_ARGS")), "传给 docker-android 内 Appium 的额外启动参数")
 	dockerADBSerial := flag.String("docker-adb-serial", envOr("DEVICE_FARM_DOCKER_ADB_SERIAL", "emulator-5554"), "模拟器容器内的 ADB serial")
 	appiumHealthTimeout := flag.Duration("appium-health-timeout", envDuration("DEVICE_FARM_APPIUM_HEALTH_TIMEOUT", 5*time.Second), "Appium 状态请求超时时间")
 	stfADBServer := flag.String("stf-adb-server", strings.TrimSpace(os.Getenv("DEVICE_FARM_AGENT_STF_ADB_SERVER")), "可选的本机回环 STF ADB Server host:port")
@@ -135,7 +136,7 @@ func main() {
 		ContainerADBPort: *dockerADBPort, ContainerAppiumPort: *dockerAppiumPort, ContainerADBSerial: *dockerADBSerial,
 		DataMountPath: *dockerDataMountPath,
 		CPUs:          *dockerCPUs, Memory: *dockerMemory, PidsLimit: *dockerPidsLimit,
-		Environment: dockerEnvironment(*dockerEmulatorDevice), AppiumProbe: appiumProbe,
+		Environment: dockerEnvironment(*dockerEmulatorDevice, *dockerAppiumAdditionalArgs), AppiumProbe: appiumProbe,
 	}, iosAdapter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "宿主机代理 Provider 配置错误：%v\n", err)
@@ -283,12 +284,15 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 	return value
 }
 
-func dockerEnvironment(emulatorDevice string) map[string]string {
+func dockerEnvironment(emulatorDevice, appiumAdditionalArgs string) map[string]string {
 	values := map[string]string{
 		"WEB_VNC":                 "false",
 		"WEB_LOG":                 "false",
 		"APPIUM":                  "true",
 		"USER_BEHAVIOR_ANALYTICS": "false",
+	}
+	if appiumAdditionalArgs = strings.TrimSpace(appiumAdditionalArgs); appiumAdditionalArgs != "" {
+		values["APPIUM_ADDITIONAL_ARGS"] = appiumAdditionalArgs
 	}
 	if emulatorDevice = strings.TrimSpace(emulatorDevice); emulatorDevice != "" {
 		values["EMULATOR_DEVICE"] = emulatorDevice
