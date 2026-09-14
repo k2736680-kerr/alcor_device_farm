@@ -42,7 +42,11 @@ describe('deviceFarmFetch', () => {
     await rejection
   })
 
-  it('routes an embedded console request through the Alcor gateway', async () => {
+  it('keeps the original URL even when embedded in an iframe', async () => {
+    // 控制台现在构建在 Device Farm server 自身上，无论直接访问还是嵌入 iframe，
+    // 浏览器的 origin 都是 Device Farm 自身，不需要任何代理翻译。
+    // 之前曾假设 Alcor 后端提供 `/api/v2/device-farm/proxy/` 代理，但实际未就绪，
+    // 导致所有写操作（POST）被静默吞掉。
     const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
     Object.defineProperty(window, 'top', { configurable: true, value: {} })
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -53,10 +57,9 @@ describe('deviceFarmFetch', () => {
     )
 
     try {
-      await deviceFarmFetch('/console/api/v1/devices/device-1/remote-control', { method: 'POST' })
-      const [url, init] = fetchMock.mock.calls[0]
-      expect(url).toBe('/api/v2/device-farm/proxy/api/v1/devices/device-1/remote-control')
-      expect(new Headers(init?.headers).get('X-Alcor-Device-Farm')).toBe('embedded-console')
+      await deviceFarmFetch('/api/v1/devices/device-1/runtime-profile-updates', { method: 'POST' })
+      const [url] = fetchMock.mock.calls[0]
+      expect(url).toBe('/api/v1/devices/device-1/runtime-profile-updates')
     } finally {
       if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
     }
