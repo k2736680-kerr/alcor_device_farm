@@ -44,7 +44,7 @@ Appium 超时、拒绝连接、重定向、非 2xx、非法 JSON 或缺少 `valu
 DEVICE_FARM_DOCKER_APPIUM_PORT=4723
 DEVICE_FARM_APPIUM_HEALTH_TIMEOUT=5s
 # 可选：把额外参数传给 docker-android 的 Appium 进程
-DEVICE_FARM_DOCKER_APPIUM_ADDITIONAL_ARGS=--allow-insecure chromedriver_autodownload
+DEVICE_FARM_DOCKER_APPIUM_ADDITIONAL_ARGS=--allow-insecure uiautomator2:chromedriver_autodownload
 ```
 
 当 Android 镜像内 Chrome 版本与预置 ChromeDriver 不一致时，可开启上述自动匹配下载。
