@@ -9,11 +9,20 @@ known_hosts=/run/secrets/ios-tunnel/known_hosts
 test -r "$key"
 test -r "$known_hosts"
 
+# 关键：用更短的 ServerAliveInterval + CountMax 让 SSH 端到端失活时自行退出。
+# 之前 ServerAliveInterval=30 CountMax=3 让一次 Mac 端重启要等 90 秒才感知到；
+# 现在 15*2=30s 内必退，配合 Docker restart: unless-stopped 快速重建。
+#
+# 另外 -o ExitOnForwardFailure=yes 确保 Mac 上的 4811/8421 不监听时一开始就失败退出，
+# 不会出现"容器 healthy 但转发卡死"的假活状态。
+
 exec ssh \
   -N -T \
   -o ExitOnForwardFailure=yes \
-  -o ServerAliveInterval=30 \
-  -o ServerAliveCountMax=3 \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=2 \
+  -o ConnectTimeout=10 \
+  -o TCPKeepAlive=yes \
   -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$known_hosts" \
   -o IdentitiesOnly=yes \

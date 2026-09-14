@@ -119,7 +119,13 @@ func consoleAllowed(request *http.Request, principal Principal) bool {
 		}
 		return true
 	}
-	if strings.HasPrefix(request.URL.Path, "/api/v1/device-reservations") {
+	// 设备运维（启停/隔离/调整规格/重装）、宿主机与设备池管理同属控制台 operator
+	// 权限范围；这些路径全部落 operator 级权限即可，避免任何"能看不能动"的硬编码 admin。
+	isOperatorAction := strings.HasPrefix(request.URL.Path, "/api/v1/device-reservations") ||
+		strings.HasPrefix(request.URL.Path, "/api/v1/devices") ||
+		strings.HasPrefix(request.URL.Path, "/api/v1/device-hosts") ||
+		strings.HasPrefix(request.URL.Path, "/api/v1/device-pools")
+	if isOperatorAction {
 		return principal.ConsoleRole == ConsoleOperator || principal.ConsoleRole == ConsoleAdmin
 	}
 	return principal.ConsoleRole == ConsoleAdmin
