@@ -51,7 +51,7 @@ describe('App session gate', () => {
       location: { replace: vi.fn() },
     }
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    server.use(http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
+    server.use(http.post('/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
       heartbeatRequests += 1
       return HttpResponse.json({ request_id: 'req_remote_heartbeat', data: {
         device_id: String(params.id), reservation_id: 'reservation_remote_0001', status: 'connected', heartbeat_interval_seconds: 15,
@@ -77,7 +77,7 @@ describe('App session gate', () => {
       id: 'device_00000000000001',
       serial: 'emulator-5554',
     }))
-    server.use(http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
+    server.use(http.post('/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
       heartbeatRequests += 1
       return HttpResponse.json({ request_id: 'req_remote_heartbeat', data: {
         device_id: String(params.id), reservation_id: 'reservation_remote_0001', status: 'connected', heartbeat_interval_seconds: 15,
@@ -95,12 +95,12 @@ describe('App session gate', () => {
     const user = userEvent.setup()
     let endRequests = 0
     server.use(
-      http.post('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({
+      http.post('/api/v1/devices/:id/remote-control', () => HttpResponse.json({
         request_id: 'req_remote_timeout',
         data: null,
         error: { code: 'REMOTE_CONTROL_TIMEOUT', message: 'remote control request timed out', retryable: true },
       }, { status: 504 })),
-      http.delete('/console/api/v1/devices/:id/remote-control', () => {
+      http.delete('/api/v1/devices/:id/remote-control', () => {
         endRequests += 1
         return HttpResponse.json({ request_id: 'req_remote_end', data: {
           device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'ended', heartbeat_interval_seconds: 15,
@@ -127,7 +127,7 @@ describe('App session gate', () => {
       location: { replace: vi.fn() },
     }
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    server.use(http.delete('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({
+    server.use(http.delete('/api/v1/devices/:id/remote-control', () => HttpResponse.json({
       request_id: 'req_missing_device',
       data: null,
       error: { code: 'NOT_FOUND', message: 'device not found', retryable: false },

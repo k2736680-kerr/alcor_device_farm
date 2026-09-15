@@ -32,7 +32,7 @@ describe('deviceFarmFetch', () => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
     }))
 
-    const request = deviceFarmFetch('/console/api/v1/devices/device-1/remote-control', { method: 'POST' })
+    const request = deviceFarmFetch('/api/v1/devices/device-1/remote-control', { method: 'POST' })
     const rejection = expect(request).rejects.toMatchObject({
       code: 'REQUEST_TIMEOUT',
       retryable: true,
@@ -48,6 +48,9 @@ describe('deviceFarmFetch', () => {
     //   控制台自身 API → /api/v2/device-farm/console/api/v1/*
     // 若不翻译，8880 上 /api/v1/* 返回 404、/console/api/v1/* 被 SPA fallback
     // 当成静态资源返回 text/html，控制台会误判为未登录并弹出登录页。
+    // ⚠️ 但 console 前缀在 Alcor 侧**只注册了 GET**（静态资源处理器），
+    // 所以任何非 GET 的控制台调用都不能落在该前缀上，必须改用北向路径 ——
+    // 见下面 `routes embedded remote-control calls through the northbound ...`。
     const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
     Object.defineProperty(window, 'top', { configurable: true, value: {} })
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
@@ -63,6 +66,40 @@ describe('deviceFarmFetch', () => {
 
       await deviceFarmFetch('/console/api/v1/session', { method: 'GET' })
       expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/device-farm/console/api/v1/session')
+    } finally {
+      if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
+    }
+  })
+
+  it('routes embedded remote-control calls through the northbound Alcor proxy', async () => {
+    // 回归用例：远控曾用并行的 Console 家族 `/console/api/v1/devices/{id}/remote-control*`。
+    // Alcor 只在 `/api/v2/device-farm/console/*` 上注册了 GET（静态资源前缀），
+    // 所以嵌入态的 POST/DELETE 命中 Alcor 的 404（text/plain），
+    // `response.json()` 抛错后被兜底成 NETWORK_ERROR，
+    // 界面显示「无法连接设备农场服务，请检查网络后重试」。
+    // 远控因此必须走北向 `/api/v1/*`，由 Alcor 的 proxy 前缀转发（全方法白名单）。
+    const topDescriptor = Object.getOwnPropertyDescriptor(window, 'top')
+    Object.defineProperty(window, 'top', { configurable: true, value: {} })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ request_id: 'req_remote', data: {}, error: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    try {
+      await deviceFarmFetch('/api/v1/devices/device-1/remote-control', { method: 'POST' })
+      await deviceFarmFetch('/api/v1/devices/device-1/remote-control/heartbeat', { method: 'POST' })
+      await deviceFarmFetch('/api/v1/devices/device-1/remote-control', { method: 'DELETE' })
+
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+        '/api/v2/device-farm/proxy/api/v1/devices/device-1/remote-control',
+        '/api/v2/device-farm/proxy/api/v1/devices/device-1/remote-control/heartbeat',
+        '/api/v2/device-farm/proxy/api/v1/devices/device-1/remote-control',
+      ])
+      for (const call of fetchMock.mock.calls) {
+        expect(String(call[0])).not.toContain('/device-farm/console/')
+      }
     } finally {
       if (topDescriptor) Object.defineProperty(window, 'top', topDescriptor)
     }

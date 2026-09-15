@@ -10,13 +10,20 @@ import {
   useRef,
   useState,
 } from 'react'
+// 远控一律走北向 `/api/v1/devices/{id}/remote-control*`，而不是并行的
+// Console 家族 `/console/api/v1/...`：Alcor 只在 `/api/v2/device-farm/console/*`
+// 上注册了 GET（静态资源前缀），嵌入态下该前缀的 POST/DELETE 会命中 Alcor 的
+// 404（text/plain），控制台解析失败后误报「无法连接设备农场服务」。北向路径在
+// 嵌入态被翻译成 `/api/v2/device-farm/proxy/api/v1/*`（Alcor 全方法白名单），
+// 直连态则用同一个 console cookie —— 两条链路都接受控制台会话，且后端
+// remoteOperator 对两者施加完全相同的 operator/admin 校验。
 import {
-  endDeviceRemoteControl,
+  endIntegratedDeviceRemoteControl,
   getListDevicesQueryKey,
-  heartbeatDeviceRemoteControl,
-  useEndDeviceRemoteControl,
-  useGetDeviceRemoteControl,
-  useStartDeviceRemoteControl,
+  heartbeatIntegratedDeviceRemoteControl,
+  useEndIntegratedDeviceRemoteControl,
+  useGetIntegratedDeviceRemoteControl,
+  useStartIntegratedDeviceRemoteControl,
 } from '../api/generated/device-farm'
 import type { Device, RemoteControl } from '../api/generated/models'
 import { unwrapData } from '../api/unwrap'
@@ -88,10 +95,10 @@ export function RemoteControlProvider({
   const remotePopup = useRef<Window | null>(null)
   const endingRemote = useRef(false)
   const remoteAttempt = useRef(0)
-  const startRemote = useStartDeviceRemoteControl()
-  const endRemote = useEndDeviceRemoteControl()
+  const startRemote = useStartIntegratedDeviceRemoteControl()
+  const endRemote = useEndIntegratedDeviceRemoteControl()
 
-  const remoteQuery = useGetDeviceRemoteControl(
+  const remoteQuery = useGetIntegratedDeviceRemoteControl(
     remoteState?.device.id ?? '',
     {
       query: {
@@ -191,7 +198,7 @@ export function RemoteControlProvider({
       {
         onSuccess: (data) => {
           if (attempt !== remoteAttempt.current || endingRemote.current) {
-            void endDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
+            void endIntegratedDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
             return
           }
           const view = unwrapData<RemoteControl>(data)
@@ -213,7 +220,7 @@ export function RemoteControlProvider({
           clearRemote(false)
           // The server may have committed the reservation before the response
           // timed out or the browser lost it. DELETE is owner-scoped and idempotent.
-          void endDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
+          void endIntegratedDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
           const err = error as RemoteAPIError
           if (isRemoteAlreadyGone(err)) {
             message.info('设备或远控会话已不存在，列表状态已刷新')
@@ -261,7 +268,7 @@ export function RemoteControlProvider({
   const sendHeartbeat = useCallback(async () => {
     if (!remoteState?.started || remoteView?.status !== 'connected') return
     try {
-      const data = await heartbeatDeviceRemoteControl(remoteState.device.id)
+      const data = await heartbeatIntegratedDeviceRemoteControl(remoteState.device.id)
       const next = unwrapData<RemoteControl>(data)
       if (next?.status === 'ended') {
         message.info('远控租约已结束，设备状态已刷新')

@@ -75,7 +75,7 @@ describe('DevicesPage device categories', () => {
       opener: window,
     }
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    server.use(http.delete('/console/api/v1/devices/:id/remote-control', () => {
+    server.use(http.delete('/api/v1/devices/:id/remote-control', () => {
       endRequests += 1
       return HttpResponse.json({ request_id: 'req_remote_end', data: {
         device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'ended', heartbeat_interval_seconds: 15,
@@ -107,7 +107,7 @@ describe('DevicesPage device categories', () => {
       location: { replace: vi.fn(() => { navigated = true }) },
     }
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    server.use(http.delete('/console/api/v1/devices/:id/remote-control', () => {
+    server.use(http.delete('/api/v1/devices/:id/remote-control', () => {
       endRequests += 1
       return HttpResponse.json({ request_id: 'req_remote_end', data: {
         device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'ended', heartbeat_interval_seconds: 15,
@@ -143,8 +143,8 @@ describe('DevicesPage device categories', () => {
       ...connecting, status: 'connected', url: 'http://stf.test/#!/control/emulator-5554',
     }
     server.use(
-      http.post('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_start', data: connecting, error: null })),
-      http.get('/console/api/v1/devices/:id/remote-control', () => {
+      http.post('/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_start', data: connecting, error: null })),
+      http.get('/api/v1/devices/:id/remote-control', () => {
         statusRequests += 1
         const data = statusRequests === 1 ? connecting : connected
         return HttpResponse.json({ request_id: 'req_remote_get', data, error: null })
@@ -175,9 +175,9 @@ describe('DevicesPage device categories', () => {
       device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'connecting', heartbeat_interval_seconds: 15,
     }
     server.use(
-      http.post('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_start', data: connecting, error: null })),
-      http.get('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_get', data: connecting, error: null })),
-      http.delete('/console/api/v1/devices/:id/remote-control', () => {
+      http.post('/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_start', data: connecting, error: null })),
+      http.get('/api/v1/devices/:id/remote-control', () => HttpResponse.json({ request_id: 'req_remote_get', data: connecting, error: null })),
+      http.delete('/api/v1/devices/:id/remote-control', () => {
         endRequests += 1
         return HttpResponse.json({ request_id: 'req_remote_end', data: { ...connecting, status: 'ended' }, error: null })
       }),
@@ -475,7 +475,7 @@ describe('DevicesPage device categories', () => {
         const items = (!lifecycle || lifecycle === iosDevice.lifecycle_status) && (!health || health === iosDevice.health_status) ? [iosDevice] : []
         return HttpResponse.json({ request_id: 'req_ios_remote_list', data: { items, total: items.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
       }),
-      http.post('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+      http.post('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
         request_id: 'req_ios_remote_start',
         data: {
           device_id: String(params.id), reservation_id: 'reservation_ios_remote_001', status: 'connected',

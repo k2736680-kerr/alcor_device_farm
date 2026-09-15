@@ -224,16 +224,16 @@ export const handlers = [
     const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
     return HttpResponse.json({ request_id: 'req_runtime_profile_update', data: { ...device, lifecycle_status: 'provisioning', runtime_profile_update_status: 'pending' }, error: null }, { status: 202 })
   }),
-  http.post('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+  http.post('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_start', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'connecting', url: undefined }, error: null,
   }, { status: 202 })),
-  http.get('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+  http.get('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_get', data: { ...sampleRemoteControl, device_id: String(params.id) }, error: null,
   })),
-  http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => HttpResponse.json({
+  http.post('/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_heartbeat', data: { ...sampleRemoteControl, device_id: String(params.id), url: undefined }, error: null,
   })),
-  http.delete('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+  http.delete('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_end', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'ended', url: undefined }, error: null,
   })),
   http.get('/api/v1/device-reservations', ({ request }) => {

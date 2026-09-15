@@ -18,7 +18,8 @@ describe('HostsPage platform consistency', () => {
     const hosts: DeviceHost[] = [
       {
         ...common, id: 'host_android_000000001', name: 'Android 宿主机', host_os: 'linux', host_arch: 'amd64',
-        capabilities: { kvm: true, docker: true },
+        // 线上 Host Agent 的真实上报形状：只有 kvm / gpu_render，**没有** docker。
+        capabilities: { kvm: true, gpu_render: true, provider_inventory_complete: true },
         capacity: { resource_model: 'dynamic_v1', cpu_cores: 12, memory_total_mb: 16000, memory_available_mb: 8000, disk_total_mb: 100000, disk_available_mb: 50000 },
         used_capacity: { cpu_cores: 4, memory_mb: 5120 },
       },
@@ -42,6 +43,55 @@ describe('HostsPage platform consistency', () => {
     expect(within(androidRow as HTMLElement).getByText('自动化就绪')).toHaveClass('ant-tag-green')
     expect(within(iosRow as HTMLElement).getByText('自动化就绪')).toHaveClass('ant-tag-green')
     expect(screen.queryByRole('columnheader', { name: 'iOS 运行环境' })).not.toBeInTheDocument()
+  })
+
+  it('derives Linux readiness from host_type and kvm instead of the never-reported docker capability', async () => {
+    // 回归背景：旧判定要求 capabilities.docker === true，但 Agent 心跳探针
+    // （internal/hostcapacity/system.go 的 Snapshot）只上报 kvm / gpu_render，
+    // 于是每台新登记的 Linux 宿主都被永久标成"自动化未就绪"（线上 55 宿主机即如此，
+    // 它的 capabilities 只有 kvm + gpu_render，171 的 docker 只是历史 jsonb 残留）。
+    const common = {
+      host_arch: 'amd64', address: '10.0.30.55', draining: false,
+      created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+    }
+    const capacity = { resource_model: 'dynamic_v1' as const, cpu_cores: 12, memory_total_mb: 16000, memory_available_mb: 4000, disk_total_mb: 400000, disk_available_mb: 400000 }
+    const hosts: DeviceHost[] = [
+      {
+        ...common, id: 'host_ready_00000000001', name: '就绪 Docker 宿主', host_os: 'linux',
+        host_type: 'docker_emulator', status: 'online',
+        capabilities: { kvm: true, gpu_render: true, provider_inventory_complete: true },
+        capacity, used_capacity: { cpu_cores: 2, memory_mb: 7168 },
+      },
+      {
+        ...common, id: 'host_nokvm_00000000002', name: '无 KVM 宿主', host_os: 'linux',
+        host_type: 'docker_emulator', status: 'online',
+        capabilities: { kvm: false, gpu_render: true },
+        capacity, used_capacity: {},
+      },
+      {
+        ...common, id: 'host_usb_00000000003', name: '真机宿主', host_os: 'linux',
+        host_type: 'usb_android', status: 'online',
+        capabilities: { kvm: true },
+        capacity, used_capacity: {},
+      },
+      {
+        ...common, id: 'host_offline_000000004', name: '离线宿主', host_os: 'linux',
+        host_type: 'docker_emulator', status: 'offline',
+        capabilities: { kvm: true },
+        capacity, used_capacity: {},
+      },
+    ]
+    server.use(http.get('/api/v1/device-hosts', () => HttpResponse.json({
+      request_id: 'req_hosts_readiness', data: { items: hosts, total: hosts.length, page: 1, page_size: 20 }, error: null,
+    })))
+
+    renderWithProviders(<HostsPage />)
+
+    const rowOf = async (name: string) => (await screen.findByText(name)).closest('tr') as HTMLElement
+    expect(within(await rowOf('就绪 Docker 宿主')).getByText('自动化就绪')).toHaveClass('ant-tag-green')
+    expect(within(await rowOf('无 KVM 宿主')).getByText('自动化未就绪')).toHaveClass('ant-tag-red')
+    expect(within(await rowOf('真机宿主')).getByText('自动化未就绪')).toHaveClass('ant-tag-red')
+    expect(within(await rowOf('离线宿主')).getByText('自动化未就绪')).toHaveClass('ant-tag-red')
   })
 
   it('keeps the internal address out of the main table and shows it in admin details', async () => {

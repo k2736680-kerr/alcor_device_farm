@@ -83,8 +83,18 @@ function hostReadiness(host: DeviceHost) {
     const readiness = capabilityObject(host, 'host_readiness')
     return readiness?.ready === true ? <Tag color="green">自动化就绪</Tag> : <Tag color="red">自动化未就绪</Tag>
   }
+  // Linux 宿主的"自动化就绪" = 在线 + 有硬件加速 + 这台机器的 provider 会拉起
+  // Android 模拟器。三者缺一，reconcile 都扩不出设备。
+  //
+  // ⚠️ 不能用 capabilities.docker 判定：Host Agent 的心跳探针
+  // （internal/hostcapacity/system.go 的 Snapshot）只产出 kvm / gpu_render，
+  // 从不写 docker。老宿主上出现 docker=true 只是 capabilities 的 jsonb 合并
+  // （hostcommand 用 `||`，只增不减）留下的历史残留，新登记的宿主永远拿不到它 ——
+  // 一旦用它判定，任何新建的 Linux 宿主都会被永久标成"未就绪"。
+  // provider 能力由 host_type 决定，这是契约里稳定且有枚举约束的信号。
+  const runsDockerEmulators = host.host_type === 'docker_emulator' || host.host_type === 'hybrid'
   const capabilities = host.capabilities as Record<string, unknown>
-  const ready = host.status === 'online' && capabilities.kvm === true && capabilities.docker === true
+  const ready = host.status === 'online' && runsDockerEmulators && capabilities.kvm === true
   return ready ? <Tag color="green">自动化就绪</Tag> : <Tag color="red">自动化未就绪</Tag>
 }
 
