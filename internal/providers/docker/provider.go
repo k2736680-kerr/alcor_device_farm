@@ -274,9 +274,15 @@ func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef st
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "INVALID_RUNTIME_PROFILE", err.Error(), false, err)
 	}
 	if value.State == "running" {
-		if _, err := provider.backend.Exec(ctx, value.Name, provider.adbArgs("shell", "sync")...); err != nil {
-			return providers.Snapshot{}, providerError(providers.OperationRestart, "RUNTIME_PROFILE_DATA_FLUSH_FAILED", "cannot flush emulator data before replacing its container", false, err)
+		_, flushErr := provider.backend.Exec(ctx, value.Name, provider.adbArgs("shell", "sync")...)
+		if flushErr != nil && provider.adbReachable(ctx, value.Name) {
+			// 运行时仍在线：冲刷失败可能只是 adb 瞬时抖动，维持原保护
+			// 行为（中止重启），避免白白丢掉容器数据卷里的用户状态。
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "RUNTIME_PROFILE_DATA_FLUSH_FAILED", "cannot flush emulator data before replacing its container", false, flushErr)
 		}
+		// 冲刷成功，或运行时已僵死（ADB 不可达且不会自愈）：僵死场景下
+		// 继续中止只会把设备永久卡在隔离态、必须人工登宿主机重启容器，
+		// 因此放弃冲刷直接硬替换。
 		if err := provider.backend.StopContainer(ctx, value.Name); err != nil {
 			return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot stop emulator before replacing its container", true, err)
 		}
@@ -466,6 +472,13 @@ func (provider *Provider) adbArgs(args ...string) []string {
 		result = append(result, "-s", provider.config.ContainerADBSerial)
 	}
 	return append(result, args...)
+}
+
+// adbReachable 判断容器内安卓运行时是否仍然可达。运行时僵死（qemu 崩溃、
+// adbd 无响应）时返回 false，此时冲刷/健康检查都不可能成功。
+func (provider *Provider) adbReachable(ctx context.Context, name string) bool {
+	state, err := provider.backend.Exec(ctx, name, provider.adbArgs("get-state")...)
+	return err == nil && strings.TrimSpace(state) == "device"
 }
 
 func (provider *Provider) snapshot(value container) (providers.Snapshot, error) {

@@ -143,6 +143,43 @@ func TestDockerProviderKeepsExistingContainerWhenDataFlushFails(t *testing.T) {
 	}
 }
 
+// 运行时僵死（sync 失败且 ADB 完全不可达）时，重启必须放弃冲刷、直接硬替换
+// 容器——否则设备会永久卡在隔离态，只能人工登宿主机重启容器。
+func TestDockerProviderHardRestartsDeadRuntimeWithoutFlush(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile-dead-runtime")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	engine.syncFailure = true
+	engine.adbOffline = true
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	snapshot, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile)
+	if err != nil {
+		t.Fatalf("dead runtime restart aborted: %v", err)
+	}
+	if snapshot.State != providers.StateRunning {
+		t.Fatalf("restarted snapshot state=%s", snapshot.State)
+	}
+	if engine.stopCalls != 1 {
+		t.Fatalf("stop calls=%d", engine.stopCalls)
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 6144") {
+		t.Fatalf("replaced emulator args=%q", got)
+	}
+}
+
 func TestDockerProviderRestoresPreviousContainerWhenProfileReplacementCannotBeCreated(t *testing.T) {
 	engine := newFakeBackend()
 	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
@@ -432,6 +469,7 @@ type fakeBackend struct {
 	syncCalls      int
 	stopCalls      int
 	syncFailure    bool
+	adbOffline     bool
 }
 
 func newFakeBackend() *fakeBackend {
@@ -565,6 +603,9 @@ func (engine *fakeBackend) Exec(_ context.Context, _ string, args ...string) (st
 		return "", nil
 	}
 	if last == "get-state" {
+		if engine.adbOffline {
+			return "", errors.New("injected adb offline")
+		}
 		return "device", nil
 	}
 	if last == "sys.boot_completed" {
