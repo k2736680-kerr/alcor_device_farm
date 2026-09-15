@@ -52,7 +52,7 @@ docker compose --env-file .env -f compose.yaml up -d
 | 7110 | STF WebSocket | 与 7100 同一安全边界 |
 | 7400-7500 | STF 官方默认设备 worker/远控端口范围 | 仅授权浏览器和 Worker 可达 |
 | 28015 | RethinkDB driver | 仅 Compose internal network，不发布 |
-| 5038（Host）→5037（容器） | ADB endpoint registrar | 只绑定 `127.0.0.1`，供同机 Host Agent 使用 |
+| 5038（Host）→5037（容器） | ADB endpoint registrar / 远程设备汇入点 | 只绑定 `127.0.0.1`，供同机 Host Agent 与本地同步脚本使用 |
 | 8080 | RethinkDB 管理页面 | 不发布 |
 
 STF 内部进程通信本身不适合不可信网络，因此整个部署必须位于设备内网。Docker Socket 不挂载给任何 STF 服务。
@@ -65,7 +65,58 @@ Docker Provider 为每台 Emulator 发布独立随机 ADB Host 端口。DF-017 �
 ./scripts/stf-connect-emulators.sh 10.0.0.10:32771
 ```
 
-这一步不创建 Emulator、不改 Pool membership、不改 Reservation，只让 STF 复用已存在的 ADB Endpoint。最终运行时由 Host Agent 的受限 STF ADB registrar 自动执行同一 `adb connect`；Compose 只把 ADB server 发布到 Host loopback 的 `STF_ADB_BIND_PORT`，默认 5038。自动同步不以 STF 数据覆盖 Device Farm PostgreSQL 真相。
+这一步不创建 Emulator、不改 Pool membership、不改 Reservation，只让 STF 复用已存在的 ADB Endpoint。自动同步不以 STF 数据覆盖 Device Farm PostgreSQL 真相。
+
+### 多宿主机：本机 ADB server 是唯一汇入点
+
+全局只有这一套 STF。STF 的 ADB registrar **硬性要求回环地址**（`internal/adapters/stfadb/client.go`；见 ADR-0037 决策 4），因此**远程宿主机的 Host Agent 无法向这里的 STF 注册**。设备进入 STF 的唯一路径是：
+
+> 由 STF 所在宿主机（本机）统一发起 `adb connect <远程宿主机设备 endpoint>`。
+
+这一步由本机上的 systemd timer 自动完成，取代此前的纯手工连接：
+
+```sh
+# 查看状态与日志
+systemctl status alcor-device-farm-stf-sync.timer
+systemctl list-timers alcor-device-farm-stf-sync.timer
+journalctl -u alcor-device-farm-stf-sync.service -n 50 --no-pager
+
+# 手动触发一次（以 root 登录时无需 sudo）
+systemctl start alcor-device-farm-stf-sync.service
+
+# 干跑（不实际连接），用于排障
+DEVICE_FARM_SERVICE_TOKEN='<控制面 Service Token>' \
+  ./scripts/stf-sync-remote-emulators.sh --dry-run --verbose
+```
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/install-stf-sync-timer.sh` | 安装器（需 root）：把同步脚本装到 `/opt/alcor-device-farm/`、生成 systemd 单元与 env 模板 |
+| `scripts/stf-sync-remote-emulators.sh` | 同步脚本：从控制面拉取 ready 的 Android 设备并逐个 `adb connect` |
+| `deploy/stf/alcor-device-farm-stf-sync.service` | oneshot 服务单元（安装器据此生成 `/etc/systemd/system/` 下的实际单元） |
+| `deploy/stf/alcor-device-farm-stf-sync.timer` | 周期触发（开机后 3 分钟起，**每 20 秒**一次；间隔须明显小于 reconcile 的 STF 宽限期，见下） |
+| `deploy/stf/stf-sync.env.example` | `/etc/alcor-device-farm/stf-sync.env` 的模板 |
+
+脚本会**跳过本机设备**（本机 Host Agent 已通过回环 registrar 完成注册），只处理远程宿主机，因此新增宿主机不需要在本机做任何额外配置。设备清单来自控制面 `GET /api/v1/devices?platform=android&lifecycle_status=ready` 并自动翻页（服务端 `page_size` 上限 200）。
+
+> **定时器间隔为什么必须是 20 秒。** `reconcile` 在判定设备是否通过 STF 可见时，先用一个宽限期保护刚创建/重建的设备（`DEVICE_FARM_RECONCILE_STF_VISIBILITY_GRACE`，默认 **30 秒**）。该宽限期的锚点是**最近一次成功 `create`/`rebuild` 命令的完成时刻**，而 `restart` **不会**重置这个锚点。
+>
+> 于是：若设备在宽限期内还没被同步进 STF，`reconcile` 即开始累计 `stf_not_visible` 失败并触发自愈重启；重启又不重置锚点 ⇒ **「反复重启但永远不可见」的死循环**。`10.0.30.55` 在 2026-09-14 出现的 `restart ×12` 就是这个机制——当时本题的定时器尚未上线，设备无论如何都不会可见。
+>
+> 所以间隔必须**明显小于**宽限期：20 秒留出约 10 秒余量。同理 `AccuracySec` 必须收紧到 `1s`；systemd 默认的 `1min` 会把 20 秒的间隔抖动到分钟级，等于重新引入超窗风险。
+
+安装（在 STF 宿主机上以 root 执行，幂等；已存在的 `/etc/alcor-device-farm/stf-sync.env` 不会被覆盖）：
+
+```sh
+cd <本仓库在该宿主机的检出位置>
+scripts/install-stf-sync-timer.sh
+# 然后在 /etc/alcor-device-farm/stf-sync.env 填入 DEVICE_FARM_SERVICE_TOKEN
+systemctl start alcor-device-farm-stf-sync.timer
+```
+
+安装器只把同步脚本复制到 `/opt/alcor-device-farm/scripts/`，因此该脚本**不能依赖默认的 compose 路径推导**（它默认按「脚本所在目录的上级/deploy/stf」定位，而 `/opt` 下没有 `deploy/`）。安装器会在生成的 env 中自动写入 `STF_COMPOSE_FILE` / `STF_ENV_FILE` 指向仓库检出位置；手工维护 env 时必须自行确认这两个路径，否则服务会以 `STF compose file not found` 反复失败。compose 顶层声明了 `name: alcor-device-farm-stf`，所以用 `-f` 指定绝对路径不影响项目名匹配。
+
+服务每次执行都会在 journal 写一行摘要（`sync done: connected=N skipped_local=N failed=N`），`VERBOSE=1` 或在 env 文件中开启可打印逐设备明细。这是守护进程唯一的可观测面，排障先看它。
 
 随后在 STF 页面创建专用 API Token。Token 只保存到 Device Farm Server 的秘密配置或验收进程环境，不写入 Compose `.env`，不发送给浏览器，不记录到日志。
 

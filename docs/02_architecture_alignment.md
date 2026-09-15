@@ -80,7 +80,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | `internal/scheduler/reconciler/reaper` | 设备分配、租约和状态收敛；按 ADR-0029 对系统健康隔离执行原机重探和一次非破坏 restart | 对 Alcor 保持内部不可见 |
 | `internal/providers` | Docker Emulator、Mock、USB 扩展 | 上层统一 Device 模型不变 |
 | `internal/adapters/stf` | STF API 封装 | 由设备农场内部调用 |
-| `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
+| `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server。多宿主机下只有 STF 所在宿主机（当前 171）的 Agent 能做本地注册；远程宿主机的设备由 STF 宿主机侧统一 `adb connect` 汇入（ADR-0037） | 只负责可见性接入，不处理 claim、release、远控或占用真相 | 不放开回环校验，不把 5037/5038 暴露到办公网或公网；不以 STF 可见性充当镜像可用性门禁 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
 | `internal/adapters/appiumdevicefarm` | 固定 12.0.1 的 iOS inventory、busy 漂移和 Node 健康；通过 CoreSimulator 受控实现动态 Simulator 生命周期 | 只由 macOS Host Agent/Session Fence 使用，不向浏览器暴露插件 API、完整 UDID 或内部 Endpoint |
 | `internal/adapters/baguette` | 固定 0.1.92 的健康、booted UDID 检查和 Reservation 受控原生 Web Gateway；按 UDID 隔离浏览器会话并把原生 App 上传固定到页面目标 | 只服务 iOS Simulator 人工远控与上游临时安装；不创建 Appium Session，不保存占用真相，不实现画面、触控或 IPA 安装 |
