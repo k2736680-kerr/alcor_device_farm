@@ -180,6 +180,44 @@ func TestDockerProviderHardRestartsDeadRuntimeWithoutFlush(t *testing.T) {
 	}
 }
 
+// 每条会把容器拉起来的路径（Start / Restart / RestartWithProfile 含回滚分支）
+// 都必须尽力安装 AVD 守护补丁：docker-android 的初始化标记在持久卷上，而 AVD
+// 根 ini 在容器临时层，重建容器后 qemu 会因 "Unknown AVD name" 秒退；标记值
+// （pixel_9）与 EMULATOR_DEVICE（Pixel 9）不匹配还会让每次启动都 -wipe-data
+// 清空用户数据；qemu 崩溃残留的锁文件会让下次启动被误判为同 AVD 双开。
+func TestDockerProviderInstallsAVDGuardOnEveryBootPath(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := provider.Create(context.Background(), dockerCreateRequest("device_0000000000001", "emulator-avd-guard"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	if engine.guardCalls != 1 {
+		t.Fatalf("start guard calls=%d", engine.guardCalls)
+	}
+	if _, err := provider.Restart(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	if engine.guardCalls != 2 {
+		t.Fatalf("restart guard calls=%d", engine.guardCalls)
+	}
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	if _, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile); err != nil {
+		t.Fatal(err)
+	}
+	if engine.guardCalls != 3 {
+		t.Fatalf("profile restart guard calls=%d", engine.guardCalls)
+	}
+}
+
 func TestDockerProviderRestoresPreviousContainerWhenProfileReplacementCannotBeCreated(t *testing.T) {
 	engine := newFakeBackend()
 	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
@@ -468,6 +506,7 @@ type fakeBackend struct {
 	createFailures int
 	syncCalls      int
 	stopCalls      int
+	guardCalls     int
 	syncFailure    bool
 	adbOffline     bool
 }
@@ -594,6 +633,10 @@ func (engine *fakeBackend) RemoveVolumes(_ context.Context, labels map[string]st
 }
 
 func (engine *fakeBackend) Exec(_ context.Context, _ string, args ...string) (string, error) {
+	if len(args) == 3 && args[0] == "sh" && args[1] == "-c" && strings.Contains(args[2], "alcor-avd-guard") {
+		engine.guardCalls++
+		return "", nil
+	}
 	last := args[len(args)-1]
 	if last == "sync" {
 		engine.syncCalls++

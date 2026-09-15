@@ -248,7 +248,13 @@ func (provider *Provider) cleanupCreateFailure(ctx context.Context, providerRef 
 }
 
 func (provider *Provider) Start(ctx context.Context, providerRef string) (providers.Snapshot, error) {
-	return provider.changeState(ctx, providers.OperationStart, providerRef, provider.backend.StartContainer)
+	snapshot, err := provider.changeState(ctx, providers.OperationStart, providerRef, provider.backend.StartContainer)
+	if err != nil {
+		return snapshot, err
+	}
+	name, _, _ := resourceNames(providerRef)
+	provider.ensureAVDGuard(ctx, name)
+	return snapshot, nil
 }
 
 func (provider *Provider) Stop(ctx context.Context, providerRef string) (providers.Snapshot, error) {
@@ -256,7 +262,13 @@ func (provider *Provider) Stop(ctx context.Context, providerRef string) (provide
 }
 
 func (provider *Provider) Restart(ctx context.Context, providerRef string) (providers.Snapshot, error) {
-	return provider.changeState(ctx, providers.OperationRestart, providerRef, provider.backend.RestartContainer)
+	snapshot, err := provider.changeState(ctx, providers.OperationRestart, providerRef, provider.backend.RestartContainer)
+	if err != nil {
+		return snapshot, err
+	}
+	name, _, _ := resourceNames(providerRef)
+	provider.ensureAVDGuard(ctx, name)
+	return snapshot, nil
 }
 
 // RestartWithProfile replaces only the container while retaining its network
@@ -300,6 +312,7 @@ func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef st
 		}
 		name, _, _ := resourceNames(restored.ProviderRef)
 		if restoreErr = provider.backend.StartContainer(ctx, name); restoreErr == nil {
+			provider.ensureAVDGuard(ctx, name)
 			value, restoreErr = provider.backend.InspectContainer(ctx, name)
 			if restoreErr == nil {
 				restored, restoreErr = provider.snapshot(value)
@@ -311,6 +324,7 @@ func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef st
 	if err := provider.backend.StartContainer(ctx, name); err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot start replaced emulator container", true, err)
 	}
+	provider.ensureAVDGuard(ctx, name)
 	value, err = provider.backend.InspectContainer(ctx, name)
 	if err != nil {
 		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_INSPECT_FAILED", "cannot inspect replaced emulator", true, err)
@@ -480,6 +494,68 @@ func (provider *Provider) adbReachable(ctx context.Context, name string) bool {
 	state, err := provider.backend.Exec(ctx, name, provider.adbArgs("get-state")...)
 	return err == nil && strings.TrimSpace(state) == "device"
 }
+
+// ensureAVDGuard 尽力在运行中的容器内安装 AVD 守护补丁（内容见 avdGuardScript）。
+// 刻意不把失败向上传播：补丁装在设备持久卷上，一次安装覆盖之后所有启动，
+// 错过本次启动的下一个启动路径（自愈重启、下次 Start）会再次尝试；设备异常
+// 由健康检查与隔离机制兜底暴露。
+func (provider *Provider) ensureAVDGuard(ctx context.Context, name string) {
+	_, _ = provider.backend.Exec(ctx, name, "sh", "-c", avdGuardScript)
+}
+
+// avdGuardScript 在容器内执行，把守护逻辑写进持久卷上的镜像启动脚本
+// （docker-android 的 run.sh，随 /home/androidusr 数据卷持久化），并为当前这
+// 次启动立即生效。背景（2026-09-15 事故）：
+//
+//  1. docker-android 的 is_initialized() 以持久卷上 config.ini 的
+//     hw.device.name 是否匹配 EMULATOR_DEVICE 为准，匹配时跳过 avdmanager
+//     创建流程。但 avdmanager 实际写入的是设备模板 id（pixel_9），与
+//     EMULATOR_DEVICE（Pixel 9）永不匹配 → 每次启动都重建 AVD 并附加
+//     -wipe-data，用户安装的 APK 与数据全部丢失。
+//  2. 手工把标记修正为 "Pixel 9" 后，AVD 根 ini（/root/.android/avd/<avd>.ini）
+//     只存在于容器临时层——硬重启回退/换 profile 会重建容器，临时层随之丢失，
+//     镜像又因标记已初始化而永远不再创建它 → qemu 报 "Unknown AVD name" 秒退。
+//  3. qemu 崩溃（而非干净退出）会在持久卷 AVD 目录留下陈旧的多实例/PID 锁
+//     文件；容器重启后 PID 空间重新编号，陈旧 PID 恰好指向新容器里的活进程，
+//     下次启动报 "Running multiple emulators with the same AVD" 拒绝运行。
+//
+// 守护逻辑在每次启动的最早期（镜像启动脚本开头）修复这三点：写入指向持久卷
+// AVD 目录的根 ini、把标记归一化为 EMULATOR_DEVICE、清理陈旧锁文件（本系统
+// 单容器独占 AVD 数据卷，启动时刻不存在合法的第二模拟器实例）。首次启动
+// （卷上尚无 config.ini）不动标记，走镜像正常创建流程。
+const avdGuardScript = `AVD_GUARD_BODY=/tmp/alcor-avd-guard-body.sh
+cat > "$AVD_GUARD_BODY" <<'AVD_GUARD_EOF'
+# alcor-avd-guard: installed by alcor-device-farm provider (internal/providers/docker/provider.go).
+# 1) The AVD root ini lives in the ephemeral /root/.android/avd and disappears
+#    when the container is recreated, while docker-android skips AVD creation
+#    once its persistent marker claims initialization -> qemu dies with
+#    "Unknown AVD name" on every boot. Rewrite the root ini on every boot.
+# 2) avdmanager writes hw.device.name=<device template id> (e.g. pixel_9) but
+#    docker-android matches EMULATOR_DEVICE (e.g. Pixel 9), so every boot
+#    recreated the AVD with -wipe-data and destroyed user data. Normalize the
+#    marker to EMULATOR_DEVICE before the emulator checks it.
+# 3) A crashed qemu leaves stale multiinstance/PID lock files in the persistent
+#    AVD dir; with a recycled in-container PID the next boot aborts with
+#    "Running multiple emulators with the same AVD". Clear them at boot.
+if [ -n "${EMULATOR_DEVICE:-}" ]; then
+    DATA_HOME="${WORK_PATH:-/home/androidusr}"
+    AVD_NAME="$(printf '%s' "$EMULATOR_DEVICE" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')_${EMULATOR_ANDROID_VERSION:-15.0}"
+    AVD_DIR="${ANDROID_AVD_HOME:-/root/.android/avd}"
+    mkdir -p "$AVD_DIR"
+    printf 'avd.ini.encoding=UTF-8\npath=%s/emulator\ntarget=android-35\n' "$DATA_HOME" > "$AVD_DIR/$AVD_NAME.ini"
+    rm -f "$DATA_HOME/emulator/multiinstance.lock" "$DATA_HOME/emulator/hardware-qemu.ini.lock" || true
+    if [ -f "$DATA_HOME/emulator/config.ini" ]; then
+        sed -i "s/^hw\.device\.name.*/hw.device.name = $EMULATOR_DEVICE/" "$DATA_HOME/emulator/config.ini" || true
+    fi
+fi
+AVD_GUARD_EOF
+sh "$AVD_GUARD_BODY" || true
+RUN_SH="${WORK_PATH:-/home/androidusr}/docker-android/mixins/scripts/run.sh"
+if [ -f "$RUN_SH" ] && ! grep -q "alcor-avd-guard" "$RUN_SH"; then
+    sed -i "1r $AVD_GUARD_BODY" "$RUN_SH" || true
+fi
+rm -f "$AVD_GUARD_BODY"
+`
 
 func (provider *Provider) snapshot(value container) (providers.Snapshot, error) {
 	generation, err := strconv.Atoi(value.Labels[labelGeneration])
