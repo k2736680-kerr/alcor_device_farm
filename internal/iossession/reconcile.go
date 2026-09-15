@@ -94,22 +94,38 @@ func (service *Service) quarantine(ctx context.Context, deviceID, reservationID,
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
-			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1`,
-			deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now); err != nil {
-			return err
-		}
-		eventID, err := service.newID()
-		if err != nil {
-			return err
-		}
-		encoded, _ := json.Marshal(payload)
-		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
-			(id,device_id,source,event_type,severity,reason,payload,observed_at)
-			VALUES($1,$2,'session_fence',$3,'critical',$4,$5::jsonb,$6)`,
-			eventID, deviceID, eventType, reason, encoded, now); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+		consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1`,
+		deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now); err != nil {
+		return err
+	}
+	// 节流：同一设备同一事件类型的健康事件/审计在窗口内只落一条。上面的幂等
+	// 护栏依赖设备保持 quarantined，但自愈/稳定化流程可能在两次 Reaper 重试
+	// 之间把设备恢复成 ready/healthy，护栏即被绕过——2026-09-14 曾单设备
+	// 4 小时刷出 12352 条 ios_session_cleanup_failed（每秒一条）。状态更新
+	// 与连续失败计数不受节流影响，控制台仍能看到最新的 health_reason。
+	const quarantineEventThrottleSeconds = 300
+	var recentlyReported bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM device_health_events
+		WHERE device_id=$1 AND event_type=$2
+		AND observed_at > clock_timestamp()-make_interval(secs => $3))`,
+		deviceID, eventType, quarantineEventThrottleSeconds).Scan(&recentlyReported); err != nil {
+		return err
+	}
+	if recentlyReported {
+		return nil
+	}
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	encoded, _ := json.Marshal(payload)
+	if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'session_fence',$3,'critical',$4,$5::jsonb,$6)`,
+		eventID, deviceID, eventType, reason, encoded, now); err != nil {
+		return err
+	}
 		actor := audit.System()
 		actor.ID = "ios_session_reconciler"
 		if reservationID == "" {

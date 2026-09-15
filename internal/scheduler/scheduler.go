@@ -117,6 +117,15 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 	}
 	if scheduler.claimer != nil && selected.device.Platform == "android" {
 		if err := scheduler.claimer.Claim(ctx, selected.device.STFSerial, time.Duration(selected.reservation.LeaseSeconds)*time.Second); err != nil {
+			// Run() 会把 ErrSTFClaimFailed 静默掉（见 Run 的日志过滤），若不在这里
+			// 落一条日志，claim 失败将完全不可观测 —— 预约只留下空的 failure_message。
+			scheduler.logger.Error("STF device claim failed",
+				"reservation_id", selected.reservation.ID,
+				"device_id", selected.device.ID,
+				"stf_serial", selected.device.STFSerial,
+				"lease_seconds", selected.reservation.LeaseSeconds,
+				"retryable", isRetryable(err),
+				"error", err)
 			terminal := !isRetryable(err)
 			compensateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
