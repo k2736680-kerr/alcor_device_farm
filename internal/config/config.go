@@ -405,8 +405,8 @@ func (cfg Config) Validate() error {
 		if len(cfg.IOSRemote.GatewaySecret) < 32 {
 			validationErrors = append(validationErrors, errors.New("ios_remote_control.gateway_secret 必须至少包含 32 字节"))
 		}
-		if cfg.IOSRemote.GatewayTokenTTL > time.Minute {
-			validationErrors = append(validationErrors, errors.New("ios_remote_control.gateway_token_ttl 不得超过 1 分钟"))
+		if cfg.IOSRemote.GatewayTokenTTL > 10*time.Minute {
+			validationErrors = append(validationErrors, errors.New("ios_remote_control.gateway_token_ttl 不得超过 10 分钟"))
 		}
 	}
 	if cfg.Console.Enabled {

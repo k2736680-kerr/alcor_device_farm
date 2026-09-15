@@ -68,7 +68,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil || public.Path != "" && public.Path != "/" {
 		return nil, fmt.Errorf("%w: 公开入口必须使用独立站点根地址", ErrUnavailable)
 	}
-	if len(cfg.Secret) < 32 || cfg.TicketTTL <= 0 || cfg.TicketTTL > time.Minute {
+	if len(cfg.Secret) < 32 || cfg.TicketTTL <= 0 || cfg.TicketTTL > 10*time.Minute {
 		return nil, fmt.Errorf("%w: 签名配置无效", ErrUnavailable)
 	}
 	if cfg.HTTPClient == nil {

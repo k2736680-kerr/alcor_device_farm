@@ -19,6 +19,7 @@ import {
 // remoteOperator 对两者施加完全相同的 operator/admin 校验。
 import {
   endIntegratedDeviceRemoteControl,
+  getGetIntegratedDeviceRemoteControlQueryKey,
   getListDevicesQueryKey,
   heartbeatIntegratedDeviceRemoteControl,
   useEndIntegratedDeviceRemoteControl,
@@ -95,6 +96,10 @@ export function RemoteControlProvider({
   const remotePopup = useRef<Window | null>(null)
   const endingRemote = useRef(false)
   const remoteAttempt = useRef(0)
+  // 记录弹窗最后一次实际导航到的入口 URL。入口 URL 每次轮询都是现签的
+  // （token 含预约 ID 与过期时间），若发现「待导航 URL === 已导航 URL」，
+  // 说明它来自上一次预约的残留 —— 二次导航必然 401，直接跳过。
+  const navigatedUrl = useRef<string | null>(null)
   const startRemote = useStartIntegratedDeviceRemoteControl()
   const endRemote = useEndIntegratedDeviceRemoteControl()
 
@@ -125,6 +130,23 @@ export function RemoteControlProvider({
   }, [queryClient])
 
   const clearRemote = useCallback((closePopup: boolean) => {
+    // 先取设备 ID 再清理状态：远控 GET 的 React Query 缓存里可能还留着上一次
+    // 预约的入口 URL（服务端每次 GET 现签 token，旧 URL 里的 token 必然已随旧
+    // 预约作废）。若不清掉，重连同一台设备时该查询一恢复 enabled 就会同步返回
+    // 旧 URL，下面的导航 effect 会把它推给弹窗 —— 用户看到的将是一次必 401 的
+    // 死链，且 opened 标记置位后新 URL 永远不会再导航。
+    let lastDeviceId: string | null = null
+    try {
+      const stored = window.sessionStorage.getItem(storedDeviceKey)
+      if (stored) {
+        lastDeviceId = (JSON.parse(stored) as { id?: string }).id ?? null
+      }
+    } catch {
+      lastDeviceId = null
+    }
+    if (lastDeviceId) {
+      queryClient.removeQueries({ queryKey: getGetIntegratedDeviceRemoteControlQueryKey(lastDeviceId) })
+    }
     const popup = remotePopup.current
     if (closePopup && popup) {
       try {
@@ -139,7 +161,7 @@ export function RemoteControlProvider({
     window.sessionStorage.removeItem(storedDeviceKey)
     setRemoteState(null)
     invalidate()
-  }, [invalidate])
+  }, [invalidate, queryClient])
 
   const finishRemote = useCallback((closePopup = true, silent = false, settleOnError = false) => {
     if (!remoteState || endingRemote.current) return
@@ -171,6 +193,7 @@ export function RemoteControlProvider({
   }, [clearRemote, endRemote, message, remoteState])
 
   const navigatePopup = useCallback((popup: Window, url: string) => {
+    navigatedUrl.current = url
     popup.location.replace(url)
     setRemoteState((current) => current ? { ...current, opened: true } : current)
   }, [])
@@ -259,6 +282,7 @@ export function RemoteControlProvider({
 
   useEffect(() => {
     if (!remoteView?.url || remoteState?.opened || !remoteState?.popup || remoteState.popup.closed) return
+    if (remoteView.url === navigatedUrl.current) return
     navigatePopup(remoteState.popup, remoteView.url)
     message.success(remoteState.device.platform === 'ios'
       ? 'iOS 远控已连接；画面和操作已绑定当前预约的目标模拟器'
