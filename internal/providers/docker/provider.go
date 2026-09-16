@@ -518,11 +518,17 @@ func (provider *Provider) ensureAVDGuard(ctx context.Context, name string) {
 //  3. qemu 崩溃（而非干净退出）会在持久卷 AVD 目录留下陈旧的多实例/PID 锁
 //     文件；容器重启后 PID 空间重新编号，陈旧 PID 恰好指向新容器里的活进程，
 //     下次启动报 "Running multiple emulators with the same AVD" 拒绝运行。
+//  4. docker-android 的 create() 调 avdmanager create avd -p <持久卷 AVD 目录>
+//     重建 AVD，而 avdmanager 在指定 -p 时不会写根 ini；全新数据卷的首次启动
+//     因此必然死于 "Unknown AVD name"（重建/扩容的每条命令尝试都是全新卷）。
+//     在 emulator.py 的 deploy() 里、qemu 启动前补写根 ini 兜底。
 //
-// 守护逻辑在每次启动的最早期（镜像启动脚本开头）修复这三点：写入指向持久卷
+// 守护逻辑在每次启动的最早期（镜像启动脚本开头）修复前三点：写入指向持久卷
 // AVD 目录的根 ini、把标记归一化为 EMULATOR_DEVICE、清理陈旧锁文件（本系统
 // 单容器独占 AVD 数据卷，启动时刻不存在合法的第二模拟器实例）。首次启动
-// （卷上尚无 config.ini）不动标记，走镜像正常创建流程。
+// （卷上尚无 config.ini）不动标记，走镜像正常创建流程，根 ini 由第 4 条补丁
+// 在 qemu 启动前写入；exec 时机早于 python 导入 emulator.py，补丁对本次启动
+// 即生效。
 const avdGuardScript = `AVD_GUARD_BODY=/tmp/alcor-avd-guard-body.sh
 cat > "$AVD_GUARD_BODY" <<'AVD_GUARD_EOF'
 # alcor-avd-guard: installed by alcor-device-farm provider (internal/providers/docker/provider.go).
@@ -553,6 +559,33 @@ sh "$AVD_GUARD_BODY" || true
 RUN_SH="${WORK_PATH:-/home/androidusr}/docker-android/mixins/scripts/run.sh"
 if [ -f "$RUN_SH" ] && ! grep -q "alcor-avd-guard" "$RUN_SH"; then
     sed -i "1r $AVD_GUARD_BODY" "$RUN_SH" || true
+fi
+EMU_PY="${WORK_PATH:-/home/androidusr}/docker-android/cli/src/device/emulator.py"
+if [ -f "$EMU_PY" ] && ! grep -q "alcor-avd-rootini" "$EMU_PY"; then
+    python3 - "$EMU_PY" <<'AVD_ROOTINI_EOF'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+anchor = "        subprocess.Popen(start_cmd.split())"
+if anchor not in src:
+    raise SystemExit(0)
+fix = (
+    "        # alcor-avd-rootini-fix: avdmanager create with -p never writes the\n"
+    "        # AVD root ini, so the first boot on a fresh volume dies with\n"
+    "        # \"Unknown AVD name\" before qemu starts. Write it right before launch.\n"
+    "        try:\n"
+    "            _avd_home = os.environ.get(\"ANDROID_AVD_HOME\") or os.path.join(os.path.expanduser(\"~\"), \".android\", \"avd\")\n"
+    "            os.makedirs(_avd_home, exist_ok=True)\n"
+    "            with open(os.path.join(_avd_home, self.name + \".ini\"), \"w\") as _ini:\n"
+    "                _ini.write(\"avd.ini.encoding=UTF-8\\npath=%s\\ntarget=android-%s\\n\" % (self.path_emulator, self.api_level))\n"
+    "        except Exception as _e:\n"
+    "            self.logger.warning(\"alcor-avd-rootini failed: %s\", _e)\n"
+)
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src.replace(anchor, fix + anchor, 1))
+AVD_ROOTINI_EOF
 fi
 rm -f "$AVD_GUARD_BODY"
 `
