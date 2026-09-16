@@ -255,6 +255,31 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		result.DevicesChecked++
 		usesAndroidHealthChain := device.Platform == "" || device.Platform == "android"
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
+		if device.OperationInFlight {
+			// 管理命令（create/rebuild/restart/start 等）在途期间，设备必然经历
+			// stopped→booting 的不健康窗口，且命令完成时会把设备乐观置为
+			// ready/healthy，而 qemu 实际开机仍需 1-2 分钟。这一窗口内的心跳与
+			// 巡检都不可作为失败证据：只记录观测、不计失败、不隔离；命令自身的
+			// 超时与结果（DEVICE_BOOT_TIMEOUT 等）才是失败判定依据。
+			input.EventType, input.Severity, input.Reason = "operation_stabilizing", "warning", "管理命令执行中，健康观测不计入失败"
+			input.SuppressFailureCount = true
+			input.SuppressQuarantine = true
+			var recentlyRecorded bool
+			if err := service.db.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_health_events
+				WHERE device_id=$1 AND event_type=$2 AND reason=$3
+				AND observed_at >= clock_timestamp()-interval '1 minute')`,
+				device.ID, input.EventType, input.Reason).Scan(&recentlyRecorded); err != nil {
+				return result, err
+			}
+			if recentlyRecorded {
+				continue
+			}
+			if _, err := service.Report(ctx, device.ID, input); err != nil {
+				return result, err
+			}
+			result.EventsRecorded++
+			continue
+		}
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", domain.HostUnavailableReason
 			if service.withinHostRecoveryGrace(device, input.ObservedAt) {
