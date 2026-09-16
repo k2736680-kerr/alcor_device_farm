@@ -35,6 +35,14 @@ func (service *Service) ReconcileOnce(ctx context.Context) error {
 					SELECT 1 FROM device_sessions recent
 					WHERE recent.device_id=d.id AND recent.appium_session_ended_at >= clock_timestamp()-interval '30 seconds'
 				)
+				AND NOT EXISTS (
+					-- 会话创建刚刚失败时，provider 侧可能残留瞬时 busy（Appium 会话
+					-- 半途建立、WDA 已拉起）。server/网关重建窗口内的这类失败不应
+					-- 立即隔离：给 90 秒自愈余量，超时后本条件自动失效、保护照常收敛。
+					SELECT 1 FROM device_health_events failed
+					WHERE failed.device_id=d.id AND failed.event_type='ios_session_create_failed'
+					AND failed.observed_at >= clock_timestamp()-interval '90 seconds'
+				)
 				THEN 'IOS_PROVIDER_BUSY_WITHOUT_RESERVATION'
 			WHEN COALESCE((d.capabilities->>'providerBusy')::boolean,false) AND r.id IS NOT NULL
 				AND s.appium_session_id IS NULL AND (s.session_grant_consumed_at IS NULL OR
