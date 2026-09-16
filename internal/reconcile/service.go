@@ -246,6 +246,9 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		// Provider 删除先移除宿主机资源，再回报 Host Command 成功。这个短窗口内
 		// InspectHealth 必然返回不存在；若把它当漂移隔离，会抢先改变 lifecycle，
 		// 导致成功的 delete completion 无法按 operation_state 收敛为 deleted。
+		// 普通 restart/start 同理：命令在途时设备经历 stopped→booting，qemu 尚未
+		// 完成开机，心跳必然报 unhealthy；若不视为在途操作，会在开机窗口内被
+		// 连续失败阈值隔离（2026-09-16 两台安卓设备重启即被隔离的根因）。
 		if device.DeletionInFlight {
 			continue
 		}
@@ -684,8 +687,7 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 		d.consecutive_failures,h.status,
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id
-			AND (c.command_type IN ('create','rebuild','reimage') OR
-				(c.command_type='restart' AND c.payload->>'operation_kind'='runtime_profile_update'))
+			AND c.command_type IN ('create','rebuild','reimage','restart','start')
 			AND c.status IN ('pending','leased')),
 		EXISTS (SELECT 1 FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type='delete'
