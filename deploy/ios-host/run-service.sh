@@ -50,9 +50,12 @@ run_appium_with_watchdog() {
       failures=0
     else
       failures=$((failures + 1))
-      echo "Appium Device Farm ${service_name} 健康检查连续失败 ${failures}/3" >&2
+      echo "Appium Device Farm ${service_name} 健康检查连续失败 ${failures}/6" >&2
     fi
-    if [ "$failures" -ge 3 ]; then
+    # 阈值 6 次（约 1 分钟）：WDA 编译、模拟器批量启动等会让插件接口短暂
+    # 卡顿，30 秒就自杀重启造成的断档比卡顿本身更长（2026-09-16 两次闪断
+    # 均由此触发）。真挂死仍会在约 1 分钟内被 launchd 拉起。
+    if [ "$failures" -ge 6 ]; then
       echo "Appium Device Farm ${service_name} 接口持续无响应，退出并交由 launchd 自动恢复" >&2
       stop_appium
       exit 1
