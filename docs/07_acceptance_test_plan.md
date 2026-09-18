@@ -1,6 +1,6 @@
 # 设备农场 MVP 验收方案
 
-> 本文件记录 Android 第一版 MVP 的验收基线。DF-028、DF-029～DF-038 和本地 ALCOR-001 的后续完成情况分别以各任务证据和实施清单为准；第二版 iOS 验收环境与用例必须由 DF-039 设计后再追加，不能用本文件的 Android Mock 或 Linux KVM 结果替代。
+> 本文件记录 Android 第一版 MVP 的历史验收基线。DF-028、DF-029～DF-038 和本地 ALCOR-001 的后续完成情况以各任务证据和最新实施清单为准；第二版 iOS 验收使用 `docs/09_ios_device_farm_v2_acceptance.md`，不能用本文件的 Android Mock 或 Linux KVM 结果替代。
 
 第二版 iOS 的 E4/E5/E6 环境、G10～G16、P0/P1 用例和证据要求已经独立定义在 [第二版 iOS 设备农场验收方案](09_ios_device_farm_v2_acceptance.md)。Android 本文件继续作为强制回归基线，不能被新方案覆盖或降级。
 
@@ -296,7 +296,7 @@ docs/evidence/
 4. 无双占、无永久悬挂、无跨任务数据残留、无密钥泄露；
 5. OpenAPI、migration、部署、监控、故障处理和回滚文档齐全；
 6. 新版 Alcor 团队可使用 Mock 契约包开发 Device Farm Adapter；
-7. ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收。
+7. 在本 Android MVP 历史签收口径下，ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收；当前 ALCOR-001 已有独立真实联调证据，状态以实施清单为准。
 8. 用户可以通过 Device Farm Console 完成设备查看、人工预约、续租/释放和受控设备操作，不需要使用命令行或直接访问内部服务；Console 不展示伪 STF Web 入口。
 # DF-035 官方目录与按需准备补充
 

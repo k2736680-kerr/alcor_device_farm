@@ -1,4 +1,4 @@
-# DF-003～DF-046 与 ALCOR-001 实施和证据清单
+# DF-003～DF-069 与 ALCOR-001 实施和证据清单
 
 本清单用于证明每个步骤都有明确提交、状态和验收入口。`completed` 表示任务定义的全部完成条件已满足；`blocked` 表示代码和本地门禁已交付，但方案明确要求的真实 Linux/设备环境尚未验收，不能以 Mock 替代；`pending` 表示已建立正式任务和验收模板，但尚未开始实现。
 
@@ -44,15 +44,39 @@
 | DF-040 | completed | `31fc0a2 完成DF-040平台中立设备域模型` | `docs/evidence/DF-040/acceptance.md` |
 | DF-041 | completed | `ba25501 完成DF-041 macOS宿主机与iOS只读适配` | `docs/evidence/DF-041/acceptance.md` |
 | DF-042 | completed | `aea220d 完成DF-042 iOS预约会话围栏`、`d485460 完成DF-042验收归档` | `docs/evidence/DF-042/acceptance.md` |
-| DF-043 | completed | 本提交：`完成DF-043 iOS模拟器固定库存接入` | `docs/evidence/DF-043/acceptance.md` |
-| DF-044 | completed | 本提交：`完成DF-044 iOS模拟器动态生命周期` | `docs/evidence/DF-044/acceptance.md` |
-| DF-045 | completed | `完成DF-045 iOS设备域控制台` | `docs/evidence/DF-045/acceptance.md` |
-| DF-046 | completed | 本提交：`完成DF-046 iOS模拟器远程控制` | `docs/evidence/DF-046/acceptance.md` |
-| DF-047 | completed | `完成DF-047 iOS最终验收与Android回归` | `docs/evidence/DF-047/acceptance.md` |
+| DF-043 | completed | `7f91846 完成DF-043 iOS模拟器固定库存接入` | `docs/evidence/DF-043/acceptance.md` |
+| DF-044 | completed | `f3def14 完成DF-044 iOS模拟器动态生命周期` | `docs/evidence/DF-044/acceptance.md` |
+| DF-045 | completed | `f8a2ff3 完成DF-045 iOS设备域控制台` | `docs/evidence/DF-045/acceptance.md` |
+| DF-046 | completed | `cba3dc0 完成DF-046 iOS模拟器远程控制` | `docs/evidence/DF-046/acceptance.md` |
+| DF-047 | completed | `0eb560a 完成DF-047 iOS最终验收与Android回归` | `docs/evidence/DF-047/acceptance.md` |
+| DF-048 | completed | `cb506d6 统一Android和iOS设备池自动伸缩` | `docs/evidence/DF-048/acceptance.md` |
+| DF-049 | completed | `afd0eba 统一设备新增入口并补齐iOS默认模板` | `docs/evidence/DF-049/acceptance.md` |
+| DF-050 | completed | `a497d7f 使用Baguette替换并清理自写iOS远控` | `docs/evidence/DF-050/acceptance.md` |
+| DF-051 | completed | `9671132 修复普通成员远控入口和网关访问` | `docs/evidence/DF-051/acceptance.md` |
+| DF-052 | completed | `c63f6a5 修复多设备远控安装目标错配` | `docs/evidence/DF-052/acceptance.md` |
+| DF-053 | completed | `2c8fac0 自动替换故障iOS模拟器并恢复双设备容量` | `docs/evidence/DF-053/acceptance.md` |
+| DF-054 | completed | `3ecf030 优化设备农场控制台页面与操作流程` | `docs/evidence/DF-054/acceptance.md` |
+| DF-055 | completed | `b710844 简化设备运行视图并完成全设备验收` | `docs/evidence/DF-055/acceptance.md` |
+| DF-056 | completed | `ccd67b6 保留长期设备并清理测试数据` | `docs/evidence/DF-056/acceptance.md` |
+| DF-057 | completed | `8dcac10 清理不可达代码和旧自愈分支` | `docs/evidence/DF-057/acceptance.md` |
+| DF-058 | completed | `89c95df 保持控制台长期登录并清理部署备份` | `docs/evidence/DF-058/acceptance.md` |
+| DF-059 | completed | `f22c9e7 修复正式控制台登录密码` | `docs/evidence/DF-059/acceptance.md` |
+| DF-060 | completed | `116f6f5 记录指定设备功能正式部署验收` | `docs/evidence/DF-060/acceptance.md` |
+| DF-061 | completed | `e97c24a 记录预约挂断修复正式验收` | `docs/evidence/DF-061/acceptance.md` |
+| DF-062 | completed | `961c2e2 记录模拟器内存溢出正式验收` | `docs/evidence/DF-062/acceptance.md` |
+| DF-063 | completed | `bfeea17 调整模拟器内存时保留设备数据` | `docs/evidence/DF-063/acceptance.md` |
+| DF-064 | completed | `884793f 预部署220控制面和独立数据库` | `docs/evidence/DF-064/acceptance.md` |
+| DF-065 | completed | `2ea7891 准备220控制面快速切换` | `docs/evidence/DF-065/acceptance.md` |
+| DF-066 | completed | `fb63f44 补齐设备农场重启自动恢复` | `docs/evidence/DF-066/acceptance.md` |
+| DF-067 | completed | `e4d2d82 完善宿主机登记和维护操作` | `docs/evidence/DF-067/acceptance.md` |
+| DF-068 | completed | `661765a 补充宿主机接入安装引导` | `docs/evidence/DF-068/acceptance.md` |
+| DF-069 | completed | `a57e75a 完成控制台本地E2E回归` | `docs/evidence/DF-069/acceptance.md` |
 | ALCOR-001 | completed | `9300fa2 完成Alcor设备农场统一入口`、`106e9dd 优化Alcor嵌入式设备页面` | `docs/evidence/ALCOR-001/readiness.md` |
 
 ## 当前结论
 
-1. Android 第一版 DF-003～DF-038 和本地 ALCOR-001 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
-2. 第二版使用本地 `codex/device-farm-v2` 分支；DF-039～DF-047 已完成，iOS Simulator 最终真实验收、运维回滚与 Android 回归均已签收；
-3. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。
+1. Android 第一版 DF-003～DF-038 已全部完成，冻结基线为 `106e9dd` 与 Tag `archive/android-baseline-2026-08-17`；
+2. ALCOR-001 已完成新版 Alcor 实际分支的本地真实联调和统一入口；正式分支合并、远端发布和正式环境切换不属于本地证据范围；
+3. 第二版使用本地 `codex/device-farm-v2` 分支，DF-039～DF-069 已完成，包含 iOS Simulator 设备域、统一容量、Baguette 远控、长期设备非破坏恢复、220 控制面预部署、Host 登记引导和 Console 本地 E2E 回归；
+4. 当前 220 控制面、18181 iOS Gateway 和 18182 Agent 端点仍属于预部署/切换准备，不能表述为已切换 171 正式流量；
+5. 所有后续状态变化继续保存验收证据并使用简洁中文 Git 提交。

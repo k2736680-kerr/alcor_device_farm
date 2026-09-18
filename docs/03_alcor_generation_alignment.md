@@ -55,7 +55,7 @@
 - 原方案固定的 `000012...000021` migration 编号不能直接沿用；
 - 把设备域代码必然迁入旧 `eval_server/internal/devicefarm` 的结论不再成立；
 - PostgreSQL 单独承载所有大规模用例明细和结果的假设不再成立；
-- App、Build 等正式业务模型需等待新版 Alcor 的 Android/Device Farm 扩展方案，不在设备项目提前建表。
+- App、Build 等正式业务模型已经由新版 Alcor 的 Android/iOS 扩展负责，仍不在设备项目建表；Device Farm 只接收 RunAttempt/Runner 所需的设备能力和预约参数。
 
 ## 4. 新版接入契约
 
@@ -81,7 +81,7 @@
 
 ## 5. 当前可安全开发的范围
 
-在新版 Alcor 第六阶段接口完成前，可以安全开发：设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试，以及只调用设备 API 的 Device Farm Console。Console 可使用独立配置用户和设备域短时会话，并为 operator/admin 编排与 Reservation 绑定的 STF/Baguette 原生 Web 入口，viewer 保持只读；不得复制 Alcor 钉钉用户、平台 RBAC、业务审计模型或远控实现。
+在新版 Alcor 第六阶段接口完成前，本仓库先完成了设备表和状态机、Host Agent、Provider、Scheduler、Reservation、Reaper、Reconciler、STF/Appium Adapter、OpenAPI、Mock Provider、DaFit Harness、契约测试、故障测试和 Device Farm Console。当前这些能力已经完成本地真实联调；后续只能在既有设备域边界内维护或扩展，不得复制 Alcor 钉钉用户、平台 RBAC、业务审计模型或远控实现。
 
 新版 Alcor 实际 `test` 分支已具备钉钉会话、App Build、Android Worker 和 Device Farm Adapter，因此统一入口确定为：Alcor“设备农场”一级菜单展开运行概览、宿主机、设备池、设备、预约、应用版本、健康事件和操作审计二级入口；设备域页面由同源受控代理按路由嵌入既有 Device Farm Console，APK 版本继续属于 Alcor，Device/Reservation/远控继续属于设备农场。浏览器只携带 Alcor 会话；Alcor 服务端持有 Service Token 并透传受控操作者 ID。仍未定稿的范围只剩 Android Case/Template 的进一步产品化和平台 RBAC；不得用当前统一入口复制设备域数据或页面。
 
@@ -125,11 +125,11 @@ DF-068 只把登记后的 Agent 本机安装、配置和 readiness 预检步骤�
 
 Android 第一版冻结在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17`；本地第二版使用 `codex/device-farm-v2`，详见 ADR-0020。分支切换不改变三方职责：设备农场仍只保存 Device/Host/Pool/Reservation 与技术连接真相，Alcor 仍保存 App/Build/Run/RunAttempt/Result/Artifact 业务真相，DaFit 仍是 Android 业务执行复用来源。
 
-DF-039 对 iOS 只进行设计和复用验证。iOS Device、Host、Pool、Reservation 和技术连接属于设备域；IPA/App Build、iOS Case、执行结果和业务报告属于 Alcor 或对应执行器。Appium Device Farm 即使提供 Hub/Node、设备发现和 Session 路由，也不得覆盖我方 PostgreSQL 预约或独立维护另一套业务设备池；真实 Session 必须与我方已预约的明确 UDID 对齐。
+DF-039～DF-047 已完成 iOS Simulator 的设备域设计、Session Fence、动态生命周期、远控和真实基础设施验收。iOS Device、Host、Pool、Reservation 和技术连接属于设备域；IPA/App Build、iOS Case、执行结果和业务报告属于 Alcor 或对应执行器。Appium Device Farm 即使提供 Hub/Node、设备发现和 Session 路由，也不得覆盖我方 PostgreSQL 预约或独立维护另一套业务设备池；真实 Session 必须与我方已预约的明确 UDID 对齐。
 
 DF-039 通过后，iOS 北向关系按 ADR-0021 固定：Alcor 仍先以 RunAttempt 创建、续租和释放 Reservation；设备农场返回明确平台、Host、Device、UDID 和受控 Session 连接，不返回 Apple Secret。iOS Executor 必须同时使用服务端生成的单值字符串 `df:udids=<reserved_udid>` 与相同 `appium:udid`，不得提交 tags、host filter 或多 UDID 让插件再次选机。Appium Device Farm 内部 busy 只用于宿主机技术互斥，不能创建、延长或关闭 Alcor RunAttempt，也不能覆盖 PostgreSQL Reservation。
 
-iOS Executor、IPA 元数据提取、安装、Case、结果和 Artifact 是 Alcor/执行器后续任务；本仓库的 DF-040～DF-046 只建设平台中立设备域、macOS Host、iOS inventory/health、Session Fence、Console 设备页和真实基础设施验收。Android DaFit Executor、STF 和长期设备语义必须保持不变。
+iOS Executor、IPA 元数据提取、安装、Case、结果和 Artifact 由 Alcor/执行器负责；本仓库的 DF-040～DF-069 已完成平台中立设备域、macOS Host、iOS inventory/health、Session Fence、Console 设备页、Baguette 远控、统一容量、控制面预部署和真实基础设施验收。Android DaFit Executor、STF 和长期设备语义必须保持不变。
 
 DF-042 按 ADR-0022 固定具体接入：Alcor 可信 iOS Executor 先用 Service Token 为自己的 active Reservation 申请一次性 Session Grant，再把 Grant 交给对应 macOS Host 的 Fence。Grant 不是 Alcor Run Token，不写入 RunAttempt、日志或 Artifact；Fence 只限制明确 UDID 和转发既有 WebDriver 协议。Alcor 浏览器、Device Farm Console 和普通用户都不能获得 Grant、Fence Endpoint 或 Appium Node Endpoint。现有 Alcor Device Farm Gateway 的服务端持证、固定路径白名单和关联 Header 透传模式可以复用，但 iOS Executor 与 XCUITest 业务实现仍留在 Alcor。
 

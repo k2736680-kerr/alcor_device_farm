@@ -4,9 +4,9 @@
 
 本表把 [设备农场方案](reference/app_evaluation_device_farm_design.md) 中仍有效的设备域能力映射到当前 `alcor_device_farm` 工作区。Alcor 平台对象和接入边界同时受 [新版 Alcor 方案](reference/alcor_next_generation_plan.txt) 约束，冲突裁决见 [三方对齐说明](03_alcor_generation_alignment.md)。
 
-当前单独建仓是因为新版 Alcor 明确把 Device Farm 放在第六阶段，相关 Adapter 尚未开发。设备域可以先行验证，但不得复制新版 Alcor 的评估业务。
+当前单独建仓起因于新版 Alcor 将 Device Farm 放在第六阶段，相关 Adapter 尚未开发。该阶段已经完成本地真实联调和统一入口；仓库仍保持独立设备域边界，不复制新版 Alcor 的评估业务。
 
-Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17` 冻结；本地第二版固定从该基线使用 `codex/device-farm-v2` 开发。分支变化不改变仓库、数据库或部署边界，详见 ADR-0020。DF-039 已完成多平台宿主机与 iOS 接入设计，但当前接口和生产实现仍是 Android；iOS 实现从 DF-040 开始。
+Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17` 冻结；本地第二版从该基线使用 `codex/device-farm-v2` 开发。分支变化不改变仓库、数据库或部署边界，详见 ADR-0020。DF-039～DF-069 已完成多平台宿主机、iOS Simulator、统一容量、受控远控、长期设备恢复、控制面预部署和 Console 回归；真实 iPhone 与 iOS 业务 Runner 仍不属于本仓库范围。
 
 ## 2. 组件逐项对齐
 

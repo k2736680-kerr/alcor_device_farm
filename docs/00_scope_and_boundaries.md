@@ -4,9 +4,9 @@
 
 `alcor_device_farm` 是带独立控制后台的设备基础设施子系统，不是另一套评估业务平台。
 
-当前阶段在新版 Alcor 的 Device Farm Adapter 尚未完成时，使用独立仓库开发和验证设备域。新版 Alcor 负责评估业务和 RunAttempt 真相；本项目负责设备、宿主机、池、预约、技术连接真相以及这些设备域能力的 Web 操作入口。STF 只负责远控和设备可见性，Docker 只负责运行载体。
+项目最初在新版 Alcor 的 Device Farm Adapter 尚未完成时，使用独立仓库先行开发和验证设备域；当前新版 Alcor 的 Android/iOS Worker、Adapter、统一入口和服务端代理已经完成本地真实联调。新版 Alcor 负责评估业务和 RunAttempt 真相；本项目负责设备、宿主机、池、预约、技术连接真相以及这些设备域能力的 Web 操作入口。STF 只负责远控和设备可见性，Docker/CoreSimulator 只负责运行载体。
 
-新版方案将 Device Farm 排在第六阶段，并明确由独立 Worker 通过 Device Farm Adapter 使用。当前先固化可测试的北向 API；接入时由 Adapter 以 RunAttempt 身份申请、续租和释放设备，不直接读取或修改对方数据库。新版方案尚未确定设备域最终是否合仓，因此当前不得假设必须迁入旧 Alcor 目录。
+新版方案将 Device Farm 排在第六阶段，并明确由独立 Worker 通过 Device Farm Adapter 使用。当前已经固化并实际使用可测试的北向 API；Adapter 以 RunAttempt 身份申请、续租和释放设备，不直接读取或修改对方数据库。设备域继续以独立服务和独立数据库部署，不依赖旧 Alcor 目录，也不与新版 Alcor 共享数据库。
 
 ## 2. 设备农场负责
 

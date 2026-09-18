@@ -5,10 +5,10 @@
 ## 与两份方案阶段的关系
 
 - 设备农场方案中的设备 Host、Provider、Pool、Reservation、Scheduler、STF、Appium、Reconciler 和 Reaper 仍是本项目功能范围；
-- 新版 Alcor 方案第一至第五阶段当前不实现 Device Farm，第六阶段才通过 Worker 的 Device Farm Adapter 接入；
-- 本文阶段一至阶段四用于在等待新版 Alcor 时完成设备域和 DaFit 真实联调；
-- 本文阶段五交付可独立使用的 Device Farm Console；
-- 本文阶段六必须以新版 `Run/RunAttempt/Artifact` 契约接入，不再扩展旧版 `eval_tasks/eval_results`；
+- 新版 Alcor 方案第一至第五阶段不实现 Device Farm，第六阶段通过 Worker 的 Device Farm Adapter 接入；该接入已完成本地真实联调和统一入口；
+- 本文阶段一至阶段五已完成设备域、DaFit 真实联调和独立 Device Farm Console；
+- 本文阶段六已按新版 `Run/RunAttempt/Artifact` 契约完成接入，不扩展旧版 `eval_tasks/eval_results`；
+- DF-039～DF-069 已补齐多平台设备域、iOS Simulator、统一容量、Baguette 远控、长期设备恢复、控制面预部署、Host 登记引导和 Console E2E 回归；
 - 原设备方案中关于旧 Alcor 表、整数 ID、本地 ArtifactStore、`Alcor Console` 和 migration 编号的内容不再作为接入依据。
 
 ## 阶段一：契约与基础骨架
@@ -69,7 +69,7 @@
 
 验收：用户不使用命令行即可通过 Web 完成设备查看、预约、远控和释放；危险操作有确认、原因和审计；页面状态始终以 Server/PostgreSQL 为真相；控制台没有 Alcor 评估业务对象。
 
-## 阶段六：Alcor 接入
+## 阶段六：Alcor 接入（已完成）
 
 - 以新版 Alcor 实际开发分支和 OpenAPI 为准生成/实现 Device Farm Adapter；
 - Alcor Worker 使用 RunAttempt UUID/ULID 调用设备预约接口；
@@ -78,7 +78,7 @@
 - Alcor 将业务元数据写 PostgreSQL、用例级结果写 ClickHouse，并通过 ArtifactStore 上传 Supabase Storage；
 - 终态和异常路径调用释放接口；
 - Alcor API/Worker 与设备农场进行契约和故障注入测试；
-- Eval Console 后续可以链接、嵌入或复用 Device Farm Console 的设备域模块，也可以继续通过 Adapter 调用同一设备 API；具体方式等待新版实际前端确定。
+- Eval Console 已通过新版 Alcor 的同源受控代理链接、嵌入或复用 Device Farm Console 的设备域模块；Worker 仍通过 Device Farm Adapter 调用同一设备 API。该集成不复制 Device/Reservation 数据，也不改变设备域控制台的独立可用性。
 
 验收：Eval Console 是统一评估业务入口；Device Farm Console 继续是设备域独立入口；RunAttempt 与 Device Session 可追溯；Alcor 与设备农场各自只保存所属领域真相；报告进入 Supabase Storage、用例结果进入 ClickHouse；不存在旧版 Eval Task 依赖、第二套评估业务模型或共享数据库耦合。
 

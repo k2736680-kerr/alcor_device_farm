@@ -48,7 +48,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 | 基础设施运行指标 | Alcor 继续使用自身可观测平台；设备农场只暴露 Prometheus `/metrics` | 仅包含 Server、数据库、设备、Agent、Reservation 和 Host Command 状态，不复制 Run/Result 业务指标 |
 | 业务制品 | PostgreSQL `artifacts` 索引 + Supabase Storage | 正式接入由 Worker 上传；设备农场不保存业务报告 |
 | 业务执行队列 | 独立 Worker + PostgreSQL 租约 | 设备农场不建立第二套 Run 队列；只管理设备 Reservation 租约 |
-| Device Farm 接入 | Worker 的 `Device Farm Adapter（后续）` | 当前固化北向设备契约和 Mock；等待新版 RunAttempt API 后联调 |
+| Device Farm 接入 | 新版 Alcor Android/iOS Worker 的 `Device Farm Adapter` | 已完成北向设备契约、RunAttempt 预约/续租/释放、服务端 Service Token 和操作者 Header 联调；后续接口变化继续通过 OpenAPI 契约回归 |
 | 用户、权限、审计 | 钉钉登录、`users`、`audit_logs`、Eval Console | 不预建 Alcor 用户模型；Device Farm Console 只实现设备域浏览器访问保护和设备技术审计，未来可接公司身份或由 Alcor 透传操作者 |
 | Target、Config、Secret | `targets`、`configs/config_versions`、受限 YAML | 本项目不接收业务密钥，不复制 Target/Config 管理 |
 | 统一响应和关联标识 | `/api/v1` 的 `request_id/data/error`，`X-Eval-Run-Id`、`X-Eval-Attempt-Id`、`traceparent` | 北向 API 兼容统一响应并透传关联标识 |
@@ -112,7 +112,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 
 ### 第二版 iOS 能力的批准边界
 
-DF-039 已按 ADR-0021 完成职责和验收设计。后续只能按 DF-040～DF-047 的顺序实现上面列出的设备域能力，不得把“允许新建”解释为可以直接建设 iOS 业务执行器：
+DF-039～DF-069 已按对应 ADR 和验收证据完成设备域能力。后续新增能力仍必须先更新复用矩阵或 ADR，不得把“允许新建”解释为可以直接建设 iOS 业务执行器：
 
 - PostgreSQL Reservation、Scheduler、Pool、Lease、Reaper 和审计继续是唯一设备占用真相；
 - Appium Device Farm 不得再次自由选择我方已经预约的设备，Session 必须同时使用与 active Reservation 相同的单值字符串 `df:udids=<reserved_udid>` 和 `appium:udid=<reserved_udid>`，并经过 Session Fence；
