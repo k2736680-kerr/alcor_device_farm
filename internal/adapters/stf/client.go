@@ -128,6 +128,13 @@ func (client *Client) Claim(ctx context.Context, serial string, ttl time.Duratio
 	if serial == "" || ttl < 30*time.Second || ttl > 24*time.Hour {
 		return &Error{Code: "INVALID_ARGUMENT", Message: "必须提供设备序列号和有效的 STF 占用时长"}
 	}
+	visible, err := client.Visible(ctx, serial)
+	if err != nil {
+		return err
+	}
+	if !visible {
+		return &Error{Code: "STF_CLAIM_FAILED", Message: "STF 设备尚未完成可见性准备", Retryable: true}
+	}
 	payload := map[string]any{"serial": serial, "timeout": ttl.Milliseconds()}
 	var response operationResponse
 	if err := client.request(ctx, http.MethodPost, "/api/v1/user/devices", payload, "STF_CLAIM_FAILED", &response); err != nil {

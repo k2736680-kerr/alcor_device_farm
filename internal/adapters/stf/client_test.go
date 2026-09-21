@@ -77,6 +77,35 @@ func TestClientUsesOfficialInventoryClaimReleaseAndRemoteConnectAPIs(t *testing.
 	}
 }
 
+func TestClaimRejectsDeviceBeforeSTFVisibilityIsReady(t *testing.T) {
+	var claims atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/devices" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{
+				{"serial": "host:32771", "present": true, "ready": false, "using": false},
+			}})
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/user/devices" {
+			claims.Add(1)
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+	client, err := New(Config{BaseURL: server.URL, Token: "token", Attempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.Claim(context.Background(), "host:32771", time.Minute)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Code != "STF_CLAIM_FAILED" || !typed.Retryable {
+		t.Fatalf("claim error=%#v", err)
+	}
+	if claims.Load() != 0 {
+		t.Fatalf("claim endpoint called before inventory readiness: %d", claims.Load())
+	}
+}
+
 func TestClientRetriesTransientFailureAndDoesNotLeakToken(t *testing.T) {
 	const token = "never-print-this-token"
 	var attempts atomic.Int32
@@ -100,6 +129,12 @@ func TestClientRetriesTransientFailureAndDoesNotLeakToken(t *testing.T) {
 	}
 
 	server.Config.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/devices" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{
+				{"serial": "host:32771", "present": true, "ready": true, "using": false},
+			}})
+			return
+		}
 		http.Error(writer, token, http.StatusBadRequest)
 	})
 	err = client.Claim(context.Background(), "host:32771", time.Minute)
