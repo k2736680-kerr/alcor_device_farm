@@ -1209,18 +1209,20 @@ func transitionImage(ctx context.Context, tx pgx.Tx, imageID string, from, to do
 func (controller *Controller) reconcile(ctx context.Context, poolID, imageID string) (Result, error) {
 	result := Result{}
 	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
-		var minReady, totalTarget int
+		var minReady, totalTarget, maxConcurrency, imageMaxInstances int
 		var apiLevel int
 		var runtimeImage, digest, abi, resolution string
 		var baseCapabilities, baseRuntimeProfile []byte
-		if err := tx.QueryRow(ctx, `SELECT p.min_ready,p.total_target,i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,
+		if err := tx.QueryRow(ctx, `SELECT p.min_ready,p.total_target,p.max_concurrency,pi.max_instances,
+			i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,
 			COALESCE(b.capabilities,jsonb_build_object('platformName','Android','apiLevel',i.api_level,'abi',i.abi,'resolution',i.resolution)),
 			COALESCE(b.runtime_profile_override,i.resource_config,'{}'::jsonb)
 			FROM device_pools p LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
 			JOIN device_pool_images pi ON pi.pool_id=p.id AND pi.image_id=COALESCE(b.image_id,p.default_image_id)
 			JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id)
 			WHERE p.id=$1 AND p.platform='android' AND COALESCE(b.image_id,p.default_image_id)=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
-			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &runtimeImage, &digest, &apiLevel, &abi, &resolution, &baseCapabilities, &baseRuntimeProfile); err != nil {
+			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &maxConcurrency, &imageMaxInstances,
+			&runtimeImage, &digest, &apiLevel, &abi, &resolution, &baseCapabilities, &baseRuntimeProfile); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -1265,17 +1267,22 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating); err != nil {
 			return err
 		}
-		var pendingDemand int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_reservations
-			WHERE pool_id=$1 AND status='pending'
-			AND NOT requested_capabilities ? '_device_farm_target_device_id'
+		var pendingDemand, activeDemand int
+		if err := tx.QueryRow(ctx, `SELECT
+			count(*) FILTER (WHERE status='pending' AND NOT requested_capabilities ? '_device_farm_target_device_id'),
+			count(*) FILTER (WHERE status='active')
+			FROM device_reservations
+			WHERE pool_id=$1 AND status IN ('pending','active')
 			AND $2::jsonb @> device_schedulable_capabilities(requested_capabilities)
-			AND (NOT requested_capabilities ? 'platformName' OR lower(requested_capabilities->>'platformName')='android')`, poolID, capabilitiesJSON).Scan(&pendingDemand); err != nil {
+			AND (NOT requested_capabilities ? 'platformName' OR lower(requested_capabilities->>'platformName')='android')`,
+			poolID, capabilitiesJSON).Scan(&pendingDemand, &activeDemand); err != nil {
 			return err
 		}
-		// 方案A：池空闲(pending=0)且 target 为 0 时缩容到 0 释放内存；
-		// 有 pending 预约时按需求拉起设备，即使 target 为 0 也不缩容正在服务的实例。
-		keepInstances := max(totalTarget, pendingDemand)
+		// Fixed targets keep a warm baseline. Demand above that baseline is the
+		// number of active leases plus unassigned reservations, bounded by the
+		// pool and image limits.
+		demandTarget := min(activeDemand+pendingDemand, min(maxConcurrency, imageMaxInstances))
+		keepInstances := max(totalTarget, demandTarget)
 		if activeInstances > keepInstances {
 			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, activeInstances-keepInstances)
 			if err != nil {

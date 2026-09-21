@@ -353,7 +353,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&auditedActions, &missingFields); err != nil {
 		t.Fatal(err)
 	}
-	if auditedActions != 8 || missingFields != 0 {
+	if auditedActions != 9 || missingFields != 0 {
 		t.Fatalf("device audit actions=%d missing fields=%d", auditedActions, missingFields)
 	}
 	var alcorActorActions int

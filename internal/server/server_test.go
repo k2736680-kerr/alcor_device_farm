@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,7 +124,7 @@ func TestRecoveredPanicIsCountedAsHTTP500(t *testing.T) {
 
 func TestRequestLogMiddlewarePreservesWebSocketHijacking(t *testing.T) {
 	registry := farmmetrics.New(nil)
-	var logs bytes.Buffer
+	var logs lockedBuffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	errors := make(chan error, 1)
 	handler := requestLogMiddleware(logger, registry, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -172,6 +173,23 @@ func TestRequestLogMiddlewarePreservesWebSocketHijacking(t *testing.T) {
 	if !strings.Contains(logs.String(), "status=101") {
 		t.Fatalf("websocket status missing from request log: %s", logs.String())
 	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (buffer *lockedBuffer) Write(value []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.b.Write(value)
+}
+
+func (buffer *lockedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.b.String()
 }
 
 func testLogger(t *testing.T, output *bytes.Buffer) *slog.Logger {

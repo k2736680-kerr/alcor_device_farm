@@ -453,6 +453,114 @@ func TestPlanAPendingReservationPullsUpDeviceWhenTargetIsZero(t *testing.T) {
 	}
 }
 
+func TestTargetZeroScalesForActiveAndPendingDemandWithinConcurrencyLimit(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 0, 2, 2)
+	if _, err := db.Pool().Exec(context.Background(), `
+		UPDATE device_pools SET total_target=0,min_ready=0,max_concurrency=2
+		WHERE id='pool_000000000000001';
+		INSERT INTO devices
+			(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,
+			capabilities,lifecycle_status,health_status)
+		VALUES
+			('device_active_00000001','host_000000000000001','image_00000000000001','emulator',
+			'docker_emulator','active-emulator','rebuild','active-emulator',
+			'{"platformName":"Android","apiLevel":34}','busy','healthy');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_active_00000001',true);
+		INSERT INTO device_reservations
+			(id,client_id,pool_id,device_id,owner_type,owner_id,requested_capabilities,
+			lease_seconds,status,idempotency_key,starts_at,expires_at)
+		VALUES
+			('reservation_active_0001','service','pool_000000000000001','device_active_00000001',
+			'run_attempt','run_attempt_00000001','{"platformName":"Android","apiLevel":34}',
+			600,'active','active-reservation-0001',clock_timestamp(),clock_timestamp()+interval '10 minutes'),
+			('reservation_pending_001','service','pool_000000000000001',NULL,
+			'run_attempt','run_attempt_00000002','{"platformName":"Android","apiLevel":34}',
+			600,'pending','pending-reservation-0001',NULL,NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 || result.DeletesQueued != 0 {
+		t.Fatalf("active plus pending demand result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE lifecycle_status<>'deleted'`, 2)
+
+	if _, err := db.Pool().Exec(context.Background(), `
+		UPDATE devices SET lifecycle_status='ready',health_status='healthy'
+		WHERE lifecycle_status='provisioning';
+		UPDATE device_host_commands SET status='succeeded',completed_at=clock_timestamp()
+		WHERE command_type='create' AND status='pending';
+		UPDATE device_pools SET max_concurrency=1
+		WHERE id='pool_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 || result.DeletesQueued != 1 {
+		t.Fatalf("concurrency cap result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE id='device_active_00000001'
+		AND lifecycle_status='busy'`, 1)
+
+	if _, err := db.Pool().Exec(context.Background(), `
+		DELETE FROM device_reservations WHERE status='pending';
+		UPDATE device_host_commands SET status='succeeded',result='{"deleted":true}',completed_at=clock_timestamp()
+		WHERE command_type='delete' AND status='pending'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err = controller.RunOnce(context.Background()); err != nil || result.DeletesCompleted != 1 || result.DeletesQueued != 0 {
+		t.Fatalf("active lease remains result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE lifecycle_status<>'deleted'`, 1)
+
+	if _, err := db.Pool().Exec(context.Background(), `DELETE FROM device_reservations`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 0 {
+		t.Fatalf("busy orphan is not scale-down eligible result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='ready'
+		WHERE id='device_active_00000001'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("all demand cleared result=%+v error=%v", result, err)
+	}
+}
+
+func TestTargetZeroDoesNotProvisionBeyondConcurrencyLimit(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 0, 2, 2)
+	if _, err := db.Pool().Exec(context.Background(), `
+		UPDATE device_pools SET total_target=0,min_ready=0,max_concurrency=1
+		WHERE id='pool_000000000000001';
+		INSERT INTO device_reservations
+			(id,client_id,pool_id,owner_type,owner_id,requested_capabilities,
+			lease_seconds,status,idempotency_key)
+		VALUES
+			('reservation_pending_001','service','pool_000000000000001','run_attempt',
+			'run_attempt_00000001','{"platformName":"Android","apiLevel":34}',600,'pending','pending-cap-0001'),
+			('reservation_pending_002','service','pool_000000000000001','run_attempt',
+			'run_attempt_00000002','{"platformName":"Android","apiLevel":34}',600,'pending','pending-cap-0002')`); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("concurrency-limited demand result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE lifecycle_status<>'deleted'`, 1)
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("concurrency-limited duplicate result=%+v error=%v", result, err)
+	}
+}
+
 func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 2, 2, 4)
