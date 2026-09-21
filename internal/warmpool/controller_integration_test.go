@@ -402,6 +402,57 @@ func TestPendingReservationCreatesDefaultImageWhenMinimumReadyIsZero(t *testing.
 	}
 }
 
+func TestPlanAPendingReservationPullsUpDeviceWhenTargetIsZero(t *testing.T) {
+	db := openTestDatabase(t)
+	// 方案A：池缩容到 0 释放内存(total_target=0,min_ready=0)，宿主 2 槽、镜像允许 2 实例
+	seedWarmPool(t, db, "ready", 0, 2, 2)
+	if _, err := db.Pool().Exec(context.Background(),
+		`UPDATE device_pools SET total_target=0,min_ready=0 WHERE id='pool_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	// 空闲无 pending：不创建任何设备(缩容到 0)
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DevicesCreated != 0 {
+		t.Fatalf("idle target0 result=%+v error=%v", result, err)
+	}
+	// 出现 pending 预约：即使 target=0 也拉起 1 台
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_reservations
+		(id,client_id,pool_id,owner_type,owner_id,requested_capabilities,lease_seconds,status,idempotency_key)
+		VALUES('reservation_planA_0001','service','pool_000000000000001','manual','planA-user',
+		'{"platformName":"Android","apiLevel":34}',600,'pending','planA-reservation-0001')`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 1 {
+		t.Fatalf("planA pending target0 result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='create'
+		AND payload->>'image_id'='image_00000000000001'`, 1)
+	// 模拟容器已拉起、设备 ready 且 create 命令已完成；pending 仍在：下一轮既不扩也不缩(不扩了又缩)
+	if _, err := db.Pool().Exec(context.Background(),
+		`UPDATE devices SET lifecycle_status='ready',health_status='healthy'
+		 WHERE provider_type='docker_emulator' AND lifecycle_status='provisioning';
+		 UPDATE device_host_commands SET status='succeeded',completed_at=clock_timestamp()
+		 WHERE command_type='create' AND status='pending'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 || result.DeletesQueued != 0 {
+		t.Fatalf("planA settled result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM devices WHERE provider_type='docker_emulator'
+		AND lifecycle_status='ready'`, 1)
+	// pending 清零后空闲池可缩回 0 释放内存
+	if _, err := db.Pool().Exec(context.Background(),
+		`DELETE FROM device_reservations WHERE id='reservation_planA_0001'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("planA idle shrink result=%+v error=%v", result, err)
+	}
+}
+
 func TestControllerAdjustsToLargerConfiguredTargetWithoutCodeChanges(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 2, 2, 4)

@@ -1265,14 +1265,6 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating); err != nil {
 			return err
 		}
-		if activeInstances > totalTarget {
-			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", totalTarget, activeInstances-totalTarget)
-			if err != nil {
-				return err
-			}
-			result.DeletesQueued += queued
-			return nil
-		}
 		var pendingDemand int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_reservations
 			WHERE pool_id=$1 AND status='pending'
@@ -1281,7 +1273,18 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			AND (NOT requested_capabilities ? 'platformName' OR lower(requested_capabilities->>'platformName')='android')`, poolID, capabilitiesJSON).Scan(&pendingDemand); err != nil {
 			return err
 		}
-		missing := min(max(minReady-readyOrCreating, pendingDemand-defaultReadyOrCreating), totalTarget-activeInstances)
+		// 方案A：池空闲(pending=0)且 target 为 0 时缩容到 0 释放内存；
+		// 有 pending 预约时按需求拉起设备，即使 target 为 0 也不缩容正在服务的实例。
+		keepInstances := max(totalTarget, pendingDemand)
+		if activeInstances > keepInstances {
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, activeInstances-keepInstances)
+			if err != nil {
+				return err
+			}
+			result.DeletesQueued += queued
+			return nil
+		}
+		missing := min(max(minReady-readyOrCreating, pendingDemand-defaultReadyOrCreating), keepInstances-activeInstances)
 		if missing <= 0 {
 			return nil
 		}
