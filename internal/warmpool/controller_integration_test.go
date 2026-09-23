@@ -827,9 +827,9 @@ func TestHistoricalCreateResultDoesNotCompleteActiveManagementRebuild(t *testing
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning' AND health_status='unknown'", 1)
 }
 
-func TestFailedCreateIsQuarantinedAndKeepsRegisteredSlot(t *testing.T) {
+func TestFailedCreateIsRemovedBeforeReplacement(t *testing.T) {
 	db := openTestDatabase(t)
-	seedWarmPool(t, db, "ready", 2, 2, 2)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
 	controller := warmpool.New(db, sequentialGenerator(), nil)
 	if _, err := controller.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -840,23 +840,24 @@ func TestFailedCreateIsQuarantinedAndKeepsRegisteredSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := controller.RunOnce(context.Background())
-	if err != nil || result.DevicesFailed != 1 || result.BackoffSkips != 0 || result.DevicesCreated != 0 {
+	if err != nil || result.DevicesFailed != 1 || result.DeletesQueued != 1 || result.BackoffSkips != 0 || result.DevicesCreated != 0 {
 		t.Fatalf("backoff result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined' AND health_status='unhealthy'", 1)
 	assertCount(t, db, "SELECT count(*) FROM device_health_events WHERE event_type='warm_pool_create_failed'", 1)
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 2)
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET created_at=clock_timestamp()-interval '20 minutes',
-		completed_at=clock_timestamp()-interval '10 minutes',updated_at=clock_timestamp() WHERE status='failed'`); err != nil {
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='delete' AND status='pending'", 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"deleted":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete' AND status='pending'`); err != nil {
 		t.Fatal(err)
 	}
 	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 0 {
-		t.Fatalf("registered quarantine result=%+v error=%v", result, err)
+	if err != nil || result.DeletesCompleted != 1 || result.DevicesCreated != 1 {
+		t.Fatalf("failed create replacement result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 2)
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 2)
-	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status<>'quarantined'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='deleted'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning'", 1)
 }
 
 func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *testing.T) {
@@ -898,11 +899,12 @@ func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *
 		t.Fatal(err)
 	}
 	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 0 {
+	if err != nil || result.DevicesCreated != 0 || result.DeletesQueued != 0 {
 		t.Fatalf("missing quarantined preservation result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 1)
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined'", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='delete'", 0)
 }
 
 func TestLatestAgentUsedCapacityBlocksUnknownProviderOverbuild(t *testing.T) {

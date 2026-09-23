@@ -34,6 +34,24 @@ func (value *CapacityUnavailableError) Unwrap() error { return ErrNoCapacity }
 // replacement that would hide the original device or discard its data.
 const slotOccupyingDevicePredicate = `d.lifecycle_status<>'deleted'`
 
+// A create placeholder has never become a usable long-lived device. These
+// rows may be cleaned up after the create command exhausts its retries so
+// they cannot permanently block on-demand capacity. Endpoint or observation
+// evidence deliberately excludes devices that have ever entered service.
+const failedCreatePlaceholderPredicate = `d.lifecycle_status='quarantined'
+	AND d.serial LIKE 'pending-%'
+	AND d.adb_endpoint IS NULL
+	AND d.appium_endpoint IS NULL
+	AND d.last_seen_at IS NULL
+	AND EXISTS (SELECT 1 FROM device_host_commands failed_create
+		WHERE failed_create.payload->>'device_id'=d.id
+		AND failed_create.command_type='create'
+		AND failed_create.status IN ('failed','timed_out'))
+	AND NOT EXISTS (SELECT 1 FROM device_host_commands successful_create
+		WHERE successful_create.payload->>'device_id'=d.id
+		AND successful_create.command_type='create'
+		AND successful_create.status='succeeded')`
+
 type Result struct {
 	Configurations       int
 	ValidationsQueued    int
@@ -683,7 +701,9 @@ func (controller *Controller) queueScaleDown(
 				WHERE active_command.payload->>'device_id'=d.id AND active_command.status IN ('pending','leased'))
 			AND NOT EXISTS (SELECT 1 FROM device_pool_devices shared_membership
 				WHERE shared_membership.device_id=d.id AND shared_membership.enabled AND shared_membership.pool_id<>$1)
-			ORDER BY d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate),
+			ORDER BY CASE WHEN %s THEN 0 ELSE 1 END,
+				d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate,
+			failedCreatePlaceholderPredicate),
 			poolID, platform, target).Scan(&current.ID, &current.HostID, &current.Platform, &current.DeviceKind,
 			&current.ProviderType, &current.ImageID, &current.ProviderRef, &current.Lifecycle,
 			&current.Health, &current.HasActiveUse, &current.HasCommand, &current.Shared)
@@ -1256,15 +1276,16 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		if err != nil {
 			return err
 		}
-		var activeInstances, readyOrCreating, defaultReadyOrCreating int
+		var activeInstances, readyOrCreating, defaultReadyOrCreating, failedCreateInstances int
 		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT
 			count(*) FILTER (WHERE %s),
 			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready')),
-			count(*) FILTER (WHERE d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting','ready'))
+			count(*) FILTER (WHERE d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting','ready')),
+			count(*) FILTER (WHERE %s)
 			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
 			JOIN device_hosts h ON h.id=d.host_id
 			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
-			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating); err != nil {
+			slotOccupyingDevicePredicate, failedCreatePlaceholderPredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating, &failedCreateInstances); err != nil {
 			return err
 		}
 		var pendingDemand, activeDemand int
@@ -1283,6 +1304,21 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		// pool and image limits.
 		demandTarget := min(activeDemand+pendingDemand, min(maxConcurrency, imageMaxInstances))
 		keepInstances := max(totalTarget, demandTarget)
+		// A failed create leaves a quarantined placeholder behind. It still
+		// represents provider capacity until deletion completes, but must not
+		// permanently satisfy demand for a usable instance. Devices that were
+		// created successfully and quarantined later remain untouched.
+		if failedCreateInstances > 0 && readyOrCreating < keepInstances {
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances,
+				min(failedCreateInstances, keepInstances-readyOrCreating))
+			if err != nil {
+				return err
+			}
+			result.DeletesQueued += queued
+			if queued > 0 {
+				return nil
+			}
+		}
 		if activeInstances > keepInstances {
 			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, activeInstances-keepInstances)
 			if err != nil {
