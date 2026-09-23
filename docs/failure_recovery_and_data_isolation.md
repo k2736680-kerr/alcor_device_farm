@@ -26,6 +26,13 @@
 | Harness/DaFit 超时或取消 | Harness finally + Reaper | 独立清理上下文 release；进程硬杀由租约到期回收 | released/expired | STF/数据库同时长期不可用 |
 | 重建结果不完整 | 固定目标 Controller | 不接受缺少 Endpoint 或健康字段的 succeeded 结果，直接隔离并记录健康事件 | quarantined | 检查 Agent/Provider 契约 |
 | 管理员 restart/rebuild 失败 | Host Command completion | 管理 API 不直调 Provider；命令最终失败、超时或健康快照不完整时原子隔离并记录 command ID | quarantined | 修复 Host/镜像后重新发起受审计操作 |
+| iOS Host Agent 退出 | launchd + heartbeat/Reconciler | launchd 拉起 Agent；Host 停止新分配，未完成 Host Command 由 lease 重领 | 120 秒内 online 或设备明确 quarantined | Agent 连续退出、启动 doctor 或固定版本失败 |
+| iOS Hub/动态发现 Node 退出或接口挂死 | launchd + Node 看门狗 + Host readiness/inventory | 进程退出由 launchd 拉起；进程仍在但 inventory 连续三次超时由看门狗终止后拉起；Host maintenance，停止新预约；Node 恢复后重新注册实际 booted Simulator | 120 秒内 inventory 收敛或隔离 | 幽灵 inventory、端口冲突或插件数据库损坏 |
+| `simctl create` 后 inventory 失败 | iOS Provider 创建补偿 | 使用刚创建且名称受控的 UDID 直接 shutdown/delete，并精确注销 Hub/Node | 无 CoreSimulator、Device、membership 或 command 半成品 | CoreSimulator 删除持续失败 |
+| iOS Session 创建后绑定失败 | Session Fence | 立即 DELETE 上游 Appium Session并记录失败，不向调用方返回 Session | Reservation 可受控释放；无 WDA/插件 busy 残留 | Fence 无法删除上游 Session |
+| iOS Session 正常结束但插件仍 busy | Session Reconciler 30 秒清理宽限 | 宽限内不误隔离；inventory 收敛后 ready/healthy | ready/healthy 或超时 quarantined | 30 秒后仍 busy |
+| iOS Reservation 过期且 Session 活跃 | Reaper + Session Fence | 先关闭上游 Session，再把 Reservation 置为 expired；失败时保持占用并隔离 | expired/ready 或 active/quarantined | Appium/Fence 清理持续失败 |
+| iOS Provider busy 无 Reservation/绑定 Session | iOS Session Reconciler | 记录漂移并隔离，禁止调度 | quarantined | 查明旁路 Appium 调用并正式清理 |
 
 ## 3. 释放和回池链路
 
@@ -69,6 +76,8 @@ sequenceDiagram
 
 真机后续不能删除物理设备，必须由 USB Provider 实现等价的受控清理策略；上层 Reservation、Session、recycling、quarantined 和审计模型不变。
 
+iOS Simulator 的隔离使用 CoreSimulator 生命周期而不是 Android 数据卷：动态设备释放后只有显式 rebuild 才执行 shutdown/erase/boot；删除必须让目标 UDID 从 CoreSimulator 和 Hub/Node 受管 inventory 同时消失。Session Fence 在 release/Reaper 时先关闭 Appium/XCUITest/WDA Session；关闭失败时保留占用和 quarantine，绝不把仍有 WDA 或 provider busy 的 Simulator 返回池中。
+
 ## 5. 禁止事项
 
 - 禁止 release 后直接把 Emulator 从 recycling 改回 ready；
@@ -78,3 +87,5 @@ sequenceDiagram
 - 禁止 restart/rebuild 管理 API 绕过 Host Command 直接调用任何 Provider；
 - 禁止旧 lease token、旧 attempt 或重复 Controller 创建第二条重建命令；
 - 禁止把 failed/timed_out/quarantined 伪装成已完成验收。
+- 禁止浏览器、DaFit 或 Alcor 绕过 Session Fence 直连 iOS Hub、Node、WDA/MJPEG；
+- 禁止通过重启整个 Mac、远程桌面或直接编辑 Appium 插件数据库代替目标 Simulator 的受控清理。

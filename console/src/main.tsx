@@ -31,17 +31,18 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           locale={zhCN}
           theme={{
             token: {
-              colorPrimary: '#2563eb',
-              colorInfo: '#2563eb',
+              // 与 Alcor 主平台（alcor_console App.tsx ConfigProvider）保持同一套视觉令牌。
+              colorPrimary: '#1769d1',
+              colorInfo: '#1769d1',
               colorSuccess: '#16a34a',
               colorWarning: '#f59e0b',
               colorError: '#dc2626',
-              borderRadius: 10,
-              fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif',
+              borderRadius: 8,
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
             },
             components: {
-              Layout: { headerBg: '#ffffff', bodyBg: '#f3f6fb', siderBg: '#07182c' },
-              Menu: { darkItemBg: '#07182c', darkSubMenuItemBg: '#07182c', darkItemSelectedBg: '#1d4ed8' },
+              Layout: { headerBg: '#ffffff', bodyBg: '#f8fafc', siderBg: '#ffffff' },
+              Menu: { itemSelectedBg: '#eff6ff', itemSelectedColor: '#1769d1', itemHoverBg: '#f8fbff', itemHoverColor: '#1769d1' },
               Card: { paddingLG: 22 },
             },
           }}

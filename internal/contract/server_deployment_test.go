@@ -38,8 +38,16 @@ func TestServerComposeAndImageStayPrivateAndUnprivileged(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, ok := document.Services["device-farm-server"]
-	if !ok || len(service.Ports) != 1 || !strings.Contains(service.Ports[0], "127.0.0.1") {
+	if !ok || len(service.Ports) != 2 {
 		t.Fatalf("Server published ports=%v", service.Ports)
+	}
+	for _, port := range service.Ports {
+		if !strings.Contains(port, "DEVICE_FARM_BIND_ADDRESS:-127.0.0.1") {
+			t.Fatalf("Server port is not private by default: %q", port)
+		}
+	}
+	if !strings.Contains(service.Ports[0], ":8080:8080") || !strings.Contains(service.Ports[1], ":18081:8081") {
+		t.Fatalf("Server published unexpected ports=%v", service.Ports)
 	}
 
 	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
@@ -157,7 +165,8 @@ func TestPrometheusRulesCoverCriticalDeviceFarmFailures(t *testing.T) {
 	for _, required := range []string{
 		"DeviceFarmServerDown", "DeviceFarmDatabaseNotReady", "DeviceFarmAgentHeartbeatStale",
 		"DeviceFarmNoReadyDevice", "DeviceFarmReservationBacklog", "DeviceFarmRecyclingStuck",
-		"DeviceFarmHTTP5xx", "DeviceFarmMetricCollectionError",
+		"DeviceFarmIOSPoolNoAvailableDevice", "DeviceFarmPoolCapacityDeficit",
+		"DeviceFarmHTTP5xx", "DeviceFarmMetricCollectionError", "DeviceFarmBuildUnknown",
 	} {
 		if strings.TrimSpace(alerts[required]) == "" {
 			t.Fatalf("Prometheus rules are missing %q", required)

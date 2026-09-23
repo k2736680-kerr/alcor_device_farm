@@ -12,13 +12,13 @@ import (
 )
 
 var (
-	ErrNotFound                  = errors.New("management resource not found")
-	ErrConflict                  = errors.New("management resource conflict")
-	ErrInvalidArgument           = errors.New("invalid management argument")
-	ErrHostUnavailable           = errors.New("device host is not accepting new devices")
-	ErrImageUnavailable          = errors.New("device image is not ready")
-	ErrProviderUnavailable       = errors.New("device provider is not configured")
-	ErrInsufficientHostResources = errors.New("insufficient host resources")
+	ErrNotFound                  = errors.New("未找到管理资源")
+	ErrConflict                  = errors.New("管理资源状态冲突")
+	ErrInvalidArgument           = errors.New("管理参数无效")
+	ErrHostUnavailable           = errors.New("设备宿主机当前不接收新设备")
+	ErrImageUnavailable          = errors.New("设备镜像尚未就绪")
+	ErrProviderUnavailable       = errors.New("设备 Provider 尚未配置")
+	ErrInsufficientHostResources = errors.New("宿主机资源不足")
 )
 
 type CapacityError struct{ Result capacity.Result }
@@ -61,6 +61,7 @@ type DeviceOperation struct {
 	DisableMemberships         bool
 	ReducePoolTargets          bool
 	Reimage                    bool
+	RuntimeProfileUpdate       bool
 	PendingImageID             string
 	PendingRuntimeProfile      map[string]any
 }
@@ -84,6 +85,8 @@ type Host struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
 	HostType        string            `json:"host_type"`
+	HostOS          string            `json:"host_os"`
+	HostArch        string            `json:"host_arch"`
 	Address         string            `json:"address,omitempty"`
 	Capabilities    map[string]any    `json:"capabilities"`
 	Capacity        map[string]any    `json:"capacity"`
@@ -98,6 +101,7 @@ type Host struct {
 type Pool struct {
 	ID                  string            `json:"id"`
 	Name                string            `json:"name"`
+	Platform            string            `json:"platform"`
 	DefaultLeaseSeconds int               `json:"default_lease_seconds"`
 	MaxLeaseSeconds     int               `json:"max_lease_seconds"`
 	MaxConcurrency      int               `json:"max_concurrency"`
@@ -121,39 +125,55 @@ type PoolImage struct {
 }
 
 type Device struct {
-	ID                      string                       `json:"id"`
-	HostID                  string                       `json:"host_id"`
-	ImageID                 *string                      `json:"image_id,omitempty"`
-	PoolID                  *string                      `json:"pool_id,omitempty"`
-	PoolName                *string                      `json:"pool_name,omitempty"`
-	IsPoolBase              bool                         `json:"is_pool_base"`
-	DeviceKind              string                       `json:"device_kind"`
-	ProviderType            string                       `json:"provider_type"`
-	ProviderRef             string                       `json:"provider_ref"`
-	LifecycleMode           string                       `json:"lifecycle_mode"`
-	Serial                  string                       `json:"serial"`
-	STFSerial               *string                      `json:"stf_serial,omitempty"`
-	ADBEndpoint             *string                      `json:"adb_endpoint,omitempty"`
-	AppiumEndpoint          *string                      `json:"appium_endpoint,omitempty"`
-	Capabilities            map[string]any               `json:"capabilities"`
-	RuntimeProfileOverride  map[string]any               `json:"runtime_profile_override,omitempty"`
-	EffectiveRuntimeProfile map[string]any               `json:"effective_runtime_profile"`
-	PendingImageID          *string                      `json:"pending_image_id,omitempty"`
-	PendingRuntimeProfile   map[string]any               `json:"pending_runtime_profile,omitempty"`
-	ReimageStatus           string                       `json:"reimage_status"`
-	ReimageError            *string                      `json:"reimage_error,omitempty"`
-	LifecycleStatus         domain.DeviceLifecycleStatus `json:"lifecycle_status"`
-	HealthStatus            domain.HealthStatus          `json:"health_status"`
-	HealthReason            *string                      `json:"health_reason,omitempty"`
-	ConsecutiveFailures     int                          `json:"consecutive_failures"`
-	CreatedAt               time.Time                    `json:"created_at"`
-	UpdatedAt               time.Time                    `json:"updated_at"`
+	ID                         string                       `json:"id"`
+	Name                       string                       `json:"name"`
+	HostID                     string                       `json:"host_id"`
+	Platform                   string                       `json:"platform"`
+	ImageID                    *string                      `json:"image_id,omitempty"`
+	PoolID                     *string                      `json:"pool_id,omitempty"`
+	PoolName                   *string                      `json:"pool_name,omitempty"`
+	IsPoolBase                 bool                         `json:"is_pool_base"`
+	DeviceKind                 string                       `json:"device_kind"`
+	ProviderType               string                       `json:"provider_type"`
+	ProviderRef                string                       `json:"provider_ref"`
+	LifecycleMode              string                       `json:"lifecycle_mode"`
+	Serial                     string                       `json:"serial"`
+	STFSerial                  *string                      `json:"stf_serial,omitempty"`
+	ADBEndpoint                *string                      `json:"adb_endpoint,omitempty"`
+	AppiumEndpoint             *string                      `json:"appium_endpoint,omitempty"`
+	Capabilities               map[string]any               `json:"capabilities"`
+	RuntimeProfileOverride     map[string]any               `json:"runtime_profile_override,omitempty"`
+	EffectiveRuntimeProfile    map[string]any               `json:"effective_runtime_profile"`
+	PendingImageID             *string                      `json:"pending_image_id,omitempty"`
+	PendingRuntimeProfile      map[string]any               `json:"pending_runtime_profile,omitempty"`
+	ReimageStatus              string                       `json:"reimage_status"`
+	ReimageError               *string                      `json:"reimage_error,omitempty"`
+	RuntimeProfileUpdateStatus string                       `json:"runtime_profile_update_status"`
+	RuntimeProfileUpdateError  *string                      `json:"runtime_profile_update_error,omitempty"`
+	LifecycleStatus            domain.DeviceLifecycleStatus `json:"lifecycle_status"`
+	HealthStatus               domain.HealthStatus          `json:"health_status"`
+	HealthReason               *string                      `json:"health_reason,omitempty"`
+	ConsecutiveFailures        int                          `json:"consecutive_failures"`
+	CreatedAt                  time.Time                    `json:"created_at"`
+	UpdatedAt                  time.Time                    `json:"updated_at"`
 }
 
 type DeviceReimageInput struct {
 	ImageID        string         `json:"image_id"`
 	RuntimeProfile map[string]any `json:"runtime_profile"`
 	Reason         string         `json:"reason"`
+}
+
+type DeviceRuntimeProfileUpdateInput struct {
+	ContainerCPUCores float64 `json:"container_cpu_cores"`
+	ContainerMemoryMB int64   `json:"container_memory_mb"`
+	GuestCPUCores     int     `json:"guest_cpu_cores"`
+	GuestMemoryMB     int64   `json:"guest_memory_mb"`
+	Reason            string  `json:"reason"`
+}
+
+type DeviceNameInput struct {
+	Name string `json:"name"`
 }
 
 type DeviceReimageCapacity struct {
@@ -177,6 +197,8 @@ type ImageInput struct {
 type HostInput struct {
 	Name         string         `json:"name"`
 	HostType     string         `json:"host_type"`
+	HostOS       string         `json:"host_os"`
+	HostArch     string         `json:"host_arch"`
 	Address      string         `json:"address"`
 	Capabilities map[string]any `json:"capabilities"`
 	Capacity     map[string]any `json:"capacity"`
@@ -184,6 +206,7 @@ type HostInput struct {
 
 type PoolInput struct {
 	Name                string  `json:"name"`
+	Platform            string  `json:"platform"`
 	DefaultLeaseSeconds int     `json:"default_lease_seconds"`
 	MaxLeaseSeconds     int     `json:"max_lease_seconds"`
 	MaxConcurrency      int     `json:"max_concurrency"`
@@ -205,12 +228,15 @@ type ProvisionMockDeviceInput struct {
 	ID           string
 	HostID       string
 	ImageID      string
+	Platform     string
+	DeviceKind   string
 	ProviderRef  string
 	Capabilities map[string]any
 }
 
 type DeviceFilter struct {
 	PoolID          string
+	Platform        string
 	LifecycleStatus domain.DeviceLifecycleStatus
 	HealthStatus    domain.HealthStatus
 }
@@ -244,9 +270,10 @@ type Store interface {
 	ListDevices(context.Context, paging.Page, DeviceFilter) ([]Device, int, error)
 	ListSchedulableDevices(context.Context, string) ([]Device, error)
 	GetDevice(context.Context, string) (Device, error)
+	UpdateDeviceName(context.Context, Device, DeviceAudit) (Device, error)
 	IsDevicePoolBase(context.Context, string) (bool, error)
 	UpdateDeviceState(context.Context, Device, domain.DeviceLifecycleStatus, domain.HealthStatus, DeviceAudit) (Device, error)
 	ReplayDeviceOperation(context.Context, string, string, string, string, string) (Device, bool, error)
 	QueueDeviceOperation(context.Context, DeviceOperation) (Device, error)
-	CheckDeviceReimageCapacity(context.Context, Device, runtimeprofile.Profile, runtimeprofile.Profile, string) (capacity.Result, error)
+	CheckDeviceReplacementCapacity(context.Context, Device, runtimeprofile.Profile, runtimeprofile.Profile, string) (capacity.Result, error)
 }

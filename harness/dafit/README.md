@@ -20,8 +20,8 @@ $env:DEVICE_FARM_SECURITY_SERVICE_TOKEN='通过部署 Secret 注入'
 .\bin\dafit-farm-harness.exe `
   -server-url http://127.0.0.1:8080 `
   -pool-id pool_000000000000001 `
-  -dafit-dir E:\AutoTestTools\Projects\dafit_auto_platform `
-  -report-dir E:\AutoTestTools\Runs\dafit-attempt-001 `
+  -dafit-dir D:\AutoTestTools\Projects\dafit_auto_platform `
+  -report-dir D:\AutoTestTools\Runs\dafit-attempt-001 `
   -python D:\python\python.exe `
   -adb E:\Android\platform-tools\adb.exe `
   -case STEPS_SMOKE_001

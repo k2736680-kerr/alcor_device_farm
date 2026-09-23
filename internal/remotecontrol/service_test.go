@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -63,6 +64,21 @@ func (fake fakeDevices) GetDevice(context.Context, string) (management.Device, e
 	return fake.device, nil
 }
 
+type fakeIOSRemote struct {
+	bootedUDID string
+	entry      string
+	bootErr    error
+}
+
+func (fake *fakeIOSRemote) EnsureBooted(_ context.Context, udid string) error {
+	fake.bootedUDID = udid
+	return fake.bootErr
+}
+
+func (fake *fakeIOSRemote) EntryURL(_, _, _, _ string) (string, error) {
+	return fake.entry, nil
+}
+
 func TestStartTargetsSelectedDeviceAndSignsShortSTFWebEntry(t *testing.T) {
 	now := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)
 	deviceID := "device_00000000000001"
@@ -76,11 +92,14 @@ func TestStartTargetsSelectedDeviceAndSignsShortSTFWebEntry(t *testing.T) {
 	if reservations.createdDeviceID != deviceID || view.Status != "connected" {
 		t.Fatalf("target=%q view=%#v", reservations.createdDeviceID, view)
 	}
+	if view.Transport != TransportSTF {
+		t.Fatalf("transport=%q", view.Transport)
+	}
 	entry, err := url.Parse(view.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.Fragment != "!/control/emulator-5554" {
+	if entry.Fragment != "!/control/stf-provider:31001" {
 		t.Fatalf("fragment=%q", entry.Fragment)
 	}
 	token := entry.Query().Get("jwt")
@@ -127,18 +146,68 @@ func TestHeartbeatRenewsReservationWithoutInferringAnSTFDisconnectIsAHangup(t *t
 
 func newTestService(t *testing.T, reservations *fakeReservations, now time.Time) *Service {
 	t.Helper()
+	stfSerial := "stf-provider:31001"
 	service, err := New(reservations, fakeDevices{device: management.Device{
-		ID: "device_00000000000001", Serial: "emulator-5554",
+		ID: "device_00000000000001", Platform: "android", DeviceKind: "emulator",
+		ProviderType: "docker_emulator", Serial: "emulator-5554", STFSerial: &stfSerial,
 	}}, Config{
-		WebURL: "http://stf.example.test", WebAuthSecret: "test-stf-auth-secret-at-least-32-bytes",
-		WebUserName: "Device Farm Admin", WebUserEmail: "admin@example.test",
-		WebTokenTTL: 30 * time.Second, Lease: time.Minute, Heartbeat: 15 * time.Second,
+		STFWebURL: "http://stf.example.test", STFWebAuthSecret: "test-stf-auth-secret-at-least-32-bytes",
+		STFWebUserName: "Device Farm Admin", STFWebUserEmail: "admin@example.test",
+		STFWebTokenTTL: 30 * time.Second,
+		Lease:          time.Minute, Heartbeat: 15 * time.Second,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return service
+}
+
+func TestStartIOSUsesBaguetteTargetSimulatorEntryWithoutInternalEndpoint(t *testing.T) {
+	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
+	deviceID := "device_00000000000001"
+	reservations := &fakeReservations{current: activeReservation(deviceID)}
+	iosRemote := &fakeIOSRemote{entry: "http://farm.example.test:18081/entry/signed-ticket"}
+	service, err := New(reservations, fakeDevices{device: management.Device{
+		ID: deviceID, Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+		HostID: "host_000000000000001", ProviderRef: "00000000-0000-0000-0000-000000000001",
+		Serial: "00000000-0000-0000-0000-000000000001",
+	}}, Config{
+		IOSEnabled: true, Lease: time.Minute, Heartbeat: 15 * time.Second,
+		Now: func() time.Time { return now },
+	}, iosRemote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := service.Start(context.Background(), audit.Console("admin"), "remote-start-key", deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Transport != TransportBaguette || view.URL != iosRemote.entry || iosRemote.bootedUDID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("view=%#v", view)
+	}
+	for _, forbidden := range []string{"127.0.0.1", "4810", "appium-session", "password", "passwd", "00000000-0000"} {
+		if strings.Contains(strings.ToLower(view.URL), strings.ToLower(forbidden)) {
+			t.Fatalf("iOS entry leaked %q: %s", forbidden, view.URL)
+		}
+	}
+}
+
+func TestStartRejectsPhysicalIOSBeforeCreatingReservation(t *testing.T) {
+	deviceID := "device_00000000000001"
+	reservations := &fakeReservations{current: activeReservation(deviceID)}
+	service, err := New(reservations, fakeDevices{device: management.Device{
+		ID: deviceID, Platform: "ios", DeviceKind: "physical", ProviderType: "appium_device_farm_ios",
+	}}, Config{
+		IOSEnabled: true, Lease: time.Minute, Heartbeat: 15 * time.Second,
+	}, &fakeIOSRemote{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Start(context.Background(), audit.Console("admin"), "remote-start-key", deviceID)
+	if !errors.Is(err, ErrUnavailable) || reservations.createdDeviceID != "" {
+		t.Fatalf("err=%v created=%q", err, reservations.createdDeviceID)
+	}
 }
 
 func activeReservation(deviceID string) reservation.View {

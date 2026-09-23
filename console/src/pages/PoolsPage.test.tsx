@@ -2,7 +2,8 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
-import type { DevicePoolInput } from '../api/generated/models'
+import type { Device, DevicePool, DevicePoolInput } from '../api/generated/models'
+import { sampleDevices } from '../test/handlers'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { server } from '../test/server'
 import { PoolsPage } from './PoolsPage'
@@ -26,13 +27,49 @@ async function openPoolEditor() {
   renderWithProviders(<PoolsPage />)
   expect(await screen.findByText('default-android')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /配\s*置/ }))
-  expect(await screen.findByRole('spinbutton', { name: '总目标数量' })).toHaveValue('2')
-  expect(screen.getByRole('spinbutton', { name: '最小预热数量' })).toHaveValue('2')
-  expect(screen.getByRole('spinbutton', { name: '最大并发' })).toHaveValue('2')
+  expect(await screen.findByRole('spinbutton', { name: '目标设备数' })).toHaveValue('2')
+  expect(screen.queryByRole('spinbutton', { name: '最小预热数量' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('spinbutton', { name: '最大并发' })).not.toBeInTheDocument()
   return user
 }
 
 describe('PoolsPage pool capacity', () => {
+  it('shows normal capacity directly in the main table', async () => {
+    renderWithProviders(<PoolsPage />)
+
+    const row = (await screen.findByText('default-android')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(screen.getByRole('columnheader', { name: '容量健康' })).toBeInTheDocument()
+    expect(row).not.toBeNull()
+    expect(row).toHaveTextContent('容量正常')
+    expect(row).toHaveTextContent('目标 2 · 可用 1 · 使用中 1 · 恢复中 0')
+    expect(screen.getByRole('button', { name: /配\s*置/ })).toBeInTheDocument()
+    expect(screen.queryByText(/改名/)).not.toBeInTheDocument()
+  })
+
+  it('does not count an unhealthy busy device as serviceable capacity', async () => {
+    const devices = [sampleDevices[0], { ...sampleDevices[1], health_status: 'unhealthy' as const }]
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      const lifecycle = search.get('lifecycle_status')
+      const health = search.get('health_status')
+      const poolID = search.get('pool_id')
+      const filtered = devices.filter((device) =>
+        (!lifecycle || device.lifecycle_status === lifecycle)
+        && (!health || device.health_status === health)
+        && (!poolID || device.pool_id === poolID))
+      const size = Number(search.get('page_size') ?? 20)
+      return HttpResponse.json({ request_id: 'req_unhealthy_busy', data: { items: filtered.slice(0, size), total: filtered.length, page: 1, page_size: size }, error: null })
+    }))
+
+    await openPoolEditor()
+    expect(screen.getByText('缺口 1 台')).toBeInTheDocument()
+    expect(screen.getByText('故障 1')).toBeInTheDocument()
+    expect(screen.getByText('目标 2 · 可用 1 · 使用中 0 · 恢复中 0')).toBeInTheDocument()
+    expect(screen.getByText('目标 2 台 · 可服务 1 台 · 可立即使用 1 台')).toBeInTheDocument()
+    expect(screen.getByText('已登记 2 台，恢复中 0 台，故障 1 台，缺口 1 台。')).toBeInTheDocument()
+  })
+
   it('updates pool-wide total, warm and concurrency limits without requiring an expansion reason', async () => {
     let submitted: DevicePoolInput | undefined
     server.use(http.put('/api/v1/device-pools/:id', async ({ request }) => {
@@ -40,13 +77,15 @@ describe('PoolsPage pool capacity', () => {
       return poolResponse(submitted)
     }))
     const user = await openPoolEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: '总目标数量' }), { target: { value: '3' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最小预热数量' }), { target: { value: '3' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最大并发' }), { target: { value: '3' } })
-    await user.click(screen.getByRole('button', { name: '保存基本信息' }))
+    const nameInput = screen.getByRole('textbox', { name: '设备池显示名称' })
+    await user.clear(nameInput)
+    await user.type(nameInput, 'Android 15-Pixel-回归池')
+    fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '3' } })
+    expect(screen.getByText('目标 3 台 · 可服务 2 台 · 可立即使用 1 台')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() => expect(submitted).toMatchObject({
-      name: 'default-android',
+      name: 'Android 15-Pixel-回归池',
       total_target: 3,
       min_ready: 3,
       max_concurrency: 3,
@@ -61,16 +100,15 @@ describe('PoolsPage pool capacity', () => {
       return poolResponse(submitted)
     }))
     const user = await openPoolEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: '总目标数量' }), { target: { value: '1' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最小预热数量' }), { target: { value: '1' } })
-    fireEvent.change(screen.getByRole('spinbutton', { name: '最大并发' }), { target: { value: '1' } })
-    await user.click(screen.getByRole('button', { name: '保存基本信息' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '1' } })
+    expect(screen.getByText('目标 1 台 · 可服务 2 台 · 可立即使用 1 台')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
     expect(await screen.findByText('缩容时请填写至少 3 个字的调整原因')).toBeInTheDocument()
     expect(submitted).toBeUndefined()
 
     await user.type(screen.getByRole('textbox', { name: '调整原因（缩容时必填并写入审计）' }), '减少测试资源')
-    await user.click(screen.getByRole('button', { name: '保存基本信息' }))
-    expect((await screen.findAllByText('确认把设备池总目标缩容到 1 台？')).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+    expect((await screen.findAllByText('确认把设备池缩容到 1 台？')).length).toBeGreaterThan(0)
     expect(submitted).toBeUndefined()
     await user.click(screen.getByRole('button', { name: /确认缩容/ }))
 
@@ -81,4 +119,108 @@ describe('PoolsPage pool capacity', () => {
       reason: '减少测试资源',
     }))
   }, 10_000)
+
+  it('can safely empty a pool while keeping the API concurrency value valid', async () => {
+    let submitted: DevicePoolInput | undefined
+    server.use(http.put('/api/v1/device-pools/:id', async ({ request }) => {
+      submitted = await request.json() as DevicePoolInput
+      return poolResponse(submitted)
+    }))
+    const user = await openPoolEditor()
+    fireEvent.change(screen.getByRole('spinbutton', { name: '目标设备数' }), { target: { value: '0' } })
+    await user.type(screen.getByRole('textbox', { name: '调整原因（缩容时必填并写入审计）' }), '清空故障设备池')
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+    await user.click(await screen.findByRole('button', { name: /确认缩容/ }))
+
+    await waitFor(() => expect(submitted).toMatchObject({
+      total_target: 0,
+      min_ready: 0,
+      max_concurrency: 1,
+    }))
+  }, 10_000)
+
+  it('allows an iOS pool target to be edited and submits one unified capacity target', async () => {
+    const iosPool: DevicePool = {
+      id: 'pool_ios_000000000001', name: 'default-ios', platform: 'ios', default_lease_seconds: 1800,
+      max_lease_seconds: 86400, total_target: 6, min_ready: 6, max_concurrency: 6,
+      base_device_id: 'device_ios_000000001', status: 'active',
+      created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
+    }
+    const iosTemplate: Device = {
+      id: 'device_ios_000000001', name: 'iOS回归-iPhone17Pro-01', host_id: 'host_ios_000000000001', platform: 'ios', pool_id: iosPool.id,
+      pool_name: iosPool.name, is_pool_base: true, device_kind: 'simulator', provider_type: 'appium_device_farm_ios',
+      provider_ref: '00000000-0000-0000-0000-000000000001', lifecycle_mode: 'rebuild',
+      serial: '00000000-0000-0000-0000-000000000001', capabilities: {
+        runtimeId: 'com.apple.CoreSimulator.SimRuntime.iOS-26-3',
+        deviceTypeId: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', model: 'iPhone 17 Pro',
+      }, effective_runtime_profile: {}, reimage_status: 'idle', runtime_profile_update_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy',
+      consecutive_failures: 0, created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
+    }
+    let submitted: DevicePoolInput | undefined
+    server.use(
+      http.get('/api/v1/device-pools', () => HttpResponse.json({ request_id: 'req_ios_pools', data: { items: [iosPool], total: 1, page: 1, page_size: 20 }, error: null })),
+      http.get('/api/v1/devices', ({ request }) => {
+        const size = Number(new URL(request.url).searchParams.get('page_size') ?? 20)
+        const items = size === 1 ? [iosTemplate] : [iosTemplate]
+        return HttpResponse.json({ request_id: 'req_ios_devices', data: { items, total: 1, page: 1, page_size: size }, error: null })
+      }),
+      http.put('/api/v1/device-pools/:id', async ({ request }) => {
+        submitted = await request.json() as DevicePoolInput
+        return poolResponse(submitted)
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<PoolsPage />)
+    expect(await screen.findByText('default-ios')).toBeInTheDocument()
+    // 扩容模板必须先回答“什么机型 + 什么系统”，编号只是补充信息。
+    expect(await screen.findByText('iOS回归-iPhone17Pro-01 · iPhone 17 Pro · iOS 26.3')).toBeInTheDocument()
+    expect(screen.queryByText('由扩容模板决定')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /配\s*置/ }))
+
+    const target = await screen.findByRole('spinbutton', { name: '目标设备数' })
+    expect(target).toBeEnabled()
+    expect(target).toHaveValue('6')
+    expect(screen.getByText(/沿用模板的 Mac、iOS 运行时和 iPhone 机型/)).toBeInTheDocument()
+    expect(screen.getAllByText(/iPhone 17 Pro/).length).toBeGreaterThan(0)
+
+    fireEvent.change(target, { target: { value: '4' } })
+    await user.type(screen.getByRole('textbox', { name: '调整原因（缩容时必填并写入审计）' }), '减少空闲设备')
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+    await user.click(await screen.findByRole('button', { name: /确认缩容/ }))
+    await waitFor(() => expect(submitted).toMatchObject({
+      platform: 'ios', total_target: 4, min_ready: 4, max_concurrency: 4,
+    }))
+  }, 10_000)
+
+  it('only lists unassigned devices from the same platform when joining a pool', async () => {
+    const unassignedAndroid: Device = {
+      id: 'device_android_unassigned', name: '待分配-Android-01', host_id: 'host_000000000000001', platform: 'android',
+      device_kind: 'emulator', provider_type: 'docker_emulator', provider_ref: 'emulator-5570',
+      lifecycle_mode: 'rebuild', serial: 'emulator-5570', capabilities: {}, effective_runtime_profile: {},
+      reimage_status: 'idle', runtime_profile_update_status: 'idle', lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
+      created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
+    }
+    const assignedAndroid: Device = { ...unassignedAndroid, id: 'device_android_assigned', serial: 'emulator-5572', pool_id: 'pool_other', pool_name: '其他池' }
+    const unassignedIOS: Device = {
+      ...unassignedAndroid, id: 'device_ios_unassigned', platform: 'ios', device_kind: 'simulator',
+      provider_type: 'appium_device_farm_ios', provider_ref: 'IOS-UNASSIGNED', serial: 'IOS-UNASSIGNED',
+    }
+    server.use(http.get('/api/v1/devices', ({ request }) => {
+      const search = new URL(request.url).searchParams
+      const current = search.get('pool_id') ? [] : [unassignedAndroid, assignedAndroid, unassignedIOS]
+      return HttpResponse.json({ request_id: 'req_addable_devices', data: { items: current, total: current.length, page: 1, page_size: Number(search.get('page_size') ?? 20) }, error: null })
+    }))
+    const user = userEvent.setup()
+    renderWithProviders(<PoolsPage />)
+
+    expect(await screen.findByText('default-android')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /配\s*置/ }))
+    await user.click(await screen.findByRole('button', { name: '加入设备' }))
+    fireEvent.mouseDown(screen.getByText('选择设备（机型 · 系统版本 · 设备标识）'))
+
+    expect(await screen.findByText(/emulator-5570/)).toBeInTheDocument()
+    expect(screen.queryByText(/emulator-5572/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/IOS-UNASSIGNED/)).not.toBeInTheDocument()
+    expect(screen.getByText(/只列出尚未加入其他设备池、且与当前设备池平台一致的设备/)).toBeInTheDocument()
+  })
 })

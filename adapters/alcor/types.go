@@ -12,6 +12,7 @@ type RunContext struct {
 
 type ReserveRequest struct {
 	PoolID                string
+	RequestedDeviceID     string
 	Run                   RunContext
 	RequestedCapabilities map[string]any
 	LeaseSeconds          int

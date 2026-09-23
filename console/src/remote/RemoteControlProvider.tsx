@@ -10,21 +10,30 @@ import {
   useRef,
   useState,
 } from 'react'
+// 远控一律走北向 `/api/v1/devices/{id}/remote-control*`，而不是并行的
+// Console 家族 `/console/api/v1/...`：Alcor 只在 `/api/v2/device-farm/console/*`
+// 上注册了 GET（静态资源前缀），嵌入态下该前缀的 POST/DELETE 会命中 Alcor 的
+// 404（text/plain），控制台解析失败后误报「无法连接设备农场服务」。北向路径在
+// 嵌入态被翻译成 `/api/v2/device-farm/proxy/api/v1/*`（Alcor 全方法白名单），
+// 直连态则用同一个 console cookie —— 两条链路都接受控制台会话，且后端
+// remoteOperator 对两者施加完全相同的 operator/admin 校验。
 import {
-  endDeviceRemoteControl,
+  endIntegratedDeviceRemoteControl,
+  getGetIntegratedDeviceRemoteControlQueryKey,
   getListDevicesQueryKey,
-  heartbeatDeviceRemoteControl,
-  useEndDeviceRemoteControl,
-  useGetDeviceRemoteControl,
-  useStartDeviceRemoteControl,
+  heartbeatIntegratedDeviceRemoteControl,
+  useEndIntegratedDeviceRemoteControl,
+  useGetIntegratedDeviceRemoteControl,
+  useStartIntegratedDeviceRemoteControl,
 } from '../api/generated/device-farm'
 import type { Device, RemoteControl } from '../api/generated/models'
 import { unwrapData } from '../api/unwrap'
+import { apiErrorText } from '../api/presentation'
 
 const storedDeviceKey = 'device-farm.remote-control-device'
 const remoteConnectTimeoutMs = 30_000
 
-type RemoteDevice = Pick<Device, 'id' | 'serial'>
+type RemoteDevice = Pick<Device, 'id' | 'serial' | 'platform' | 'device_kind'>
 
 interface RemoteState {
   device: RemoteDevice
@@ -58,7 +67,12 @@ function restoreDevice(): RemoteDevice | null {
     if (!stored) return null
     const parsed = JSON.parse(stored) as Partial<RemoteDevice>
     return typeof parsed.id === 'string' && typeof parsed.serial === 'string'
-      ? { id: parsed.id, serial: parsed.serial }
+      ? {
+          id: parsed.id,
+          serial: parsed.serial,
+          platform: parsed.platform === 'ios' ? 'ios' : 'android',
+          device_kind: typeof parsed.device_kind === 'string' ? parsed.device_kind : 'emulator',
+        }
       : null
   } catch {
     window.sessionStorage.removeItem(storedDeviceKey)
@@ -82,19 +96,22 @@ export function RemoteControlProvider({
   const remotePopup = useRef<Window | null>(null)
   const endingRemote = useRef(false)
   const remoteAttempt = useRef(0)
-  const startRemote = useStartDeviceRemoteControl()
-  const endRemote = useEndDeviceRemoteControl()
+  // 记录弹窗最后一次实际导航到的入口 URL。入口 URL 每次轮询都是现签的
+  // （token 含预约 ID 与过期时间），若发现「待导航 URL === 已导航 URL」，
+  // 说明它来自上一次预约的残留 —— 二次导航必然 401，直接跳过。
+  const navigatedUrl = useRef<string | null>(null)
+  const startRemote = useStartIntegratedDeviceRemoteControl()
+  const endRemote = useEndIntegratedDeviceRemoteControl()
 
-  const remoteQuery = useGetDeviceRemoteControl(
+  const remoteQuery = useGetIntegratedDeviceRemoteControl(
     remoteState?.device.id ?? '',
     {
       query: {
         enabled: remoteState?.started === true,
         retry: false,
         refetchInterval: remoteState?.started ? 1_000 : false,
-        // Opening the placeholder popup backgrounds the Console tab. Keep
-        // polling there so a ready STF URL can replace about:blank without
-        // requiring the administrator to focus the Console again.
+        // 预先打开空白标签页后，控制台会进入后台；后台轮询可在入口就绪时
+        // 直接替换空白页，无需管理员再次切回控制台。
         refetchIntervalInBackground: true,
       },
     },
@@ -113,6 +130,23 @@ export function RemoteControlProvider({
   }, [queryClient])
 
   const clearRemote = useCallback((closePopup: boolean) => {
+    // 先取设备 ID 再清理状态：远控 GET 的 React Query 缓存里可能还留着上一次
+    // 预约的入口 URL（服务端每次 GET 现签 token，旧 URL 里的 token 必然已随旧
+    // 预约作废）。若不清掉，重连同一台设备时该查询一恢复 enabled 就会同步返回
+    // 旧 URL，下面的导航 effect 会把它推给弹窗 —— 用户看到的将是一次必 401 的
+    // 死链，且 opened 标记置位后新 URL 永远不会再导航。
+    let lastDeviceId: string | null = null
+    try {
+      const stored = window.sessionStorage.getItem(storedDeviceKey)
+      if (stored) {
+        lastDeviceId = (JSON.parse(stored) as { id?: string }).id ?? null
+      }
+    } catch {
+      lastDeviceId = null
+    }
+    if (lastDeviceId) {
+      queryClient.removeQueries({ queryKey: getGetIntegratedDeviceRemoteControlQueryKey(lastDeviceId) })
+    }
     const popup = remotePopup.current
     if (closePopup && popup) {
       try {
@@ -127,7 +161,7 @@ export function RemoteControlProvider({
     window.sessionStorage.removeItem(storedDeviceKey)
     setRemoteState(null)
     invalidate()
-  }, [invalidate])
+  }, [invalidate, queryClient])
 
   const finishRemote = useCallback((closePopup = true, silent = false, settleOnError = false) => {
     if (!remoteState || endingRemote.current) return
@@ -136,7 +170,7 @@ export function RemoteControlProvider({
       { id: remoteState.device.id },
       {
         onSuccess: () => {
-          if (!silent) message.success('远控已挂断，设备正在清理并重建')
+          if (!silent) message.success('远控已挂断，设备预约正在释放')
           clearRemote(closePopup)
         },
         onError: (error) => {
@@ -148,17 +182,18 @@ export function RemoteControlProvider({
             return
           }
           if (settleOnError) {
-            message.warning(`取消连接未能确认（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}），设备状态已刷新`)
+            message.warning(`取消连接未能确认，设备状态已刷新：${apiErrorText(error)}`)
             clearRemote(closePopup)
             return
           }
-          message.error(`挂断失败（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+          message.error(`挂断失败：${apiErrorText(error)}`)
         },
       },
     )
   }, [clearRemote, endRemote, message, remoteState])
 
   const navigatePopup = useCallback((popup: Window, url: string) => {
+    navigatedUrl.current = url
     popup.location.replace(url)
     setRemoteState((current) => current ? { ...current, opened: true } : current)
   }, [])
@@ -174,7 +209,9 @@ export function RemoteControlProvider({
       return
     }
     popup.document.title = '正在连接设备…'
-    popup.document.body.textContent = '正在预约设备并连接 STF，请稍候…'
+    popup.document.body.textContent = device.platform === 'ios'
+      ? '正在预约设备并连接 iOS 远程画面，请稍候…'
+      : '正在预约设备并连接 STF，请稍候…'
     remotePopup.current = popup
     endingRemote.current = false
     const attempt = ++remoteAttempt.current
@@ -184,14 +221,21 @@ export function RemoteControlProvider({
       {
         onSuccess: (data) => {
           if (attempt !== remoteAttempt.current || endingRemote.current) {
-            void endDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
+            void endIntegratedDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
             return
           }
           const view = unwrapData<RemoteControl>(data)
           window.sessionStorage.setItem(storedDeviceKey, JSON.stringify(device))
           setRemoteState((current) => current?.device.id === device.id ? { ...current, started: true } : current)
-          if (view?.url) navigatePopup(popup, view.url)
-          message.info('设备已预约，正在建立远控连接…')
+          if (view?.url) {
+            navigatePopup(popup, view.url)
+            if (device.platform === 'ios') {
+              message.success('iOS 远控已打开，只会显示当前预约的目标模拟器')
+            }
+          }
+          message.info(device.platform === 'ios'
+            ? 'iOS 设备已预约，正在打开受控远程画面…'
+            : '设备已预约，正在建立 STF 远控连接…')
           invalidate()
         },
         onError: (error) => {
@@ -199,12 +243,12 @@ export function RemoteControlProvider({
           clearRemote(false)
           // The server may have committed the reservation before the response
           // timed out or the browser lost it. DELETE is owner-scoped and idempotent.
-          void endDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
+          void endIntegratedDeviceRemoteControl(device.id).catch(() => undefined).finally(invalidate)
           const err = error as RemoteAPIError
           if (isRemoteAlreadyGone(err)) {
             message.info('设备或远控会话已不存在，列表状态已刷新')
           } else {
-            message.error(`远控连接失败（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+            message.error(`远控连接失败：${apiErrorText(error)}`)
           }
         },
       },
@@ -238,14 +282,17 @@ export function RemoteControlProvider({
 
   useEffect(() => {
     if (!remoteView?.url || remoteState?.opened || !remoteState?.popup || remoteState.popup.closed) return
+    if (remoteView.url === navigatedUrl.current) return
     navigatePopup(remoteState.popup, remoteView.url)
-    message.success('远控已连接；点击挂断会释放并清理设备')
+    message.success(remoteState.device.platform === 'ios'
+      ? 'iOS 远控已连接；画面和操作已绑定当前预约的目标模拟器'
+      : 'Android 远控已连接；点击挂断会释放本次设备预约')
   }, [message, navigatePopup, remoteState, remoteView?.url])
 
   const sendHeartbeat = useCallback(async () => {
     if (!remoteState?.started || remoteView?.status !== 'connected') return
     try {
-      const data = await heartbeatDeviceRemoteControl(remoteState.device.id)
+      const data = await heartbeatIntegratedDeviceRemoteControl(remoteState.device.id)
       const next = unwrapData<RemoteControl>(data)
       if (next?.status === 'ended') {
         message.info('远控租约已结束，设备状态已刷新')

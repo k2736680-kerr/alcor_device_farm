@@ -21,7 +21,7 @@
 
 ## 复用核对
 
-开工前按项目规则搜索了 `E:/AutoTestTools/Projects/Alcor` 与 `E:/AutoTestTools/Projects/dafit_auto_platform`。旧 Alcor 只提供历史边界理解，DaFit 继续作为业务执行和报告能力；两者都没有可直接复用的官方 System Image 目录、受控构建 Agent 或验证后登记能力。本任务复用现有 Docker Provider、KVM、STF Adapter、Appium 健康探针、Host Command、动态容量和 DF-034 重装编排，没有形成第二套兼容实现。
+开工前按项目规则搜索了 `D:/AutoTestTools/Projects/Alcor` 与 `D:/AutoTestTools/Projects/dafit_auto_platform`。旧 Alcor 只提供历史边界理解，DaFit 继续作为业务执行和报告能力；两者都没有可直接复用的官方 System Image 目录、受控构建 Agent 或验证后登记能力。本任务复用现有 Docker Provider、KVM、STF Adapter、Appium 健康探针、Host Command、动态容量和 DF-034 重装编排，没有形成第二套兼容实现。
 
 ## 自动化门禁
 

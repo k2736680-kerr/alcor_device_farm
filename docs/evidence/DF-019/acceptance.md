@@ -8,7 +8,7 @@ DaFit 继续复用唯一的 `tools/run_full.py → runner → scenarios → page
 
 ## 代码位置与既有提交
 
-- 仓库：`E:/AutoTestTools/Projects/dafit_auto_platform`；
+- 仓库：`D:/AutoTestTools/Projects/dafit_auto_platform`；
 - 当前分支：`main`；
 - Farm 薄适配既有提交：`2ae74ca 加入设备农场运行模式`、`d211eb2 区分Appium设备和ADB连接`；
 - 本次真实验收不需要修改 DaFit 代码，DaFit 工作树最终保持 clean。

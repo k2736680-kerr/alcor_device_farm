@@ -1,5 +1,7 @@
 # Android 设备农场 MVP 功能方案
 
+> 本文件是已经完成并归档的 Android 第一版功能基线。第二版多平台与 iOS 扩展见 `docs/08_ios_device_farm_v2_design.md` 和 ADR-0021；本文件中的“明确不做 iOS”仍对第一版实现有效，生产扩展只能按 DF-040～DF-046 逐项进入。
+
 ## 1. 交付目标
 
 在不等待新版 Alcor 的情况下，先交付一套可独立运行、可通过 Web 控制、可自动测试的 Android 设备农场。首期使用 Linux KVM 宿主机上的 Docker Android Emulator；设备申请成功后返回明确的 UDID 和 Appium Endpoint。STF 原生 Web 页面保持独立受控访问，Console 不把 `remoteConnect` TCP 地址展示为浏览器入口。
@@ -137,7 +139,9 @@ GetConnectionInfo
 ```text
 provisioning → booting → ready → reserved → busy → ready
                        ↘ stopped
-任一异常状态 → quarantined → rebuild → provisioning
+系统健康异常 → quarantined → 原机重探 → ready
+                         ↘ 原机 restart → provisioning → booting → ready
+人工明确选择 rebuild/reimage → provisioning
 stopped → deleted
 ```
 
@@ -145,7 +149,7 @@ stopped → deleted
 
 ### 4.5 设备池与按资源动态扩缩容
 
-设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认/最大租期、最大并发、启停状态和设备成员关系。
+设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认租期、最大未来续约窗口、最大并发、启停状态和设备成员关系。按 ADR-0023，`max_lease_seconds` 是相对数据库当前时间的有限滑动安全窗口，不是从 `starts_at` 起计算的任务总寿命；执行方存活时可持续续约，失联后仍由 Reaper 有界回收。
 
 MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行一台，但代码和接口不得把一台作为固定上限：
 
@@ -160,9 +164,11 @@ MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行�
 - 控制台显示当前规格最多可新增台数以及 CPU、内存、磁盘中最先达到的限制，不要求管理员登录 Host 修改 Agent 配置；
 - Controller 在目标降低时删除超出的最旧空闲 Emulator，保留最新实例；占用中、回收中或仍有其他 Pool membership 的设备不得被自动删除；
 - 自动删除走持久化 delete Host Command 和 Agent/Docker Provider，成功后 Device 标记为 `deleted` 并保留历史，失败则隔离和告警；
+- 按 ADR-0029，上一条自动删除只适用于管理员明确降低 Pool 目标的缩容；健康异常、STF 不可见、inventory 漂移和隔离不得自动删除或补建。所有未显式删除的设备继续占用登记容量；
+- 系统健康隔离先重探原设备，恢复后使用同一 Device ID、Provider 资源和数据卷回到可用；持续失败且空闲时最多自动执行一次非破坏 restart，失败后保留隔离等待人工；
 - 管理员可对没有活动预约的 `quarantined/stopped` Device 发起人工删除；必须填写原因、携带幂等键并二次确认，复用同一 delete Host Command。成功后退出 Pool、清空 Endpoint 并标记 `deleted`，失败保持 `quarantined/unhealthy`；
 - 缩容是最终一致的：占用中的最旧设备先等待释放，不能为立即达到数字而强制中断 Reservation。
-- 管理员可对空闲 Emulator 选择 Android 13～16 Image 并修改 CPU、内存、数据盘、分辨率和 GPU 模式；该操作会清空设备数据并通过 Host Command 重装，成功前不改变当前 Image/规格，失败时恢复或隔离。
+- 管理员可对空闲 Emulator 单独调整容器/Android CPU 和内存；该操作通过保留数据卷的 Host Command 重启，成功前不改变当前有效规格，失败时恢复旧规格或隔离。Image、数据盘、分辨率和 GPU 模式仍通过清空设备数据的 reimage 修改。
 
 后续接入 USB 真机时，由 Agent 发现并显式加入默认池；若业务需要明确选择真机，则新增一个逻辑真机池。真机不参与 Emulator 自动创建，但继续复用统一 Device、Reservation、Scheduler 和 Provider 模型。
 
@@ -182,6 +188,7 @@ active  → force_released
 - `owner_type`：`run_attempt`（新版 Alcor 自动执行）、`manual`（人工调试）或 `test_run`（DaFit 联调）；
 - `owner_id`：UUID/ULID 字符串；
 - `pool_id`；
+- 可选 `requested_device_id`：由 Alcor 的具体设备选择产生，只收窄到该 Pool 的明确 Device；目标正在使用时继续排队，禁止回退到同 Pool 其他设备；
 - required capabilities；
 - lease seconds；
 - `Idempotency-Key`；
@@ -197,6 +204,8 @@ Scheduler 按以下顺序执行：
 6. 失败时执行补偿，关闭预约并按错误类型恢复或隔离设备。
 
 同一个设备任何时刻最多一个 active reservation。相同客户端和幂等键必须返回同一预约，不得重复占用。
+
+Device 另有 2～40 字符的可编辑显示名称。Console 的设备列表、Pool 模板和 Reservation 引用以名称为主，完整 ID 只在详情中保留；改名不改变不可变 ID、Pool membership、Reservation 或 Provider 关联。
 
 ### 4.7 Reaper 与 Reconciler
 
@@ -259,7 +268,7 @@ Reconciler：
 - Pool：列表、租期、Image、Device membership 和单一目标设备数；Pool 并发由启用 Image 目标自动同步；
 - Device：列表、详情、连接状态、健康事件、restart、rebuild、quarantine/unquarantine，以及空闲 Emulator 的镜像和运行规格编辑；
 - Reservation：创建人工预约、查看状态、续租、释放和当前连接信息；
-- STF 原生远控：管理员从 Device 行一键创建精确设备短租约，无需再次输入 STF 账号密码，并在新标签页打开 STF 原生单设备控制页；
+- 原生远控：operator/admin 从 Device 行一键创建精确设备短租约，Android 打开 STF，iOS 打开 Baguette；viewer 保持只读；
 - 设备域审计：按资源查看操作人、原因、request ID、动作和时间。
 
 控制台必须遵守：
@@ -330,6 +339,7 @@ DF-034 将契约版本提升为 `1.5.0`，新增 Device 当前/有效/待应用�
 - `POST /api/v1/devices/:id/restarts`
 - `POST /api/v1/devices/:id/rebuilds`
 - `POST /api/v1/devices/:id/reimages`
+- `POST /api/v1/devices/:id/runtime-profile-updates`
 - `POST /api/v1/devices/:id/quarantines`
 - `DELETE /api/v1/devices/:id/quarantines`
 
@@ -426,7 +436,7 @@ DF-034 将契约版本提升为 `1.5.0`，新增 Device 当前/有效/待应用�
 4. 每台设备可建立独立 Appium Session；
 5. STF 可看屏、claim、release，且不作为数据库真相；
 6. DaFit 冒烟用例能够申请设备、运行、收集报告并释放；
-7. 超时、Agent 离线、STF 失败和 Appium 失败能够回收或隔离；
+7. 超时、Agent 离线、STF 失败和 Appium 失败能够停止调度并优先恢复原设备；自动恢复失败后隔离，但不自动删除、重建或补建替代设备；
 8. Server/Agent 重启后两分钟内状态收敛；
 9. 重建后无法读取上一次任务 App 数据；
 10. OpenAPI、migration、部署说明、测试报告和回滚步骤齐全。

@@ -93,6 +93,52 @@ func TestOneHundredConcurrentReservationsUseTwoDevicesWithoutDoubleAllocation(t 
 		WHERE connection_metadata->>'appium_udid'=connection_metadata->>'serial'`, 2)
 }
 
+func TestOneHundredConcurrentIOSReservationsUseOneDeviceWithoutDoubleAllocation(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeedIOS(t, db)
+	reservationService := reservation.NewService(db, nil)
+	deviceScheduler := scheduler.New(db, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	const requests = 100
+	start := make(chan struct{})
+	errorsChannel := make(chan error, requests)
+	var waitGroup sync.WaitGroup
+	for index := 0; index < requests; index++ {
+		index := index
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			_, err := reservationService.Create(context.Background(), audit.Service("service"), fmt.Sprintf("ios-reservation-key-%03d", index), reservation.CreateInput{
+				PoolID: "ios_pool_000000000001", OwnerType: "test_run", OwnerID: fmt.Sprintf("ios_owner_%015d", index),
+				RequestedCapabilities: map[string]any{"platformName": "IOS", "deviceClass": "phone", "executorHint": "non-authoritative"}, LeaseSeconds: 600,
+			})
+			if err != nil {
+				errorsChannel <- err
+				return
+			}
+			_, err = deviceScheduler.RunOnce(context.Background())
+			if err != nil && !errors.Is(err, scheduler.ErrCapacityUnavailable) && !errors.Is(err, scheduler.ErrNoPendingReservation) {
+				errorsChannel <- err
+			}
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(errorsChannel)
+	for err := range errorsChannel {
+		t.Fatal(err)
+	}
+
+	assertCount(t, db, "SELECT count(*) FROM device_reservations WHERE status='active'", 1)
+	assertCount(t, db, "SELECT count(DISTINCT device_id) FROM device_reservations WHERE status='active'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE platform='ios' AND lifecycle_status='busy'", 1)
+	assertCount(t, db, `SELECT count(*) FROM device_sessions
+		WHERE connection_metadata->>'platform'='ios'
+		  AND connection_metadata->>'host_id'='ios_host_000000000001'
+		  AND connection_metadata->>'appium_udid'='00008110-IOS-UDID-0001'`, 1)
+}
+
 func TestConcurrentIdempotencyCreatesOneReservation(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 2)
@@ -194,6 +240,60 @@ func TestTargetedConsoleReservationAllocatesOnlySelectedDevice(t *testing.T) {
 	}
 }
 
+func TestTargetedRunWaitsForSelectedDeviceAndStartsAfterRelease(t *testing.T) {
+	db := openTestDatabase(t)
+	resetAndSeed(t, db, 2)
+	service := reservation.NewService(db, nil)
+	deviceScheduler := scheduler.New(db, nil, nil)
+	targetDeviceID := fmt.Sprintf("device_%019d", 1)
+
+	first, err := service.Create(context.Background(), audit.Service("service"), "targeted-first-run-key", reservation.CreateInput{
+		PoolID: "pool_000000000000001", RequestedDeviceID: targetDeviceID,
+		OwnerType: "run_attempt", OwnerID: "attempt_000000000701", LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAssignment, err := deviceScheduler.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstAssignment.Reservation.DeviceID == nil || *firstAssignment.Reservation.DeviceID != targetDeviceID {
+		t.Fatalf("first assignment device=%v want=%s", firstAssignment.Reservation.DeviceID, targetDeviceID)
+	}
+
+	queued, err := service.Create(context.Background(), audit.Service("service"), "targeted-queued-run-key", reservation.CreateInput{
+		PoolID: "pool_000000000000001", RequestedDeviceID: targetDeviceID,
+		OwnerType: "run_attempt", OwnerID: "attempt_000000000702", LeaseSeconds: 600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deviceScheduler.RunOnce(context.Background()); !errors.Is(err, scheduler.ErrCapacityUnavailable) {
+		t.Fatalf("scheduler while target busy error=%v", err)
+	}
+	storedQueued, err := service.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedQueued.Status != "pending" || storedQueued.DeviceID != nil {
+		t.Fatalf("queued targeted reservation=%#v", storedQueued)
+	}
+
+	if _, err := service.Release(context.Background(), audit.Service("service"), "targeted-release-key", first.ID,
+		"targeted-release-request", reservation.ReleaseInput{Reason: "selected device run completed"}); err != nil {
+		t.Fatal(err)
+	}
+	secondAssignment, err := deviceScheduler.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondAssignment.Reservation.ID != queued.ID || secondAssignment.Reservation.DeviceID == nil ||
+		*secondAssignment.Reservation.DeviceID != targetDeviceID {
+		t.Fatalf("queued assignment=%#v want reservation=%s device=%s", secondAssignment.Reservation, queued.ID, targetDeviceID)
+	}
+}
+
 func TestTargetedConsoleReservationRejectsSecondOpenControl(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
@@ -288,6 +388,9 @@ func TestConcurrentSchedulersRespectPoolMaximumBelowDeviceCount(t *testing.T) {
 func TestSTFClaimRunsBeforeReservationActivation(t *testing.T) {
 	db := openTestDatabase(t)
 	resetAndSeed(t, db, 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET stf_serial='stf-emulator-0'`); err != nil {
+		t.Fatal(err)
+	}
 	service := reservation.NewService(db, nil)
 	created, err := service.Create(context.Background(), audit.Service("service"), "stf-claim-success-key", reservation.CreateInput{
 		PoolID: "pool_000000000000001", OwnerType: "run_attempt", OwnerID: "attempt_000000000101",
@@ -297,7 +400,7 @@ func TestSTFClaimRunsBeforeReservationActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimer := &fakeClaimer{claim: func(_ context.Context, serial string, ttl time.Duration) error {
-		if serial != "emulator-0" || ttl != 600*time.Second {
+		if serial != "stf-emulator-0" || ttl != 600*time.Second {
 			t.Fatalf("claim serial=%q ttl=%s", serial, ttl)
 		}
 		var reservationStatus domain.ReservationStatus
@@ -444,6 +547,31 @@ func resetAndSeed(t *testing.T, db *database.DB, devices int) {
 		if _, err := db.Pool().Exec(context.Background(), `
             INSERT INTO device_pool_devices (pool_id,device_id,enabled)
             VALUES ('pool_000000000000001',$1,true)`, deviceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func resetAndSeedIOS(t *testing.T, db *database.DB) {
+	t.Helper()
+	statements := []string{`TRUNCATE TABLE
+		device_idempotency_records,device_audit_events,device_health_events,device_sessions,
+		device_reservations,device_pool_devices,devices,device_pool_images,device_pools,
+		device_host_commands,device_hosts,device_images RESTART IDENTITY CASCADE`,
+		`INSERT INTO device_hosts (id,name,host_type,host_os,host_arch,status,draining)
+		 VALUES ('ios_host_000000000001','scheduler-macos-host','appium_device_farm_ios','macos','arm64','online',false)`,
+		`INSERT INTO device_pools (id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,status)
+		 VALUES ('ios_pool_000000000001','scheduler-ios-pool','ios',600,3600,1,1,1,'active')`,
+		`INSERT INTO devices (id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,
+		 serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		 VALUES ('ios_device_000000001','ios_host_000000000001','ios','simulator','mock','mock-ios-1','rebuild',
+		 '00008110-IOS-UDID-0001','http://mac-host.test:4723',
+		 '{"platformName":"iOS","deviceClass":"phone","realDevice":false}'::jsonb,'ready','healthy')`,
+		`INSERT INTO device_pool_devices (pool_id,device_id,enabled)
+		 VALUES ('ios_pool_000000000001','ios_device_000000001',true)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Pool().Exec(context.Background(), statement); err != nil {
 			t.Fatal(err)
 		}
 	}

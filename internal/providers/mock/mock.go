@@ -43,20 +43,22 @@ type Scenario struct {
 }
 
 type Config struct {
-	BaseADBPort    int
-	BaseAppiumPort int
-	Sleeper        Sleeper
-	Scenario       Scenario
+	BaseADBPort          int
+	BaseAppiumPort       int
+	SharedAppiumEndpoint string
+	Sleeper              Sleeper
+	Scenario             Scenario
 }
 
 type Provider struct {
-	mu             sync.RWMutex
-	devices        map[string]device
-	nextPortOffset int
-	baseADBPort    int
-	baseAppiumPort int
-	sleeper        Sleeper
-	scenario       Scenario
+	mu                   sync.RWMutex
+	devices              map[string]device
+	nextPortOffset       int
+	baseADBPort          int
+	baseAppiumPort       int
+	sharedAppiumEndpoint string
+	sleeper              Sleeper
+	scenario             Scenario
 }
 
 type device struct {
@@ -77,11 +79,12 @@ func New(config Config) *Provider {
 		config.Sleeper = realSleeper{}
 	}
 	return &Provider{
-		devices:        make(map[string]device),
-		baseADBPort:    config.BaseADBPort,
-		baseAppiumPort: config.BaseAppiumPort,
-		sleeper:        config.Sleeper,
-		scenario:       cloneScenario(config.Scenario),
+		devices:              make(map[string]device),
+		baseADBPort:          config.BaseADBPort,
+		baseAppiumPort:       config.BaseAppiumPort,
+		sharedAppiumEndpoint: config.SharedAppiumEndpoint,
+		sleeper:              config.Sleeper,
+		scenario:             cloneScenario(config.Scenario),
 	}
 }
 
@@ -114,14 +117,29 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 	if err := provider.before(ctx, providers.OperationCreate); err != nil {
 		return providers.Snapshot{}, err
 	}
-	if request.DeviceID == "" || request.HostID == "" || request.ImageID == "" || request.ProviderRef == "" {
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "device, host, image and provider ref are required", false, nil)
+	if request.Platform == "" {
+		request.Platform = providers.PlatformAndroid
 	}
-	if request.RuntimeProfile == (runtimeprofile.Profile{}) {
+	if request.DeviceKind == "" {
+		request.DeviceKind = "emulator"
+		if request.Platform == providers.PlatformIOS {
+			request.DeviceKind = "simulator"
+		}
+	}
+	if request.DeviceID == "" || request.HostID == "" || request.ProviderRef == "" ||
+		(request.Platform == providers.PlatformAndroid && request.ImageID == "") {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "device, host, provider ref and Android image are required", false, nil)
+	}
+	if request.Platform != providers.PlatformAndroid && request.Platform != providers.PlatformIOS {
+		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", "unsupported device platform", false, nil)
+	}
+	if request.Platform == providers.PlatformAndroid && request.RuntimeProfile == (runtimeprofile.Profile{}) {
 		request.RuntimeProfile = runtimeprofile.Default()
 	}
-	if err := request.RuntimeProfile.Validate(); err != nil {
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", err.Error(), false, err)
+	if request.Platform == providers.PlatformAndroid {
+		if err := request.RuntimeProfile.Validate(); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "INVALID_ARGUMENT", err.Error(), false, err)
+		}
 	}
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
@@ -136,14 +154,25 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 	}
 	offset := provider.nextPortOffset
 	provider.nextPortOffset++
+	adbEndpoint := fmt.Sprintf("127.0.0.1:%d", provider.baseADBPort+offset*2)
+	appiumEndpoint := fmt.Sprintf("http://127.0.0.1:%d", provider.baseAppiumPort+offset)
+	if request.Platform == providers.PlatformIOS {
+		adbEndpoint = ""
+		if provider.sharedAppiumEndpoint != "" {
+			appiumEndpoint = provider.sharedAppiumEndpoint
+		}
+	}
 	value := device{
 		request:    request,
 		state:      providers.StateCreated,
 		generation: 1,
 		connection: providers.ConnectionInfo{
+			Platform:       request.Platform,
 			Serial:         request.Serial,
-			ADBEndpoint:    fmt.Sprintf("127.0.0.1:%d", provider.baseADBPort+offset*2),
-			AppiumEndpoint: fmt.Sprintf("http://127.0.0.1:%d", provider.baseAppiumPort+offset),
+			DeviceUDID:     request.Serial,
+			ProviderID:     request.ProviderRef,
+			ADBEndpoint:    adbEndpoint,
+			AppiumEndpoint: appiumEndpoint,
 			AppiumUDID:     request.Serial,
 		},
 	}
@@ -215,6 +244,9 @@ func (provider *Provider) InspectHealth(ctx context.Context, providerRef string)
 	}
 	if value.state != providers.StateRunning {
 		return providers.Health{}, providerError(providers.OperationInspectHealth, "DEVICE_NOT_RUNNING", "mock device is not running", true, nil)
+	}
+	if value.request.Platform == providers.PlatformIOS {
+		return provider.iosHealthLocked(), provider.iosHealthErrorLocked()
 	}
 	if provider.scenario.BootTimeout {
 		return providers.Health{Online: true, ADBOnline: true}, providerError(
@@ -292,19 +324,53 @@ func (provider *Provider) deviceLocked(operation providers.Operation, providerRe
 }
 
 func (provider *Provider) snapshotLocked(value device) providers.Snapshot {
-	health := providers.Health{}
+	health := providers.Health{Platform: value.request.Platform}
 	if value.state == providers.StateRunning && !provider.scenario.Offline {
-		health.Online = true
-		health.ADBOnline = true
-		health.BootCompleted = !provider.scenario.BootTimeout
-		health.AppiumHealthy = health.BootCompleted && !provider.scenario.AppiumUnhealthy
+		if value.request.Platform == providers.PlatformIOS {
+			health, _ = provider.iosHealthLocked(), provider.iosHealthErrorLocked()
+		} else {
+			health.Online = true
+			health.ADBOnline = true
+			health.BootCompleted = !provider.scenario.BootTimeout
+			health.AppiumHealthy = health.BootCompleted && !provider.scenario.AppiumUnhealthy
+		}
 	}
 	return providers.Snapshot{
 		DeviceID: value.request.DeviceID, HostID: value.request.HostID, ImageID: value.request.ImageID,
+		Platform:    value.request.Platform,
 		ProviderRef: value.request.ProviderRef, State: value.state, Generation: value.generation,
 		Capabilities: cloneMap(value.request.Capabilities), RuntimeProfile: value.request.RuntimeProfile,
 		Health: health, Connection: value.connection,
 	}
+}
+
+func (provider *Provider) iosHealthLocked() providers.Health {
+	components := map[string]providers.ProbeStatus{
+		providers.ProbeTransport:     providers.ProbePassed,
+		providers.ProbeOSReady:       providers.ProbePassed,
+		providers.ProbeAutomation:    providers.ProbePassed,
+		providers.ProbeRouter:        providers.ProbePassed,
+		providers.ProbeRemoteControl: providers.ProbeUnsupported,
+	}
+	if provider.scenario.BootTimeout {
+		components[providers.ProbeOSReady] = providers.ProbeFailed
+	}
+	if provider.scenario.AppiumUnhealthy {
+		components[providers.ProbeRouter] = providers.ProbeFailed
+	}
+	return providers.Health{Platform: providers.PlatformIOS, Components: components, Online: true,
+		BootCompleted: components[providers.ProbeOSReady] == providers.ProbePassed,
+		AppiumHealthy: components[providers.ProbeRouter] == providers.ProbePassed}
+}
+
+func (provider *Provider) iosHealthErrorLocked() error {
+	if provider.scenario.BootTimeout {
+		return providerError(providers.OperationInspectHealth, "DEVICE_BOOT_TIMEOUT", "mock iOS device did not become ready", true, nil)
+	}
+	if provider.scenario.AppiumUnhealthy {
+		return providerError(providers.OperationInspectHealth, "APPIUM_UNHEALTHY", "mock Appium Device Farm endpoint is unhealthy", true, nil)
+	}
+	return nil
 }
 
 func providerError(operation providers.Operation, code, message string, retryable bool, cause error) error {

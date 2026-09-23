@@ -12,6 +12,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	providermock "github.com/Ad-Quanta/alcor-device-farm/internal/providers/mock"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 )
 
 func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
@@ -49,6 +50,74 @@ func TestAgentCreateCompletionReturnsProviderSnapshot(t *testing.T) {
 	}
 }
 
+func TestAgentIOSCreateUsesCoreSimulatorUDIDReturnedByProvider(t *testing.T) {
+	client := &completionClient{}
+	provider := &dynamicIOSProvider{Provider: providermock.New(providermock.Config{})}
+	runtime, err := New(Config{
+		HostID: "ios_host_000000000001", ProviderType: "appium_device_farm_ios", HeartbeatInterval: time.Second,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second,
+		ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 4},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "lease_token_000000000001"
+	runtime.execute(context.Background(), hostcommand.Command{
+		ID: "command_0000000000100", CommandType: "create", LeaseToken: &token, Attempt: 1,
+		Payload: map[string]any{
+			"device_id": "device_0000000000100", "platform": "ios", "device_kind": "simulator",
+			"provider_ref": "pending:device_0000000000100", "capabilities": map[string]any{
+				"runtimeId":    "com.apple.CoreSimulator.SimRuntime.iOS-26-3",
+				"deviceTypeId": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+			},
+		},
+	})
+	if provider.startedRef != provider.udid || provider.request.Platform != providers.PlatformIOS || provider.request.DeviceKind != "simulator" {
+		t.Fatalf("provider request=%#v started_ref=%q udid=%q", provider.request, provider.startedRef, provider.udid)
+	}
+	if client.completion.Status != "succeeded" || client.completion.Result["provider_ref"] != provider.udid {
+		t.Fatalf("completion=%#v", client.completion)
+	}
+	connection, ok := client.completion.Result["connection"].(map[string]any)
+	if !ok || connection["provider_id"] != provider.udid || connection["serial"] != provider.udid {
+		t.Fatalf("connection=%#v", client.completion.Result["connection"])
+	}
+}
+
+type dynamicIOSProvider struct {
+	providers.Provider
+	request    providers.CreateRequest
+	startedRef string
+	udid       string
+}
+
+func (provider *dynamicIOSProvider) Create(_ context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
+	provider.request = request
+	provider.udid = "11111111-2222-3333-4444-555555555555"
+	return providers.Snapshot{DeviceID: request.DeviceID, HostID: request.HostID, Platform: providers.PlatformIOS,
+		DeviceKind: "simulator", ProviderRef: provider.udid, State: providers.StateCreated, Generation: 1}, nil
+}
+
+func (provider *dynamicIOSProvider) Start(_ context.Context, providerRef string) (providers.Snapshot, error) {
+	provider.startedRef = providerRef
+	return providers.Snapshot{DeviceID: provider.request.DeviceID, HostID: provider.request.HostID, Platform: providers.PlatformIOS,
+		DeviceKind: "simulator", ProviderRef: providerRef, State: providers.StateRunning, Generation: 1}, nil
+}
+
+func (provider *dynamicIOSProvider) InspectHealth(_ context.Context, providerRef string) (providers.Health, error) {
+	if providerRef != provider.udid {
+		return providers.Health{}, errors.New("使用了错误的 Simulator UDID")
+	}
+	return providers.Health{Platform: providers.PlatformIOS, Online: true, BootCompleted: true, AppiumHealthy: true,
+		Components: map[string]providers.ProbeStatus{providers.ProbeTransport: providers.ProbePassed,
+			providers.ProbeOSReady: providers.ProbePassed, providers.ProbeAutomation: providers.ProbePassed, providers.ProbeRouter: providers.ProbePassed}}, nil
+}
+
+func (provider *dynamicIOSProvider) GetConnectionInfo(_ context.Context, providerRef string) (providers.ConnectionInfo, error) {
+	return providers.ConnectionInfo{Platform: providers.PlatformIOS, Serial: providerRef, DeviceUDID: providerRef, ProviderID: providerRef,
+		AppiumEndpoint: "http://127.0.0.1:4723", AppiumUDID: providerRef}, nil
+}
+
 func TestLongImagePreparationRenewsCommandLease(t *testing.T) {
 	client := &completionClient{}
 	runtime, err := New(Config{
@@ -79,21 +148,88 @@ func TestReimageRollbackGetsFreshDeadlineAfterTargetTimeout(t *testing.T) {
 		"guest_memory_mb": 4096, "data_disk_mb": 4096, "graphics": "host"}
 	result, err := runtime.reimage(targetContext, map[string]any{
 		"device_id": "device_0000000000001", "host_id": "host_000000000000001", "image_id": "target_image_0000001",
-		"provider_ref": "emulator-1", "runtime_profile": profile, "capabilities": map[string]any{},
-		"rollback": map[string]any{"image_id": "previous_image_001", "runtime_profile": profile},
+		"provider_ref": "emulator-1", "runtime_profile": profile, "capabilities": map[string]any{"apiLevel": 36},
+		"rollback": map[string]any{"image_id": "previous_image_001", "runtime_profile": profile,
+			"capabilities": map[string]any{"apiLevel": 35}},
 	})
-	if providers.ErrorCode(err) != "REIMAGE_TARGET_FAILED" || result["rollback_restored"] != true || provider.currentImage != "previous_image_001" {
-		t.Fatalf("result=%#v error=%v current image=%q", result, err, provider.currentImage)
+	if providers.ErrorCode(err) != "REIMAGE_TARGET_FAILED" || result["rollback_restored"] != true ||
+		provider.currentImage != "previous_image_001" || provider.currentCapabilities["apiLevel"] != 35 {
+		t.Fatalf("result=%#v error=%v current image=%q capabilities=%#v", result, err, provider.currentImage, provider.currentCapabilities)
 	}
 }
 
-type rollbackDeadlineProvider struct{ currentImage string }
+func TestRuntimeProfileUpdateRestoresPreviousProfileAfterTargetFailure(t *testing.T) {
+	provider := &runtimeProfileUpdateProvider{}
+	runtime := &Agent{config: Config{CommandTimeout: time.Second}, provider: provider}
+	result, err := runtime.updateRuntimeProfile(context.Background(), runtimeProfileUpdatePayload())
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_TARGET_FAILED" || result["rollback_restored"] != true || provider.calls != 2 {
+		t.Fatalf("result=%#v error=%v calls=%d", result, err, provider.calls)
+	}
+	if provider.profiles[0].ContainerMemoryMB != 6144 || provider.profiles[1].ContainerMemoryMB != 5120 {
+		t.Fatalf("profiles=%#v", provider.profiles)
+	}
+}
+
+func TestRuntimeProfileUpdateUsesProviderStartedRollbackOnlyOnce(t *testing.T) {
+	provider := &runtimeProfileUpdateProvider{rollbackAlreadyStarted: true}
+	runtime := &Agent{config: Config{CommandTimeout: time.Second}, provider: provider}
+	result, err := runtime.updateRuntimeProfile(context.Background(), runtimeProfileUpdatePayload())
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_TARGET_FAILED" || result["rollback_restored"] != true || provider.calls != 1 {
+		t.Fatalf("result=%#v error=%v calls=%d", result, err, provider.calls)
+	}
+}
+
+func runtimeProfileUpdatePayload() map[string]any {
+	target := runtimeprofile.Default()
+	target.ContainerMemoryMB = 6144
+	target.GuestMemoryMB = 5120
+	previous := runtimeprofile.Default()
+	return map[string]any{
+		"provider_ref": "emulator-profile", "runtime_profile": target.Map(),
+		"rollback": map[string]any{"runtime_profile": previous.Map()},
+	}
+}
+
+type runtimeProfileUpdateProvider struct {
+	providers.Provider
+	calls                  int
+	rollbackAlreadyStarted bool
+	profiles               []runtimeprofile.Profile
+}
+
+func (provider *runtimeProfileUpdateProvider) RestartWithProfile(_ context.Context, providerRef string, profile runtimeprofile.Profile) (providers.Snapshot, error) {
+	provider.calls++
+	provider.profiles = append(provider.profiles, profile)
+	snapshot := providers.Snapshot{DeviceID: "device-profile", HostID: "host-profile", Platform: providers.PlatformAndroid,
+		ProviderRef: providerRef, State: providers.StateRunning, Generation: provider.calls + 1, RuntimeProfile: profile}
+	if provider.calls == 1 {
+		if provider.rollbackAlreadyStarted {
+			return snapshot, &providers.Error{Operation: providers.OperationRestart, Code: "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED", Message: "old container restored"}
+		}
+		return providers.Snapshot{}, &providers.Error{Operation: providers.OperationRestart, Code: "EMULATOR_OPERATION_FAILED", Message: "target failed"}
+	}
+	return snapshot, nil
+}
+
+func (*runtimeProfileUpdateProvider) InspectHealth(context.Context, string) (providers.Health, error) {
+	return providers.Health{Online: true, ADBOnline: true, BootCompleted: true, AppiumHealthy: true}, nil
+}
+
+func (*runtimeProfileUpdateProvider) GetConnectionInfo(context.Context, string) (providers.ConnectionInfo, error) {
+	return providers.ConnectionInfo{Serial: "serial-profile", ADBEndpoint: "127.0.0.1:5555",
+		AppiumEndpoint: "http://127.0.0.1:4723", AppiumUDID: "emulator-5554"}, nil
+}
+
+type rollbackDeadlineProvider struct {
+	currentImage        string
+	currentCapabilities map[string]any
+}
 
 func (provider *rollbackDeadlineProvider) Discover(context.Context, string) ([]providers.Snapshot, error) {
 	return nil, nil
 }
 func (provider *rollbackDeadlineProvider) Create(_ context.Context, request providers.CreateRequest) (providers.Snapshot, error) {
-	provider.currentImage = request.ImageID
+	provider.currentImage, provider.currentCapabilities = request.ImageID, request.Capabilities
 	return providers.Snapshot{DeviceID: request.DeviceID, HostID: request.HostID, ImageID: request.ImageID,
 		ProviderRef: request.ProviderRef, State: providers.StateCreated, RuntimeProfile: request.RuntimeProfile}, nil
 }
@@ -151,7 +287,7 @@ func TestAgentKeepsReadyEmulatorWhenSTFRegistrationIsTemporarilyUnavailable(t *t
 
 func TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady(t *testing.T) {
 	booting := providers.Snapshot{State: providers.StateRunning, Health: providers.Health{Online: true}}
-	if providerLifecycle(booting) != "booting" || providerHealth(booting) != "unknown" {
+	if providerLifecycle(booting) != "booting" || providerHealth(booting) != "unhealthy" {
 		t.Fatalf("booting lifecycle=%s health=%s", providerLifecycle(booting), providerHealth(booting))
 	}
 	ready := providers.Snapshot{State: providers.StateRunning, Health: providers.Health{
@@ -159,6 +295,15 @@ func TestProviderHeartbeatStatusDoesNotMarkBootingDeviceReady(t *testing.T) {
 	}}
 	if providerLifecycle(ready) != "ready" || providerHealth(ready) != "healthy" {
 		t.Fatalf("ready lifecycle=%s health=%s", providerLifecycle(ready), providerHealth(ready))
+	}
+}
+
+func TestHeartbeatUsesDomainProviderTypeForDocker(t *testing.T) {
+	if got := heartbeatProviderType(" Docker "); got != "docker_emulator" {
+		t.Fatalf("heartbeat provider type=%q", got)
+	}
+	if got := heartbeatProviderType("appium_device_farm_ios"); got != "appium_device_farm_ios" {
+		t.Fatalf("iOS heartbeat provider type=%q", got)
 	}
 }
 

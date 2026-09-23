@@ -90,12 +90,12 @@ func (server *Server) authenticate(next http.Handler) http.Handler {
 		}
 		actual := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
 		if len(actual) != len(server.config.Token) || subtle.ConstantTimeCompare([]byte(actual), []byte(server.config.Token)) != 1 {
-			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Message: "invalid mock service token"})
+			httpx.WriteError(writer, request, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Message: "Mock 服务令牌无效"})
 			return
 		}
 		if !identifierPattern.MatchString(request.Header.Get(correlation.HeaderRunID)) ||
 			!identifierPattern.MatchString(request.Header.Get(correlation.HeaderAttemptID)) {
-			httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "Run and RunAttempt correlation headers are required"})
+			httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "必须提供 Run 和 RunAttempt 关联请求头"})
 			return
 		}
 		next.ServeHTTP(writer, request)
@@ -109,15 +109,15 @@ func (server *Server) health(writer http.ResponseWriter, request *http.Request) 
 func (server *Server) createReservation(writer http.ResponseWriter, request *http.Request) {
 	key := request.Header.Get("Idempotency-Key")
 	if len(key) < 8 {
-		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Idempotency-Key is required", false)
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "必须提供 Idempotency-Key", false)
 		return
 	}
 	if server.config.Scenario == ScenarioCapacityUnavailable {
-		server.error(writer, request, http.StatusServiceUnavailable, alcor.CodeDeviceCapacityUnavailable, "mock device capacity is unavailable", true)
+		server.error(writer, request, http.StatusServiceUnavailable, alcor.CodeDeviceCapacityUnavailable, "Mock 设备容量当前不可用", true)
 		return
 	}
 	if server.config.Scenario == ScenarioInfrastructureFail {
-		server.error(writer, request, http.StatusServiceUnavailable, "KVM_UNAVAILABLE", "mock KVM host is unavailable", false)
+		server.error(writer, request, http.StatusServiceUnavailable, "KVM_UNAVAILABLE", "Mock KVM 宿主机当前不可用", false)
 		return
 	}
 	var input createInput
@@ -126,7 +126,7 @@ func (server *Server) createReservation(writer http.ResponseWriter, request *htt
 	}
 	if input.OwnerType != alcor.OwnerTypeRunAttempt || !identifierPattern.MatchString(input.OwnerID) ||
 		input.OwnerID != request.Header.Get(correlation.HeaderAttemptID) || !identifierPattern.MatchString(input.PoolID) || input.LeaseSeconds < 60 {
-		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "mock requires a matching RunAttempt owner", false)
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Mock 请求必须使用匹配的 RunAttempt 所有者", false)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (server *Server) createReservation(writer http.ResponseWriter, request *htt
 		stored := server.reservations[id].Reservation
 		if stored.OwnerID != input.OwnerID || stored.PoolID != input.PoolID || stored.LeaseSeconds != input.LeaseSeconds ||
 			!reflect.DeepEqual(stored.RequestedCapabilities, input.RequestedCapabilities) {
-			server.error(writer, request, http.StatusConflict, "CONFLICT", "idempotency key was reused with different input", false)
+			server.error(writer, request, http.StatusConflict, "CONFLICT", "同一幂等键不能用于不同请求参数", false)
 			return
 		}
 		httpx.WriteData(writer, request, http.StatusCreated, stored)
@@ -157,11 +157,11 @@ func (server *Server) getReservation(writer http.ResponseWriter, request *http.R
 	defer server.mutex.Unlock()
 	state := server.reservations[request.PathValue("id")]
 	if state == nil {
-		server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "mock reservation not found", false)
+		server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "Mock 预约不存在", false)
 		return
 	}
 	if state.Reservation.OwnerID != request.Header.Get(correlation.HeaderAttemptID) {
-		server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "RunAttempt does not own this reservation", false)
+		server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "该预约不属于当前 RunAttempt", false)
 		return
 	}
 	if state.Reservation.Status == "pending" {
@@ -188,33 +188,33 @@ func (server *Server) extendReservation(writer http.ResponseWriter, request *htt
 		return
 	}
 	if input.AdditionalSeconds < 60 {
-		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "additional_seconds must be at least 60", false)
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "additional_seconds 不能小于 60", false)
 		return
 	}
 	key := request.Header.Get("Idempotency-Key")
 	if len(key) < 8 || len(key) > 128 {
-		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Idempotency-Key is required", false)
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "必须提供 Idempotency-Key", false)
 		return
 	}
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	state := server.reservations[request.PathValue("id")]
 	if state == nil {
-		server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "mock reservation not found", false)
+		server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "Mock 预约不存在", false)
 		return
 	}
 	if state.Reservation.OwnerID != request.Header.Get(correlation.HeaderAttemptID) {
-		server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "RunAttempt does not own this reservation", false)
+		server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "该预约不属于当前 RunAttempt", false)
 		return
 	}
 	if state.Reservation.Status != "active" || state.Reservation.ExpiresAt == nil {
-		server.error(writer, request, http.StatusConflict, "INVALID_STATE_TRANSITION", "only active reservations can be extended", false)
+		server.error(writer, request, http.StatusConflict, "INVALID_STATE_TRANSITION", "只有已激活预约可以续约", false)
 		return
 	}
 	op := "extend:" + state.Reservation.ID + ":" + key
 	requestValue := strconv.Itoa(input.AdditionalSeconds)
 	if previous := server.operations[op]; previous != "" && previous != requestValue {
-		server.error(writer, request, http.StatusConflict, "CONFLICT", "idempotency key was reused with different input", false)
+		server.error(writer, request, http.StatusConflict, "CONFLICT", "同一幂等键不能用于不同请求参数", false)
 		return
 	}
 	if server.operations[op] == "" {
@@ -234,29 +234,29 @@ func (server *Server) releaseReservation(writer http.ResponseWriter, request *ht
 		return
 	}
 	if len(strings.TrimSpace(input.Reason)) < 3 {
-		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "release reason is required", false)
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "必须填写释放原因", false)
 		return
 	}
 	key := request.Header.Get("Idempotency-Key")
 	if len(key) < 8 || len(key) > 128 {
-		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Idempotency-Key is required", false)
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "必须提供 Idempotency-Key", false)
 		return
 	}
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	state := server.reservations[request.PathValue("id")]
 	if state == nil {
-		server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "mock reservation not found", false)
+		server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "Mock 预约不存在", false)
 		return
 	}
 	if state.Reservation.OwnerID != request.Header.Get(correlation.HeaderAttemptID) {
-		server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "RunAttempt does not own this reservation", false)
+		server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "该预约不属于当前 RunAttempt", false)
 		return
 	}
 	op := "release:" + state.Reservation.ID + ":" + key
 	requestValue := strings.TrimSpace(input.Reason)
 	if previous := server.operations[op]; previous != "" && previous != requestValue {
-		server.error(writer, request, http.StatusConflict, "CONFLICT", "idempotency key was reused with different input", false)
+		server.error(writer, request, http.StatusConflict, "CONFLICT", "同一幂等键不能用于不同请求参数", false)
 		return
 	}
 	server.operations[op] = requestValue
@@ -283,7 +283,7 @@ func (server *Server) getDevice(writer http.ResponseWriter, request *http.Reques
 			continue
 		}
 		if state.Reservation.OwnerID != request.Header.Get(correlation.HeaderAttemptID) {
-			server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "RunAttempt does not own this device", false)
+			server.error(writer, request, http.StatusForbidden, "FORBIDDEN", "该设备不属于当前 RunAttempt", false)
 			return
 		}
 		adb, appium := "127.0.0.1:5555", "http://127.0.0.1:4723"
@@ -292,11 +292,11 @@ func (server *Server) getDevice(writer http.ResponseWriter, request *http.Reques
 		httpx.WriteData(writer, request, http.StatusOK, device)
 		return
 	}
-	server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "mock device not found", false)
+	server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "Mock 设备不存在", false)
 }
 
 func (server *Server) notFound(writer http.ResponseWriter, request *http.Request) {
-	server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "mock route not found", false)
+	server.error(writer, request, http.StatusNotFound, "NOT_FOUND", "Mock 接口不存在", false)
 }
 
 func (server *Server) error(writer http.ResponseWriter, request *http.Request, status int, code, message string, retryable bool) {
@@ -307,11 +307,11 @@ func decode(writer http.ResponseWriter, request *http.Request, target any) bool 
 	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "invalid mock request body"})
+		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "Mock 请求正文无效"})
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "mock request body must contain one JSON object"})
+		httpx.WriteError(writer, request, http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: "Mock 请求正文只能包含一个 JSON 对象"})
 		return false
 	}
 	return true

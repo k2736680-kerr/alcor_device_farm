@@ -97,17 +97,36 @@ reconcile:
 [System.IO.File]::WriteAllText($ServerConfig, $Config, [System.Text.UTF8Encoding]::new($false))
 
 $SavedEnvironment = @{}
-foreach ($Name in @("NODE_OPTIONS", "DEVICE_FARM_STF_ENABLED", "DEVICE_FARM_STF_BASE_URL", "DEVICE_FARM_STF_API_TOKEN", "DEVICE_FARM_STF_WEB_URL", "DEVICE_FARM_STF_WEB_AUTH_SECRET", "DEVICE_FARM_STF_WEB_USER_NAME", "DEVICE_FARM_STF_WEB_USER_EMAIL", "DEVICE_FARM_E2E_SERVER_BINARY", "DEVICE_FARM_E2E_SERVER_CONFIG", "DEVICE_FARM_E2E_REUSE_SERVER")) {
+foreach ($Name in @("NODE_OPTIONS", "COREPACK_ENABLE_PROJECT_SPEC", "DEVICE_FARM_STF_ENABLED", "DEVICE_FARM_STF_BASE_URL", "DEVICE_FARM_STF_API_TOKEN", "DEVICE_FARM_STF_WEB_URL", "DEVICE_FARM_STF_WEB_AUTH_SECRET", "DEVICE_FARM_STF_WEB_USER_NAME", "DEVICE_FARM_STF_WEB_USER_EMAIL", "DEVICE_FARM_E2E_SERVER_BINARY", "DEVICE_FARM_E2E_SERVER_CONFIG", "DEVICE_FARM_E2E_REUSE_SERVER")) {
     $SavedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
 }
+# The bundled pnpm wrapper uses Corepack.  The workspace declares the
+# supported major line (11.14), while the machine may have a newer compatible
+# 11.x binary; pass the documented opt-out explicitly so install/build/E2E
+# starts instead of failing before the first test.
+$PnpmCompatibilityArgs = @("--pm-on-fail=ignore")
 
 $MockProcess = $null
 try {
     Push-Location $ProjectRoot
     try {
-        Invoke-Checked -Executable $PnpmExecutable -Arguments @("--dir", "console", "install", "--frozen-lockfile")
-        Invoke-Checked -Executable $PnpmExecutable -Arguments @("--dir", "console", "build")
+        Invoke-Checked -Executable $PnpmExecutable -Arguments ($PnpmCompatibilityArgs + @("--dir", "console", "install", "--frozen-lockfile"))
+        Invoke-Checked -Executable $PnpmExecutable -Arguments ($PnpmCompatibilityArgs + @("--dir", "console", "build"))
         Invoke-Checked -Executable $GoExecutable -Arguments @("build", "-o", $ServerBinary, "./cmd/device-farm-server")
+        # A freshly created local database has no device tables yet.  Apply
+        # every ordered up migration once before loading the E2E fixture; on a
+        # later run keep the schema and only reset fixture rows.  The URL guard
+        # above makes this reset loopback/test-database-only.
+        $SchemaExists = (& $PsqlExecutable $DatabaseURL -X -A -t --set ON_ERROR_STOP=1 --command "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename='device_images');").Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "$PsqlExecutable failed while checking the local schema"
+        }
+        if ($SchemaExists -ne "t") {
+            $MigrationFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "migrations") -Filter "*.up.sql" -File | Sort-Object Name
+            foreach ($Migration in $MigrationFiles) {
+                Invoke-Checked -Executable $PsqlExecutable -Arguments @($DatabaseURL, "-X", "--set", "ON_ERROR_STOP=1", "--single-transaction", "--file", $Migration.FullName)
+            }
+        }
         Invoke-Checked -Executable $PsqlExecutable -Arguments @($DatabaseURL, "-X", "--set", "ON_ERROR_STOP=1", "--file", (Join-Path $FixtureRoot "seed.sql"))
 
         $MockProcess = Start-Process -FilePath $NodeExecutable -ArgumentList (Join-Path $FixtureRoot "mock-stf.mjs") `
@@ -133,7 +152,7 @@ try {
         $env:DEVICE_FARM_E2E_SERVER_BINARY = $ServerBinary
         $env:DEVICE_FARM_E2E_SERVER_CONFIG = $ServerConfig
         $env:DEVICE_FARM_E2E_REUSE_SERVER = "0"
-        Invoke-Checked -Executable $PnpmExecutable -Arguments @("--dir", "console", "test:e2e")
+        Invoke-Checked -Executable $PnpmExecutable -Arguments ($PnpmCompatibilityArgs + @("--dir", "console", "test:e2e"))
 
         $CleanupQuery = "SELECT count(*) FROM device_reservations WHERE status IN ('pending','active'); SELECT count(*) FROM device_console_sessions WHERE revoked_at IS NULL AND expires_at > NOW(); SELECT count(*) FROM devices WHERE lifecycle_status IN ('reserved','busy');"
         $CleanupCounts = & $PsqlExecutable $DatabaseURL -X -A -t --set ON_ERROR_STOP=1 --command $CleanupQuery

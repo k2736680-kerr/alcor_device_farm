@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid health event argument")
-	ErrNotFound        = errors.New("device not found")
+	ErrInvalidArgument = errors.New("健康事件参数无效")
+	ErrNotFound        = errors.New("未找到指定设备")
 )
 
 type Visibility interface {
@@ -51,18 +51,22 @@ type Event struct {
 }
 
 type DeviceState struct {
-	ID                  string
-	HostID              string
-	ProviderRef         string
-	Serial              string
-	Lifecycle           domain.DeviceLifecycleStatus
-	Health              domain.HealthStatus
-	HealthReason        string
-	ConsecutiveFailures int
-	HostStatus          domain.HostStatus
-	OperationInFlight   bool
-	LatestProvisionedAt *time.Time
-	STFFailureStartedAt *time.Time
+	ID                   string
+	HostID               string
+	Platform             string
+	ProviderRef          string
+	Serial               string
+	Lifecycle            domain.DeviceLifecycleStatus
+	Health               domain.HealthStatus
+	HealthReason         string
+	AssignmentTarget     string
+	ConsecutiveFailures  int
+	HostStatus           domain.HostStatus
+	OperationInFlight    bool
+	DeletionInFlight     bool
+	LatestProvisionedAt  *time.Time
+	STFFailureStartedAt  *time.Time
+	HostFailureStartedAt *time.Time
 }
 
 type Result struct {
@@ -70,19 +74,22 @@ type Result struct {
 	DevicesChecked     int `json:"devices_checked"`
 	EventsRecorded     int `json:"events_recorded"`
 	DevicesQuarantined int `json:"devices_quarantined"`
+	DevicesRecovered   int `json:"devices_recovered"`
+	RestartsQueued     int `json:"restarts_queued"`
 }
 
 type Service struct {
-	db               *database.DB
-	provider         providers.Provider
-	visibility       Visibility
-	visibilityGrace  time.Duration
-	failureThreshold int
-	newID            func() (string, error)
-	logger           *slog.Logger
+	db                *database.DB
+	provider          providers.Provider
+	visibility        Visibility
+	visibilityGrace   time.Duration
+	hostRecoveryGrace time.Duration
+	failureThreshold  int
+	newID             func() (string, error)
+	logger            *slog.Logger
 }
 
-func New(db *database.DB, provider providers.Provider, visibility Visibility, failureThreshold int, visibilityGrace time.Duration, logger *slog.Logger) *Service {
+func New(db *database.DB, provider providers.Provider, visibility Visibility, failureThreshold int, visibilityGrace, hostRecoveryGrace time.Duration, logger *slog.Logger) *Service {
 	if failureThreshold < 1 {
 		failureThreshold = 3
 	}
@@ -92,7 +99,10 @@ func New(db *database.DB, provider providers.Provider, visibility Visibility, fa
 	if visibilityGrace < 0 {
 		visibilityGrace = 0
 	}
-	return &Service{db: db, provider: provider, visibility: visibility, visibilityGrace: visibilityGrace,
+	if hostRecoveryGrace < 0 {
+		hostRecoveryGrace = 0
+	}
+	return &Service{db: db, provider: provider, visibility: visibility, visibilityGrace: visibilityGrace, hostRecoveryGrace: hostRecoveryGrace,
 		failureThreshold: failureThreshold, newID: identifier.New, logger: logger}
 }
 
@@ -133,6 +143,12 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 				return err
 			}
 		}
+		if input.EventType == "health_recovered" && targetHealth == domain.HealthHealthy &&
+			aggregate.Lifecycle() == domain.DeviceQuarantined && domain.IsSystemRecoverableHealthReason(device.HealthReason) {
+			if err := recoverDeviceLifecycle(aggregate, device.AssignmentTarget, input.Reason, now); err != nil {
+				return err
+			}
+		}
 		if (input.ForceQuarantine || (!input.SuppressQuarantine && failures >= service.failureThreshold)) &&
 			aggregate.Lifecycle() != domain.DeviceQuarantined {
 			if err := aggregate.Transition(domain.DeviceQuarantined, input.Reason, now); err != nil {
@@ -143,7 +159,7 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
 			lifecycle_status=$2::varchar,health_status=$3::varchar,health_reason=$4,consecutive_failures=$5,
 			last_seen_at=CASE WHEN $3::varchar='healthy' THEN $6::timestamptz ELSE last_seen_at END,updated_at=$6::timestamptz
             WHERE id=$1`, device.ID, aggregate.Lifecycle(), aggregate.Health(), input.Reason, failures, now); err != nil {
-			return fmt.Errorf("update device health: %w", err)
+			return fmt.Errorf("更新设备健康状态：%w", err)
 		}
 		err = tx.QueryRow(ctx, `INSERT INTO device_health_events
             (id,device_id,source,event_type,severity,reason,payload,observed_at)
@@ -151,7 +167,7 @@ func (service *Service) Report(ctx context.Context, deviceID string, input Event
             RETURNING created_at`, id, device.ID, input.Source, input.EventType,
 			input.Severity, input.Reason, payload, input.ObservedAt).Scan(&event.CreatedAt)
 		if err != nil {
-			return fmt.Errorf("insert device health event: %w", err)
+			return fmt.Errorf("写入设备健康事件：%w", err)
 		}
 		event = Event{ID: id, DeviceID: device.ID, Source: input.Source, EventType: input.EventType,
 			Severity: input.Severity, Reason: input.Reason, Payload: input.Payload,
@@ -179,22 +195,110 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 		return Result{}, err
 	}
 	for _, device := range devices {
-		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceQuarantined || device.Lifecycle == domain.DeviceRecycling {
+		if device.Lifecycle == domain.DeviceDeleted || device.Lifecycle == domain.DeviceRecycling {
+			continue
+		}
+		// A host reboot can leave an Android emulator reported as stopped/unknown
+		// even though its pool still requires the slot. This state is not
+		// schedulable and used to be skipped forever, requiring an operator to
+		// click Restart manually. Queue a non-destructive restart for managed
+		// pool devices; an explicit administrator Stop remains respected.
+		if device.Lifecycle == domain.DeviceStopped && device.Platform == "android" &&
+			device.HostStatus == domain.HostOnline && !device.OperationInFlight && !device.DeletionInFlight {
+			queued, err := service.queueUnexpectedStoppedRestart(ctx, device.ID)
+			if err != nil {
+				return result, err
+			}
+			if queued {
+				result.RestartsQueued++
+			}
+			continue
+		}
+		if device.Lifecycle == domain.DeviceQuarantined {
+			if device.Platform != "android" || !domain.IsSystemRecoverableHealthReason(device.HealthReason) {
+				continue
+			}
+			if domain.IsSTFFailureReason(device.HealthReason) && service.visibility != nil {
+				visible, visibilityErr := service.visibility.Visible(ctx, device.Serial)
+				if visibilityErr == nil && visible {
+					if _, err := service.Report(ctx, device.ID, EventInput{Source: "reconciler", EventType: "health_recovered",
+						Severity: "info", Reason: "STF visibility recovered", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}); err != nil {
+						return result, err
+					}
+					result.DevicesChecked++
+					result.EventsRecorded++
+					result.DevicesRecovered++
+					continue
+				}
+			}
+			queued, err := service.queueSelfHealingRestart(ctx, device.ID)
+			if err != nil {
+				return result, err
+			}
+			if queued {
+				result.RestartsQueued++
+			}
 			continue
 		}
 		if device.OperationInFlight && (device.Lifecycle == domain.DeviceProvisioning || device.Lifecycle == domain.DeviceBooting) {
 			continue
 		}
+		// Provider 删除先移除宿主机资源，再回报 Host Command 成功。这个短窗口内
+		// InspectHealth 必然返回不存在；若把它当漂移隔离，会抢先改变 lifecycle，
+		// 导致成功的 delete completion 无法按 operation_state 收敛为 deleted。
+		// 普通 restart/start 同理：命令在途时设备经历 stopped→booting，qemu 尚未
+		// 完成开机，心跳必然报 unhealthy；若不视为在途操作，会在开机窗口内被
+		// 连续失败阈值隔离（2026-09-16 两台安卓设备重启即被隔离的根因）。
+		if device.DeletionInFlight {
+			continue
+		}
 		result.DevicesChecked++
+		usesAndroidHealthChain := device.Platform == "" || device.Platform == "android"
 		input := EventInput{Source: "reconciler", ObservedAt: time.Now().UTC(), Payload: map[string]any{}}
+		if device.OperationInFlight {
+			// 管理命令（create/rebuild/restart/start 等）在途期间，设备必然经历
+			// stopped→booting 的不健康窗口，且命令完成时会把设备乐观置为
+			// ready/healthy，而 qemu 实际开机仍需 1-2 分钟。这一窗口内的心跳与
+			// 巡检都不可作为失败证据：只记录观测、不计失败、不隔离；命令自身的
+			// 超时与结果（DEVICE_BOOT_TIMEOUT 等）才是失败判定依据。
+			input.EventType, input.Severity, input.Reason = "operation_stabilizing", "warning", "管理命令执行中，健康观测不计入失败"
+			input.SuppressFailureCount = true
+			input.SuppressQuarantine = true
+			var recentlyRecorded bool
+			if err := service.db.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_health_events
+				WHERE device_id=$1 AND event_type=$2 AND reason=$3
+				AND observed_at >= clock_timestamp()-interval '1 minute')`,
+				device.ID, input.EventType, input.Reason).Scan(&recentlyRecorded); err != nil {
+				return result, err
+			}
+			if recentlyRecorded {
+				continue
+			}
+			if _, err := service.Report(ctx, device.ID, input); err != nil {
+				return result, err
+			}
+			result.EventsRecorded++
+			continue
+		}
 		if device.HostStatus != domain.HostOnline {
 			input.EventType, input.Severity, input.Reason = "host_unavailable", "warning", domain.HostUnavailableReason
-		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
+			if service.withinHostRecoveryGrace(device, input.ObservedAt) {
+				// A stale heartbeat can briefly mark the host offline while the server or
+				// agent is restarting. The scheduler already excludes an offline host, so
+				// keep the device's last verified health intact until the recovery grace
+				// expires instead of manufacturing a device failure/event.
+				if device.HostStatus == domain.HostOffline {
+					continue
+				}
+				input.SuppressFailureCount = true
+				input.SuppressQuarantine = true
+			}
+		} else if usesAndroidHealthChain && service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
 			service.withinVisibilityGrace(device, input.ObservedAt) {
 			input.EventType, input.Severity, input.Reason = "stf_stabilizing", "error", domain.STFReadinessStabilizationReason
 			input.SuppressFailureCount = true
 			input.SuppressQuarantine = true
-		} else if service.provider != nil {
+		} else if usesAndroidHealthChain && service.provider != nil {
 			health, inspectErr := service.provider.InspectHealth(ctx, device.ProviderRef)
 			switch {
 			case inspectErr != nil && providers.ErrorCode(inspectErr) == "PROVIDER_DEVICE_NOT_FOUND":
@@ -215,7 +319,7 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 					}
 				}
 			}
-		} else if service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
+		} else if usesAndroidHealthChain && service.visibility != nil && schedulableLifecycle(device.Lifecycle) &&
 			(device.Health == domain.HealthHealthy || domain.IsSTFFailureReason(device.HealthReason)) {
 			visible, visibilityErr := service.visibility.Visible(ctx, device.Serial)
 			if visibilityErr == nil && visible {
@@ -230,7 +334,17 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 				}
 			}
 		} else if device.Health != domain.HealthHealthy && schedulableLifecycle(device.Lifecycle) {
-			input.EventType, input.Severity, input.Reason = "agent_reported_unhealthy", "error", "agent heartbeat reported an assigned or schedulable device is not healthy"
+			input.EventType, input.Severity, input.Reason = "agent_reported_unhealthy", "error", domain.AgentReportedUnhealthyReason
+			// iOS Simulators share one Appium/Device Farm automation service on the Mac.
+			// Creating another Simulator can briefly degrade that shared service for every
+			// otherwise healthy device. Keep the observation, but do not spend an
+			// individual device's quarantine budget; persistent shared failures are
+			// handled by host readiness/maintenance instead.
+			if device.Platform == "ios" {
+				input.EventType, input.Severity = "ios_automation_stabilizing", "warning"
+				input.SuppressFailureCount = true
+				input.SuppressQuarantine = true
+			}
 		} else {
 			continue
 		}
@@ -240,6 +354,18 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 				input.SuppressQuarantine = true
 			} else if service.withinSTFOutageGrace(device, input.ObservedAt) {
 				input.SuppressQuarantine = true
+			}
+		}
+		if input.SuppressFailureCount && input.SuppressQuarantine {
+			var recentlyRecorded bool
+			if err := service.db.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_health_events
+				WHERE device_id=$1 AND event_type=$2 AND reason=$3
+				AND observed_at >= clock_timestamp()-interval '1 minute')`,
+				device.ID, input.EventType, input.Reason).Scan(&recentlyRecorded); err != nil {
+				return result, err
+			}
+			if recentlyRecorded {
+				continue
 			}
 		}
 		before := device.Lifecycle
@@ -261,7 +387,170 @@ func (service *Service) RunOnce(ctx context.Context, hostTimeout time.Duration) 
 }
 
 func schedulableLifecycle(lifecycle domain.DeviceLifecycleStatus) bool {
-	return lifecycle == domain.DeviceReady || lifecycle == domain.DeviceReserved || lifecycle == domain.DeviceBusy
+	return lifecycle == domain.DeviceBooting || lifecycle == domain.DeviceReady ||
+		lifecycle == domain.DeviceReserved || lifecycle == domain.DeviceBusy
+}
+
+func recoverDeviceLifecycle(device *domain.Device, assignmentTarget, reason string, now time.Time) error {
+	for _, target := range []domain.DeviceLifecycleStatus{domain.DeviceProvisioning, domain.DeviceBooting, domain.DeviceReady} {
+		if err := device.Transition(target, reason, now); err != nil {
+			return err
+		}
+	}
+	if assignmentTarget == string(domain.DeviceReserved) || assignmentTarget == string(domain.DeviceBusy) {
+		if err := device.Transition(domain.DeviceReserved, reason, now); err != nil {
+			return err
+		}
+	}
+	if assignmentTarget == string(domain.DeviceBusy) {
+		return device.Transition(domain.DeviceBusy, reason, now)
+	}
+	return nil
+}
+
+func (service *Service) queueSelfHealingRestart(ctx context.Context, deviceID string) (bool, error) {
+	return service.queueRestart(ctx, deviceID, false)
+}
+
+func (service *Service) queueUnexpectedStoppedRestart(ctx context.Context, deviceID string) (bool, error) {
+	return service.queueRestart(ctx, deviceID, true)
+}
+
+func (service *Service) queueRestart(ctx context.Context, deviceID string, allowStopped bool) (bool, error) {
+	queued := false
+	err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		var hostID, providerRef, platform, healthReason, latestManagementAction string
+		var lifecycle domain.DeviceLifecycleStatus
+		var health domain.HealthStatus
+		lifecyclePredicate := "d.lifecycle_status='quarantined'"
+		if allowStopped {
+			lifecyclePredicate = "d.lifecycle_status IN ('quarantined','stopped')"
+		}
+		err := tx.QueryRow(ctx, `SELECT d.host_id,d.provider_ref,d.platform,d.lifecycle_status,d.health_status,
+			COALESCE(d.health_reason,''),COALESCE((SELECT c.command_type FROM device_host_commands c
+				WHERE c.payload->>'device_id'=d.id AND c.payload->>'operation_source'='management'
+				AND c.command_type IN ('stop','start','restart') AND c.status='succeeded'
+				ORDER BY c.completed_at DESC NULLS LAST,c.id DESC LIMIT 1),'')
+			FROM devices d JOIN device_hosts h ON h.id=d.host_id
+			WHERE d.id=$1 AND `+lifecyclePredicate+` AND h.status='online' AND NOT h.draining
+			AND EXISTS (SELECT 1 FROM device_pool_devices pd JOIN device_pools p ON p.id=pd.pool_id
+				WHERE pd.device_id=d.id AND pd.enabled AND p.platform='android' AND p.status='active' AND p.total_target>0)
+			AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
+			AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
+			AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
+			-- A persistent incident gets at most one automatic, non-destructive
+			-- restart.  A later incident is eligible only after a healthy heartbeat
+			-- was observed after that restart, or an operator explicitly released
+			-- the quarantine.  Without this fence, a transient STF/Agent flap can
+			-- enqueue a restart every reconciliation cycle.
+			AND NOT EXISTS (
+				SELECT 1
+				FROM device_host_commands previous
+				WHERE previous.id=(
+					SELECT latest.id FROM device_host_commands latest
+					WHERE latest.payload->>'device_id'=d.id
+					  AND latest.payload->>'operation_source'='self_healing'
+					  AND latest.command_type='restart'
+					  AND latest.status IN ('succeeded','failed','timed_out')
+					ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1)
+				AND COALESCE(d.last_seen_at,d.created_at) <= COALESCE(previous.completed_at,previous.updated_at)
+				AND NOT EXISTS (
+					SELECT 1 FROM device_audit_events reset
+					WHERE reset.resource_type='device' AND reset.resource_id=d.id
+					  AND reset.action='unquarantine_device'
+					  AND reset.created_at > previous.created_at)
+			)
+			FOR UPDATE OF d`, deviceID).Scan(&hostID, &providerRef, &platform, &lifecycle, &health, &healthReason, &latestManagementAction)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if platform != "android" {
+			return nil
+		}
+		if lifecycle == domain.DeviceQuarantined && (healthReason != domain.AgentReportedUnhealthyReason && !domain.IsSTFFailureReason(healthReason)) {
+			return nil
+		}
+		if lifecycle == domain.DeviceStopped && (!allowStopped || latestManagementAction == "stop") {
+			return nil
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return err
+		}
+		var runtimeProfileJSON []byte
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(d.runtime_profile_override,i.resource_config,'{}'::jsonb)
+			FROM devices d LEFT JOIN device_images i ON i.id=d.image_id WHERE d.id=$1`, deviceID).Scan(&runtimeProfileJSON); err != nil {
+			return err
+		}
+		runtimeProfile := map[string]any{}
+		if err := json.Unmarshal(runtimeProfileJSON, &runtimeProfile); err != nil {
+			return err
+		}
+		aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+		if err != nil {
+			return err
+		}
+		reason := "系统健康检查持续失败，非破坏重启原设备"
+		if lifecycle == domain.DeviceStopped {
+			reason = "活动设备池中的 Android 模拟器意外停止，系统自动非破坏重启原设备"
+		}
+		if aggregate.Health() != domain.HealthUnknown {
+			if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
+				return err
+			}
+		}
+		targetLifecycle := domain.DeviceProvisioning
+		if lifecycle == domain.DeviceStopped {
+			targetLifecycle = domain.DeviceBooting
+		}
+		if err := aggregate.Transition(targetLifecycle, reason, now); err != nil {
+			return err
+		}
+		commandID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]any{"operation_source": "self_healing", "operation_state": string(aggregate.Lifecycle()),
+			"device_id": deviceID, "host_id": hostID, "provider_ref": providerRef, "previous_reason": healthReason,
+			"runtime_profile": runtimeProfile})
+		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
+			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+			VALUES($1,$2,'restart',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload, "self-heal-restart-"+commandID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`, deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+		eventID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		eventPayload, _ := json.Marshal(map[string]any{"command_id": commandID, "previous_reason": healthReason})
+		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+			(id,device_id,source,event_type,severity,reason,payload,observed_at)
+			VALUES($1,$2,'reconciler','self_healing_restart_queued','warning',$3,$4::jsonb,$5)`,
+			eventID, deviceID, reason, eventPayload, now); err != nil {
+			return err
+		}
+		auditID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO device_audit_events
+			(id,actor_type,actor_id,action,resource_type,resource_id,request_id,reason,summary)
+			VALUES($1,'system','system','restart_device_self_healing','device',$2,$3,$4,
+			jsonb_build_object('command_id',$5::text,'previous_reason',$6::text))`, auditID, deviceID,
+			"self-heal-restart-"+commandID, reason, commandID, healthReason); err != nil {
+			return err
+		}
+		queued = true
+		return nil
+	})
+	return queued, err
 }
 
 func (service *Service) withinVisibilityGrace(device DeviceState, observedAt time.Time) bool {
@@ -284,13 +573,23 @@ func (service *Service) withinSTFOutageGrace(device DeviceState, observedAt time
 	return age >= 0 && age < service.visibilityGrace
 }
 
+func (service *Service) withinHostRecoveryGrace(device DeviceState, observedAt time.Time) bool {
+	if service.hostRecoveryGrace <= 0 || device.HostFailureStartedAt == nil {
+		return false
+	}
+	age := observedAt.Sub(*device.HostFailureStartedAt)
+	return age >= 0 && age < service.hostRecoveryGrace
+}
+
 func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout time.Duration) (int, error) {
+	// draining 是运维人员控制的安全状态。心跳过期时仍保留排空意图；
+	// 心跳年龄指标继续暴露故障，Host 在显式解除排空前始终不可调度。
 	rows, err := service.db.Pool().Query(ctx, `SELECT id FROM device_hosts
-        WHERE status IN ('online','draining')
+        WHERE status='online'
           AND COALESCE(last_heartbeat_at,created_at) < clock_timestamp() - make_interval(secs => $1)
         ORDER BY id`, int(hostTimeout/time.Second))
 	if err != nil {
-		return 0, fmt.Errorf("list stale device hosts: %w", err)
+		return 0, fmt.Errorf("查询心跳过期的设备宿主机：%w", err)
 	}
 	var ids []string
 	for rows.Next() {
@@ -311,7 +610,7 @@ func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout t
 		err := service.db.WithinTx(ctx, func(tx pgx.Tx) error {
 			var status domain.HostStatus
 			err := tx.QueryRow(ctx, `SELECT status FROM device_hosts
-                WHERE id=$1 AND status IN ('online','draining')
+                WHERE id=$1 AND status='online'
                   AND COALESCE(last_heartbeat_at,created_at) < clock_timestamp() - make_interval(secs => $2)
                 FOR UPDATE`, id, int(hostTimeout/time.Second)).Scan(&status)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -340,7 +639,7 @@ func (service *Service) markStaleHostsOffline(ctx context.Context, hostTimeout t
 			return nil
 		})
 		if err != nil {
-			return count, fmt.Errorf("mark stale device host offline: %w", err)
+			return count, fmt.Errorf("将心跳过期的设备宿主机标记为离线：%w", err)
 		}
 	}
 	return count, nil
@@ -354,7 +653,7 @@ func (service *Service) Run(ctx context.Context, interval, hostTimeout time.Dura
 	defer ticker.Stop()
 	for {
 		if _, err := service.RunOnce(ctx, hostTimeout); err != nil && !errors.Is(err, context.Canceled) {
-			service.logger.Error("device reconciliation failed", "error", err)
+			service.logger.Error("设备状态收敛失败", "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -405,10 +704,18 @@ type queryer interface {
 }
 
 func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
-	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.serial,d.lifecycle_status,
-		d.health_status,COALESCE(d.health_reason,''),d.consecutive_failures,h.status,
+	rows, err := query.Query(ctx, `SELECT d.id,d.host_id,d.platform,d.provider_ref,d.serial,d.lifecycle_status,
+		d.health_status,COALESCE(d.health_reason,''),
+		COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
+			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
+			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),
+		d.consecutive_failures,h.status,
 		EXISTS (SELECT 1 FROM device_host_commands c
-			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild')
+			WHERE c.payload->>'device_id'=d.id
+			AND c.command_type IN ('create','rebuild','reimage','restart','start')
+			AND c.status IN ('pending','leased')),
+		EXISTS (SELECT 1 FROM device_host_commands c
+			WHERE c.payload->>'device_id'=d.id AND c.command_type='delete'
 			AND c.status IN ('pending','leased')),
 		(SELECT max(c.completed_at) FROM device_host_commands c
 			WHERE c.payload->>'device_id'=d.id AND c.command_type IN ('create','rebuild') AND c.status='succeeded'),
@@ -416,7 +723,11 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 			SELECT e.observed_at FROM device_health_events e
 			WHERE e.device_id=d.id AND e.event_type='stf_not_visible'
 			ORDER BY e.created_at DESC LIMIT d.consecutive_failures
-		) recent)
+		) recent),
+		CASE WHEN h.status<>'online' THEN COALESCE(
+			NULLIF(h.capabilities->>'host_readiness_failure_started_at','')::timestamptz,
+			h.last_heartbeat_at,h.updated_at)
+		ELSE NULLIF(h.capabilities->>'host_readiness_failure_started_at','')::timestamptz END
 		FROM devices d JOIN device_hosts h ON h.id=d.host_id ORDER BY d.created_at,d.id`)
 	if err != nil {
 		return nil, err
@@ -425,9 +736,10 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 	result := []DeviceState{}
 	for rows.Next() {
 		var device DeviceState
-		if err := rows.Scan(&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
-			&device.Lifecycle, &device.Health, &device.HealthReason, &device.ConsecutiveFailures, &device.HostStatus,
-			&device.OperationInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt); err != nil {
+		if err := rows.Scan(&device.ID, &device.HostID, &device.Platform, &device.ProviderRef, &device.Serial,
+			&device.Lifecycle, &device.Health, &device.HealthReason, &device.AssignmentTarget, &device.ConsecutiveFailures, &device.HostStatus,
+			&device.OperationInFlight, &device.DeletionInFlight, &device.LatestProvisionedAt, &device.STFFailureStartedAt,
+			&device.HostFailureStartedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, device)
@@ -438,10 +750,13 @@ func listDevices(ctx context.Context, query queryer) ([]DeviceState, error) {
 func lockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceState, error) {
 	var device DeviceState
 	err := tx.QueryRow(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.serial,d.lifecycle_status,
-        d.health_status,d.consecutive_failures,h.status
-        FROM devices d JOIN device_hosts h ON h.id=d.host_id WHERE d.id=$1 FOR UPDATE OF d`, id).Scan(
+		d.health_status,COALESCE(d.health_reason,''),COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
+			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
+			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),
+		d.consecutive_failures,h.status
+		FROM devices d JOIN device_hosts h ON h.id=d.host_id WHERE d.id=$1 FOR UPDATE OF d`, id).Scan(
 		&device.ID, &device.HostID, &device.ProviderRef, &device.Serial,
-		&device.Lifecycle, &device.Health, &device.ConsecutiveFailures, &device.HostStatus)
+		&device.Lifecycle, &device.Health, &device.HealthReason, &device.AssignmentTarget, &device.ConsecutiveFailures, &device.HostStatus)
 	return device, err
 }
 

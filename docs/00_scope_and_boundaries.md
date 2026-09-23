@@ -4,9 +4,9 @@
 
 `alcor_device_farm` 是带独立控制后台的设备基础设施子系统，不是另一套评估业务平台。
 
-当前阶段在新版 Alcor 的 Device Farm Adapter 尚未完成时，使用独立仓库开发和验证设备域。新版 Alcor 负责评估业务和 RunAttempt 真相；本项目负责设备、宿主机、池、预约、技术连接真相以及这些设备域能力的 Web 操作入口。STF 只负责远控和设备可见性，Docker 只负责运行载体。
+项目最初在新版 Alcor 的 Device Farm Adapter 尚未完成时，使用独立仓库先行开发和验证设备域；当前新版 Alcor 的 Android/iOS Worker、Adapter、统一入口和服务端代理已经完成本地真实联调。新版 Alcor 负责评估业务和 RunAttempt 真相；本项目负责设备、宿主机、池、预约、技术连接真相以及这些设备域能力的 Web 操作入口。STF 只负责远控和设备可见性，Docker/CoreSimulator 只负责运行载体。
 
-新版方案将 Device Farm 排在第六阶段，并明确由独立 Worker 通过 Device Farm Adapter 使用。当前先固化可测试的北向 API；接入时由 Adapter 以 RunAttempt 身份申请、续租和释放设备，不直接读取或修改对方数据库。新版方案尚未确定设备域最终是否合仓，因此当前不得假设必须迁入旧 Alcor 目录。
+新版方案将 Device Farm 排在第六阶段，并明确由独立 Worker 通过 Device Farm Adapter 使用。当前已经固化并实际使用可测试的北向 API；Adapter 以 RunAttempt 身份申请、续租和释放设备，不直接读取或修改对方数据库。设备域继续以独立服务和独立数据库部署，不依赖旧 Alcor 目录，也不与新版 Alcor 共享数据库。
 
 ## 2. 设备农场负责
 
@@ -20,6 +20,7 @@
 - Appium Endpoint 的启动、端口隔离和健康状态；
 - Device Farm Console：设备总览、资源管理、人工预约、设备操作和设备域审计；STF 原生 Web 页面保持独立受控访问，Console 不展示 `remoteConnect` TCP 地址；
 - 面向外部任务系统的幂等北向 API。
+- 第二版专用 macOS Host、iOS Simulator/真机的设备域 inventory、健康、Pool、Reservation 和技术连接；具体边界以 ADR-0021 与 `docs/08_ios_device_farm_v2_design.md` 为准。
 
 ## 3. 新版 Alcor 负责
 
@@ -46,6 +47,8 @@
 - 禁止自行启动远程 Emulator 或 Appium；
 - 每次运行写入外部指定的独立报告目录；
 - 原本地单机运行行为保持不变。
+
+DaFit 当前仍是 Android 执行器，不因为设备农场增加 iOS 而自动成为 iOS Runner。iOS Case、页面对象、动作、断言和报告必须由 Alcor 或后续明确选定的 iOS Executor 负责，本仓库不得复制 DaFit 形成第二套实现。
 
 ## 5. 数据所有权
 
@@ -77,5 +80,7 @@ DaFit 生成的 HTML/JSON、截图和日志只在联调阶段由 Harness 返回�
 - 不使用进程内锁代替 PostgreSQL 并发约束；
 - 不把 DaFit 业务代码变成设备农场的一部分。
 - 不把 Device Farm Console 扩展成包含 Case、Dataset、Target、Config、Run、评分、门禁和业务报告的第二套 Eval Console。
+- 不把 Appium Device Farm 的数据库、busy、Team Allocation、人工 block/unblock 或 Dashboard 当作第二套设备预约真相；iOS Session 只能绑定本项目 active Reservation 的明确 UDID。
+- 不在浏览器或普通 API 暴露 Appium Device Farm、WDA、go-ios、Apple Account、签名私钥、Provisioning Profile 或 Session Grant。
 
 现有能力的具体归属和允许新建范围以 [现有能力复用矩阵](01_existing_capability_reuse_matrix.md) 为准。

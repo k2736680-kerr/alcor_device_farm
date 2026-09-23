@@ -92,7 +92,7 @@ COOKIE_OR_BEARER_HEADER_PATTERN=0
 执行：
 
 ```powershell
-& 'E:\AutoTestTools\Tools\go1.26.5\go\bin\go.exe' test ./internal/... -p=1 -count=1
+& 'D:\AutoTestTools\Tools\go1.26.5\go\bin\go.exe' test ./internal/... -p=1 -count=1
 ```
 
 结果：`internal/adapters/stf`、`internal/scheduler`、`internal/reservation`、`internal/reaper`、`internal/reconcile`、`internal/api`、`internal/contract` 以及其余 `internal/...` 包全部通过。

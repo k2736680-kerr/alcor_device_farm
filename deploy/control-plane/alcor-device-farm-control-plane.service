@@ -1,0 +1,18 @@
+[Unit]
+Description=Alcor Device Farm control-plane Compose stack
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/data/stacks/alcor-device-farm
+ExecStart=/usr/bin/docker compose --profile ios --env-file /data/stacks/alcor-device-farm/postgres.env --env-file /data/stacks/alcor-device-farm/server.env -f /data/stacks/alcor-device-farm/compose.yaml up -d
+ExecStop=/usr/bin/docker compose --profile ios --env-file /data/stacks/alcor-device-farm/postgres.env --env-file /data/stacks/alcor-device-farm/server.env -f /data/stacks/alcor-device-farm/compose.yaml stop
+TimeoutStartSec=180
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

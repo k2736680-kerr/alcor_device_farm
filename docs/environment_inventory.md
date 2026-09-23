@@ -73,9 +73,9 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 
 | 仓库 | 分支/commit | 工作区状态 | 处理规则 |
 |---|---|---|---|
-| `alcor_device_farm` | `master`，尚无首个 commit | 当前方案和目录均为未跟踪文件 | 开发只在该目录进行，首个 commit 由用户决定何时创建 |
-| `dafit_auto_platform` | `main` / `ea59e78f3d3a7026a48ddb5a237f6d6d27915956` | 干净 | DF-019 前不修改；届时创建独立 feature 分支 |
-| `Alcor` | `master` / `1755f5c58e0b20deff2e9c331457c0933fcdc9de` | 有未跟踪 `alcor_console/`、`docs/` | 旧版事实和用户文件，不修改；等待新版实际分支 |
+| `alcor_device_farm` | `codex/device-farm-v2` / `60a1855` | Git 跟踪文件工作树干净；保留被忽略的临时验收目录 | 第二版设备域和 Console 继续在本分支维护；新架构改动先更新文档/ADR |
+| `dafit_auto_platform` | `main` / 以当前工作树为准 | 可能含用户未提交修改 | 只复用其既有 Runner、Appium、证据和报告能力，不复制到本仓库 |
+| `Alcor` | 本地实际开发分支/当前工作树 | 具有 Android/iOS Worker、Device Farm Adapter、同源设备入口和相关文档；工作树可能含用户修改 | 作为新版集成事实来源只读核对；不修改其工作树，不将其业务对象迁入设备农场 |
 
 ## 7. 开发和验收能力矩阵
 
@@ -90,7 +90,7 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 | Docker Emulator | 不可 | 缺 Linux KVM Host 和 Docker |
 | STF 完整环境 | 不可 | 等 DF-017 部署环境 |
 | 单设备 Android 16/Appium | 可在 Linux KVM 服务器执行 | 当前使用一台 Emulator；多设备并发为 P2 扩展验收 |
-| 新版 Alcor 联调 | 不可 | 等新版实际分支和 OpenAPI |
+| 新版 Alcor 联调 | 已完成本地真实联调 | 使用新版实际分支、RunAttempt、Android/iOS Worker 和 Device Farm Adapter；正式环境发布另行验收 |
 
 ## 8. 依赖准备顺序
 
@@ -99,8 +99,22 @@ Appium 设备方案原文写的是 Appium 2，而当前已验证环境安装 App
 3. DF-014 前：提供 Linux KVM Host、Docker Engine 和可用网络；
 4. DF-015~DF-018：在 Host 环境固定 Appium、UiAutomator2、STF 和 Emulator 镜像版本；
 5. DF-019：只对 DaFit 增加 Farm 模式薄适配；
-6. ALCOR-001：等待新版 Alcor OpenAPI。
+6. ALCOR-001：已完成新版 Alcor 实际分支的本地真实联调和统一入口；后续接口变化继续按双方 OpenAPI 做契约回归。
 
 ## 9. 敏感信息处理
 
 本清单未保存完整设备序列号、用户名密码、数据库 DSN、Appium/STF Token、Docker Registry 凭据或 Alcor Secret。后续证据继续使用相同规则。
+
+## 10. DF-047 第二版真实环境更新（2026-08-19）
+
+原 DF-000 盘点保留为第一版开发起点；DF-047 最终验收使用的真实环境已扩展为：
+
+| 环境 | 脱敏事实 | 当前用途 |
+|---|---|---|
+| Windows 开发机 | Windows 11、Go 1.26.5、Python 3.12.10、PostgreSQL 17.10 便携测试实例 | Go/Console/OpenAPI、migration up/down/up、DaFit collect-only、Alcor 契约 |
+| Linux KVM Host | Ubuntu x86_64、Docker Engine、KVM；当前一台 Android 15 / API 35 / x86_64 长期 Emulator | Android 第一版 Reservation、STF、Appium、DaFit 真实回归；不因 iOS 回滚重建 |
+| 专用 macOS Host | macOS 26.5.1（25F80）、arm64、10 核、24 GiB 内存、4 个设备槽位、Xcode 26.3（17C529） | iOS Simulator 动态生命周期、XCUITest/WDA Session 与受控远控 |
+
+macOS Host 固定工具链为 Node.js 22.23.2、Appium 3.6.0、Appium Device Farm 12.0.1、XCUITest Driver 12.4.0、WebDriverAgent 16.2.0、go-ios 1.3.2。DF-047 选择 Host 已安装且受 allowlist 约束的 iOS 18.6 Runtime 与 iPhone 16 Pro Simulator 类型执行真实循环；不自动下载 Runtime，不使用 tvOS，不宣称接入真实 iPhone。
+
+当前设备农场开发分支为本地 `codex/device-farm-v2`。DaFit 当前用户工作树收集 449 个执行实例，不能把 DF-000 的 26 项或旧文档中的 158 项写回当前基线；Alcor 和 DaFit 的既有未提交修改均按用户资产保留。

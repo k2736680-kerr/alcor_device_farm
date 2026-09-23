@@ -60,6 +60,38 @@
 | DF-037 | Phone 硬件模板和受控模拟器创建向导 | completed | DF-036 |
 | DF-038 | 长期设备、基础设备扩容和 Android Studio 式创建流程 | completed | DF-037 |
 | ALCOR-001 | 新版 Alcor 真实接口联调与统一入口 | completed | DF-028、新版 Alcor 实际 `test` 分支 |
+| DF-039 | 第二版多平台宿主机与 iOS 接入设计 | completed | DF-038、ALCOR-001、Android 第一版归档基线 |
+| DF-040 | 平台中立设备域模型与契约 | completed | DF-039 |
+| DF-041 | macOS Host Agent 与 Appium Device Farm Adapter | completed | DF-040 |
+| DF-042 | Reservation 绑定的 iOS Session Fence | completed | DF-041 |
+| DF-043 | iOS Simulator 固定库存接入 | completed | DF-042 |
+| DF-044 | iOS Simulator 动态创建、重建和删除 | completed | DF-043 |
+| DF-045 | Device Farm Console iOS 设备域页面 | completed | DF-044 |
+| DF-046 | iOS Simulator 受控远程控制 | completed | DF-045、ADR-0025 |
+| DF-047 | iOS 真实验收、运维回滚与 Android 回归 | completed | DF-046 |
+| DF-048 | 统一 Android 与 iOS 设备池自动伸缩 | completed | DF-047 |
+| DF-049 | 统一设备农场控制台功能与中文文案审校 | completed | DF-048 |
+| DF-050 | 使用 Baguette 替换并清理自写 iOS 远控 | completed | DF-049、ADR-0026 |
+| DF-051 | 修复普通成员远控入口与独立网关可达性 | completed | DF-050 |
+| DF-052 | 修复多设备并存时远控安装目标错配 | completed | DF-051、ADR-0027 |
+| DF-053 | 受管虚拟设备自动淘汰替换与可用性收敛 | completed | DF-048、DF-052、ADR-0028 |
+| DF-054 | 设备农场控制台全页面可用性审校 | completed | DF-049、DF-053 |
+| DF-055 | 简化设备运行视图并清理历史噪声入口 | completed | DF-054 |
+| DF-056 | 正式数据清理与长期设备非破坏自愈 | completed | DF-055、ADR-0029 |
+| DF-057 | 全仓不可达代码与旧策略清理 | completed | DF-056 |
+| DF-058 | 独立控制台安全保持登录 | completed | DF-057 |
+| DF-059 | 修复正式控制台密码哈希并完成真实登录验收 | completed | DF-058 |
+| DF-060 | 设备可读名称与指定设备排队 | completed | DF-059 |
+| DF-061 | 修复跨入口挂断与过期预约回收 | completed | DF-060 |
+| DF-062 | 修复 Emulator OOM 后的幽灵占用与原机恢复 | completed | DF-061、ADR-0029 |
+| DF-063 | Android CPU 和内存无损改配 | completed | DF-062、ADR-0030 |
+| DF-064 | 220 控制面预部署与独立数据库隔离 | completed | DF-063、ADR-0031 |
+| DF-065 | 控制面瞬时切换准备与 Agent 端点 | completed | DF-064、ADR-0032 |
+| DF-066 | 控制面 iOS 隧道与 HTTPS Gateway 部署包 | completed | DF-065、ADR-0033 |
+| DF-067 | 控制台宿主机登记与 Agent 引导 | completed | DF-066、ADR-0034 |
+| DF-068 | 宿主机接入安装引导与预检 | completed | DF-067、ADR-0035 |
+| DF-069 | 控制台本地 E2E 启动与发布前回归 | completed | DF-068、ADR-0036 |
+| DF-070 | 失败创建占位补偿与按需池恢复 | in_progress | DF-069、ADR-0038 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -155,11 +187,11 @@
 
 ### DF-010 续租、释放和 Reaper
 
-实施：实现 extension、主动 release、强制 release、grace period 和数据库锁保护的 Reaper。
+实施：实现 extension、主动 release、强制 release、grace period 和数据库锁保护的 Reaper。按 ADR-0023，最大租期表示相对数据库当前时间的有限滑动窗口；运行方周期续约时不得因累计运行超过一小时而强制结束。
 
 产出：租约 service、后台 Reaper、时间可控测试。
 
-验收：合法续租更新 expires_at；超过最大租期被拒绝；过期预约在目标时间内关闭；并发 release 幂等；两台 Reaper 同时运行只回收一次。
+验收：合法续租更新 expires_at；单次续约和任意时刻的未来到期时间不超过设备池最大窗口；累计运行超过四小时仍可续约；过期预约不能复活并在目标时间内关闭；并发 release 幂等；两台 Reaper 同时运行只回收一次。
 
 ### DF-011 Reconciler、健康事件和隔离
 
@@ -405,7 +437,260 @@
 
 验收：Eval Console 创建 Run 后，Worker 自动申请设备、执行、写 ClickHouse/Supabase、释放设备；RunAttempt 与 Device Session 可双向追溯；失败正确映射为 failed 或 infra_failed；Alcor 设备入口与独立 Device Farm Console 不产生两套设备状态或操作语义；浏览器没有 Service/STF Token，设备操作审计记录钉钉操作者，打开设备入口无需第二次登录。
 
-## 11. 单任务完成定义
+## 11. 第二版多平台设备农场
+
+### DF-039 第二版多平台宿主机与 iOS 接入设计
+
+实施：只做设计、复用验证和真实环境盘点，不修改 API、数据库、状态机或 Provider 代码。固定 Android 第一版归档基线和本地第二版分支；核对 Appium Device Farm、Appium 3、XCUITest、WebDriverAgent、go-ios、macOS/Xcode 和 iOS 真机/Simulator 的版本与职责；明确现有 PostgreSQL Scheduler、Pool、Reservation、Reaper 和审计继续作为唯一设备占用真相，Appium Device Farm 只能作为宿主机侧发现、连接和 Session 路由候选组件；设计按明确 UDID 使用设备的防双分配约束、平台中立健康模型、连接快照、Android STF 保留策略和 iOS 人工远控边界。
+
+产出：第二版专项 ADR、更新后的复用矩阵、架构对齐表、功能方案、分步实施任务、验收环境和 `docs/evidence/DF-039/` 证据。后续实现任务只有在这些文档明确允许后才能新增。
+
+验收：可以明确回答 macOS Host、iOS 真机和 Simulator 分别如何发现、签名、健康检查、预约、建立 XCUITest Session、释放和故障收敛；证明不会让 Appium Device Farm 与 PostgreSQL 各自独立分配同一设备；明确 Appium Device Farm 12.x 不提供当前版本的人工串流，因此不把它描述为 STF 的跨平台远控替代；Alcor/DaFit/STF/Appium 的既有职责没有被复制；没有写入任何生产代码、migration 或真实凭证。
+
+### DF-040 平台中立设备域模型与契约
+
+实施：按 ADR-0021 为 Host、Pool、Device、Connection 和健康模型增加明确平台语义；migration 将现有数据回填为 Android，Pool 禁止混合平台，Device 支持 `simulator/physical` 和 iOS Provider；允许同 Host 多台 iOS Device 共享 Appium Endpoint，同时保持 UDID/serial、Provider identity 和 active Reservation 唯一。更新 OpenAPI、领域状态机、Scheduler 能力匹配、Mock 与契约测试，不接入真实 Appium Device Farm。
+
+产出：可回滚 migration、平台中立领域模型、OpenAPI、Repository/Scheduler 适配、Mock 测试和证据。
+
+验收：migration up/down/up；Android 旧数据和全部第一版测试无回归；iOS Pool 不能加入 Android Device；共享 Endpoint 合法但重复 UDID 被拒绝；100 个并发请求竞争一台 Mock iOS Device 仍只有一个 active Reservation。
+
+### DF-041 macOS Host Agent 与 Appium Device Farm Adapter
+
+实施：让现有 Host Agent 在 macOS 运行并上报 host_os、架构、Xcode/Runtime、Node、Appium、Device Farm、XCUITest、WDA/go-ios 版本与脱敏 readiness；新增固定 12.0.1 的 Appium Device Farm Adapter，只读取本机 inventory、busy 和 Node 健康。每台 Host 使用本机 Hub/Node，不启用跨 Host Hub 分配，不把插件数据库同步为业务表。
+
+产出：macOS 构建/部署入口、版本锁、Adapter 契约、Host 心跳扩展、故障分类和 E4 环境部署说明。
+
+验收：版本不匹配、Xcode license、Appium doctor、Node 离线均阻止新预约；未知设备只登记 unknown/quarantined；插件凭证和 Apple Secret 不进入心跳、日志或 API；Android Linux Agent 回归通过。
+
+### DF-042 Reservation 绑定的 iOS Session Fence
+
+实施：新增基础设施级 Session Fence。它只接受短时单次 Session Grant，校验 active Reservation、Device、Host、Endpoint 和 UDID，强制相同的 `appium:udid` 与单值字符串 `df:udids=<reserved_udid>` 后透明转发 Appium Session；保存 Appium Session ID 技术绑定并让 Reaper 关闭遗留 Session。`providerBusy` 作为占用事实继续上报，不把正常活动 Session 误判为 Router 故障；正常清理后留 30 秒等待心跳刷新 busy。禁止 tags、filterByHost、多 UDID 和浏览器直连 Node，不解释或实现 WebDriver 业务命令。
+
+产出：Session Grant/Fence 契约、技术绑定持久化、网络配置、漂移 Reconciler、故障测试和审计。
+
+验收：无 Reservation、错误/多 UDID、重放 Grant、跨 Host Endpoint 均拒绝；插件 busy 与 Reservation 不一致时停止分配并隔离；活动 Session 期间 Host 保持 online、Device 保持 busy/healthy；Session 删除/过期后 busy、Device Session 和 Reservation 收敛且不会在清理心跳宽限内误隔离；任何时刻同一 Device 最多一个 active Session。
+
+### DF-043 iOS Simulator 固定库存接入
+
+实施：在 E4 只接入管理员 allowlist 中已经创建并 booted 的 Simulator；Agent 报告 UDID、Runtime、机型和健康，Server 通过既有 Pool/Reservation 管理固定库存。首期不下载 Runtime、不自动克隆或删除 Simulator，启动/停止操作必须使用受控 Host Command。
+
+产出：Simulator inventory/health Provider、受控命令、Pool/Reservation 集成、E4 部署和证据。
+
+验收：两台不同 UDID Simulator 可发现、加入单平台 Pool、分别预约并并发建立 XCUITest Session；WDA 冷启动在 300 秒安全窗口内不得被漂移检查误隔离；shutdown、boot timeout、Agent 重启和 UDID 冲突正确收敛；50 次循环无永久 busy、双占或端口/Session 泄漏。
+
+### DF-044 iOS Simulator 动态创建、重建和删除
+
+实施：按 ADR-0024 让 macOS Agent 上报已安装且受控的 iOS Runtime 与 iPhone Device Type 目录；新增受控创建 API，复用现有 Device、Pool、Host Command、容量预检、幂等、审计和 Provider 链路执行 `simctl create/boot/bootstatus`。为无活动 Reservation/Session 的 Simulator 实现 shutdown、erase 重建和 delete；调用方不能提交 shell 或任意参数。
+
+产出：CoreSimulator 目录、Provider 动态生命周期、Server 创建编排、OpenAPI、容量/并发/故障测试、macOS 部署说明和 E4 证据。
+
+验收：从后台分别选择 Host 已安装的 Runtime 和受控 iPhone 类型创建 Simulator，最终进入 ready/healthy 并可按明确 UDID 建立 XCUITest Session、读取最小 `/source` 后删除 Session；stop/start、erase rebuild、delete 均真实通过；容量不足返回中文缺口且无半条 Device/Command；busy 或有活动 Reservation 时拒绝 rebuild/delete；Agent 重启后动态设备可重新发现；重复幂等请求不重复创建；删除后无残留 UDID、Session、Reservation 或 provider busy。
+
+### DF-045 Device Farm Console iOS 设备域页面
+
+实施：在现有 Host、Pool、Device、Reservation 和审计页面增加平台筛选、iOS Runtime/机型、Simulator、组件健康以及动态创建向导；操作继续调用设备 API。iOS 页面明确人工远控不支持，不显示 Android STF 操作、Appium Endpoint、Dashboard、WDA 地址或 Session Grant。
+
+产出：Console 页面、OpenAPI client、权限/安全测试和真实浏览器证据。
+
+验收：viewer/operator/admin 权限正确；跨平台操作受服务端校验；浏览器构建、网络和存储无内部 Endpoint/Secret；刷新后与 Server 一致；Android Console 和 STF 原生远控无回归。
+
+### DF-046 iOS Simulator 受控远程控制
+
+实施：复用 Appium Device Farm 的明确 UDID 路由、Appium XCUITest Session、WDA MJPEG/动作，以及既有 `remotecontrol.Service` 的 Reservation、滑动租约、心跳、释放、Reaper 与审计。Server 通过 Session Fence 为当前管理员独占预约创建人工 Session，只向浏览器签发同源短时入口和固定画面/动作白名单，不返回 Host、Fence、Appium、WDA、MJPEG、Agent Token 或 Session Grant。Android 继续使用 STF，不复制或迁移 STF 协议。
+
+产出：远控传输抽象、Session Fence 受控画面/动作接口、同源 iOS 远控页、Console 入口、部署/回滚说明、权限/双占/泄露测试和真实 Mac 证据。
+
+验收：管理员只能看到和操作已预约的目标 iOS Simulator，画面不含 macOS 桌面；截图/MJPEG、点击、滑动、文本和 Home 有效；远控与自动化 Session、其他操作者、drain、隔离和超时均互斥且正确收敛；浏览器无法直连 Fence/Appium/WDA/MJPEG 或发送任意 WebDriver 命令；Android STF 远控无回归。
+
+### DF-047 iOS 真实验收、运维回滚与 Android 回归
+
+实施：按 `docs/09_ios_device_farm_v2_acceptance.md` 在 E4/E6 执行当前动态 Simulator P0/P1，完成多设备、过期回收、漂移、稳定性、指标、告警、备份、升级、排空和版本回滚；同时执行 Android 第一版真实链路和 Alcor Device Farm Adapter 契约回归。真实 iPhone 与 iOS 业务 Executor 另立后续任务。
+
+产出：完整脱敏证据、运维/故障/回滚文档、版本清单、已知问题和最终签收记录。
+
+验收：iOS Simulator 创建/Session/重建/删除至少 50 次循环无双占、串机、永久 busy 或 CoreSimulator 残留；Host/Agent/Appium 故障 120 秒内收敛或隔离；回滚后 Android 继续可用；报告明确当前未宣称真实 iPhone 已接入。
+
+### DF-048 统一 Android 与 iOS 设备池自动伸缩
+
+实施：复用现有 Pool `total_target/min_ready/max_concurrency`、基础设备字段、Host Command、Host Agent、容量预检和 Provider 生命周期，为 iOS Pool 增加与 Android 一致的固定目标自动伸缩。管理员先从本 Pool 选择一台 `ready/healthy` iOS Simulator 作为扩容模板；扩容只复用其 Mac Host、Runtime 与 iPhone Device Type 创建全新 CoreSimulator，不复制设备数据；缩容只删除没有活动 Reservation/Session 和在途命令的最旧空闲 Simulator。Console 的目标输入不再按平台禁用，实际数量、目标、差额、模板缺失和容量不足必须使用真实 API 数据与中文说明。
+
+产出：iOS Pool 目标 Controller、模板设备校验、Android/iOS 通用缩容、Console 目标表单、并发/容量/安全缩容测试和 `docs/evidence/DF-048/`。
+
+验收：iOS 目标从 3 调到 6 时，在模板和容量满足的情况下只创建 3 台且每台 Runtime/机型与模板一致、数据全新；两个 Controller 并发不超建；模板缺失、Host 排空/离线、内存/磁盘/槽位不足时保留真实目标并显示中文原因，不留下半条资源；目标降低时不强删使用中设备，空闲设备经既有 Agent/CoreSimulator 删除链路收敛；Android 自动扩缩容和 iOS 手工创建/删除均无回归。
+
+### DF-049 统一设备农场控制台功能与中文文案审校
+
+实施：逐页审核导航、总览、宿主机、设备池、设备、预约、健康事件、审计、登录和远控中的字段名、按钮、确认、成功/失败提示、空状态和帮助文字。产品口径统一为 Android+iOS 设备农场；平台名称统一使用 Android/iOS，Android 专属镜像、ADB、STF 与 iOS 专属 CoreSimulator、Runtime、WDA 只在对应平台出现；面向用户的 request ID、错误、租期和状态使用中文名称，不显示失实的迁移、自动清理或单平台说明。同步补齐关键交互测试。
+
+产出：控制台平台化文案清单、页面与标签修正、组件测试和 `docs/evidence/DF-049/`。
+
+验收：全控制台搜索不存在把统一平台误写成纯 Android、把 Mac 当普通模拟器服务器、把释放误写为清理数据或把目标数量写死的文案；Android/iOS 条件字段和操作正确；所有用户提示为中文且包含可追踪请求编号；前端测试和生产构建通过，真实同一后台能同时查看并操作 Android 与 iOS。
+
+### DF-050 使用 Baguette 替换并清理自写 iOS 远控
+
+实施：按 ADR-0026 固定并部署 Baguette，新增只负责健康、目标 UDID 和独立签名 Gateway 的 Adapter；现有开始、查询、心跳和结束 API 继续复用 PostgreSQL Reservation/Lease/Reaper。删除自写 iOS HTML/CSS/JavaScript、WDA MJPEG/截图/动作代理、人工 Appium Session 创建、Fence 远控路由及 Alcor 旧同源代理。Android 继续挂载 STF 原生页面，iOS 挂载 Baguette 原生页面。
+
+产出：ADR-0026、Baguette Adapter/Gateway、Mac 后台服务与安全通道配置、OpenAPI/Console/Alcor 入口修正、旧代码零残留扫描、真实浏览器证据和 `docs/evidence/DF-050/`。
+
+验收：真实 Mac 与浏览器连续操作舒适可用，点击、滑动、文字、Home、应用切换和重连生效；其他 UDID、设备墙、生命周期和插件命令被拒绝；结束或超时后页面失效且 Reservation 回收；Android STF、iOS 自动化 Session Fence、Appium Device Farm inventory 均无回归；仓库和部署中不存在旧自写页面、MJPEG/动作转发或可恢复旧方案的配置；全部提示为中文。
+
+### DF-051 修复普通成员远控入口与独立网关可达性
+
+实施：修正 Console 角色与既有设备 API 权限不一致的问题，使 operator/admin 可使用 Android STF 和 iOS Baguette 人工远控，viewer 保持只读；iOS Gateway 使用与 Android STF 一致的 30.171 可访问主机名，不要求修改 Alcor 代码或新增 Alcor 远控路由。
+
+产出：Console/Server 权限修正、角色回归测试、30.171 部署配置和 `docs/evidence/DF-051/`。
+
+验收：普通 Alcor 设备农场成员可以看到远程连接入口并使用自己预约的 Android/iOS 设备；viewer 不能启动远控；管理员危险操作权限不下放；Baguette HTTP/WebSocket、预约隔离、心跳、挂断和 Android STF 无回归；正式 Alcor 代码与服务不改动。
+
+### DF-052 修复多设备并存时远控安装目标错配
+
+实施：按 ADR-0027 保留 STF/Baguette 原生 APK/IPA 安装实现，不新增 App Build、Artifact 或第二套安装器。Android 的 claim、remoteConnect、release 和 STF Web 单设备入口统一使用预约 Device 的明确 `stf_serial`；iOS Baguette Gateway 将会话 Cookie 按 UDID 隔离，从请求设备路径或同源页面来源选择对应会话，多个设备会话同时存在时禁止模糊回退。只有当前预约 UDID 的 `/simulators/:udid/files` 可透传，错误会话、其他 UDID 或无明确目标均失败关闭。
+
+产出：ADR-0027、Android STF 序列号统一、iOS 多标签页会话隔离、双设备上传目标测试、真实测试环境验证和 `docs/evidence/DF-052/`。
+
+验收：同时打开两台 iOS Simulator 时，分别拖入 Simulator App 包只会向各自 UDID 的 Baguette `/files` 路径发起安装，错误会话不能安装到任一设备；Android STF 入口、claim、远程连接和释放使用同一个 `stf_serial`，不会回退第一台 ADB 设备；上游返回失败时页面不得提示成功；预约结束后安装入口立即失效；正式 Alcor 与正式环境均不改动。
+
+### DF-053 受管虚拟设备自动淘汰替换与可用性收敛
+
+实施：按 ADR-0028 修正 iOS Pool 的容量统计，隔离、停止或不健康 Simulator 不再满足固定目标；Agent 对成功/失败的完整 inventory 明确打标，Server 对完整清单中持续消失的已登记 Simulator 收敛为故障。无活动 Reservation、技术 Session 或在途命令的故障 Simulator 自动复用既有 delete Host Command 清理 CoreSimulator，成功后保留历史记录并按 Pool 原目标创建全新设备；删除失败保留隔离并阻止盲目超建。扩容模板允许在原基础设备淘汰后继续使用已验证的静态 Host/Runtime/Device Type 配置，但每次创建仍重新校验 Host 目录、心跳和容量。Console 以可用、使用中、恢复中、故障表达日常状态，并显示 Pool 目标、已登记、可用、恢复中、故障和缺口；Prometheus 增加平台与 Pool 容量指标和缺口告警。
+
+产出：ADR-0028、inventory 缺失收敛、iOS 自动删除补建 Controller、Pool 容量修正、简化状态展示、平台/Pool 指标与告警、回归测试和 `docs/evidence/DF-053/`。
+
+验收：`total_target=min_ready=2` 且一台 Simulator 进入隔离或从一次成功的完整 inventory 持续消失时，不再显示目标已满足；无占用故障设备只产生一个幂等 delete Command，CoreSimulator 删除成功后自动补建至两台可服务设备且目标不变。删除失败时不创建第三台、不形成命令或事件风暴，并显示明确故障。inventory 请求失败不误删全部设备；基础模板被替换后仍可按其已验证 Runtime/机型补建。Host 页面不把 Agent 在线表述为设备可用，Pool/Device 页面只突出简化可用性。Android、真机、Reservation、Session Fence、STF/Baguette 和 DaFit 回归通过。
+
+### DF-054 设备农场控制台全页面可用性审校
+
+实施：在不新增评估业务对象、不复制 STF/Appium/DaFit 能力且不改变设备域状态机的前提下，逐页审校运行概览、Host、Pool、Device、Reservation、健康事件和操作审计。统一页面标题、用途说明、刷新时间、手动刷新、加载失败和空状态；主表只保留日常判断与直接操作字段，把内部编号、Endpoint、原始 payload、完整资源规格和创建信息移入详情。Pool 直接展示目标、可用、使用中、恢复中、故障和缺口；Reservation 默认突出进行中记录并展示剩余时间与失败结果；响应式和嵌入模式保留清晰页面上下文。
+
+产出：Console 共用页面组件、全页面字段与交互优化、响应式样式、组件测试、浏览器验收和 `docs/evidence/DF-054/`。
+
+验收：每个页面都能明确说明用途、显示最近更新时间、手动刷新并在请求失败时给出可重试错误；主表不直接暴露内部 Host 地址和自动化 Endpoint，技术字段可在详情中按权限查看；Pool 容量、Device 可用性、Reservation 剩余时间和故障原因无需横向查找；当前记录与历史记录有清晰入口；桌面、窄屏和 Alcor 嵌入模式可完成主要查看与操作。前端测试、生产构建、Go 全量测试、静态检查和真实浏览器验收通过。
+
+### DF-055 简化设备运行视图并清理历史噪声入口
+
+实施：控制台日常视图只保留当前可用、使用中和故障设备，移除已删除历史、全部记录、健康事件菜单和逐设备健康记录入口；旧健康事件路由统一跳转到故障设备。宿主机主表以 Agent 与调度状态表达当前可用性，精确心跳时间只保留在详情。设备池允许把目标安全降到零，向 API 保留合法的最小并发值，以支持清空故障模板后重新创建。
+
+产出：精简后的导航、设备和宿主机主表，设备池清空回归测试，现场 Android 故障资源重建与 Android/iOS 真实 Appium 验收证据。
+
+验收：日常页面不再显示 deleted 数量和数千条底层健康事件，旧链接可安全回到故障设备；后台心跳、健康收敛和审计能力继续工作；设备池可从一台安全降到零并恢复；Android 与两台 iOS 均逐台完成真实 Appium Session、页面树读取和会话释放，无残留预约或会话。
+
+### DF-056 正式数据清理与长期设备非破坏自愈
+
+实施：按 ADR-0029 取代 DF-053 的故障虚拟设备自动删除补建。Warm Pool 把所有未显式删除的虚拟设备计入登记容量，iOS 故障设备不再排队自动 delete；Reconciler 对系统产生的 Android Agent/STF 隔离重探原 Device，恢复时回到原预约状态或 ready，持续失败且空闲时只排队一次既有 restart Host Command。管理端允许隔离设备执行 restart，但 rebuild/reimage/delete 继续明确标记为破坏性人工操作。正式启用前先备份 PostgreSQL，在维护窗口清理测试 Reservation、Session、健康事件、审计、Host Command、provisioning job、幂等和 deleted Device 关系，保留当前 Host、Pool、Image、三台 Device 及 Provider 数据。
+
+产出：ADR-0029、非破坏恢复实现、容量与自动删除回归、清理前备份和清理清单、三台设备身份/数据保持证据、`docs/evidence/DF-056/`。
+
+验收：Android 因 Agent/STF 短暂失败进入系统隔离后，真实健康恢复必须使用原 Device ID 自动回到 ready；持续失败最多自动 restart 一次且 Device ID、Provider ref、Pool membership 和数据卷不变。restart 失败只隔离；人工隔离不自动解除；Android/iOS 故障设备均不得产生自动 delete/rebuild/reimage 或替代 create。清理后历史业务/健康/审计/命令/已删除设备计数为零，当前三台设备、两台 Host、两类 Pool/Image 配置存在且逐台 Appium `/source` 验证通过。
+
+### DF-057 全仓不可达代码与旧策略清理
+
+实施：从 Server、Host Agent、Harness、Adapter Mock、Console、Docker 构建和部署脚本入口建立引用清单；使用 Go `deadcode -test`、Staticcheck、`go vet`、TypeScript `noUnusedLocals/noUnusedParameters`、Knip 文件扫描和全文引用核对删除不可达实现。重点移除 ADR-0029 已取代且正式历史已清零的 iOS 自动删除补建完成分支与 Console 旧文案、未调用领域构造器/方法、未调用 Repository 查询、未使用 import 和无效控制流。生成的 OpenAPI Client、独立运维脚本、E2E fixture、迁移、回滚和历史证据不因单纯“没有 import”而删除。
+
+产出：删除清单与保留理由、持续静态检查配置、全量回归和 `docs/evidence/DF-057/`。不新增兼容实现、第二套 Adapter、业务对象、API、表或状态。
+
+验收：`deadcode -test ./...` 零结果；Staticcheck 排除纯样式 `ST*` 规则后零问题；Console 开启未使用局部变量和参数检查且构建通过；OpenAPI 生成无漂移；Go 全量测试、`go vet`、Console 测试、生产构建和真实三设备冒烟通过。Warm Pool 显式缩容仍可用，健康故障仍不自动删除或补建；正式库继续保持零历史污染，三台 Device ID/Provider ref 不变。
+
+### DF-058 独立控制台安全保持登录
+
+实施：复用现有 PostgreSQL Console Session、HttpOnly/SameSite Cookie、CSRF 双提交校验、Argon2id 配置用户和注销吊销机制，把默认绝对会话期限与空闲期限统一设为 30 天。登录页明确说明只保存安全登录状态、不在浏览器记录明文密码；账号、角色和密码哈希来源不变，不新增表、API、状态或第二套认证实现。
+
+产出：长期会话默认配置、登录页安全提示、配置/前端/认证回归、正式部署验证和 `docs/evidence/DF-058/acceptance.md`。
+
+验收：新登录响应下发 30 天持久 Cookie，数据库 `expires_at` 与配置一致；复用 Cookie 在浏览器重开及超过旧 30 分钟空闲窗口后仍可访问，主动退出后立即失效；浏览器存储、静态资源、日志、证据和 Git 中没有明文密码。Go 全量测试、静态检查、Console 测试和生产构建通过；正式 Server 与 iOS 隧道重建后 Android 和两台 iOS 逐台完成真实 Appium `/source`，历史测试记录再次清零，随后只删除已确认不再使用的部署备份、退出回滚容器和旧 Server 镜像。
+
+### DF-059 修复正式控制台密码哈希并完成真实登录验收
+
+实施：纠正 DF-058 只验证会话配置、却沿用旧 Secret 哈希并误判账号可登录的验收遗漏。根据管理员明确指定的密码重新生成 Argon2id 哈希，只替换正式只读 Secret volume 中 `admin` 的 `password_hash`；用户名、显示名和角色不变。重启 Server 清除进程内错误登录限流，并同步重建依附 Server 网络空间的 iOS 隧道。明文不得进入代码、Git、证据、远端临时文件或日志。
+
+产出：正确的正式 Argon2id Secret、真实 HTTPS 登录/当前会话/30 天 Cookie/注销验证、零临时文件与零验证数据、`docs/evidence/DF-059/acceptance.md`。
+
+验收：正式 HTTPS 登录返回 201，使用返回的 Secure/HttpOnly Cookie 查询当前会话返回 200，Cookie 到期时间为 30 天，注销返回 200；验证后 Console Session、Audit Event、Reservation 和 Device Session 均为 0。Secret 文件保持 `0400`、owner `65532:65532`；Server `running/healthy`，iOS 隧道 `running`、restart count 0，4811/4842 实际可达。
+
+### DF-060 设备可读名称与指定设备排队
+
+实施：为 Device 增加可编辑显示名称，并把编辑入口合入现有设备详情；列表、设备池模板和预约引用以名称为主，完整 ID 只放详情。北向普通预约增加可选 `requested_device_id`，校验目标属于请求 Pool 后复用既有 Scheduler 精确分配；目标使用中时 Reservation 保持 pending，释放后自动调度到同一设备，禁止回退到 Pool 内其他设备。Alcor 通过 Adapter 传递明确 Device，不复制设备或预约数据。
+
+产出：设备名称迁移与管理 API、Console 详情编辑、指定设备预约契约、Scheduler/API/前端测试、正式部署和 `docs/evidence/DF-060/acceptance.md`。
+
+验收：管理员可在设备详情编辑 2～40 字符名称且所有当前设备域引用刷新为新名称；页面没有单独“改名”操作；指定空闲设备只分配该设备；指定使用中设备保持 pending，原预约释放后自动获得该设备；不属于 Pool、已删除/停止/隔离的目标被拒绝；未传目标字段的旧调用继续按 Pool 调度。Go 全量测试、Console 测试和生产构建通过，30.171 部署健康且无活动预约被中断。
+
+### DF-061 修复跨入口挂断与过期预约回收
+
+实施：修复 Alcor 服务入口代用户创建人工预约后，独立 Console 因 `client_id` 不同而无法由同一用户挂断的问题；管理员跨预约归属释放时由 Console 显式提交 `force=true`，继续复用既有权限和强制释放审计。修复 Host/Reconciler 已把设备恢复为 `ready` 后，Release/Reaper 重复执行 `ready -> ready` 并因数据库受影响行检查失败而让预约永久保持 active 的问题。不得放宽非本人普通释放、operator/viewer 强制释放或设备状态机的其他边界。
+
+产出：Reservation Service/Repository 幂等收敛修复、管理员 Console 释放参数、PostgreSQL 集成测试、Console 组件测试、30.171 正式备份与真实远控申请/挂断回归，以及 `docs/evidence/DF-061/acceptance.md`。
+
+验收：同一 Console 用户可释放由 Alcor 可信网关代建的 manual Reservation；非本人普通释放仍返回 forbidden；管理员跨归属释放进入 `force_released` 并记录 `force_release_device_reservation`；过期 active Reservation 即使绑定设备已是 `ready`，Reaper 仍关闭 Session、把 Reservation 置为 expired 并保持设备 `ready/healthy`。Go 全量测试、`go vet`、Console 全量测试和生产构建通过；正式卡住预约自动收敛，新增 Android 远控申请/连接/明确挂断完整通过，STF 与 iOS 隧道无回归。
+
+### DF-062 修复 Emulator OOM 后的幽灵占用与原机恢复
+
+实施：延续 ADR-0029 的非破坏恢复约束，补齐 Docker `State.OOMKilled` 解析与 Provider 错误分类；Agent 将仍在运行但未通过 ADB、启动或 Appium 完整检查的 Emulator 上报为 `booting/unhealthy`，并把运行时 `docker` 映射为设备域 `docker_emulator`。Reconciler 对没有 create/rebuild 在途命令的空闲 `booting/unhealthy` 设备累计失败并隔离，随后只复用既有 restart Host Command。STF 对 inventory 已不存在或 `present=false` 的设备把重复 release 视为幂等完成，仍拒绝释放 `present=true && using=true` 的真实占用。修复 Docker 模式没有 iOS Session Fence 时 typed nil 被误执行造成的 Agent panic。
+
+产出：OOM 状态解析、Agent/Reconciler 健康收敛、STF 幽灵占用释放、Docker Agent 启动兼容回归、30.171 正式 Server/Agent 部署和 Android 真实 Appium 验收，以及 `docs/evidence/DF-062/acceptance.md`。未新增 API、表、migration、配置或自动 delete/rebuild/reimage/create。
+
+验收：正式过期 Reservation 和 Session 自动关闭；同一 Android Device ID、Provider ref、Pool membership、容器与数据卷保持不变；系统只产生一次 `operation_source=self_healing` 的 restart，破坏性命令为零。重启后 Docker `OOMKilled=false`，ADB、Android boot、STF 与 Appium `/source` 均通过，设备最终为 `ready/healthy`，开放 Reservation、Session 和在途 Host Command 均为零。Go 全量测试、`go vet`、真实 PostgreSQL Reconciler 集成测试和正式部署检查通过。
+
+### DF-063 Android CPU 和内存无损改配
+
+状态：completed。
+
+实施：按 ADR-0030 新增只接受容器/Android CPU 和内存的受控 Device API。Server 复用动态容量、PostgreSQL Host Command、幂等和审计；Agent 复用 Docker Provider `RestartWithProfile` 保留数据卷替换容器，并在 ADB、STF、Appium 全部健康后提交有效规格。目标失败时用同一数据卷恢复旧规格一次。Console 将“调整 CPU/内存”与“更换镜像/重建数据”分开；镜像、数据盘和图形模式继续走清空数据的 reimage。
+
+产出：ADR-0030、migration、OpenAPI、Management/Agent/Host Command 编排、Console 分流、自动化测试、`10.0.30.171` 真实 Linux KVM 验收和 `docs/evidence/DF-063/acceptance.md`。
+
+验收：纯 CPU/内存修改不删除数据卷，Device ID、Pool membership、APK、应用数据和文件保持；Docker 限额与 Android Guest 参数更新；使用中、存在在途命令、非法规格或容量不足时在替换前拒绝；目标失败恢复旧规格，恢复失败隔离；镜像或数据盘修改仍明确清空；Go 全量测试、静态检查、Console 测试和生产构建通过，正式 Server/Agent/Console 发布后设备回到 `ready/healthy`。
+
+### DF-064 220 控制面预部署与独立数据库隔离
+
+状态：completed。
+
+实施：按 ADR-0031 在 `10.0.80.220` 的 `/data/stacks/alcor-device-farm`（与现有服务同级）部署独立 Compose 项目。项目只包含 Device Farm Server、Console 和专用 PostgreSQL；数据库不发布宿主机端口，不复用 220 现有 PostgreSQL 或 `alcor` 数据库。预部署只监听 18180/18181，继续保持 171 正式 Server、Agent、STF、模拟器和评估后台不变；STF Token 未配置前保持适配器关闭。内置 migration、健康检查、备份和回滚入口，所有凭证只写远端 0600 文件。
+
+产出：控制面 Compose 部署包、独立数据库初始化、对齐文档、ADR-0031、`docs/evidence/DF-064/acceptance.md`。
+
+验收：本地 Go 测试/静态检查和 Compose 配置检查通过；220 预部署 PostgreSQL 健康且只含设备域 migration 表；220 现有 PostgreSQL、评估后台 18080 和 171 全部保持不变；Server `/healthz`、`/readyz`、`/metrics` 与 `/console/` 可访问且未认证请求被拒绝；预部署容器重启后状态可恢复；证据脱敏且不含 Token/密码；正式切换前不得改 Agent 指向。通过后单独提交简洁中文 commit。
+
+### DF-065 控制面瞬时切换准备与 Agent 端点
+
+状态：completed。
+
+实施：为 220 Server 预留 `18182` Host Agent 私网 API；新增切换环境模板和只读 readiness 检查，明确 18180 控制台、18181 iOS Gateway、18182 Agent API 的边界。准备阶段不修改 171 Agent/NPS，不迁移 STF/RethinkDB，不导入生产数据库；切换窗口才执行生产 custom dump、独立库导入、Agent URL 切换、心跳/设备验证和 NPS 后端切换。
+
+产出：ADR-0032、切换配置模板、只读 readiness 脚本、回滚清单和 `docs/evidence/DF-065/acceptance.md`。
+
+验收：220 的 18182 只绑定内网且可被 readiness 检查访问；18180 HTTPS、18181 预留入口和独立 PostgreSQL 健康；脚本不会停止服务、修改 Agent 或 NPS；明确生产切换前仍缺少生产数据库备份、Host Agent 认证 Token 对齐、STF Token、iOS Baguette 隧道和 NPS 配置确认。通过后单独提交简洁中文 commit。
+
+### DF-066 控制面 iOS 隧道与 HTTPS Gateway 部署包
+
+状态：completed。
+
+实施：按 ADR-0033 为 220 下一阶段预发布增加固定版本、非 root 的 SSH tunnel sidecar 和独立 Nginx TLS Gateway。Server 8081 只在 Compose 内部暴露，18181 由 TLS Gateway 对外提供；隧道与 Server 共用网络命名空间并只挂载只读证书、私钥和 known_hosts。部署代码、验证脚本和证据只用于后续切换准备，不代表已发布到 171，也不修改 NPS、正式 Agent URL 或正式数据库。
+
+依赖：DF-065、ADR-0033。
+
+产出：固定版本 tunnel Dockerfile、iOS TLS Gateway 配置、Compose Secret 挂载模板、server.env 示例、只读验证脚本和 `docs/evidence/DF-066/`。
+
+验收：`docker compose config` 通过；Server 不再直接映射 18181；tunnel 使用 `network_mode: service:device-farm-server`、非 root、只读 Secret、无 Docker Socket；Baguette `simulators.json` 链路可通过真实 Mac 隧道访问；18181 TLS 握手和未认证 API 401 通过；关闭 iOS 开关后可回滚到 disabled；220、171 和 NPS 均未切换。通过后单独提交简洁中文 commit。
+
+### DF-070 失败创建占位补偿与按需池恢复
+
+状态：in_progress。
+
+实施：按 ADR-0038 严格识别从未进入服务的 Android create 失败占位。有真实预约需求且
+该占位阻塞容量时，复用 Warm Pool 的 delete Host Command、Host Agent 和 Provider
+Delete 完成补偿清理；成功后按既有按需容量规则补建。不得自动删除任何曾成功创建、
+出现 Endpoint、被 Host 观察到或因运行期健康问题隔离的长期设备。
+
+产出：ADR-0038、真实 PostgreSQL 集成测试、正式发布后的 Linux KVM 与 Alcor UI 全链路
+证据。
+
+验收：数据库测试证明失败占位只产生一个 delete Command，删除成功后只新增一个
+replacement，历史 Device 保留为 deleted；长期隔离设备不产生 delete 或 replacement。
+正式发布后从 Alcor UI 投递 APK，证明 Reservation 触发创建、任务独占、Runner 完成、
+Reservation 释放、Emulator 删除且 Pool 回到零；并发请求不双占且不突破 Pool 上限。
+
+## 12. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：
 

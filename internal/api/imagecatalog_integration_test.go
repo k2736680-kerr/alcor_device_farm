@@ -13,6 +13,7 @@ const (
 	buildHostID = "host_build_agent_000001"
 	digestOne   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	digestTwo   = "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	digestThree = "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 )
 
 func TestOfficialCatalogBuildValidationAndDigestCacheFlow(t *testing.T) {
@@ -129,29 +130,50 @@ func TestOfficialCatalogBuildValidationAndDigestCacheFlow(t *testing.T) {
 		t.Fatalf("failed preparations=%d", failedPreparations)
 	}
 
-	missingSTFBody := map[string]any{"catalog_id": catalogID, "runtime_profile": map[string]any{
+	// ADR-0037: stf_registered 不再作为镜像可用性的门禁。多宿主机下宿主机无法注册到
+	// 171 的 STF，设备在 STF 中的可见性由 reconcile 的 stf_not_visible 独立把关。
+	// 因此 stf_registered=false 的验证结果应仍然创建镜像。
+	withoutSTFRegisteredBody := map[string]any{"catalog_id": catalogID, "runtime_profile": map[string]any{
 		"container_cpu_cores": 4, "container_memory_mb": 7168, "guest_cpu_cores": 4, "guest_memory_mb": 6144,
 		"data_disk_mb": 4096, "width": 1080, "height": 2400, "density_dpi": 420, "vm_heap_mb": 512, "graphics": "auto",
 	}}
-	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/android-system-images/preparations", missingSTFBody,
+	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/android-system-images/preparations", withoutSTFRegisteredBody,
 		serviceToken, "catalog-prepare-0004", "integration-image-admin"), http.StatusAccepted)
-	missingSTFBuild := claimCatalogCommand(t, environment, "prepare_android_image")
-	completeClaimedCatalogCommand(t, environment, missingSTFBuild, map[string]any{
+	withoutSTFRegisteredBuild := claimCatalogCommand(t, environment, "prepare_android_image")
+	completeClaimedCatalogCommand(t, environment, withoutSTFRegisteredBuild, map[string]any{
 		"docker_image":  "registry.example/alcor/android-emulator:api36-google_apis-x86_64-r16-stf-check",
 		"docker_digest": digestTwo, "image_disk_mb": 9000,
 	})
-	missingSTFValidation := claimCatalogCommand(t, environment, "validate_image")
-	completeClaimedCatalogCommand(t, environment, missingSTFValidation, map[string]any{
+	withoutSTFRegisteredValidation := claimCatalogCommand(t, environment, "validate_image")
+	completeClaimedCatalogCommand(t, environment, withoutSTFRegisteredValidation, map[string]any{
 		"digest_verified": true, "ready": true, "stf_registered": false,
 	})
-	assertImageCount(t, environment, 1)
+	assertImageCount(t, environment, 2)
+
+	// 真正的门禁仍然有效：ready=false 必须导致 IMAGE_VALIDATION_INCOMPLETE。
+	notReadyBody := map[string]any{"catalog_id": catalogID, "runtime_profile": map[string]any{
+		"container_cpu_cores": 4, "container_memory_mb": 5120, "guest_cpu_cores": 4, "guest_memory_mb": 4096,
+		"data_disk_mb": 4096, "width": 1080, "height": 2400, "density_dpi": 420, "vm_heap_mb": 512, "graphics": "auto",
+	}}
+	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/android-system-images/preparations", notReadyBody,
+		serviceToken, "catalog-prepare-0005", "integration-image-admin"), http.StatusAccepted)
+	notReadyBuild := claimCatalogCommand(t, environment, "prepare_android_image")
+	completeClaimedCatalogCommand(t, environment, notReadyBuild, map[string]any{
+		"docker_image":  "registry.example/alcor/android-emulator:api36-google_apis-x86_64-r16-not-ready",
+		"docker_digest": digestThree, "image_disk_mb": 9000,
+	})
+	notReadyValidation := claimCatalogCommand(t, environment, "validate_image")
+	completeClaimedCatalogCommand(t, environment, notReadyValidation, map[string]any{
+		"digest_verified": true, "ready": false, "stf_registered": true,
+	})
+	assertImageCount(t, environment, 2)
 	var incompleteValidations int
 	if err := environment.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_image_preparations
 		WHERE status='failed' AND error_code='IMAGE_VALIDATION_INCOMPLETE'`).Scan(&incompleteValidations); err != nil {
 		t.Fatal(err)
 	}
 	if incompleteValidations != 1 {
-		t.Fatalf("incomplete STF validations=%d", incompleteValidations)
+		t.Fatalf("incomplete validations=%d", incompleteValidations)
 	}
 
 	assertStatus(t, environment.requestAsActor(t, http.MethodPost, "/api/v1/android-system-images/synchronizations", nil,

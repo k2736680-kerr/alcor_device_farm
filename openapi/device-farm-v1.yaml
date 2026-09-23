@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
   title: Alcor Device Farm API
-  version: 1.9.0
+  version: 2.6.0
   x-contract-status: frozen
-  x-contract-frozen-at: 2026-08-13
+  x-contract-frozen-at: 2026-08-18
   x-platform-semantics: Case/Run/RunAttempt
   description: >-
-    Android 设备农场独立控制面契约。北向接口只接受平台服务身份，
+    Android 与 iOS 设备农场独立控制面契约。北向接口只接受平台服务身份，
     internal 接口只接受 Host Agent 身份；不包含 Alcor Run、Result 或历史评估任务接口。
 servers:
   - url: http://127.0.0.1:8080
@@ -284,6 +284,39 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/ios-simulator-catalog:
+    get:
+      tags: [Devices]
+      operationId: getIOSSimulatorCatalog
+      description: 返回指定 Mac 宿主机当前心跳上报且通过部署白名单的 iOS Runtime 与 iPhone 机型目录。
+      parameters:
+        - name: host_id
+          in: query
+          required: true
+          schema: {$ref: "#/components/schemas/Identifier"}
+      responses:
+        "200": {$ref: "#/components/responses/IOSSimulatorCatalogSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/ios-simulators:
+    post:
+      tags: [Devices]
+      operationId: createIOSSimulator
+      description: 在受控 Mac 宿主机上异步创建并启动一个持久化虚拟 iPhone，同时原子登记 Device、Pool 成员、Host Command 与审计事件。
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSimulatorCreateInput"}
+      responses:
+        "202": {$ref: "#/components/responses/IOSSimulatorOperationAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
   /api/v1/device-pools:
     get:
       tags: [Pools]
@@ -446,6 +479,7 @@ paths:
         - {$ref: "#/components/parameters/Page"}
         - {$ref: "#/components/parameters/PageSize"}
         - {name: pool_id, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
+        - {name: platform, in: query, schema: {type: string, enum: [android, ios]}}
         - {name: lifecycle_status, in: query, schema: {$ref: "#/components/schemas/DeviceLifecycleStatus"}}
         - {name: health_status, in: query, schema: {$ref: "#/components/schemas/HealthStatus"}}
       responses:
@@ -471,6 +505,18 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "500": {$ref: "#/components/responses/ServerError"}
         "503": {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [Devices]
+      operationId: updateDeviceName
+      requestBody: {$ref: "#/components/requestBodies/DeviceNameInput"}
+      responses:
+        "200": {$ref: "#/components/responses/DeviceSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "504": {$ref: "#/components/responses/Error"}
     delete:
       tags: [Devices]
       operationId: deleteDevice
@@ -492,6 +538,43 @@ paths:
     post:
       tags: [Devices]
       operationId: restartDevice
+      description: 对 ready、stopped 或 quarantined 的已登记虚拟设备排队非破坏 restart。保留 Device ID、Provider 数据和 Pool membership；有活动预约或在途命令时拒绝。
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/devices/{id}/starts:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: startDevice
+      description: 只允许启动已登记、固定 allowlist、当前 stopped 且无活动预约的 iOS Simulator。Server 仅排队受控 Host Command，不直接连接 macOS 或执行任意命令。
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/OperationReason"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/v1/devices/{id}/stops:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: stopDevice
+      description: 只允许停止已登记、固定 allowlist、当前 ready 且无活动预约的 iOS Simulator。Provider busy 或状态漂移时拒绝，不强制中断 Session。
       parameters:
         - {$ref: "#/components/parameters/IdempotencyKey"}
         - {$ref: "#/components/parameters/ActorID"}
@@ -732,7 +815,7 @@ paths:
     post:
       tags: [Console]
       operationId: startDeviceRemoteControl
-      description: Admin only. Creates a short manual Reservation targeted at this exact ready/healthy Device and waits for the existing Scheduler/STF claim flow.
+      description: 仅限管理员。为当前就绪且健康的目标设备创建短时人工预约；Android 打开 STF，iOS Simulator 打开受预约约束的 Baguette 原生 Web 远控。
       security: [{consoleCookie: []}]
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
@@ -748,7 +831,7 @@ paths:
     get:
       tags: [Console]
       operationId: getDeviceRemoteControl
-      description: Admin only. Returns the current administrator-owned remote control for this Device. The URL is a no-store, short-lived STF Web login entry and is present only after the Reservation is active.
+      description: 仅限管理员。返回当前管理员拥有的远控连接；Android 使用短时 STF Web 登录，iOS 使用仅允许访问预约 Simulator 的签名 Baguette 网关入口。
       security: [{consoleCookie: []}]
       responses:
         "200": {$ref: "#/components/responses/RemoteControlSuccess"}
@@ -760,7 +843,7 @@ paths:
     delete:
       tags: [Console]
       operationId: endDeviceRemoteControl
-      description: Admin only. Idempotently ends remote control, releases the Reservation and STF claim, and starts the normal device recycle/rebuild path.
+      description: 仅限管理员。幂等结束远控并释放预约；Android 同时释放 STF 占用，iOS Baguette 入口随预约结束立即失效。
       security: [{consoleCookie: []}]
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
@@ -778,7 +861,7 @@ paths:
     post:
       tags: [Console]
       operationId: heartbeatDeviceRemoteControl
-      description: Admin only. Renews the short Reservation while STF still reports the device as claimed; if STF has released it, the Reservation is ended instead.
+      description: 仅限管理员。管理员保持连接时滑动续租预约；Android 继续使用 STF，iOS 网关请求继续绑定有效预约。
       security: [{consoleCookie: []}]
       parameters:
         - {$ref: "#/components/parameters/CSRFToken"}
@@ -790,6 +873,47 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/v1/device-reservations/{id}/session-grants:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Reservations]
+      operationId: createIOSSessionGrant
+      description: Issues a short-lived, one-time Grant for the exact iOS Device and Host already bound to an active Reservation. The Grant must never be logged or persisted by the caller.
+      security: [{serviceBearer: []}]
+      parameters:
+        - {$ref: "#/components/parameters/EvalRunID"}
+        - {$ref: "#/components/parameters/EvalAttemptID"}
+        - {$ref: "#/components/parameters/Traceparent"}
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionGrantCreate"}
+      responses:
+        "201": {$ref: "#/components/responses/IOSSessionGrantCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+        "503": {$ref: "#/components/responses/Error"}
+        "504": {$ref: "#/components/responses/Error"}
+  /api/v1/devices/{id}/runtime-profile-updates:
+    parameters: [{$ref: "#/components/parameters/ResourceID"}]
+    post:
+      tags: [Devices]
+      operationId: updateDeviceRuntimeProfile
+      description: Replaces an idle Docker Emulator container with new container and Android guest CPU/memory settings while preserving its network and data volume. The effective profile changes only after ADB, Android boot, Appium and STF readiness succeed; one rollback to the previous profile is attempted on failure.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/ActorID"}
+      requestBody: {$ref: "#/components/requestBodies/DeviceRuntimeProfileUpdateInput"}
+      responses:
+        "202": {$ref: "#/components/responses/DeviceAccepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
         "503": {$ref: "#/components/responses/Error"}
         "504": {$ref: "#/components/responses/Error"}
   /api/v1/devices/{id}/remote-control:
@@ -819,11 +943,10 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "503": {$ref: "#/components/responses/Error"}
-        "504": {$ref: "#/components/responses/Error"}
     delete:
       tags: [Devices]
       operationId: endIntegratedDeviceRemoteControl
-      description: Trusted Alcor gateway operation that reuses the existing Reservation/STF release path.
+      description: 供可信 Alcor 网关调用，复用已有预约以及对应平台的 STF 或 Baguette 释放路径。
       security: [{serviceBearer: []}]
       parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
       responses:
@@ -906,6 +1029,55 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "500": {$ref: "#/components/responses/ServerError"}
+  /internal/v1/ios-session-fence/grants/consumptions:
+    post:
+      tags: [Agent]
+      operationId: consumeIOSSessionGrant
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionGrantConsumption"}
+      responses:
+        "200": {$ref: "#/components/responses/IOSSessionConsumptionSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /internal/v1/ios-session-fence/sessions/bindings:
+    post:
+      tags: [Agent]
+      operationId: bindIOSAppiumSession
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionBinding"}
+      responses: *standardResponses
+  /internal/v1/ios-session-fence/sessions/authorizations:
+    post:
+      tags: [Agent]
+      operationId: authorizeIOSAppiumSession
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionAuthorization"}
+      responses:
+        "200": {$ref: "#/components/responses/IOSSessionAuthorizationSuccess"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /internal/v1/ios-session-fence/sessions/closures:
+    post:
+      tags: [Agent]
+      operationId: closeIOSAppiumSessionBinding
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionBinding"}
+      responses: *standardResponses
+  /internal/v1/ios-session-fence/sessions/failures:
+    post:
+      tags: [Agent]
+      operationId: recordIOSAppiumSessionFailure
+      security: [{agentBearer: []}]
+      requestBody: {$ref: "#/components/requestBodies/IOSSessionFailure"}
+      responses: *standardResponses
 components:
   securitySchemes:
     serviceBearer:
@@ -983,13 +1155,25 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceHostInput"}
-          example: {name: kvm-host-01, host_type: docker_emulator, capacity: {cpu: 16, memory_mb: 32768, device_slots: 8}}
+          example: {name: kvm-host-01, host_type: docker_emulator, host_os: linux, host_arch: x86_64, capacity: {cpu: 16, memory_mb: 32768, device_slots: 8}}
+    IOSSimulatorCreateInput:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSimulatorCreateInput"}
+          example:
+            host_id: "01JIOSHOST000000000000000"
+            pool_id: "01JIOSPOOL000000000000000"
+            runtime_id: "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
+            device_type_id: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+            display_name: "自动化 iPhone"
+            reason: "为 DaFit 长时自动化创建 iOS 测试设备"
     DevicePoolInput:
       required: true
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DevicePoolInput"}
-          example: {name: android-smoke, default_lease_seconds: 1800, max_lease_seconds: 7200, total_target: 2, min_ready: 1, max_concurrency: 2, default_image_id: "01JDEVICEIMAGE000000000000", enabled: true}
+          example: {name: android-smoke, platform: android, default_lease_seconds: 1800, max_lease_seconds: 7200, total_target: 2, min_ready: 1, max_concurrency: 2, default_image_id: "01JDEVICEIMAGE000000000000", enabled: true}
     DevicePoolImageInput:
       required: true
       content:
@@ -1032,6 +1216,31 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/RemoteSessionCreate"}
+    IOSSessionGrantCreate:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionGrantCreate"}
+    IOSSessionGrantConsumption:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionGrantConsumption"}
+    IOSSessionBinding:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionBinding"}
+    IOSSessionAuthorization:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionAuthorization"}
+    IOSSessionFailure:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/IOSSessionFailure"}
     OperationReason:
       required: true
       content:
@@ -1042,6 +1251,16 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DeviceReimageInput"}
+    DeviceRuntimeProfileUpdateInput:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/DeviceRuntimeProfileUpdateInput"}
+    DeviceNameInput:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/DeviceNameInput"}
     HostHeartbeat:
       required: true
       content:
@@ -1112,6 +1331,12 @@ components:
     HostCreated:
       description: Host 已创建
       content: {application/json: {schema: {$ref: "#/components/schemas/HostEnvelope"}}}
+    IOSSimulatorCatalogSuccess:
+      description: Mac 宿主机当前可创建的受控 Simulator 目录
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSimulatorCatalogEnvelope"}}}
+    IOSSimulatorOperationAccepted:
+      description: iOS Simulator 创建操作已原子登记并等待 Host Agent 执行
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSimulatorOperationEnvelope"}}}
     PoolListSuccess:
       description: Pool 分页列表
       content: {application/json: {schema: {$ref: "#/components/schemas/PoolListEnvelope"}}}
@@ -1142,6 +1367,15 @@ components:
     RemoteSessionCreated:
       description: STF 短时入口已创建
       content: {application/json: {schema: {$ref: "#/components/schemas/RemoteSessionEnvelope"}}}
+    IOSSessionGrantCreated:
+      description: Reservation 绑定的一次性 iOS Session Grant 已签发；响应禁止缓存和持久化
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSessionGrantEnvelope"}}}
+    IOSSessionConsumptionSuccess:
+      description: Grant 已原子消费，返回只含固定 UDID 的 Appium New Session 请求
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSessionConsumptionEnvelope"}}}
+    IOSSessionAuthorizationSuccess:
+      description: 后续 WebDriver 请求与已绑定 Appium Session 一致
+      content: {application/json: {schema: {$ref: "#/components/schemas/IOSSessionAuthorizationEnvelope"}}}
     AuditEventListSuccess:
       description: 设备域审计分页列表
       content: {application/json: {schema: {$ref: "#/components/schemas/AuditEventListEnvelope"}}}
@@ -1158,7 +1392,7 @@ components:
       description: 当前 Console 会话已撤销
       content: {application/json: {schema: {$ref: "#/components/schemas/ConsoleLogoutEnvelope"}}}
     RemoteControlAccepted:
-      description: 远控预约已创建，等待 Scheduler/STF claim
+      description: 远控预约已创建，正在等待设备分配和远控通道就绪
       content: {application/json: {schema: {$ref: "#/components/schemas/RemoteControlEnvelope"}}}
     RemoteControlSuccess:
       description: 管理员设备远控状态
@@ -1246,7 +1480,7 @@ components:
         code:
           type: string
           pattern: "^[A-Z][A-Z0-9_]{2,63}$"
-          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, INSUFFICIENT_HOST_RESOURCES, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
+          x-adapter-stable-codes: [INVALID_ARGUMENT, INVALID_STATE_TRANSITION, DEVICE_POOL_UNAVAILABLE, DEVICE_CAPACITY_UNAVAILABLE, INSUFFICIENT_HOST_RESOURCES, HOST_OFFLINE, AGENT_COMMAND_TIMEOUT, EMULATOR_CREATE_FAILED, EMULATOR_START_FAILED, EMULATOR_DELETE_FAILED, KVM_UNAVAILABLE, STF_CLAIM_FAILED, STF_RELEASE_FAILED, STF_REMOTE_CONNECT_FAILED, STF_REMOTE_DISCONNECT_FAILED, STF_BAD_RESPONSE, APPIUM_UNHEALTHY, DEVICE_BOOT_TIMEOUT, DEVICE_QUARANTINED, RESERVATION_EXPIRED, LEASE_EXTENSION_REJECTED, IOS_SESSION_NOT_FOUND, IOS_SESSION_GRANT_EXPIRED, IOS_SESSION_GRANT_CONSUMED, IOS_SESSION_ROUTING_MISMATCH, IOS_PROVIDER_BUSY_DRIFT, IOS_SESSION_FENCE_UNAVAILABLE, IOS_SESSION_CLEANUP_FAILED, SERVICE_UNAVAILABLE, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, INTERNAL_ERROR]
         message: {type: string}
         details: {type: object, additionalProperties: true}
         retryable: {type: boolean}
@@ -1359,9 +1593,27 @@ components:
         host_id:
           allOf: [{$ref: "#/components/schemas/Identifier"}]
           nullable: true
-        status: {type: string, enum: [preparing_image, creating_emulator, adb_check, stf_registration, appium_check, ready, failed, provisioning]}
+        status: {type: string, enum: [preparing_image, waiting_capacity, creating_emulator, adb_check, stf_registration, appium_check, ready, failed, provisioning]}
         error_stage: {type: string, nullable: true}
         error_code: {type: string, nullable: true}
+        capacity_result:
+          allOf: [{$ref: "#/components/schemas/HostCapacityResult"}]
+          nullable: true
+          description: 容量不足时的结构化缺口；任务保持可重试，容量恢复后自动继续。
+    HostCapacityResult:
+      type: object
+      additionalProperties: false
+      required: [fits, additional_devices, available_cpu_cores, available_memory_mb, available_disk_mb]
+      properties:
+        fits: {type: boolean}
+        additional_devices: {type: integer, minimum: 0}
+        limiting_resource: {type: string, enum: [cpu, memory, disk, device_slots]}
+        shortfall:
+          type: object
+          additionalProperties: {type: integer, format: int64, minimum: 0}
+        available_cpu_cores: {type: number, format: double, minimum: 0}
+        available_memory_mb: {type: integer, format: int64, minimum: 0}
+        available_disk_mb: {type: integer, format: int64, minimum: 0}
     DeviceProvisioningEnvelope:
       type: object
       additionalProperties: false
@@ -1384,11 +1636,13 @@ components:
     DeviceHost:
       type: object
       additionalProperties: false
-      required: [id, name, host_type, capabilities, capacity, used_capacity, status, draining, created_at, updated_at]
+      required: [id, name, host_type, host_os, host_arch, capabilities, capacity, used_capacity, status, draining, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string}
-        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
+        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid, appium_device_farm_ios]}
+        host_os: {type: string, enum: [linux, macos, windows]}
+        host_arch: {type: string, minLength: 1, maxLength: 32, pattern: "^[A-Za-z0-9_.-]+$"}
         address: {type: string}
         capabilities: {type: object, additionalProperties: true}
         capacity: {$ref: "#/components/schemas/HostCapacity"}
@@ -1398,13 +1652,83 @@ components:
         last_heartbeat_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    IOSSimulatorRuntime:
+      type: object
+      additionalProperties: false
+      required: [id, name, version, device_type_ids]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 255}
+        name: {type: string, minLength: 1, maxLength: 128}
+        version: {type: string, minLength: 1, maxLength: 32}
+        device_type_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 255}
+    IOSSimulatorDeviceType:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 255}
+        name: {type: string, minLength: 1, maxLength: 128}
+    IOSSimulatorCatalog:
+      type: object
+      additionalProperties: false
+      required: [host_id, runtimes, device_types]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        runtimes: {type: array, items: {$ref: "#/components/schemas/IOSSimulatorRuntime"}}
+        device_types: {type: array, items: {$ref: "#/components/schemas/IOSSimulatorDeviceType"}}
+    IOSSimulatorCreateInput:
+      type: object
+      additionalProperties: false
+      required: [host_id, pool_id, runtime_id, device_type_id, reason]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        runtime_id: {type: string, minLength: 1, maxLength: 255}
+        device_type_id: {type: string, minLength: 1, maxLength: 255}
+        display_name: {type: string, maxLength: 128}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: 必填操作原因；包含 Token、密码、Cookie、密钥或带口令 DSN 时拒绝请求。
+    IOSSimulatorOperation:
+      type: object
+      additionalProperties: false
+      required: [device_id, command_id, host_id, pool_id, status]
+      properties:
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        command_id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        pool_id: {$ref: "#/components/schemas/Identifier"}
+        status: {type: string, enum: [creating_simulator]}
+    IOSSimulatorCatalogEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/IOSSimulatorCatalog"}
+        error: {nullable: true}
+    IOSSimulatorOperationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties:
+        request_id: {type: string}
+        data: {$ref: "#/components/schemas/IOSSimulatorOperation"}
+        error: {nullable: true}
     DevicePool:
       type: object
       additionalProperties: false
-      required: [id, name, default_lease_seconds, max_lease_seconds, max_concurrency, total_target, min_ready, status, created_at, updated_at]
+      required: [id, name, platform, default_lease_seconds, max_lease_seconds, max_concurrency, total_target, min_ready, status, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string}
+        platform: {type: string, enum: [android, ios]}
         default_lease_seconds: {type: integer}
         max_lease_seconds: {type: integer}
         max_concurrency: {type: integer}
@@ -1464,7 +1788,7 @@ components:
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         device_id: {$ref: "#/components/schemas/Identifier"}
-        source: {type: string, enum: [agent, provider, adb, appium, stf, reconciler]}
+        source: {type: string, enum: [agent, provider, adb, appium, stf, reconciler, session_fence]}
         event_type: {type: string}
         severity: {type: string, enum: [info, warning, error, critical]}
         reason: {type: string}
@@ -1480,6 +1804,39 @@ components:
         reservation_id: {$ref: "#/components/schemas/Identifier"}
         remote_connect_url: {type: string, format: uri}
         expires_at: {type: string, format: date-time}
+    IOSSessionGrant:
+      type: object
+      additionalProperties: false
+      required: [reservation_id, device_id, host_id, platform, udid, fence_endpoint, session_grant, expires_at]
+      properties:
+        reservation_id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        platform: {type: string, enum: [ios]}
+        udid: {type: string, minLength: 1, maxLength: 255}
+        fence_endpoint: {type: string, format: uri}
+        session_grant:
+          type: string
+          minLength: 43
+          maxLength: 43
+          readOnly: true
+          description: 256-bit one-time bearer secret. Never log or persist it.
+        expires_at: {type: string, format: date-time}
+    IOSSessionConsumptionResult:
+      type: object
+      additionalProperties: false
+      required: [reservation_id, device_id, upstream_endpoint, request]
+      properties:
+        reservation_id: {$ref: "#/components/schemas/Identifier"}
+        device_id: {$ref: "#/components/schemas/Identifier"}
+        upstream_endpoint: {type: string, format: uri}
+        request: {type: object, additionalProperties: true}
+    IOSSessionAuthorizationResult:
+      type: object
+      additionalProperties: false
+      required: [upstream_endpoint]
+      properties:
+        upstream_endpoint: {type: string, format: uri}
     ConsoleRole:
       type: string
       enum: [viewer, operator, admin]
@@ -1508,18 +1865,22 @@ components:
     RemoteControlStatus:
       type: string
       enum: [connecting, connected, ended, failed]
+    RemoteControlTransport:
+      type: string
+      enum: [stf, baguette]
     RemoteControl:
       type: object
       additionalProperties: false
-      required: [device_id, status, heartbeat_interval_seconds]
+      required: [device_id, status, transport, heartbeat_interval_seconds]
       properties:
         device_id: {$ref: "#/components/schemas/Identifier"}
         reservation_id: {$ref: "#/components/schemas/Identifier"}
         status: {$ref: "#/components/schemas/RemoteControlStatus"}
+        transport: {$ref: "#/components/schemas/RemoteControlTransport"}
         url:
           type: string
           format: uri
-          description: Extremely short-lived STF Web login URL. Never contains the STF API token or signing secret and must not be cached or persisted.
+          description: 短时受控远控入口。Android 使用 STF；iOS 通过绑定预约 Simulator 的独立网关使用 Baguette 原生 Web。入口不包含 Mac/Baguette 回环地址、Fence/Appium/WDA 地址、Session Grant、API Token 或签名密钥，且不得缓存或持久化。
         expires_at: {type: string, format: date-time}
         heartbeat_interval_seconds: {type: integer, minimum: 1}
     PageMetadata:
@@ -1642,6 +2003,21 @@ components:
       additionalProperties: false
       required: [request_id, data, error]
       properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/RemoteSession"}, error: {nullable: true}}
+    IOSSessionGrantEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/IOSSessionGrant"}, error: {nullable: true}}
+    IOSSessionConsumptionEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/IOSSessionConsumptionResult"}, error: {nullable: true}}
+    IOSSessionAuthorizationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [request_id, data, error]
+      properties: {request_id: {type: string}, data: {$ref: "#/components/schemas/IOSSessionAuthorizationResult"}, error: {nullable: true}}
     AuditEventListEnvelope:
       type: object
       additionalProperties: false
@@ -1694,10 +2070,12 @@ components:
     DeviceHostInput:
       type: object
       additionalProperties: false
-      required: [name, host_type, capacity]
+      required: [name, host_type, host_os, host_arch, capacity]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
-        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid]}
+        host_type: {type: string, enum: [docker_emulator, usb_android, hybrid, appium_device_farm_ios]}
+        host_os: {type: string, enum: [linux, macos, windows]}
+        host_arch: {type: string, minLength: 1, maxLength: 32, pattern: "^[A-Za-z0-9_.-]+$"}
         address: {type: string, maxLength: 255}
         capabilities: {type: object, additionalProperties: true}
         capacity: {$ref: "#/components/schemas/HostCapacity"}
@@ -1736,9 +2114,10 @@ components:
     DevicePoolInput:
       type: object
       additionalProperties: false
-      required: [name, default_lease_seconds, max_lease_seconds, max_concurrency]
+      required: [name, platform, default_lease_seconds, max_lease_seconds, max_concurrency]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
+        platform: {type: string, enum: [android, ios]}
         default_lease_seconds: {type: integer, minimum: 60}
         max_lease_seconds: {type: integer, minimum: 60}
         max_concurrency: {type: integer, minimum: 0}
@@ -1823,22 +2202,24 @@ components:
     Device:
       type: object
       additionalProperties: false
-      required: [id, host_id, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, effective_runtime_profile, reimage_status, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
+      required: [id, name, host_id, platform, device_kind, provider_type, provider_ref, lifecycle_mode, serial, capabilities, effective_runtime_profile, reimage_status, runtime_profile_update_status, lifecycle_status, health_status, consecutive_failures, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
+        name: {type: string, minLength: 2, maxLength: 40}
         host_id: {$ref: "#/components/schemas/Identifier"}
+        platform: {type: string, enum: [android, ios]}
         image_id: {$ref: "#/components/schemas/Identifier"}
         pool_id: {$ref: "#/components/schemas/Identifier"}
         pool_name: {type: string}
         is_pool_base: {type: boolean, description: Whether this Device is the selected configuration source for its Pool.}
-        device_kind: {type: string, enum: [emulator, physical]}
-        provider_type: {type: string, enum: [docker_emulator, usb_android, mock]}
+        device_kind: {type: string, enum: [emulator, simulator, physical]}
+        provider_type: {type: string, enum: [docker_emulator, usb_android, appium_device_farm_ios, mock]}
         provider_ref: {type: string}
         lifecycle_mode: {type: string, enum: [rebuild, clean, factory_reset]}
         serial: {type: string, minLength: 1}
         stf_serial: {type: string}
         adb_endpoint: {type: string}
-        appium_endpoint: {type: string, format: uri}
+        appium_endpoint: {type: string, format: uri, description: May be shared by multiple iOS Devices on the same Appium Device Farm Host.}
         capabilities:
           type: object
           additionalProperties: true
@@ -1849,6 +2230,8 @@ components:
         pending_runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         reimage_status: {type: string, enum: [idle, pending, failed]}
         reimage_error: {type: string}
+        runtime_profile_update_status: {type: string, enum: [idle, pending, failed]}
+        runtime_profile_update_error: {type: string}
         lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
         health_status: {$ref: "#/components/schemas/HealthStatus"}
         health_reason: {type: string}
@@ -1877,6 +2260,9 @@ components:
       required: [pool_id, owner_type, owner_id, lease_seconds]
       properties:
         pool_id: {$ref: "#/components/schemas/Identifier"}
+        requested_device_id:
+          allOf: [{$ref: "#/components/schemas/Identifier"}]
+          description: Optional exact Device target. If it is currently reserved or busy, the reservation remains pending until that Device becomes ready.
         owner_type: {$ref: "#/components/schemas/OwnerType"}
         owner_id: {$ref: "#/components/schemas/OwnerID"}
         requested_capabilities: {type: object, additionalProperties: true}
@@ -1906,6 +2292,46 @@ components:
         owner_type: {$ref: "#/components/schemas/OwnerType"}
         owner_id: {$ref: "#/components/schemas/OwnerID"}
         ttl_seconds: {type: integer, minimum: 30, maximum: 3600, default: 300}
+    IOSSessionGrantCreate:
+      type: object
+      additionalProperties: false
+      required: [owner_type, owner_id]
+      properties:
+        owner_type: {$ref: "#/components/schemas/OwnerType"}
+        owner_id: {$ref: "#/components/schemas/OwnerID"}
+        ttl_seconds: {type: integer, minimum: 15, maximum: 120, default: 60}
+    IOSSessionGrantConsumption:
+      type: object
+      additionalProperties: false
+      required: [host_id, session_grant, request]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        session_grant: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        request:
+          type: object
+          additionalProperties: false
+          required: [capabilities]
+          description: W3C New Session payload. JSONWP desiredCapabilities is rejected.
+          properties:
+            capabilities: {type: object, additionalProperties: true}
+    IOSSessionBinding:
+      type: object
+      additionalProperties: false
+      required: [host_id, session_grant, appium_session_id]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        session_grant: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        appium_session_id: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$"}
+    IOSSessionAuthorization:
+      allOf: [{$ref: "#/components/schemas/IOSSessionBinding"}]
+    IOSSessionFailure:
+      type: object
+      additionalProperties: false
+      required: [host_id, session_grant, error_code]
+      properties:
+        host_id: {$ref: "#/components/schemas/Identifier"}
+        session_grant: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        error_code: {type: string, minLength: 3, maxLength: 64, pattern: "^[A-Z][A-Z0-9_]+$"}
     OperationReason:
       type: object
       additionalProperties: false
@@ -1928,6 +2354,26 @@ components:
           minLength: 3
           maxLength: 500
           description: Required audit reason. The operation erases all APKs and device data.
+    DeviceRuntimeProfileUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [container_cpu_cores, container_memory_mb, guest_cpu_cores, guest_memory_mb, reason]
+      properties:
+        container_cpu_cores: {type: number, format: double, minimum: 1, maximum: 64}
+        container_memory_mb: {type: integer, format: int64, minimum: 2048, maximum: 262144}
+        guest_cpu_cores: {type: integer, minimum: 1, maximum: 32}
+        guest_memory_mb: {type: integer, format: int64, minimum: 1536, maximum: 261632}
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Required audit reason. The operation restarts the emulator while preserving its data volume.
+    DeviceNameInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 40}
     HostHeartbeat:
       type: object
       additionalProperties: false
@@ -1939,12 +2385,20 @@ components:
         devices: {type: array, items: {$ref: "#/components/schemas/DiscoveredDevice"}}
     DiscoveredDevice:
       type: object
+      additionalProperties: false
       required: [provider_ref, serial, lifecycle_status, health_status]
       properties:
         provider_ref: {type: string}
         serial: {type: string}
+        platform: {type: string, enum: [android, ios]}
+        device_kind: {type: string, enum: [emulator, simulator, physical]}
+        provider_type: {type: string, enum: [mock, docker_emulator, usb_android, appium_device_farm_ios]}
         lifecycle_status: {$ref: "#/components/schemas/DeviceLifecycleStatus"}
         health_status: {$ref: "#/components/schemas/HealthStatus"}
+        capabilities: {type: object, additionalProperties: true}
+        components:
+          type: object
+          additionalProperties: {type: string, enum: [passed, failed, unknown, unsupported]}
         runtime_profile: {$ref: "#/components/schemas/EmulatorRuntimeProfile"}
         connection:
           type: object

@@ -10,7 +10,11 @@ const defaultServerBinary = path.join(projectRoot, 'tmp', process.platform === '
 const defaultServerConfig = path.join(projectRoot, 'tmp', 'server-config.yaml')
 const serverBinary = process.env.DEVICE_FARM_E2E_SERVER_BINARY ?? defaultServerBinary
 const serverConfig = process.env.DEVICE_FARM_E2E_SERVER_CONFIG ?? defaultServerConfig
-const quote = (value: string) => `"${value.replace(/"/g, '\\"')}"`
+// Keep Windows paths without spaces unquoted.  Playwright passes webServer
+// through the platform shell and an extra quoted executable path can become a
+// literal command token on cmd; the repository's default paths contain no
+// spaces.  Quote only caller-provided paths that actually need it.
+const quote = (value: string) => value.includes(' ') ? `"${value}"` : value
 
 export default defineConfig({
   testDir: './e2e',

@@ -23,16 +23,17 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("invalid reservation argument")
-	ErrNotFound            = errors.New("reservation not found")
-	ErrConflict            = errors.New("reservation conflict")
-	ErrPoolUnavailable     = errors.New("device pool is unavailable")
-	ErrCapacityUnavailable = errors.New("matching device capacity is unavailable")
-	ErrNothingToReap       = errors.New("no expired reservation to reap")
-	ErrNothingToReapRemote = errors.New("no expired STF remote session to reap")
-	ErrForbidden           = errors.New("reservation access is forbidden")
-	ErrSTFReleaseFailed    = errors.New("STF device release failed")
-	ErrSTFRemoteFailed     = errors.New("STF remote connection failed")
+	ErrInvalidArgument     = errors.New("预约参数无效")
+	ErrNotFound            = errors.New("预约不存在")
+	ErrConflict            = errors.New("预约状态冲突")
+	ErrPoolUnavailable     = errors.New("设备池当前不可用")
+	ErrCapacityUnavailable = errors.New("暂无满足条件的设备容量")
+	ErrNothingToReap       = errors.New("没有需要回收的过期预约")
+	ErrNothingToReapRemote = errors.New("没有需要回收的过期 STF 远控会话")
+	ErrForbidden           = errors.New("无权访问该预约")
+	ErrSTFReleaseFailed    = errors.New("STF 设备释放失败")
+	ErrSTFRemoteFailed     = errors.New("STF 远程连接失败")
+	ErrIOSSessionCleanup   = errors.New("iOS Appium 会话清理失败")
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
@@ -41,6 +42,7 @@ type IDGenerator func() (string, error)
 
 type CreateInput struct {
 	PoolID                string         `json:"pool_id"`
+	RequestedDeviceID     string         `json:"requested_device_id,omitempty"`
 	OwnerType             string         `json:"owner_type"`
 	OwnerID               string         `json:"owner_id"`
 	RequestedCapabilities map[string]any `json:"requested_capabilities,omitempty"`
@@ -91,6 +93,10 @@ type STFController interface {
 	RemoteDisconnect(context.Context, string) error
 }
 
+type IOSSessionController interface {
+	CloseForReservation(context.Context, string) error
+}
+
 type View struct {
 	ID                    string                   `json:"id"`
 	PoolID                string                   `json:"pool_id"`
@@ -113,6 +119,13 @@ type Service struct {
 	repo  repository.ReservationRepository
 	newID IDGenerator
 	stf   STFController
+	ios   IOSSessionController
+}
+
+func (service *Service) SetIOSSessionController(controller IOSSessionController) {
+	if service != nil {
+		service.ios = controller
+	}
 }
 
 func NewService(db *database.DB, generator IDGenerator, controllers ...STFController) *Service {
@@ -127,7 +140,7 @@ func NewService(db *database.DB, generator IDGenerator, controllers ...STFContro
 }
 
 func (service *Service) Create(ctx context.Context, actor audit.Actor, key string, input CreateInput) (View, error) {
-	return service.create(ctx, actor, key, input, "")
+	return service.create(ctx, actor, key, input, strings.TrimSpace(input.RequestedDeviceID))
 }
 
 func (service *Service) CreateForDevice(
@@ -137,7 +150,7 @@ func (service *Service) CreateForDevice(
 	leaseSeconds int,
 ) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	if !actor.Valid() || len(key) < 8 || len(key) > 128 || !validOwnerID("manual", actor.ID) ||
 		!identifierPattern.MatchString(deviceID) || leaseSeconds < 60 {
@@ -160,8 +173,13 @@ func (service *Service) CreateForDevice(
 
 func (service *Service) create(ctx context.Context, actor audit.Actor, key string, input CreateInput, targetDeviceID string) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
+	normalizedCapabilities, err := normalizeRequestedCapabilities(input.RequestedCapabilities)
+	if err != nil {
+		return View{}, err
+	}
+	input.RequestedCapabilities = normalizedCapabilities
 	if err := validateCreate(actor, key, input); err != nil {
 		return View{}, err
 	}
@@ -173,13 +191,23 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 	if policy.Status != "active" {
 		return View{}, ErrPoolUnavailable
 	}
+	if platformName, exists := input.RequestedCapabilities["platformName"]; exists &&
+		strings.ToLower(platformName.(string)) != policy.Platform {
+		return View{}, fmt.Errorf("%w：platformName 与设备池平台不匹配", ErrInvalidArgument)
+	}
 	if input.LeaseSeconds > policy.MaxLeaseSeconds {
-		return View{}, fmt.Errorf("%w: lease_seconds exceeds pool maximum", ErrInvalidArgument)
+		return View{}, fmt.Errorf("%w：lease_seconds 超过设备池最大续约窗口", ErrInvalidArgument)
 	}
 	if input.RequestedCapabilities == nil {
 		input.RequestedCapabilities = map[string]any{}
 	}
 	if targetDeviceID != "" {
+		if !identifierPattern.MatchString(targetDeviceID) {
+			return View{}, ErrInvalidArgument
+		}
+		if err := service.repo.ValidateTargetDeviceInPool(ctx, service.db.Pool(), input.PoolID, targetDeviceID); err != nil {
+			return View{}, translateRepositoryError(err)
+		}
 		input.RequestedCapabilities[repository.TargetDeviceCapability] = targetDeviceID
 	}
 	id, err := service.newID()
@@ -252,7 +280,7 @@ func (service *Service) KeepAliveForDevice(
 
 func (service *Service) Get(ctx context.Context, id string) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	if !identifierPattern.MatchString(id) {
 		return View{}, ErrInvalidArgument
@@ -266,7 +294,7 @@ func (service *Service) Get(ctx context.Context, id string) (View, error) {
 
 func (service *Service) List(ctx context.Context, filter Filter, page paging.Page) (paging.Result[View], error) {
 	if service == nil || service.db == nil {
-		return paging.Result[View]{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return paging.Result[View]{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	if filter.OwnerType != "" && !validOwnerType(filter.OwnerType) {
 		return paging.Result[View]{}, ErrInvalidArgument
@@ -293,7 +321,7 @@ func (service *Service) List(ctx context.Context, filter Filter, page paging.Pag
 
 func (service *Service) Extend(ctx context.Context, actor audit.Actor, key, id string, input ExtensionInput) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	clientID := actor.ClientID
 	if !actor.Valid() || len(key) < 8 || len(key) > 128 ||
@@ -329,18 +357,25 @@ func (service *Service) Extend(ctx context.Context, actor audit.Actor, key, id s
 			return err
 		}
 		if !current.ExpiresAt.After(now) {
-			return fmt.Errorf("%w: expired reservation cannot be extended", ErrConflict)
+			return fmt.Errorf("%w：预约已经过期，不能续约", ErrConflict)
 		}
 		policy, err := service.repo.GetPoolPolicy(ctx, tx, current.PoolID)
 		if err != nil {
 			return err
 		}
-		maximumExpiry := current.StartsAt.Add(time.Duration(policy.MaxLeaseSeconds) * time.Second)
-		remainingSeconds := int64(maximumExpiry.Sub(*current.ExpiresAt) / time.Second)
-		if int64(input.AdditionalSeconds) > remainingSeconds {
-			return fmt.Errorf("%w: extension exceeds pool maximum lease", ErrInvalidArgument)
+		if input.AdditionalSeconds > policy.MaxLeaseSeconds {
+			return fmt.Errorf("%w：单次续约秒数不能超过设备池最大续约窗口 %d 秒", ErrInvalidArgument, policy.MaxLeaseSeconds)
 		}
-		result, err = service.repo.Extend(ctx, tx, id, current.ExpiresAt.Add(time.Duration(input.AdditionalSeconds)*time.Second))
+		// max_lease_seconds is a rolling safety window, not a reservation lifetime
+		// limit. A healthy worker may therefore keep a long-running reservation
+		// alive indefinitely, while a crashed worker still stops extending it and
+		// is collected by the Reaper after this bounded future window.
+		maximumExpiry := now.Add(time.Duration(policy.MaxLeaseSeconds) * time.Second)
+		nextExpiry := current.ExpiresAt.Add(time.Duration(input.AdditionalSeconds) * time.Second)
+		if nextExpiry.After(maximumExpiry) {
+			nextExpiry = maximumExpiry
+		}
+		result, err = service.repo.Extend(ctx, tx, id, nextExpiry)
 		return err
 	})
 	if err != nil {
@@ -356,7 +391,7 @@ func (service *Service) Release(
 	input ReleaseInput,
 ) (View, error) {
 	if service == nil || service.db == nil {
-		return View{}, fmt.Errorf("%w: database is not configured", ErrPoolUnavailable)
+		return View{}, fmt.Errorf("%w：数据库未配置", ErrPoolUnavailable)
 	}
 	clientID := actor.ClientID
 	input.Reason = strings.TrimSpace(input.Reason)
@@ -379,10 +414,21 @@ func (service *Service) Release(
 	if err != nil {
 		return View{}, translateRepositoryError(err)
 	}
-	if current.ClientID != clientID {
+	// A manual reservation may be created through Alcor's trusted service
+	// gateway on behalf of a Console user. In that case the persisted
+	// idempotency client is "service", while the authenticated Console actor is
+	// still the reservation owner. Treat that as an ordinary owner release.
+	// Cross-owner releases remain limited to the explicit force path, whose API
+	// authorization only permits Console administrators (or a trusted service).
+	ownedByActor := current.ClientID == clientID ||
+		(actor.Type == audit.ActorConsole && current.OwnerType == "manual" && current.OwnerID == actor.ID)
+	if !ownedByActor && !input.Force {
 		return View{}, ErrForbidden
 	}
 	if current.Status == domain.ReservationActive {
+		if err := service.closeIOSSession(ctx, current); err != nil {
+			return View{}, err
+		}
 		if err := service.releaseSTF(ctx, current); err != nil {
 			auditErr := service.recordSTFFailure(context.Background(), current, actor, requestID,
 				"stf_release_failed", "STF release failed; reservation remains active")
@@ -405,7 +451,7 @@ func (service *Service) Release(
 		}
 		if current.Status == domain.ReservationPending {
 			if current.DeviceID != nil {
-				return fmt.Errorf("%w: reservation claim is in progress", ErrConflict)
+				return fmt.Errorf("%w：预约设备仍在领取中", ErrConflict)
 			}
 			now, err := database.ClockNow(ctx, tx)
 			if err != nil {
@@ -472,6 +518,9 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 		return View{}, translateRepositoryError(err)
 	}
 	requestID := "reaper_" + selected.ID
+	if err := service.closeIOSSession(ctx, selected); err != nil {
+		return View{}, err
+	}
 	if err := service.releaseSTF(ctx, selected); err != nil {
 		auditErr := service.recordSTFFailure(context.Background(), selected, reaperActor(), requestID,
 			"stf_release_failed", "STF release failed during expiry; reservation remains active")
@@ -512,7 +561,7 @@ func (service *Service) CreateRemoteSession(
 	input RemoteSessionInput,
 ) (RemoteSessionView, error) {
 	if service == nil || service.db == nil || service.stf == nil {
-		return RemoteSessionView{}, fmt.Errorf("%w: STF is not configured", ErrSTFRemoteFailed)
+		return RemoteSessionView{}, fmt.Errorf("%w：STF 尚未配置", ErrSTFRemoteFailed)
 	}
 	clientID := actor.ClientID
 	if input.TTLSeconds == 0 {
@@ -559,7 +608,7 @@ func (service *Service) CreateRemoteSession(
 	if err != nil {
 		return RemoteSessionView{}, fmt.Errorf("generate remote session ID: %w", err)
 	}
-	connection, err := service.stf.RemoteConnect(ctx, device.Serial)
+	connection, err := service.stf.RemoteConnect(ctx, device.STFSerial)
 	if err != nil {
 		return RemoteSessionView{}, fmt.Errorf("%w: %w", ErrSTFRemoteFailed, err)
 	}
@@ -570,7 +619,7 @@ func (service *Service) CreateRemoteSession(
 	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
-		service.disconnectRemote(device.Serial)
+		service.disconnectRemote(device.STFSerial)
 		return RemoteSessionView{}, err
 	}
 	var stored remoteSessionMetadata
@@ -603,7 +652,7 @@ func (service *Service) CreateRemoteSession(
 		return err
 	})
 	if err != nil {
-		service.disconnectRemote(device.Serial)
+		service.disconnectRemote(device.STFSerial)
 		return RemoteSessionView{}, translateRepositoryError(err)
 	}
 	return remoteSessionView(reservationID, stored), nil
@@ -643,8 +692,21 @@ func (service *Service) releaseSTF(ctx context.Context, current repository.Reser
 	if err != nil {
 		return translateRepositoryError(err)
 	}
-	if err := service.stf.Release(ctx, device.Serial); err != nil {
+	if device.Platform != "android" {
+		return nil
+	}
+	if err := service.stf.Release(ctx, device.STFSerial); err != nil {
 		return fmt.Errorf("%w: %w", ErrSTFReleaseFailed, err)
+	}
+	return nil
+}
+
+func (service *Service) closeIOSSession(ctx context.Context, current repository.ReservationRecord) error {
+	if service.ios == nil || current.DeviceID == nil {
+		return nil
+	}
+	if err := service.ios.CloseForReservation(ctx, current.ID); err != nil {
+		return fmt.Errorf("%w: %w", ErrIOSSessionCleanup, err)
 	}
 	return nil
 }
@@ -748,7 +810,11 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	if deviceState.Lifecycle() != domain.DeviceQuarantined {
+	// Reconciler/Host heartbeats may have already restored the device to ready
+	// before the reservation is closed. Device transitions are intentionally
+	// strict, so avoid an invalid ready -> ready transition and keep release and
+	// Reaper retries idempotent.
+	if lifecycle := deviceState.Lifecycle(); lifecycle != domain.DeviceQuarantined && lifecycle != domain.DeviceReady {
 		if err := deviceState.Transition(domain.DeviceReady, "reservation released; device data retained", now); err != nil {
 			return repository.ReservationRecord{}, err
 		}
@@ -773,6 +839,9 @@ func validateCreate(actor audit.Actor, key string, input CreateInput) error {
 		!validOwnerType(input.OwnerType) || input.LeaseSeconds < 60 {
 		return ErrInvalidArgument
 	}
+	if input.RequestedDeviceID != "" && !identifierPattern.MatchString(input.RequestedDeviceID) {
+		return ErrInvalidArgument
+	}
 	if input.RequestedCapabilities == nil {
 		input.RequestedCapabilities = map[string]any{}
 	}
@@ -781,13 +850,37 @@ func validateCreate(actor audit.Actor, key string, input CreateInput) error {
 	}
 	for key := range input.RequestedCapabilities {
 		if strings.HasPrefix(key, "_device_farm_") {
-			return fmt.Errorf("%w: requested_capabilities contains a reserved key", ErrInvalidArgument)
+			return fmt.Errorf("%w：requested_capabilities 包含系统保留字段", ErrInvalidArgument)
 		}
 	}
 	if _, err := json.Marshal(input.RequestedCapabilities); err != nil {
-		return fmt.Errorf("%w: requested_capabilities is not valid JSON", ErrInvalidArgument)
+		return fmt.Errorf("%w：requested_capabilities 不是有效的 JSON", ErrInvalidArgument)
 	}
 	return nil
+}
+
+func normalizeRequestedCapabilities(source map[string]any) (map[string]any, error) {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	value, exists := result["platformName"]
+	if !exists {
+		return result, nil
+	}
+	platformName, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("%w：platformName 必须是 Android 或 iOS", ErrInvalidArgument)
+	}
+	switch strings.ToLower(strings.TrimSpace(platformName)) {
+	case "android":
+		result["platformName"] = "Android"
+	case "ios":
+		result["platformName"] = "iOS"
+	default:
+		return nil, fmt.Errorf("%w：platformName 必须是 Android 或 iOS", ErrInvalidArgument)
+	}
+	return result, nil
 }
 
 func validOwnerType(value string) bool {

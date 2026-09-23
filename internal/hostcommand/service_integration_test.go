@@ -210,6 +210,37 @@ func TestHeartbeatPreservesProvisioningStateDuringInFlightRebuild(t *testing.T) 
 	}
 }
 
+func TestHeartbeatPreservesProvisioningStateDuringRuntimeProfileUpdate(t *testing.T) {
+	db := openTestDatabase(t)
+	seedHost(t, db)
+	seedDevice(t, db, "device_0000000000001", "host_000000000000001", "container-1", "old-serial",
+		nil, nil, "provisioning", "unknown")
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_host_commands
+		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES('command_000000000002','host_000000000000001','restart',
+		'{"device_id":"device_0000000000001","provider_ref":"container-1","operation_kind":"runtime_profile_update"}','pending',1,'heartbeat-runtime-profile-in-flight')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "host_000000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "container-1", Serial: "new-serial",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{
+				"adb_endpoint": "10.0.0.8:31000", "appium_endpoint": "http://10.0.0.8:4723", "appium_udid": "emulator-5554"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health, serial string
+	var lastSeen *time.Time
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,serial,last_seen_at
+		FROM devices WHERE id='device_0000000000001'`).Scan(&lifecycle, &health, &serial, &lastSeen); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "provisioning" || health != "unknown" || serial != "new-serial" || lastSeen == nil {
+		t.Fatalf("lifecycle=%s health=%s serial=%s last_seen=%v", lifecycle, health, serial, lastSeen)
+	}
+}
+
 func TestHeartbeatMayReuseConnectionIdentityFromQuarantinedPoolExitRecord(t *testing.T) {
 	db := openTestDatabase(t)
 	seedHost(t, db)
@@ -273,6 +304,257 @@ func TestHeartbeatDoesNotCreateOrCrossBindDiscoveredDevice(t *testing.T) {
 	}
 	if count != 1 || serial != "other-serial" {
 		t.Fatalf("device count=%d cross-host serial=%s", count, serial)
+	}
+}
+
+func TestIOSHeartbeatReadinessControlsHostAndPersistsOnlyRegisteredInventory(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-ALLOWED','rebuild','SIM-ALLOWED',
+		'http://127.0.0.1:4723','{"platformName":"iOS"}','stopped','unknown')`); err != nil {
+		t.Fatal(err)
+	}
+	service := hostcommand.New(db)
+	input := hostcommand.HeartbeatInput{AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": false,
+			"reasons": []any{"appium_node_not_ready"}}},
+		Devices: []hostcommand.DiscoveredDevice{
+			{ProviderRef: "SIM-ALLOWED", Serial: "SIM-ALLOWED", Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+				LifecycleStatus: "booting", HealthStatus: "degraded", Connection: map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-ALLOWED"},
+				Capabilities: map[string]any{"platformName": "iOS", "platformVersion": "26.3", "providerBusy": true, "allowlisted": true},
+				Components:   map[string]string{"transport": "passed", "os_ready": "passed", "automation": "passed", "router": "failed", "remote_control": "unsupported"}},
+			{ProviderRef: "SIM-UNKNOWN", Serial: "SIM-UNKNOWN", Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+				LifecycleStatus: "stopped", HealthStatus: "unknown"},
+		}}
+	result, err := service.Heartbeat(context.Background(), "ios_host_000000000001", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "maintenance" {
+		t.Fatalf("status=%s", result.Status)
+	}
+	var status, hostOS, hostArch, lifecycle, health, platformVersion, router string
+	var providerBusy, autoMaintenance bool
+	var readinessFailureStartedAt *time.Time
+	var usedCPU float64
+	var usedSlots int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT status,host_os,host_arch,COALESCE((used_capacity->>'cpu_cores')::float,0),
+		COALESCE((used_capacity->>'device_slots')::int,0),COALESCE((capabilities->>'host_readiness_auto_maintenance')::boolean,false),
+		NULLIF(capabilities->>'host_readiness_failure_started_at','')::timestamptz
+		FROM device_hosts WHERE id='ios_host_000000000001'`).Scan(&status, &hostOS, &hostArch, &usedCPU, &usedSlots,
+		&autoMaintenance, &readinessFailureStartedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,capabilities->>'platformVersion',
+		(capabilities->>'providerBusy')::boolean,capabilities->'componentHealth'->>'router' FROM devices WHERE id='ios_device_000000001'`).
+		Scan(&lifecycle, &health, &platformVersion, &providerBusy, &router); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE provider_ref='SIM-UNKNOWN'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if status != "maintenance" || !autoMaintenance || readinessFailureStartedAt == nil || hostOS != "macos" || hostArch != "arm64" || usedCPU != 0 || usedSlots != 1 || lifecycle != "booting" ||
+		health != "degraded" || platformVersion != "26.3" || !providerBusy || router != "failed" || count != 0 {
+		t.Fatalf("host=%s/%s/%s cpu=%v slots=%d device=%s/%s version=%s busy=%v router=%s unknown=%d", status, hostOS, hostArch,
+			usedCPU, usedSlots, lifecycle, health, platformVersion, providerBusy, router, count)
+	}
+	input.AgentTime = time.Now().UTC()
+	input.Environment["host_readiness"] = map[string]any{"ready": true, "reasons": []any{}}
+	input.Devices[0].LifecycleStatus, input.Devices[0].HealthStatus = "ready", "healthy"
+	input.Devices[0].Capabilities["providerBusy"] = false
+	input.Devices[0].Components["router"] = "passed"
+	result, err = service.Heartbeat(context.Background(), "ios_host_000000000001", input)
+	if err != nil || result.Status != "online" {
+		t.Fatalf("recovery result=%+v error=%v", result, err)
+	}
+	var failureTimestampPresent bool
+	if err := db.Pool().QueryRow(context.Background(), `SELECT capabilities ? 'host_readiness_failure_started_at'
+		FROM device_hosts WHERE id='ios_host_000000000001'`).Scan(&failureTimestampPresent); err != nil {
+		t.Fatal(err)
+	}
+	if failureTimestampPresent {
+		t.Fatal("宿主机就绪恢复后仍保留故障起始时间")
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET status='maintenance' WHERE id='ios_host_000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	input.AgentTime = time.Now().UTC()
+	result, err = service.Heartbeat(context.Background(), "ios_host_000000000001", input)
+	if err != nil || result.Status != "maintenance" {
+		t.Fatalf("manual maintenance was overridden: result=%+v error=%v", result, err)
+	}
+	input.AgentTime = time.Now().UTC()
+	input.Environment["host_readiness"] = map[string]any{"ready": false, "reasons": []any{"appium_node_not_ready"}}
+	if result, err = service.Heartbeat(context.Background(), "ios_host_000000000001", input); err != nil || result.Status != "maintenance" {
+		t.Fatalf("manual maintenance changed during readiness failure: result=%+v error=%v", result, err)
+	}
+	input.AgentTime = time.Now().UTC()
+	input.Environment["host_readiness"] = map[string]any{"ready": true, "reasons": []any{}}
+	if result, err = service.Heartbeat(context.Background(), "ios_host_000000000001", input); err != nil || result.Status != "maintenance" {
+		t.Fatalf("manual maintenance was cleared after readiness recovery: result=%+v error=%v", result, err)
+	}
+}
+
+func TestIOSHeartbeatSelectsFirstHealthySimulatorAsDefaultPoolTemplate(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_pools(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,status)
+		VALUES('ios_pool_000000000001','iOS 默认池','ios',1800,86400,1,1,0,'active');
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-DEFAULT','rebuild','SIM-DEFAULT',
+		'http://127.0.0.1:4723','{"platformName":"iOS","runtimeId":"runtime-ios-26","deviceTypeId":"iphone-17"}','booting','degraded');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('ios_pool_000000000001','ios_device_000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(),
+		Capacity:  map[string]any{"device_slots": 2},
+		Environment: map[string]any{
+			"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true, "reasons": []any{}},
+		},
+		Devices: []hostcommand.DiscoveredDevice{{
+			ProviderRef: "SIM-DEFAULT", Serial: "SIM-DEFAULT", Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+			LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection:   map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-DEFAULT"},
+			Capabilities: map[string]any{"platformName": "iOS", "runtimeId": "runtime-ios-26", "deviceTypeId": "iphone-17", "allowlisted": true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var baseDeviceID *string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT base_device_id FROM device_pools WHERE id='ios_pool_000000000001'`).Scan(&baseDeviceID); err != nil {
+		t.Fatal(err)
+	}
+	if baseDeviceID == nil || *baseDeviceID != "ios_device_000000001" {
+		t.Fatalf("base_device_id=%v", baseDeviceID)
+	}
+
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+		VALUES('ios_device_000000002','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-SECOND','rebuild','SIM-SECOND',
+		'http://127.0.0.1:4723','{"platformName":"iOS","runtimeId":"runtime-ios-26","deviceTypeId":"iphone-17"}','booting','degraded');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('ios_pool_000000000001','ios_device_000000002',true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true, "reasons": []any{}}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-SECOND", Serial: "SIM-SECOND", Platform: "ios", DeviceKind: "simulator", ProviderType: "appium_device_farm_ios",
+			LifecycleStatus: "ready", HealthStatus: "healthy", Connection: map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-SECOND"},
+			Capabilities: map[string]any{"platformName": "iOS", "runtimeId": "runtime-ios-26", "deviceTypeId": "iphone-17", "allowlisted": true}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A later healthy Simulator never overwrites the established template.
+	var preserved *string
+	if err := db.Pool().QueryRow(context.Background(), `SELECT base_device_id FROM device_pools WHERE id='ios_pool_000000000001'`).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	if preserved == nil || *preserved != "ios_device_000000001" {
+		t.Fatalf("preserved base_device_id=%v", preserved)
+	}
+}
+
+func TestIOSHeartbeatRecoversAutomaticSharedAutomationQuarantine(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-RECOVER','rebuild','SIM-RECOVER',
+		'http://127.0.0.1:4723','{"platformName":"iOS"}','quarantined','unhealthy',$1,3)`, domain.AgentReportedUnhealthyReason); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_pools(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,base_device_id,status)
+		VALUES('ios_pool_000000000001','iOS 默认池','ios',1800,86400,1,1,0,'ios_device_000000001','active')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('ios_pool_000000000001','ios_device_000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-RECOVER", Serial: "SIM-RECOVER", Platform: "ios", DeviceKind: "simulator",
+			ProviderType: "appium_device_farm_ios", LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection:   map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-RECOVER"},
+			Capabilities: map[string]any{"platformName": "iOS", "allowlisted": true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health string
+	var failures int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,consecutive_failures
+		FROM devices WHERE id='ios_device_000000001'`).Scan(&lifecycle, &health, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "ready" || health != "healthy" || failures != 0 {
+		t.Fatalf("recovered iOS device lifecycle=%s health=%s failures=%d", lifecycle, health, failures)
+	}
+}
+
+func TestHealthyIOSHeartbeatClearsStaleFailureCounter(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status,health_reason,consecutive_failures)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-HEALTHY','rebuild','SIM-HEALTHY',
+		'http://127.0.0.1:4723','{"platformName":"iOS"}','ready','degraded','host is unavailable',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-HEALTHY", Serial: "SIM-HEALTHY", Platform: "ios", DeviceKind: "simulator",
+			ProviderType: "appium_device_farm_ios", LifecycleStatus: "ready", HealthStatus: "healthy",
+			Connection:   map[string]any{"appium_endpoint": "http://127.0.0.1:4723", "appium_udid": "SIM-HEALTHY"},
+			Capabilities: map[string]any{"platformName": "iOS", "allowlisted": true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, health string
+	var reason *string
+	var failures int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status,health_reason,consecutive_failures
+		FROM devices WHERE id='ios_device_000000001'`).Scan(&lifecycle, &health, &reason, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "ready" || health != "healthy" || reason != nil || failures != 0 {
+		t.Fatalf("healthy heartbeat lifecycle=%s health=%s reason=%v failures=%d", lifecycle, health, reason, failures)
+	}
+}
+
+func TestIOSHeartbeatRejectsRegisteredIdentityMismatch(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO devices(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status)
+		VALUES('ios_device_000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios','SIM-1','rebuild','SIM-1','{"platformName":"iOS"}','stopped','unknown')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostcommand.New(db).Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+		AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 1},
+		Environment: map[string]any{"host_os": "macos", "host_arch": "arm64", "host_readiness": map[string]any{"ready": true}},
+		Devices: []hostcommand.DiscoveredDevice{{ProviderRef: "SIM-1", Serial: "SIM-1", Platform: "android", DeviceKind: "simulator",
+			ProviderType: "appium_device_farm_ios", LifecycleStatus: "ready", HealthStatus: "healthy"}},
+	})
+	if !errors.Is(err, hostcommand.ErrDeviceIdentityConflict) {
+		t.Fatalf("error=%v", err)
 	}
 }
 
@@ -486,6 +768,48 @@ func claimOne(t *testing.T, service *hostcommand.Service) hostcommand.Command {
 	return values[0]
 }
 
+func TestHeartbeatOnlyQuarantinesMissingIOSDeviceAfterCompleteInventory(t *testing.T) {
+	db := openTestDatabase(t)
+	seedIOSHost(t, db)
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+		(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,
+		 lifecycle_status,health_status,last_seen_at)
+		VALUES('ios_device_0000000001','ios_host_000000000001','ios','simulator','appium_device_farm_ios',
+		'00000000-0000-0000-0000-000000000001','rebuild','00000000-0000-0000-0000-000000000001','{}',
+		'ready','healthy',clock_timestamp()-interval '1 minute')`); err != nil {
+		t.Fatal(err)
+	}
+	service := hostcommand.New(db)
+	for _, complete := range []bool{false, true} {
+		_, err := service.Heartbeat(context.Background(), "ios_host_000000000001", hostcommand.HeartbeatInput{
+			AgentTime: time.Now().UTC(), Capacity: map[string]any{"device_slots": 2},
+			Environment: map[string]any{"provider_inventory_complete": complete}, Devices: []hostcommand.DiscoveredDevice{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lifecycle, health string
+		if err := db.Pool().QueryRow(context.Background(), `SELECT lifecycle_status,health_status FROM devices
+			WHERE id='ios_device_0000000001'`).Scan(&lifecycle, &health); err != nil {
+			t.Fatal(err)
+		}
+		if !complete && (lifecycle != "ready" || health != "healthy") {
+			t.Fatalf("incomplete inventory changed device to %s/%s", lifecycle, health)
+		}
+		if complete && (lifecycle != "quarantined" || health != "unhealthy") {
+			t.Fatalf("complete missing inventory left device at %s/%s", lifecycle, health)
+		}
+	}
+	var events int
+	if err := db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id='ios_device_0000000001' AND event_type='ios_provider_device_missing'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Fatalf("missing inventory events=%d", events)
+	}
+}
+
 func openTestDatabase(t *testing.T) *database.DB {
 	t.Helper()
 	url := os.Getenv("DEVICE_FARM_TEST_DATABASE_URL")
@@ -515,6 +839,18 @@ func seedHost(t *testing.T, db *database.DB) {
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images
 		(id,name,docker_image,docker_digest,api_level,abi,resolution,status)
 		VALUES ('image_00000000000001','command-image','registry.example/alcor/android-emulator:api34','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',34,'x86_64','1080x1920','ready')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedIOSHost(t *testing.T, db *database.DB) {
+	t.Helper()
+	if _, err := db.Pool().Exec(context.Background(), `TRUNCATE TABLE
+		device_idempotency_records,device_audit_events,device_health_events,device_sessions,
+		device_reservations,device_pool_devices,devices,device_pool_images,device_pools,
+		device_host_commands,device_hosts,device_images RESTART IDENTITY CASCADE;
+		INSERT INTO device_hosts(id,name,host_type,host_os,host_arch,status)
+		VALUES('ios_host_000000000001','mac-node','appium_device_farm_ios','macos','unknown','offline')`); err != nil {
 		t.Fatal(err)
 	}
 }

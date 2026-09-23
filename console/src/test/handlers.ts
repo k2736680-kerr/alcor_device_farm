@@ -53,7 +53,7 @@ export const sampleAndroidHardwareProfiles: AndroidHardwareProfile[] = [
 
 export const sampleHosts: DeviceHost[] = [
   {
-    id: 'host_000000000000001', name: 'kvm-01', host_type: 'docker_emulator', address: '10.0.0.1',
+    id: 'host_000000000000001', name: 'kvm-01', host_type: 'docker_emulator', host_os: 'linux', host_arch: 'amd64', address: '10.0.0.1',
     capabilities: {}, capacity: {}, used_capacity: {}, status: 'online', draining: false,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
@@ -61,7 +61,7 @@ export const sampleHosts: DeviceHost[] = [
 
 export const samplePools: DevicePool[] = [
   {
-    id: 'pool_000000000000001', name: 'default-android', default_lease_seconds: 1800, max_lease_seconds: 7200,
+    id: 'pool_000000000000001', name: 'default-android', platform: 'android', default_lease_seconds: 1800, max_lease_seconds: 7200,
     total_target: 2, min_ready: 2, max_concurrency: 2, default_image_id: 'image_00000000000001',
     status: 'active', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
@@ -76,30 +76,32 @@ export const samplePoolImages: DevicePoolImage[] = [
 
 export const sampleDevices: Device[] = [
   {
-    id: 'device_00000000000001', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
-    provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: {},
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    id: 'device_00000000000001', name: 'DaFit回归-Pixel9-01', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
+    provider_ref: 'emulator-5554', lifecycle_mode: 'rebuild', serial: 'emulator-5554', capabilities: { apiLevel: 36 },
+    pool_id: 'pool_000000000000001', pool_name: 'default-android',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'ready', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
   },
   {
-    id: 'device_00000000000002', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000002', name: 'DaFit回归-Pixel9-02', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5556', lifecycle_mode: 'rebuild', serial: 'emulator-5556', capabilities: {},
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    pool_id: 'pool_000000000000001', pool_name: 'default-android',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'busy', health_status: 'healthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:01:00Z', updated_at: '2026-08-06T00:01:00Z',
   },
   {
-    id: 'device_00000000000003', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000003', name: '故障设备-Pixel9-03', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5558', lifecycle_mode: 'rebuild', serial: 'emulator-5558', capabilities: {},
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'quarantined', health_status: 'unhealthy', health_reason: 'health check failed', consecutive_failures: 3,
     created_at: '2026-08-06T00:02:00Z', updated_at: '2026-08-06T00:02:00Z',
   },
   {
-    id: 'device_00000000000004', host_id: 'host_000000000000001', device_kind: 'emulator', provider_type: 'docker_emulator',
+    id: 'device_00000000000004', name: '历史设备-Pixel9-04', host_id: 'host_000000000000001', platform: 'android', device_kind: 'emulator', provider_type: 'docker_emulator',
     provider_ref: 'emulator-5560', lifecycle_mode: 'rebuild', serial: 'emulator-5560', capabilities: {},
-    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle',
+    image_id: 'image_00000000000001', effective_runtime_profile: sampleImages[0].resource_config, reimage_status: 'idle', runtime_profile_update_status: 'idle',
     lifecycle_status: 'deleted', health_status: 'unhealthy', consecutive_failures: 0,
     created_at: '2026-08-06T00:03:00Z', updated_at: '2026-08-06T00:03:00Z',
   },
@@ -132,6 +134,7 @@ export const sampleHealthEvents: HealthEventRecord[] = [
 
 export const sampleRemoteControl: RemoteControl = {
   device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'connected',
+  transport: 'stf',
   url: 'http://stf.example.test/?jwt=short-lived-token#!/control/emulator-5554',
   expires_at: new Date(Date.now() + 60_000).toISOString(), heartbeat_interval_seconds: 15,
 }
@@ -193,11 +196,21 @@ export const handlers = [
     const size = Number(search.get('page_size') ?? 20)
     const lifecycle = search.get('lifecycle_status')
     const health = search.get('health_status')
+    const poolID = search.get('pool_id')
+    const platform = search.get('platform')
     const filtered = sampleDevices.filter((device) =>
-      (!lifecycle || device.lifecycle_status === lifecycle) && (!health || device.health_status === health),
+      (!lifecycle || device.lifecycle_status === lifecycle) &&
+      (!health || device.health_status === health) &&
+      (!platform || device.platform === platform) &&
+      (!poolID || device.pool_id === poolID),
     )
     const start = (page - 1) * size
     return HttpResponse.json(pageEnvelope(filtered.slice(start, start + size), filtered.length, page, size))
+  }),
+  http.patch('/api/v1/devices/:id', async ({ request, params }) => {
+    const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
+    const input = await request.json() as { name: string }
+    return HttpResponse.json({ request_id: 'req_update_device_name', data: { ...device, name: input.name }, error: null })
   }),
   http.delete('/api/v1/devices/:id', ({ params }) => {
     const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
@@ -207,16 +220,20 @@ export const handlers = [
     const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
     return HttpResponse.json({ request_id: 'req_reimage_device', data: { ...device, lifecycle_status: 'provisioning', reimage_status: 'pending' }, error: null }, { status: 202 })
   }),
-  http.post('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+  http.post('/api/v1/devices/:id/runtime-profile-updates', ({ params }) => {
+    const device = sampleDevices.find((item) => item.id === params.id) ?? sampleDevices[0]
+    return HttpResponse.json({ request_id: 'req_runtime_profile_update', data: { ...device, lifecycle_status: 'provisioning', runtime_profile_update_status: 'pending' }, error: null }, { status: 202 })
+  }),
+  http.post('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_start', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'connecting', url: undefined }, error: null,
   }, { status: 202 })),
-  http.get('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+  http.get('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_get', data: { ...sampleRemoteControl, device_id: String(params.id) }, error: null,
   })),
-  http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => HttpResponse.json({
+  http.post('/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_heartbeat', data: { ...sampleRemoteControl, device_id: String(params.id), url: undefined }, error: null,
   })),
-  http.delete('/console/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
+  http.delete('/api/v1/devices/:id/remote-control', ({ params }) => HttpResponse.json({
     request_id: 'req_remote_end', data: { ...sampleRemoteControl, device_id: String(params.id), status: 'ended', url: undefined }, error: null,
   })),
   http.get('/api/v1/device-reservations', ({ request }) => {

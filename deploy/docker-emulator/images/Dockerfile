@@ -59,6 +59,7 @@ RUN appium driver list --installed 2>&1 | grep -q 'uiautomator2@8.2.2' \
 RUN rm -rf ${SCRIPT_PATH}
 ENV SCRIPT_PATH=docker-android \
     APP_PATH=${WORK_PATH}/docker-android \
+    ANDROID_AVD_HOME=${WORK_PATH}/.android/avd \
     DEVICE_TYPE=emulator \
     LOG_PATH=${WORK_PATH}/logs \
     WEB_LOG_PORT=9000 \

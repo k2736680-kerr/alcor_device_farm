@@ -1,5 +1,9 @@
 # 设备农场 MVP 验收方案
 
+> 本文件记录 Android 第一版 MVP 的历史验收基线。DF-028、DF-029～DF-038 和本地 ALCOR-001 的后续完成情况以各任务证据和最新实施清单为准；第二版 iOS 验收使用 `docs/09_ios_device_farm_v2_acceptance.md`，不能用本文件的 Android Mock 或 Linux KVM 结果替代。
+
+第二版 iOS 的 E4/E5/E6 环境、G10～G16、P0/P1 用例和证据要求已经独立定义在 [第二版 iOS 设备农场验收方案](09_ios_device_farm_v2_acceptance.md)。Android 本文件继续作为强制回归基线，不能被新方案覆盖或降级。
+
 ## 1. 验收原则
 
 - `P0`：核心正确性和安全项，必须全部通过；
@@ -79,6 +83,7 @@
 | AT-API-004 | P0 | 相同 Idempotency-Key 重复创建预约 | 返回同一 reservation，不重复占设备 |
 | AT-API-005 | P0 | 非法 UUID/ULID、租期或能力 | 400 和稳定错误码，数据库无脏记录 |
 | AT-API-006 | P1 | OpenAPI 示例和实际响应比对 | Schema 一致，无未记录字段 |
+| AT-API-007 | P0 | 编辑 Device 显示名称 | 详情和所有当前引用显示新名称，不改变 Device ID、Pool membership 或 Reservation 关联 |
 
 ### 4.2 数据库和状态机
 
@@ -98,13 +103,16 @@
 | AT-SCH-001 | P0 | 100 个并发预约竞争 2 台 ready 设备 | 任意时刻最多 2 个 active，无双占 |
 | AT-SCH-002 | P0 | 要求 API/ABI/分辨率能力 | 只分配完全满足的设备 |
 | AT-SCH-003 | P0 | 无满足能力设备 | pending 或明确容量失败，不错配设备 |
-| AT-SCH-004 | P0 | 合法续租 | expires_at 延长且不超过最大租期 |
+| AT-SCH-004 | P0 | 运行方持续续租且逻辑运行时间超过 4 小时 | expires_at 按数据库当前时间滑动延长；总运行时间不锁死，任意时刻的未来窗口不超过 Pool `max_lease_seconds` |
 | AT-SCH-005 | P0 | 过期后续租 | 被拒绝，不复活旧预约 |
 | AT-SCH-006 | P0 | 同时调用两次 release | 幂等成功，只执行一次底层释放 |
 | AT-SCH-007 | P0 | 两个 Scheduler 实例同时领取 | 一个 pending reservation 只被处理一次 |
 | AT-SCH-008 | P0 | 两个 Reaper 实例同时回收 | 只产生一次终态和清理命令 |
 | AT-SCH-009 | P1 | ready warm 设备正常申请 | 10 秒内获得 active 或返回明确可重试错误 |
 | AT-SCH-010 | P1 | 预约过期 | grace period 后 60 秒内关闭并进入清理 |
+| AT-SCH-011 | P0 | 指定空闲 Device 创建预约 | 只分配该 Device，不从同 Pool 选择其他设备 |
+| AT-SCH-012 | P0 | 指定 Device 正在使用 | 新预约保持 pending；目标释放后自动获得同一 Device，不回退其他空闲设备 |
+| AT-SCH-013 | P0 | 指定 Device 不属于 Pool 或不可调度 | 创建被拒绝且不留下 Reservation |
 
 ### 4.4 Host Agent 和 Docker Emulator
 
@@ -155,7 +163,7 @@
 
 | 编号 | 优先级 | 场景 | 预期结果 |
 |---|---|---|---|
-| AT-DFT-001 | P0 | DaFit 当前 collect-only | 当前主线动态语言矩阵仍收集 158 个执行实例，与 Farm 改造前基线一致 |
+| AT-DFT-001 | P0 | DaFit 当前 collect-only | 以验收时用户工作树为事实基线；DF-047 当前收集 449 个执行实例，设备农场改造不得让该数量减少或写回历史 158 基线 |
 | AT-DFT-002 | P0 | Farm 模式未传 UDID | 立即失败，不自动选择第一台设备 |
 | AT-DFT-003 | P0 | 冒烟用例成功 | 报告生成、预约释放、设备进入 recycling/ready |
 | AT-DFT-004 | P0 | 冒烟用例断言失败 | 失败报告保留，预约仍释放 |
@@ -214,6 +222,8 @@
 | AT-WEB-019 | P0 | Pool 目标提高到实际资源无法全部满足 | 保存真实目标，Controller 只创建可容纳数量并显示待扩容原因；不抬高或伪造 Host `device_slots` |
 | AT-WEB-020 | P0 | 编辑空闲 Emulator 的 Image 和运行规格 | 二次确认清空数据；异步状态可刷新恢复；成功后 Device ID 不变且 Image/规格/Endpoint 更新 |
 | AT-WEB-021 | P0 | 编辑有活动预约或资源不足的 Emulator | 服务端返回 409 和可解释原因，不删除旧 Provider 资源，不提前改写当前 Image/规格 |
+| AT-WEB-022 | P0 | 独立 Console 登录后关闭并重开浏览器，且空闲超过旧 30 分钟窗口 | 30 天内复用 HttpOnly/SameSite Cookie 继续登录；浏览器不保存明文密码，主动退出、到期或服务端吊销后立即要求重新认证 |
+| AT-WEB-023 | P0 | 使用正式管理员指定密码从 HTTPS 入口登录 | 登录返回 201、当前会话返回 200、Cookie 为 Secure/HttpOnly 且有效期 30 天、注销返回 200；不得以 Secret 文件存在或历史登录成功替代当前密码的真实验证 |
 
 ### 4.10 动态容量、镜像和重装
 
@@ -228,6 +238,10 @@
 | AT-IMG-002 | P0 | 未选择其他版本时提高 Pool 目标 | 新设备全部使用默认 Android 16，不因目录中有四个 Image 而每版常驻一台 |
 | AT-RIM-001 | P0 | 空闲 Device 从 Android 16 重装为其他版本 | 同一 Device ID/Pool membership，旧数据清空，成功后原子更新 Image、规格和 Endpoint |
 | AT-RIM-002 | P0 | 重装目标启动或健康失败 | 尝试恢复旧配置一次；恢复成功保持旧 Image，恢复失败隔离，所有结果可审计 |
+| AT-RPU-001 | P0 | 空闲 Android Emulator 调整容器/Guest CPU 和内存 | 保留原数据卷替换容器；Device ID、Pool membership、APK、应用数据和文件不变；Docker/Guest 新规格和 ADB、STF、Appium 健康后原子生效 |
+| AT-RPU-002 | P0 | CPU/内存目标启动失败 | 使用同一数据卷恢复旧规格一次；恢复成功保持旧有效规格并记录失败，恢复失败隔离 |
+| AT-RPU-003 | P0 | 忙碌、在途命令、非法字段或容量不足时改配 | 替换容器前拒绝，不修改当前/待应用规格，不删除数据卷；API 不能接受 Image、数据盘、图形或任意参数 |
+| AT-RPU-004 | P0 | Console 分别修改 CPU/内存与 Image/数据盘 | CPU/内存提示短暂中断和保留数据；Image/数据盘继续二次确认清空并调用 reimage；混合修改不走无损路径 |
 
 ## 5. 非功能指标
 
@@ -282,7 +296,7 @@ docs/evidence/
 4. 无双占、无永久悬挂、无跨任务数据残留、无密钥泄露；
 5. OpenAPI、migration、部署、监控、故障处理和回滚文档齐全；
 6. 新版 Alcor 团队可使用 Mock 契约包开发 Device Farm Adapter；
-7. ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收。
+7. 在本 Android MVP 历史签收口径下，ALCOR-001 可以等待新版 Alcor 完成，不影响设备农场 MVP 独立签收；当前 ALCOR-001 已有独立真实联调证据，状态以实施清单为准。
 8. 用户可以通过 Device Farm Console 完成设备查看、人工预约、续租/释放和受控设备操作，不需要使用命令行或直接访问内部服务；Console 不展示伪 STF Web 入口。
 # DF-035 官方目录与按需准备补充
 
@@ -299,3 +313,25 @@ docs/evidence/
 # DF-038 长期设备和基础设备扩容补充
 
 验收应证明：释放预约只关闭预约/STF 会话并把 healthy Device 返回 `ready`，不发 rebuild、不删除数据卷，已安装 APK、应用数据、帐号和文件仍在；显式 rebuild/reimage 仍清空数据。创建向导可选择目录中的任一 Phone Android 版本，提交 `catalog_id` 后由持久化 provisioning job 完成已缓存直接创建或未缓存受控准备、验证与自动继续；刷新和同一幂等键重试只能看到同一 job，不能重复下载、创建或增加 Pool 目标，失败必须显示明确阶段。每个 Pool 可在控制台选择基础设备；扩容使用该设备的 Image、Phone 模板和有效 runtime profile，但新实例使用全新数据卷，绝不复制用户数据；非 healthy Phone、非本 Pool 设备及未先切换替代基础设备时均不得设置/删除。空闲 ready Device 可直接删除，删除命令和 Pool `total_target`/`min_ready`/`max_concurrency` 的下调必须原子生效，控制器不得自动补回；reserved、busy、recycling 或带活动预约的 Device 必须拒绝删除。真实 Linux KVM 验收需保存释放前后 APK/数据校验、基础设备扩容命令 payload、删除后 Pool 目标及无补建证据。
+
+# DF-039～DF-046 第二版 iOS 补充
+
+DF-039 只签收设计和真实环境缺口盘点，不用本机 Windows Appium 或 Mock 冒充 iOS 可运行。DF-040～DF-046 必须逐项使用 `docs/09_ios_device_farm_v2_acceptance.md`；只有 E4 Simulator、E5 真机、E6 发布回归对应 Gate 通过后，才能分别宣称控制面、Simulator、真机和第二版整体完成。
+
+DF-053 额外要求：Pool 目标为 2 且一台受管 iOS Simulator 隔离、停止、不健康或从成功的完整 inventory 持续消失时，该设备不得继续满足可服务目标；无活动占用时只排队一个幂等删除命令，删除成功后保持 Pool 目标并自动补建。删除失败不得盲目创建第三台或形成命令/事件风暴，inventory 请求失败不得被解释成全部设备消失。详细用例见 `docs/09_ios_device_farm_v2_acceptance.md` 的 AT-IOS-SIM-016～019。
+
+# DF-056 长期设备非破坏恢复与正式数据清理补充
+
+ADR-0029 取代 DF-053 的自动删除补建验收口径。验收必须证明：系统产生的 Android Agent/STF 隔离可由真实心跳/可见性恢复原 Device；持续故障最多自动 restart 一次，且 restart 前后 Device ID、Provider ref、Pool membership、已安装 App/账号/缓存/文件不变。人工隔离不得自动解除；任何健康隔离都不得产生 delete/rebuild/reimage 或替代 create。iOS inventory 消失或故障只形成容量缺口和告警，不自动删除 CoreSimulator。清理正式库前必须生成可恢复备份并记录保留 ID；清理后 Reservation、Session、健康事件、设备审计、Host Command、provisioning job、幂等/Console Session 和 deleted Device 为零，当前 Host、Pool、Image 与三台 Device 保留并逐台完成真实 Appium Session 和 `/source`。
+
+# DF-057 全仓不可达代码与旧策略清理补充
+
+DF-057 必须同时使用生产入口、测试入口、部署/运维引用和静态调用图判断删除，不得把独立 CLI、迁移、E2E fixture、OpenAPI 生成代码或历史证据误判为死代码。验收保存删除项与保留项清单，并证明 Go deadcode 零结果、Staticcheck 无有效问题、TypeScript 未使用检查零结果、生成代码无漂移和全量测试/构建通过。删除 DF-053 旧完成分支后必须回归管理员显式缩容成功/失败、iOS 故障不自动删除、Android 原机恢复和三台真实设备会话；正式库最终继续为零历史记录。
+
+# DF-058 独立控制台安全保持登录补充
+
+DF-058 必须证明新会话的数据库绝对期限、Cookie `Expires/Max-Age` 和空闲期限均为 30 天，旧的 30 分钟空闲窗口不再导致频繁重登；浏览器重开后仍能读取当前会话，注销后原 Cookie 无法认证。检查 localStorage、sessionStorage、构建产物、日志和 Git diff 均不得出现明文密码。正式部署必须同步重建依附 Server 网络命名空间的 iOS 隧道，并在清理回滚资源前完成 Android 与两台 iOS 的真实 `/source` 回归。
+
+# DF-059 正式管理员密码修复补充
+
+密码修复验收必须使用正式 HTTPS 入口和管理员当前指定的密码走完整登录链路，不能只校验 Argon2id 格式、配置加载或旧 Session。连续错误登录触发进程内限流后，受控重启 Server 清除限流时必须同步重建 iOS 隧道；成功验证后删除临时哈希工具、临时 Secret 文件、Console Session 和审计记录，保持设备域正式历史为零。

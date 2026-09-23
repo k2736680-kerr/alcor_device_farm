@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"time"
 
+	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/baguette"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/adapters/stf"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/api"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/auth"
@@ -20,6 +23,8 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossimulator"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -32,17 +37,25 @@ import (
 )
 
 type Services struct {
-	Management    *management.Service
-	Reservations  *reservation.Service
-	Scheduler     *scheduler.Scheduler
-	Reconcile     *reconcile.Service
-	HostCommands  *hostcommand.Service
-	Metrics       *farmmetrics.Registry
-	ConsoleAuth   *consoleauth.Service
-	ConsoleQuery  *consolequery.Service
-	RemoteControl *remotecontrol.Service
-	ImageCatalog  *imagecatalog.Service
-	WarmPool      *warmpool.Controller
+	Management      *management.Service
+	Reservations    *reservation.Service
+	Scheduler       *scheduler.Scheduler
+	Reconcile       *reconcile.Service
+	HostCommands    *hostcommand.Service
+	Metrics         *farmmetrics.Registry
+	ConsoleAuth     *consoleauth.Service
+	ConsoleQuery    *consolequery.Service
+	RemoteControl   *remotecontrol.Service
+	ImageCatalog    *imagecatalog.Service
+	IOSSessions     *iossession.Service
+	IOSSimulators   *iossimulator.Service
+	WarmPool        *warmpool.Controller
+	BaguetteGateway http.Handler
+}
+
+func NewBaguetteHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+	return &http.Server{Addr: cfg.IOSRemote.GatewayAddress, Handler: handler,
+		ReadHeaderTimeout: cfg.Server.ReadTimeout, IdleTimeout: cfg.Server.IdleTimeout}
 }
 
 func NewHTTPServer(cfg config.Config, logger *slog.Logger, services Services) *http.Server {
@@ -71,6 +84,8 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 	api.RegisterImageCatalog(mux, services.ImageCatalog)
 	api.RegisterProvisioning(mux, services.WarmPool, services.ImageCatalog)
 	api.RegisterReservations(mux, services.Reservations)
+	api.RegisterIOSSessions(mux, services.IOSSessions)
+	api.RegisterIOSSimulators(mux, services.IOSSimulators)
 	api.RegisterHealth(mux, services.Reconcile)
 	api.RegisterHostCommands(mux, services.HostCommands)
 	api.RegisterConsole(mux, services.ConsoleAuth, services.ConsoleQuery, services.RemoteControl)
@@ -85,6 +100,7 @@ func Handler(security config.SecurityConfig, logger *slog.Logger, serviceSets ..
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	var services Services
 	var db *database.DB
+	var baguetteClient *baguette.Client
 	if cfg.Database.URL != "" {
 		var err error
 		db, err = database.Open(ctx, cfg.Database.URL)
@@ -112,6 +128,10 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			services.Reservations = reservation.NewService(db, nil)
 			services.Scheduler = scheduler.New(db, nil, logger)
 		}
+		services.IOSSessions = iossession.New(db, cfg.Security.AgentToken)
+		services.IOSSimulators = iossimulator.New(db, nil)
+		services.Reservations.SetIOSSessionController(services.IOSSessions)
+		go services.IOSSessions.RunReconcile(ctx, cfg.Reconcile.Interval, logger)
 		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
 		reservationReaper := reaper.New(services.Reservations, cfg.Lease.GracePeriod, logger)
 		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)
@@ -122,11 +142,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		// Real Provider operations belong to the Host Agent. The Server reconciles
 		// database state and Agent heartbeat observations without Docker access.
 		services.Reconcile = reconcile.New(db, nil, visibility, cfg.Reconcile.FailureThreshold,
-			cfg.Reconcile.STFVisibilityGrace, logger)
+			cfg.Reconcile.STFVisibilityGrace, cfg.Reconcile.HostRecoveryGrace, logger)
 		go services.Reconcile.Run(ctx, cfg.Reconcile.Interval, cfg.Reconcile.HostTimeout)
 		services.HostCommands = hostcommand.New(db)
 		go services.HostCommands.RunLeaseRecovery(ctx, time.Second)
-		services.WarmPool = warmpool.New(db, nil, logger)
+		services.WarmPool = warmpool.New(db, nil, logger, services.IOSSimulators)
 		go services.WarmPool.Run(ctx, cfg.WarmPool.Interval)
 		services.ConsoleQuery = consolequery.New(db)
 		if cfg.Console.Enabled {
@@ -139,12 +159,27 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				return err
 			}
 			go services.ConsoleAuth.RunCleanup(ctx)
-			if stfClient != nil && cfg.STF.WebConfigured() {
-				services.RemoteControl, err = remotecontrol.New(
-					services.Reservations, services.Management, remotecontrol.ConfigFrom(cfg),
-				)
+			if cfg.IOSRemote.Configured() {
+				baguetteClient, err = baguette.New(baguette.Config{UpstreamURL: cfg.IOSRemote.BaguetteURL,
+					PublicURL: cfg.IOSRemote.PublicURL, Secret: cfg.IOSRemote.GatewaySecret,
+					TicketTTL: cfg.IOSRemote.GatewayTokenTTL})
 				if err != nil {
 					return err
+				}
+			}
+			if (stfClient != nil && cfg.STF.WebConfigured()) || baguetteClient != nil {
+				remoteConfig := remotecontrol.ConfigFrom(cfg)
+				remoteConfig.Logger = logger
+				services.RemoteControl, err = remotecontrol.New(
+					services.Reservations, services.Management, remoteConfig, baguetteClient)
+				if err != nil {
+					return err
+				}
+				if baguetteClient != nil {
+					services.BaguetteGateway, err = baguette.NewGateway(baguetteClient, services.RemoteControl)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -153,31 +188,51 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		services.Metrics = farmmetrics.New(nil)
 	}
 	httpServer := NewHTTPServer(cfg, logger, services)
-	errorChannel := make(chan error, 1)
+	servers := []*http.Server{httpServer}
+	if services.BaguetteGateway != nil {
+		servers = append(servers, NewBaguetteHTTPServer(cfg, services.BaguetteGateway))
+	}
+	errorChannel := make(chan error, len(servers))
 
-	go func() {
-		logger.Info("device farm server listening", "address", cfg.Server.Address)
-		err := httpServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errorChannel <- err
-			return
+	for index, running := range servers {
+		name := "设备农场服务"
+		if index == 1 {
+			name = "iOS Baguette 远控网关"
 		}
-		errorChannel <- nil
-	}()
+		go func(server *http.Server, serverName string) {
+			logger.Info(serverName+"正在监听", "地址", server.Addr)
+			err := server.ListenAndServe()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errorChannel <- err
+		}(running, name)
+	}
 
+	var runErr error
 	select {
-	case err := <-errorChannel:
-		return err
+	case runErr = <-errorChannel:
 	case <-ctx.Done():
-		logger.Info("device farm server shutting down")
+		logger.Info("设备农场服务正在停止")
 	}
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
-	if err := httpServer.Shutdown(shutdownContext); err != nil {
-		return err
+	for _, running := range servers {
+		if err := running.Shutdown(shutdownContext); err != nil && runErr == nil {
+			runErr = err
+		}
 	}
-	return <-errorChannel
+	for range servers {
+		select {
+		case err := <-errorChannel:
+			if err != nil && runErr == nil {
+				runErr = err
+			}
+		default:
+		}
+	}
+	return runErr
 }
 
 func healthHandler(writer http.ResponseWriter, request *http.Request) {
@@ -198,7 +253,7 @@ func readinessHandler(registry *farmmetrics.Registry) http.HandlerFunc {
 		defer cancel()
 		if err := registry.Ready(ctx); err != nil {
 			httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{
-				Code: "SERVICE_UNAVAILABLE", Message: "database is not ready", Retryable: true,
+				Code: "SERVICE_UNAVAILABLE", Message: "数据库尚未就绪", Retryable: true,
 			})
 			return
 		}
@@ -209,7 +264,7 @@ func readinessHandler(registry *farmmetrics.Registry) http.HandlerFunc {
 func notFoundHandler(writer http.ResponseWriter, request *http.Request) {
 	httpx.WriteError(writer, request, http.StatusNotFound, httpx.APIError{
 		Code:      "NOT_FOUND",
-		Message:   "resource not found",
+		Message:   "未找到指定资源",
 		Retryable: false,
 	})
 }
@@ -217,7 +272,7 @@ func notFoundHandler(writer http.ResponseWriter, request *http.Request) {
 func methodNotAllowed(writer http.ResponseWriter, request *http.Request) {
 	httpx.WriteError(writer, request, http.StatusMethodNotAllowed, httpx.APIError{
 		Code:      "METHOD_NOT_ALLOWED",
-		Message:   "method not allowed",
+		Message:   "不支持当前请求方法",
 		Retryable: false,
 	})
 }
@@ -231,7 +286,7 @@ func recoverMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 				logger.Error("http handler panic", attrs...)
 				httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{
 					Code:      "INTERNAL_ERROR",
-					Message:   "internal server error",
+					Message:   "服务器内部错误",
 					Retryable: false,
 				})
 			}
@@ -278,4 +333,28 @@ func (writer *responseStatusWriter) Write(content []byte) (int, error) {
 		writer.WriteHeader(http.StatusOK)
 	}
 	return writer.ResponseWriter.Write(content)
+}
+
+func (writer *responseStatusWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
+func (writer *responseStatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := writer.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	connection, buffered, err := hijacker.Hijack()
+	if err == nil {
+		writer.status = http.StatusSwitchingProtocols
+		writer.wroteHeader = true
+	}
+	return connection, buffered, err
+}
+
+func (writer *responseStatusWriter) Flush() {
+	if !writer.wroteHeader {
+		writer.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(writer.ResponseWriter).Flush()
 }

@@ -1,0 +1,20 @@
+[Unit]
+Description=Alcor Device Farm STF remote device sync (connect remote host Android endpoints)
+Documentation=file:///opt/alcor-device-farm/deploy/stf/README.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+# 周期性收敛动作，单次失败不应让 timer 停机；失败由日志与退出码体现。
+EnvironmentFile=-/etc/alcor-device-farm/stf-sync.env
+ExecStart=/opt/alcor-device-farm/scripts/stf-sync-remote-emulators.sh
+WorkingDirectory=/opt/alcor-device-farm
+TimeoutStartSec=300
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

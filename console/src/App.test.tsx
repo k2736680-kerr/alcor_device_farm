@@ -11,7 +11,7 @@ describe('App session gate', () => {
     server.use(
       http.get('/console/api/v1/me', () =>
         HttpResponse.json(
-          { request_id: 'req_test', data: null, error: { code: 'UNAUTHENTICATED', message: 'console session is not authenticated', retryable: false } },
+          { request_id: 'req_test', data: null, error: { code: 'UNAUTHENTICATED', message: '控制台会话尚未登录', retryable: false } },
           { status: 401 },
         ),
       ),
@@ -24,13 +24,21 @@ describe('App session gate', () => {
     renderWithProviders(<App />)
 
     expect(await screen.findByText('测试管理员')).toBeInTheDocument()
-    expect(screen.getByText('仪表盘')).toBeInTheDocument()
-    expect(screen.getByText('健康事件')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '运行概览' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '健康事件' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Android 镜像' })).not.toBeInTheDocument()
     // menu labels also appear as dashboard statistic titles, so expect at least one
-    for (const label of ['宿主机', '设备池', '设备', '预约', '审计']) {
+    for (const label of ['宿主机', '设备池', '设备', '预约', '操作审计']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
     expect(screen.getByRole('button', { name: /退出/ })).toBeInTheDocument()
+  })
+
+  it('redirects the removed Android image route to the device page', async () => {
+    renderWithProviders(<App />, '/images')
+
+    expect(await screen.findByText('Android 与 iOS 设备')).toBeInTheDocument()
+    expect(screen.queryByText('Android 官方系统目录')).not.toBeInTheDocument()
   })
 
   it('keeps the remote session alive while navigating away from the devices page', async () => {
@@ -43,7 +51,7 @@ describe('App session gate', () => {
       location: { replace: vi.fn() },
     }
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    server.use(http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
+    server.use(http.post('/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
       heartbeatRequests += 1
       return HttpResponse.json({ request_id: 'req_remote_heartbeat', data: {
         device_id: String(params.id), reservation_id: 'reservation_remote_0001', status: 'connected', heartbeat_interval_seconds: 15,
@@ -56,7 +64,7 @@ describe('App session gate', () => {
     await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
     expect(await screen.findByText('正在远控 emulator-5554')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('link', { name: '仪表盘' }))
+    await user.click(screen.getByRole('link', { name: '运行概览' }))
     expect(await screen.findByText('设备运行概览')).toBeInTheDocument()
     expect(screen.getByText('正在远控 emulator-5554')).toBeInTheDocument()
     window.dispatchEvent(new Event('focus'))
@@ -69,7 +77,7 @@ describe('App session gate', () => {
       id: 'device_00000000000001',
       serial: 'emulator-5554',
     }))
-    server.use(http.post('/console/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
+    server.use(http.post('/api/v1/devices/:id/remote-control/heartbeat', ({ params }) => {
       heartbeatRequests += 1
       return HttpResponse.json({ request_id: 'req_remote_heartbeat', data: {
         device_id: String(params.id), reservation_id: 'reservation_remote_0001', status: 'connected', heartbeat_interval_seconds: 15,
@@ -87,12 +95,12 @@ describe('App session gate', () => {
     const user = userEvent.setup()
     let endRequests = 0
     server.use(
-      http.post('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({
+      http.post('/api/v1/devices/:id/remote-control', () => HttpResponse.json({
         request_id: 'req_remote_timeout',
         data: null,
         error: { code: 'REMOTE_CONTROL_TIMEOUT', message: 'remote control request timed out', retryable: true },
       }, { status: 504 })),
-      http.delete('/console/api/v1/devices/:id/remote-control', () => {
+      http.delete('/api/v1/devices/:id/remote-control', () => {
         endRequests += 1
         return HttpResponse.json({ request_id: 'req_remote_end', data: {
           device_id: 'device_00000000000001', reservation_id: 'reservation_remote_0001', status: 'ended', heartbeat_interval_seconds: 15,
@@ -105,7 +113,7 @@ describe('App session gate', () => {
     expect(row).not.toBeNull()
     await user.click(within(row as HTMLElement).getByRole('button', { name: '远程连接' }))
 
-    expect(await screen.findByText(/远控连接失败（REMOTE_CONTROL_TIMEOUT/)).toBeInTheDocument()
+    expect(await screen.findByText(/远控连接失败：远控连接请求超时（错误代码：REMOTE_CONTROL_TIMEOUT；请求编号：req_remote_timeout）/)).toBeInTheDocument()
     await waitFor(() => expect(endRequests).toBe(1))
     expect(screen.queryByText(/正在连接 emulator-5554/)).not.toBeInTheDocument()
   })
@@ -119,7 +127,7 @@ describe('App session gate', () => {
       location: { replace: vi.fn() },
     }
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    server.use(http.delete('/console/api/v1/devices/:id/remote-control', () => HttpResponse.json({
+    server.use(http.delete('/api/v1/devices/:id/remote-control', () => HttpResponse.json({
       request_id: 'req_missing_device',
       data: null,
       error: { code: 'NOT_FOUND', message: 'device not found', retryable: false },

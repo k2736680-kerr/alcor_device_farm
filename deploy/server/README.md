@@ -108,6 +108,17 @@ DEVICE_FARM_CONSOLE_USERS_FILE=/run/secrets/device-farm/console-users.yaml
 - `DEVICE_FARM_CONSOLE_REMOTE_LEASE` 默认 60 秒，心跳默认 15 秒。关闭页面的主动释放失败时，Reservation Reaper 在租约和 grace period 后兜底；
 - 远控响应使用 `no-store` 和 `Referrer-Policy: no-referrer`。反向代理不得记录包含 `jwt` 查询参数的完整 URL；STF App 会在首次成功请求后移除该参数。
 
+### iOS Simulator Baguette 原生远控
+
+iOS 人工远控复用固定版本 Baguette 的原生 Web UI、画面流和 Host HID，不创建人工 Appium/XCUITest Session，也不控制 macOS 桌面。Server 在独立端口提供受控 Gateway；每个 HTTP/WebSocket 请求都绑定 active Reservation 和唯一目标 UDID。
+
+- `DEVICE_FARM_IOS_REMOTE_CONTROL_BAGUETTE_URL` 必须是 Server 网络空间中的回环地址；部署时通过 SSH 隧道转发到 Mac `127.0.0.1:8421`；
+- `DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_ADDRESS` 是独立 Gateway 监听地址，不能与主 API 端口相同；`PUBLIC_URL` 是浏览器可访问的该 Gateway 根地址；
+- `DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_SECRET` 使用至少 32 字节的独立随机值，只进入权限为 `0600` 的 Server Secret；不得复用 Console 密码或 Service/Agent Token；
+- 返回浏览器的入口只含 Device/Reservation 绑定的短时签名票据，不含 Mac/Baguette 回环地址、Fence、Appium、WDA 或 Session Grant；
+- Gateway 只代理目标 `/simulators/{udid}` 和原生静态资源；设备墙、其他 UDID、boot/shutdown、插件和 bakery 路由全部拒绝；
+- Console 的 15 秒心跳使用 60 秒滑动租约，持续操作没有固定一小时上限；浏览器停止心跳后由 Reaper 释放。
+
 ### 访问与健康检查
 
 - 入口：`http://<server>:8080/console/`，SPA 路由由服务端回退到应用壳；

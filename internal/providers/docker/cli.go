@@ -131,7 +131,8 @@ func (client *cliBackend) InspectContainer(ctx context.Context, reference string
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
 		State struct {
-			Status string `json:"Status"`
+			Status    string `json:"Status"`
+			OOMKilled bool   `json:"OOMKilled"`
 		} `json:"State"`
 		NetworkSettings struct {
 			Ports map[string][]struct {
@@ -159,7 +160,8 @@ func (client *cliBackend) InspectContainer(ctx context.Context, reference string
 	}
 	return container{
 		ID: values[0].ID, Name: strings.TrimPrefix(values[0].Name, "/"), Image: values[0].Config.Image,
-		State: values[0].State.Status, Labels: values[0].Config.Labels, Ports: ports,
+		State: values[0].State.Status, OOMKilled: values[0].State.OOMKilled,
+		Labels: values[0].Config.Labels, Ports: ports,
 	}, nil
 }
 

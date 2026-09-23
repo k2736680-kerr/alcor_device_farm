@@ -27,7 +27,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 		t.Fatalf("lease defaults = %+v", cfg.Lease)
 	}
 	if cfg.Reconcile.FailureThreshold != 3 || cfg.Reconcile.HostTimeout != 30*time.Second ||
-		cfg.Reconcile.STFVisibilityGrace != 30*time.Second {
+		cfg.Reconcile.STFVisibilityGrace != 30*time.Second || cfg.Reconcile.HostRecoveryGrace != 90*time.Second {
 		t.Fatalf("reconcile defaults = %+v", cfg.Reconcile)
 	}
 	if cfg.WarmPool.Interval != 30*time.Second {
@@ -35,6 +35,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.STF.Enabled || cfg.STF.Attempts != 3 || cfg.STF.Timeout != 5*time.Second {
 		t.Fatalf("STF defaults = %+v", cfg.STF)
+	}
+	if cfg.Console.SessionMaxAge != 30*24*time.Hour || cfg.Console.SessionIdleTimeout != 30*24*time.Hour {
+		t.Fatalf("Console session defaults = %+v", cfg.Console)
 	}
 }
 
@@ -69,6 +72,13 @@ stf:
   web_user_name: Device Farm Admin
   web_user_email: admin@example.test
   web_token_ttl: 25s
+ios_remote_control:
+  enabled: true
+  baguette_url: http://127.0.0.1:8421
+  gateway_address: 0.0.0.0:8081
+  public_url: http://device-farm.example.test:18081
+  gateway_secret: yaml-ios-gateway-secret-at-least-32-bytes
+  gateway_token_ttl: 25s
 `)
 	t.Setenv("DEVICE_FARM_SERVER_ADDRESS", "127.0.0.1:28080")
 	t.Setenv("DEVICE_FARM_SERVER_READ_TIMEOUT", "7s")
@@ -79,6 +89,7 @@ stf:
 	t.Setenv("DEVICE_FARM_LEASE_GRACE_PERIOD", "45s")
 	t.Setenv("DEVICE_FARM_RECONCILE_FAILURE_THRESHOLD", "5")
 	t.Setenv("DEVICE_FARM_RECONCILE_STF_VISIBILITY_GRACE", "40s")
+	t.Setenv("DEVICE_FARM_RECONCILE_HOST_RECOVERY_GRACE", "80s")
 	t.Setenv("DEVICE_FARM_WARM_POOL_INTERVAL", "12s")
 	t.Setenv("DEVICE_FARM_STF_BASE_URL", "http://stf-environment.local/base")
 	t.Setenv("DEVICE_FARM_STF_API_TOKEN", "environment-stf-secret")
@@ -87,6 +98,12 @@ stf:
 	t.Setenv("DEVICE_FARM_STF_WEB_USER_NAME", "Environment Admin")
 	t.Setenv("DEVICE_FARM_STF_WEB_USER_EMAIL", "environment-admin@example.test")
 	t.Setenv("DEVICE_FARM_STF_ATTEMPTS", "4")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_ENABLED", "true")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_BAGUETTE_URL", "http://127.0.0.1:4842")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_ADDRESS", "127.0.0.1:28081")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_PUBLIC_URL", "http://gateway.example.test:28081")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_SECRET", "environment-ios-gateway-secret-at-least-32-bytes")
+	t.Setenv("DEVICE_FARM_IOS_REMOTE_CONTROL_GATEWAY_TOKEN_TTL", "20s")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -114,6 +131,9 @@ stf:
 	if cfg.Reconcile.STFVisibilityGrace != 40*time.Second {
 		t.Fatalf("STFVisibilityGrace = %v", cfg.Reconcile.STFVisibilityGrace)
 	}
+	if cfg.Reconcile.HostRecoveryGrace != 80*time.Second {
+		t.Fatalf("HostRecoveryGrace = %v", cfg.Reconcile.HostRecoveryGrace)
+	}
 	if cfg.WarmPool.Interval != 12*time.Second {
 		t.Fatalf("WarmPool interval = %v", cfg.WarmPool.Interval)
 	}
@@ -121,6 +141,11 @@ stf:
 		cfg.STF.APIToken != "environment-stf-secret" || cfg.STF.Attempts != 4 ||
 		cfg.STF.WebURL != "http://stf-web-environment.local" || cfg.STF.WebUserEmail != "environment-admin@example.test" {
 		t.Fatalf("STF config = %+v", cfg.STF)
+	}
+	if !cfg.IOSRemote.Enabled || cfg.IOSRemote.GatewayTokenTTL != 20*time.Second ||
+		cfg.IOSRemote.BaguetteURL != "http://127.0.0.1:4842" || cfg.IOSRemote.GatewayAddress != "127.0.0.1:28081" ||
+		cfg.IOSRemote.PublicURL != "http://gateway.example.test:28081" {
+		t.Fatalf("iOS remote config = %+v", cfg.IOSRemote)
 	}
 }
 
@@ -145,7 +170,7 @@ func TestValidateRejectsInvalidValues(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() error = nil")
 	}
-	for _, want := range []string{"host must not be empty", "read_timeout", "warm_pool.interval", "log.level"} {
+	for _, want := range []string{"主机不能为空", "read_timeout", "warm_pool.interval", "log.level"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Validate() error = %q, want %q", err, want)
 		}
@@ -194,6 +219,24 @@ func TestValidateRejectsSTFBaseURLWithCredentialsOrQuery(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresIOSRemoteGatewaySecret(t *testing.T) {
+	cfg := Default()
+	cfg.IOSRemote.Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "ios_remote_control.gateway_secret") {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
+func TestValidateRequiresDedicatedIOSGatewayAddress(t *testing.T) {
+	cfg := Default()
+	cfg.IOSRemote = IOSRemoteConfig{Enabled: true, BaguetteURL: "http://127.0.0.1:8421",
+		GatewayAddress: cfg.Server.Address, PublicURL: "http://gateway.example.test:18081",
+		GatewaySecret: "ios-gateway-secret-at-least-32-bytes", GatewayTokenTTL: 30 * time.Second}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "不能与 server.address 相同") {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
 func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg := Default()
 	cfg.Security.ServiceToken = "service-token-value"
@@ -203,6 +246,7 @@ func TestSecretsAreExcludedFromJSONAndSlogValue(t *testing.T) {
 	cfg.Database.URL = "postgres://database-secret-value"
 	cfg.STF.APIToken = "stf-token-value"
 	cfg.STF.WebAuthSecret = "stf-web-secret-value"
+	cfg.IOSRemote.GatewaySecret = "ios-gateway-secret-value"
 
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
@@ -245,7 +289,7 @@ func clearDeviceFarmEnvironment(t *testing.T) {
 
 func assertNoSecrets(t *testing.T, value string) {
 	t.Helper()
-	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value", "stf-web-secret-value"} {
+	for _, secret := range []string{"service-token-value", "service-previous-token-value", "agent-token-value", "agent-previous-token-value", "database-secret-value", "stf-token-value", "stf-web-secret-value", "ios-gateway-secret-value"} {
 		if strings.Contains(value, secret) {
 			t.Fatalf("serialized value contains secret %q", secret)
 		}

@@ -1,14 +1,19 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
@@ -115,6 +120,76 @@ func TestRecoveredPanicIsCountedAsHTTP500(t *testing.T) {
 	if !strings.Contains(metricsResponse.Body.String(), `device_farm_http_requests_total{method="GET",route="unmatched",status="500"} 1`) {
 		t.Fatalf("panic metric missing:\n%s", metricsResponse.Body.String())
 	}
+}
+
+func TestRequestLogMiddlewarePreservesWebSocketHijacking(t *testing.T) {
+	registry := farmmetrics.New(nil)
+	var logs lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	errors := make(chan error, 1)
+	handler := requestLogMiddleware(logger, registry, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		hijacker, ok := writer.(http.Hijacker)
+		if !ok {
+			errors <- fmt.Errorf("请求日志包装器没有实现 http.Hijacker")
+			return
+		}
+		connection, buffered, err := hijacker.Hijack()
+		if err != nil {
+			errors <- err
+			return
+		}
+		defer connection.Close()
+		_, err = buffered.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		if err == nil {
+			err = buffered.Flush()
+		}
+		errors <- err
+	}))
+
+	testServer := httptest.NewServer(handler)
+	defer testServer.Close()
+	connection, err := net.Dial("tcp", strings.TrimPrefix(testServer.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if _, err := fmt.Fprintf(connection, "GET /ws HTTP/1.1\r\nHost: test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := bufio.NewReader(connection).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "HTTP/1.1 101 Switching Protocols\r\n" {
+		t.Fatalf("unexpected websocket response: %q", status)
+	}
+	if err := <-errors; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(logs.String(), "status=101") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), "status=101") {
+		t.Fatalf("websocket status missing from request log: %s", logs.String())
+	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (buffer *lockedBuffer) Write(value []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.b.Write(value)
+}
+
+func (buffer *lockedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.b.String()
 }
 
 func testLogger(t *testing.T, output *bytes.Buffer) *slog.Logger {

@@ -27,7 +27,7 @@ const (
 	HealthUnhealthy HealthStatus = "unhealthy"
 )
 
-const HostUnavailableReason = "device host is offline or unavailable"
+const HostUnavailableReason = "设备宿主机离线或暂不可用"
 
 var deviceTransitions = map[DeviceLifecycleStatus]map[DeviceLifecycleStatus]struct{}{
 	DeviceProvisioning: allowed(DeviceBooting, DeviceQuarantined, DeviceDeleted),
@@ -52,10 +52,6 @@ type Device struct {
 	lifecycle stateMachine[DeviceLifecycleStatus]
 	health    HealthStatus
 	events    []TransitionEvent
-}
-
-func NewDevice(id string) (*Device, error) {
-	return RestoreDevice(id, DeviceProvisioning, HealthUnknown)
 }
 
 func RestoreDevice(id string, lifecycle DeviceLifecycleStatus, health HealthStatus) (*Device, error) {
@@ -123,11 +119,6 @@ func (device *Device) Events() []TransitionEvent {
 	result = append(result, device.events...)
 	sort.SliceStable(result, func(left, right int) bool { return result[left].At.Before(result[right].At) })
 	return result
-}
-
-func (device *Device) ClearEvents() {
-	device.lifecycle.clearEvents()
-	device.events = nil
 }
 
 func validDeviceLifecycleStatus(status DeviceLifecycleStatus) bool {

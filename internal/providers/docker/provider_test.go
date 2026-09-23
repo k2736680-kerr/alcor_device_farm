@@ -82,6 +82,203 @@ func TestDockerProviderLifecycleUsesUniquePortsAndCleansResources(t *testing.T) 
 	}
 }
 
+func TestDockerProviderRestartWithProfilePreservesDataVolume(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	_, _, volume := resourceNames(created.ProviderRef)
+	engine.volumes[volume]["restored-data"] = "keep"
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	if _, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile); err != nil {
+		t.Fatal(err)
+	}
+	if engine.volumes[volume]["restored-data"] != "keep" {
+		t.Fatal("profile restart removed the existing data volume")
+	}
+	if engine.syncCalls != 1 || engine.stopCalls != 1 {
+		t.Fatalf("profile restart sync calls=%d stop calls=%d", engine.syncCalls, engine.stopCalls)
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 6144") {
+		t.Fatalf("emulator args=%q", got)
+	}
+}
+
+func TestDockerProviderKeepsExistingContainerWhenDataFlushFails(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile-sync-failure")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	engine.syncFailure = true
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	_, err = provider.RestartWithProfile(context.Background(), created.ProviderRef, profile)
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_DATA_FLUSH_FAILED" {
+		t.Fatalf("error=%v code=%s", err, providers.ErrorCode(err))
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if engine.containers[name].State != "running" || engine.stopCalls != 0 {
+		t.Fatalf("container=%#v stop calls=%d", engine.containers[name], engine.stopCalls)
+	}
+}
+
+// 运行时僵死（sync 失败且 ADB 完全不可达）时，重启必须放弃冲刷、直接硬替换
+// 容器——否则设备会永久卡在隔离态，只能人工登宿主机重启容器。
+func TestDockerProviderHardRestartsDeadRuntimeWithoutFlush(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile-dead-runtime")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	engine.syncFailure = true
+	engine.adbOffline = true
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	snapshot, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile)
+	if err != nil {
+		t.Fatalf("dead runtime restart aborted: %v", err)
+	}
+	if snapshot.State != providers.StateRunning {
+		t.Fatalf("restarted snapshot state=%s", snapshot.State)
+	}
+	if engine.stopCalls != 1 {
+		t.Fatalf("stop calls=%d", engine.stopCalls)
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 6144") {
+		t.Fatalf("replaced emulator args=%q", got)
+	}
+}
+
+// 每条会把容器拉起来的路径（Start / Restart / RestartWithProfile 含回滚分支）
+// 都必须尽力安装 AVD 守护补丁：docker-android 的初始化标记在持久卷上，而 AVD
+// 根 ini 在容器临时层，重建容器后 qemu 会因 "Unknown AVD name" 秒退；标记值
+// （pixel_9）与 EMULATOR_DEVICE（Pixel 9）不匹配还会让每次启动都 -wipe-data
+// 清空用户数据；qemu 崩溃残留的锁文件会让下次启动被误判为同 AVD 双开。
+func TestDockerProviderInstallsAVDGuardOnEveryBootPath(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := provider.Create(context.Background(), dockerCreateRequest("device_0000000000001", "emulator-avd-guard"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	if engine.guardCalls != 1 {
+		t.Fatalf("start guard calls=%d", engine.guardCalls)
+	}
+	if _, err := provider.Restart(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	if engine.guardCalls != 2 {
+		t.Fatalf("restart guard calls=%d", engine.guardCalls)
+	}
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	if _, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile); err != nil {
+		t.Fatal(err)
+	}
+	if engine.guardCalls != 3 {
+		t.Fatalf("profile restart guard calls=%d", engine.guardCalls)
+	}
+}
+
+func TestDockerProviderRestoresPreviousContainerWhenProfileReplacementCannotBeCreated(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-profile-create-failure")
+	created, err := provider.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), created.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	_, _, volume := resourceNames(created.ProviderRef)
+	engine.volumes[volume]["account-and-cache"] = "keep"
+	engine.createFailures = 1
+	profile := runtimeprofile.Default()
+	profile.ContainerMemoryMB = 7168
+	profile.GuestMemoryMB = 6144
+	restored, err := provider.RestartWithProfile(context.Background(), created.ProviderRef, profile)
+	if providers.ErrorCode(err) != "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED" {
+		t.Fatalf("error=%v code=%s", err, providers.ErrorCode(err))
+	}
+	if restored.ProviderRef != created.ProviderRef || engine.volumes[volume]["account-and-cache"] != "keep" {
+		t.Fatalf("restored=%#v volume=%#v", restored, engine.volumes[volume])
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if got := engine.specs[name].Environment["EMULATOR_ADDITIONAL_ARGS"]; !strings.Contains(got, "-memory 4096") {
+		t.Fatalf("restored emulator args=%q", got)
+	}
+}
+
+func TestDockerProviderReportsOOMKilledBeforeADBProbe(t *testing.T) {
+	engine := newFakeBackend()
+	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := dockerCreateRequest("device_0000000000001", "emulator-oom")
+	if _, err := provider.Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), request.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	name, _, _ := resourceNames(request.ProviderRef)
+	value := engine.containers[name]
+	value.OOMKilled = true
+	engine.containers[name] = value
+
+	health, err := provider.InspectHealth(context.Background(), request.ProviderRef)
+	if providers.ErrorCode(err) != "EMULATOR_OOM_KILLED" || !health.Online || health.Ready() {
+		t.Fatalf("health=%#v error=%v code=%s", health, err, providers.ErrorCode(err))
+	}
+	discovered, err := provider.Discover(context.Background(), request.HostID)
+	if err != nil || len(discovered) != 1 || discovered[0].Ready() {
+		t.Fatalf("discovered=%#v error=%v", discovered, err)
+	}
+}
+
 func TestDockerProviderVerifiesConfiguredImageDigest(t *testing.T) {
 	engine := newFakeBackend()
 	provider, err := newProvider(context.Background(), testConfig(), engine, staticHostProbe{})
@@ -306,6 +503,12 @@ type fakeBackend struct {
 	nextADBPort    int
 	nextAppiumPort int
 	images         map[string]imageMetadata
+	createFailures int
+	syncCalls      int
+	stopCalls      int
+	guardCalls     int
+	syncFailure    bool
+	adbOffline     bool
 }
 
 func newFakeBackend() *fakeBackend {
@@ -343,6 +546,10 @@ func (engine *fakeBackend) CreateVolume(_ context.Context, name string, labels m
 }
 
 func (engine *fakeBackend) CreateContainer(_ context.Context, spec containerSpec) error {
+	if engine.createFailures > 0 {
+		engine.createFailures--
+		return errors.New("injected container creation failure")
+	}
 	if _, exists := engine.containers[spec.Name]; exists {
 		return errors.New("container exists")
 	}
@@ -398,6 +605,7 @@ func (engine *fakeBackend) StopContainer(_ context.Context, name string) error {
 	}
 	value.State = "exited"
 	engine.containers[name] = value
+	engine.stopCalls++
 	return nil
 }
 
@@ -424,9 +632,23 @@ func (engine *fakeBackend) RemoveVolumes(_ context.Context, labels map[string]st
 	return nil
 }
 
-func (*fakeBackend) Exec(_ context.Context, _ string, args ...string) (string, error) {
+func (engine *fakeBackend) Exec(_ context.Context, _ string, args ...string) (string, error) {
+	if len(args) == 3 && args[0] == "sh" && args[1] == "-c" && strings.Contains(args[2], "alcor-avd-guard") {
+		engine.guardCalls++
+		return "", nil
+	}
 	last := args[len(args)-1]
+	if last == "sync" {
+		engine.syncCalls++
+		if engine.syncFailure {
+			return "", errors.New("injected data flush failure")
+		}
+		return "", nil
+	}
 	if last == "get-state" {
+		if engine.adbOffline {
+			return "", errors.New("injected adb offline")
+		}
 		return "device", nil
 	}
 	if last == "sys.boot_completed" {

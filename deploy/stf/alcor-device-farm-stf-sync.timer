@@ -1,0 +1,21 @@
+[Unit]
+Description=Periodically sync remote host Android devices into the local STF ADB server
+Documentation=file:///opt/alcor-device-farm/deploy/stf/README.md
+
+[Timer]
+# 开机 3 分钟后先跑一次（此时本机 STF 三件套已就绪），随后每 20 秒收敛一次。
+#
+# 间隔必须明显小于 reconcile 的 STF 可见性宽限期（DEVICE_FARM_RECONCILE_STF_VISIBILITY_GRACE，
+# 默认 30s）。该宽限期从「最近一次成功的 create/rebuild 完成时刻」起算，而 restart 不会重置
+# 这个锚点；一旦新设备在宽限期内还没被 adb connect 进 STF，reconcile 就会开始累计
+# stf_not_visible 失败并触发自愈重启，重启又不重置锚点，于是进入「反复重启但永远不可见」的
+# 循环 —— 10.0.30.55 在 2026-09-14 出现的 restart ×12 正是这个机制。
+# 20s 留出约 10s 余量，保证设备 ready 后一轮之内即可见，远早于失败计数触发重启。
+OnBootSec=3min
+OnUnitActiveSec=20s
+# 精度必须收紧：默认 1min 会把 20s 的间隔抖动到分钟级，重新引入上面的超窗风险。
+AccuracySec=1s
+Unit=alcor-device-farm-stf-sync.service
+
+[Install]
+WantedBy=timers.target

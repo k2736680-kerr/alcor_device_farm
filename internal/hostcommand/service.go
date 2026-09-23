@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/providers"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/repository"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/sensitive"
@@ -21,22 +24,30 @@ import (
 )
 
 var errorCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,63}$`)
+var hostArchPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
+
+const iosInventoryMissingGrace = 30 * time.Second
 
 var (
-	ErrInvalidArgument        = errors.New("invalid host command argument")
-	ErrNotFound               = errors.New("host command resource not found")
-	ErrConflict               = errors.New("host command conflict")
-	ErrDeviceIdentityConflict = errors.New("discovered device identity conflict")
-	ErrNoCommand              = errors.New("no host command available")
+	ErrInvalidArgument        = errors.New("宿主机命令参数无效")
+	ErrNotFound               = errors.New("未找到宿主机命令资源")
+	ErrConflict               = errors.New("宿主机命令发生冲突")
+	ErrDeviceIdentityConflict = errors.New("发现的设备身份发生冲突")
+	ErrNoCommand              = errors.New("当前没有可领取的宿主机命令")
 )
 
 type DiscoveredDevice struct {
-	ProviderRef     string         `json:"provider_ref"`
-	Serial          string         `json:"serial"`
-	LifecycleStatus string         `json:"lifecycle_status"`
-	HealthStatus    string         `json:"health_status"`
-	Connection      map[string]any `json:"connection,omitempty"`
-	RuntimeProfile  map[string]any `json:"runtime_profile,omitempty"`
+	ProviderRef     string            `json:"provider_ref"`
+	Serial          string            `json:"serial"`
+	Platform        string            `json:"platform,omitempty"`
+	DeviceKind      string            `json:"device_kind,omitempty"`
+	ProviderType    string            `json:"provider_type,omitempty"`
+	LifecycleStatus string            `json:"lifecycle_status"`
+	HealthStatus    string            `json:"health_status"`
+	Connection      map[string]any    `json:"connection,omitempty"`
+	Capabilities    map[string]any    `json:"capabilities,omitempty"`
+	Components      map[string]string `json:"components,omitempty"`
+	RuntimeProfile  map[string]any    `json:"runtime_profile,omitempty"`
 }
 
 type HeartbeatInput struct {
@@ -132,9 +143,18 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		device := &input.Devices[index]
 		device.ProviderRef = strings.TrimSpace(device.ProviderRef)
 		device.Serial = strings.TrimSpace(device.Serial)
+		device.Platform = strings.ToLower(strings.TrimSpace(device.Platform))
+		device.DeviceKind = strings.ToLower(strings.TrimSpace(device.DeviceKind))
+		device.ProviderType = strings.ToLower(strings.TrimSpace(device.ProviderType))
 		if device.ProviderRef == "" || seenRefs[device.ProviderRef] ||
 			!validDiscoveredLifecycle(device.LifecycleStatus) || !validDiscoveredHealth(device.HealthStatus) ||
 			(device.LifecycleStatus == string(domain.DeviceReady) && device.HealthStatus != string(domain.HealthHealthy)) {
+			return HeartbeatResult{}, ErrInvalidArgument
+		}
+		if (device.Platform != "" && device.Platform != "android" && device.Platform != "ios") ||
+			(device.DeviceKind != "" && device.DeviceKind != "emulator" && device.DeviceKind != "simulator" && device.DeviceKind != "physical") ||
+			(device.ProviderType != "" && device.ProviderType != "mock" && device.ProviderType != "docker_emulator" && device.ProviderType != "usb_android" && device.ProviderType != "appium_device_farm_ios") ||
+			!validComponents(device.Components) {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
 		if device.Serial == "" && device.LifecycleStatus != string(domain.DeviceStopped) {
@@ -146,13 +166,34 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 		if _, _, _, err := discoveredConnection(device.Connection); err != nil {
 			return HeartbeatResult{}, ErrInvalidArgument
 		}
-		if _, err := runtimeprofile.Parse(device.RuntimeProfile); err != nil {
-			return HeartbeatResult{}, ErrInvalidArgument
+		if len(device.RuntimeProfile) > 0 {
+			if _, err := runtimeprofile.Parse(device.RuntimeProfile); err != nil {
+				return HeartbeatResult{}, ErrInvalidArgument
+			}
 		}
 		seenRefs[device.ProviderRef] = true
 		if device.Serial != "" {
 			seenSerials[device.Serial] = true
 		}
+	}
+	readiness, err := reportedHostReadiness(input.Environment)
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	inventoryComplete, err := reportedInventoryComplete(input.Environment)
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	hostOS, hostArch, err := reportedHostIdentity(input.Environment)
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	sessionFenceEndpoint, err := reportedSessionFenceEndpoint(input.Environment, hostOS)
+	if err != nil {
+		return HeartbeatResult{}, ErrInvalidArgument
+	}
+	if sessionFenceEndpoint != nil {
+		input.Environment["session_fence_endpoint"] = *sessionFenceEndpoint
 	}
 	capacity, err := json.Marshal(sensitive.RedactMap(input.Capacity))
 	if err != nil {
@@ -162,8 +203,14 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	if err != nil {
 		return HeartbeatResult{}, ErrInvalidArgument
 	}
-	used := map[string]any{"device_slots": len(input.Devices), "cpu_cores": float64(0), "memory_mb": int64(0), "data_disk_mb": int64(0)}
+	used := map[string]any{"device_slots": 0, "cpu_cores": float64(0), "memory_mb": int64(0), "data_disk_mb": int64(0)}
 	for _, device := range input.Devices {
+		if discoveredCountsAsUsed(device) {
+			used["device_slots"] = used["device_slots"].(int) + 1
+		}
+		if len(device.RuntimeProfile) == 0 {
+			continue
+		}
 		profile, _ := runtimeprofile.Parse(device.RuntimeProfile)
 		used["cpu_cores"] = used["cpu_cores"].(float64) + profile.ContainerCPUCores
 		used["memory_mb"] = used["memory_mb"].(int64) + profile.ContainerMemoryMB
@@ -173,7 +220,11 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	var result HeartbeatResult
 	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var status domain.HostStatus
-		if err := tx.QueryRow(ctx, "SELECT status FROM device_hosts WHERE id=$1 FOR UPDATE", hostID).Scan(&status); err != nil {
+		var autoMaintenance bool
+		var readinessFailureStartedAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT status,COALESCE((capabilities->>'host_readiness_auto_maintenance')::boolean,false),
+			NULLIF(capabilities->>'host_readiness_failure_started_at','')::timestamptz
+			FROM device_hosts WHERE id=$1 FOR UPDATE`, hostID).Scan(&status, &autoMaintenance, &readinessFailureStartedAt); err != nil {
 			return err
 		}
 		now, err := database.ClockNow(ctx, tx)
@@ -181,24 +232,51 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 			return err
 		}
 		target := status
-		if status == domain.HostOffline {
+		if status != domain.HostDraining && readiness != nil {
+			if !*readiness {
+				if status != domain.HostMaintenance {
+					target = domain.HostMaintenance
+					autoMaintenance = true
+				}
+				if autoMaintenance && readinessFailureStartedAt == nil {
+					startedAt := now
+					readinessFailureStartedAt = &startedAt
+				}
+			} else if status == domain.HostOffline || status == domain.HostOnline || (status == domain.HostMaintenance && autoMaintenance) {
+				target = domain.HostOnline
+				autoMaintenance = false
+				readinessFailureStartedAt = nil
+			}
+		} else if status == domain.HostOffline {
+			target = domain.HostOnline
+		}
+		if target != status {
 			host, err := domain.RestoreHost(hostID, status)
 			if err != nil {
 				return err
 			}
-			if err := host.Transition(domain.HostOnline, "agent heartbeat received", now); err != nil {
+			if err := host.Transition(target, "agent heartbeat readiness observation", now); err != nil {
 				return err
 			}
 			target = host.Status()
 		}
 		if _, err := tx.Exec(ctx, `UPDATE device_hosts SET status=$2::varchar,draining=($2::varchar='draining'),
 			capacity=CASE WHEN $3::jsonb->>'resource_model'='dynamic_v1' THEN $3::jsonb ELSE capacity || ($3::jsonb-'device_slots') END,
-			capabilities=capabilities || ($4::jsonb-'provider'),used_capacity=$5,last_heartbeat_at=$6,updated_at=$6 WHERE id=$1`,
-			hostID, target, capacity, environment, usedCapacity, now); err != nil {
+			capabilities=((capabilities || ($4::jsonb-'provider'-'host_os'-'host_arch'))-'host_readiness_failure_started_at') ||
+				jsonb_build_object('host_readiness_auto_maintenance',$9::boolean) ||
+				CASE WHEN $10::timestamptz IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('host_readiness_failure_started_at',$10::timestamptz) END,
+			used_capacity=$5,
+			host_os=COALESCE($6,host_os),host_arch=COALESCE($7,host_arch),last_heartbeat_at=$8,updated_at=$8 WHERE id=$1`,
+			hostID, target, capacity, environment, usedCapacity, hostOS, hostArch, now, autoMaintenance, readinessFailureStartedAt); err != nil {
 			return err
 		}
 		for _, discovered := range input.Devices {
 			if err := updateDiscoveredDevice(ctx, tx, hostID, discovered, now); err != nil {
+				return err
+			}
+		}
+		if inventoryComplete {
+			if err := service.quarantineMissingIOSDevices(ctx, tx, hostID, seenRefs, now); err != nil {
 				return err
 			}
 		}
@@ -215,6 +293,105 @@ func (service *Service) Heartbeat(ctx context.Context, hostID string, input Hear
 	return result, err
 }
 
+func reportedInventoryComplete(environment map[string]any) (bool, error) {
+	value, exists := environment["provider_inventory_complete"]
+	if !exists {
+		// Older Agents did not declare whether an empty list was authoritative.
+		// Failing open here prevents an upgrade from deleting every Simulator.
+		return false, nil
+	}
+	complete, ok := value.(bool)
+	if !ok {
+		return false, ErrInvalidArgument
+	}
+	return complete, nil
+}
+
+func (service *Service) quarantineMissingIOSDevices(
+	ctx context.Context,
+	tx pgx.Tx,
+	hostID string,
+	seenRefs map[string]bool,
+	now time.Time,
+) error {
+	rows, err := tx.Query(ctx, `SELECT d.id,d.provider_ref,d.lifecycle_status,d.health_status,
+		COALESCE(d.last_seen_at,d.created_at)
+		FROM devices d
+		WHERE d.host_id=$1 AND d.platform='ios' AND d.device_kind='simulator'
+		AND d.provider_type='appium_device_farm_ios'
+		AND d.lifecycle_status NOT IN ('quarantined','deleted')
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
+			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased'))
+		ORDER BY d.id FOR UPDATE OF d`, hostID)
+	if err != nil {
+		return err
+	}
+	type missingCandidate struct {
+		id, providerRef string
+		lifecycle       domain.DeviceLifecycleStatus
+		health          domain.HealthStatus
+		lastSeen        time.Time
+	}
+	candidates := []missingCandidate{}
+	for rows.Next() {
+		var candidate missingCandidate
+		if err := rows.Scan(&candidate.id, &candidate.providerRef, &candidate.lifecycle, &candidate.health, &candidate.lastSeen); err != nil {
+			rows.Close()
+			return err
+		}
+		if !seenRefs[candidate.providerRef] && now.Sub(candidate.lastSeen) >= iosInventoryMissingGrace {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, candidate := range candidates {
+		reason := "IOS_PROVIDER_DEVICE_MISSING: complete inventory no longer contains the registered Simulator"
+		aggregate, err := domain.RestoreDevice(candidate.id, candidate.lifecycle, candidate.health)
+		if err != nil {
+			return err
+		}
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1`, candidate.id,
+			aggregate.Lifecycle(), aggregate.Health(), reason, now); err != nil {
+			return err
+		}
+		eventID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]any{"host_id": hostID, "inventory_complete": true})
+		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
+			(id,device_id,source,event_type,severity,reason,payload,observed_at)
+			VALUES($1,$2,'agent','ios_provider_device_missing','critical',$3,$4::jsonb,$5)`,
+			eventID, candidate.id, reason, payload, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func discoveredCountsAsUsed(device DiscoveredDevice) bool {
+	if device.Platform != "ios" {
+		return true
+	}
+	allowlisted, _ := device.Capabilities["allowlisted"].(bool)
+	return allowlisted
+}
+
 type discoveredDeviceState struct {
 	id                string
 	lifecycle         domain.DeviceLifecycleStatus
@@ -222,23 +399,35 @@ type discoveredDeviceState struct {
 	healthReason      *string
 	operationInFlight bool
 	assignmentTarget  string
+	platform          string
+	deviceKind        string
+	providerType      string
 }
 
 func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, discovered DiscoveredDevice, now time.Time) error {
 	var current discoveredDeviceState
 	err := tx.QueryRow(ctx, `SELECT d.id,d.lifecycle_status,d.health_status,d.health_reason,
 		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id
-			AND c.command_type IN ('create','rebuild','delete') AND c.status IN ('pending','leased')),
+			AND (c.command_type IN ('create','rebuild','delete') OR
+				(c.command_type='restart' AND c.payload->>'operation_kind'='runtime_profile_update'))
+			AND c.status IN ('pending','leased')),
 		COALESCE((SELECT CASE WHEN r.status='active' THEN 'busy' ELSE 'reserved' END
 			FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active')
-			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),'')
+			ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT 1),''),
+		d.platform,d.device_kind,d.provider_type
 		FROM devices d WHERE d.host_id=$1 AND d.provider_ref=$2 FOR UPDATE OF d`, hostID, discovered.ProviderRef).
-		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason, &current.operationInFlight, &current.assignmentTarget)
+		Scan(&current.id, &current.lifecycle, &current.health, &current.healthReason, &current.operationInFlight, &current.assignmentTarget,
+			&current.platform, &current.deviceKind, &current.providerType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if (discovered.Platform != "" && discovered.Platform != current.platform) ||
+		(discovered.DeviceKind != "" && discovered.DeviceKind != current.deviceKind) ||
+		(discovered.ProviderType != "" && discovered.ProviderType != current.providerType) {
+		return ErrDeviceIdentityConflict
 	}
 	adbEndpoint, appiumEndpoint, appiumUDID, err := discoveredConnection(discovered.Connection)
 	if err != nil {
@@ -249,14 +438,15 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		return err
 	}
 	preserveSTFHealth := false
-	recoveredHostOutage := current.lifecycle == domain.DeviceQuarantined && current.healthReason != nil &&
-		*current.healthReason == domain.HostUnavailableReason && discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
-	if recoveredHostOutage {
+	recoveredAutomatically := current.lifecycle == domain.DeviceQuarantined && current.healthReason != nil &&
+		domain.IsSystemRecoverableHealthReason(*current.healthReason) && !domain.IsSTFFailureReason(*current.healthReason) &&
+		discovered.HealthStatus == string(domain.HealthHealthy) && !current.operationInFlight
+	if recoveredAutomatically {
 		if err := recoverFromHostOutage(aggregate, current.assignmentTarget, now); err != nil {
 			return err
 		}
 	}
-	if (current.lifecycle != domain.DeviceQuarantined || recoveredHostOutage) && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
+	if (current.lifecycle != domain.DeviceQuarantined || recoveredAutomatically) && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight {
 		incomingHealth := domain.HealthStatus(discovered.HealthStatus)
 		preserveSTFHealth = incomingHealth == domain.HealthHealthy && current.healthReason != nil &&
 			domain.IsSTFFailureReason(*current.healthReason)
@@ -272,7 +462,7 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 		}
 	}
 	healthReason := current.healthReason
-	if (current.lifecycle != domain.DeviceQuarantined || recoveredHostOutage) && current.lifecycle != domain.DeviceDeleted &&
+	if (current.lifecycle != domain.DeviceQuarantined || recoveredAutomatically) && current.lifecycle != domain.DeviceDeleted &&
 		!current.operationInFlight && !preserveSTFHealth {
 		healthReason = nil
 		if aggregate.Health() != domain.HealthHealthy {
@@ -280,13 +470,120 @@ func updateDiscoveredDevice(ctx context.Context, tx pgx.Tx, hostID string, disco
 			healthReason = &value
 		}
 	}
+	discoveryCapabilities := sensitive.RedactMap(discovered.Capabilities)
+	if len(discovered.Components) > 0 {
+		componentValues := make(map[string]any, len(discovered.Components))
+		for name, status := range discovered.Components {
+			componentValues[name] = status
+		}
+		discoveryCapabilities["componentHealth"] = componentValues
+	}
+	resetFailures := recoveredAutomatically || (!preserveSTFHealth && aggregate.Health() == domain.HealthHealthy &&
+		current.lifecycle != domain.DeviceQuarantined && current.lifecycle != domain.DeviceDeleted && !current.operationInFlight)
+	capabilitiesJSON, err := json.Marshal(discoveryCapabilities)
+	if err != nil {
+		return ErrInvalidArgument
+	}
 	_, err = tx.Exec(ctx, `UPDATE devices SET serial=CASE WHEN $2='' THEN serial ELSE $2 END,
 		adb_endpoint=COALESCE($3,adb_endpoint),appium_endpoint=COALESCE($4,appium_endpoint),
-		capabilities=CASE WHEN $5::text IS NULL THEN capabilities ELSE jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true) END,
-		lifecycle_status=$6::varchar,health_status=$7::varchar,health_reason=$8,last_seen_at=$9,updated_at=$9
-		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID,
-		aggregate.Lifecycle(), aggregate.Health(), healthReason, now)
+		capabilities=CASE WHEN $5::text IS NULL THEN (capabilities || $6::jsonb) ELSE jsonb_set((capabilities || $6::jsonb),'{appiumUdid}',to_jsonb($5::text),true) END,
+		lifecycle_status=$7::varchar,health_status=$8::varchar,health_reason=$9,
+		consecutive_failures=CASE WHEN $11::boolean THEN 0 ELSE consecutive_failures END,last_seen_at=$10,updated_at=$10
+		WHERE id=$1`, current.id, discovered.Serial, adbEndpoint, appiumEndpoint, appiumUDID, capabilitiesJSON,
+		aggregate.Lifecycle(), aggregate.Health(), healthReason, now, resetFailures)
+	if err != nil {
+		return err
+	}
+	// The first healthy managed Simulator is the pool's safe expansion
+	// template. Existing pools are repaired by the next regular heartbeat;
+	// an explicit administrator selection is never overwritten.
+	if current.platform == "ios" && current.deviceKind == "simulator" && current.providerType == "appium_device_farm_ios" &&
+		aggregate.Lifecycle() == domain.DeviceReady && aggregate.Health() == domain.HealthHealthy {
+		_, err = tx.Exec(ctx, `UPDATE device_pools p SET base_device_id=$1,updated_at=$2
+			WHERE p.platform='ios' AND p.status='active' AND p.base_device_id IS NULL
+			AND EXISTS (SELECT 1 FROM device_pool_devices pd
+				WHERE pd.pool_id=p.id AND pd.device_id=$1 AND pd.enabled)`, current.id, now)
+	}
 	return err
+}
+
+func reportedHostReadiness(environment map[string]any) (*bool, error) {
+	value, exists := environment["host_readiness"]
+	if !exists {
+		return nil, nil
+	}
+	readiness, ok := value.(map[string]any)
+	if !ok {
+		return nil, ErrInvalidArgument
+	}
+	ready, ok := readiness["ready"].(bool)
+	if !ok {
+		return nil, ErrInvalidArgument
+	}
+	return &ready, nil
+}
+
+func reportedHostIdentity(environment map[string]any) (*string, *string, error) {
+	var hostOS, hostArch *string
+	if raw, exists := environment["host_os"]; exists {
+		value, ok := raw.(string)
+		value = strings.ToLower(strings.TrimSpace(value))
+		if !ok || (value != "linux" && value != "macos" && value != "windows") {
+			return nil, nil, ErrInvalidArgument
+		}
+		hostOS = &value
+	}
+	if raw, exists := environment["host_arch"]; exists {
+		value, ok := raw.(string)
+		value = strings.TrimSpace(value)
+		if !ok || !hostArchPattern.MatchString(value) {
+			return nil, nil, ErrInvalidArgument
+		}
+		hostArch = &value
+	}
+	return hostOS, hostArch, nil
+}
+
+func reportedSessionFenceEndpoint(environment map[string]any, hostOS *string) (*string, error) {
+	raw, exists := environment["session_fence_endpoint"]
+	if !exists {
+		return nil, nil
+	}
+	value, ok := raw.(string)
+	if !ok || strings.TrimSpace(value) == "" || hostOS == nil || *hostOS != "macos" {
+		return nil, ErrInvalidArgument
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, ErrInvalidArgument
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	ip := net.ParseIP(hostname)
+	loopback := hostname == "localhost" || (ip != nil && ip.IsLoopback())
+	if parsed.Scheme != "https" && !loopback {
+		return nil, ErrInvalidArgument
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	normalized := strings.TrimRight(parsed.String(), "/")
+	return &normalized, nil
+}
+
+func validComponents(components map[string]string) bool {
+	for name, status := range components {
+		switch name {
+		case providers.ProbeTransport, providers.ProbeOSReady, providers.ProbeAutomation, providers.ProbeRouter, providers.ProbeRemoteControl:
+		default:
+			return false
+		}
+		switch providers.ProbeStatus(status) {
+		case providers.ProbePassed, providers.ProbeFailed, providers.ProbeUnknown, providers.ProbeUnsupported:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func recoverFromHostOutage(device *domain.Device, assignmentTarget string, now time.Time) error {
@@ -497,20 +794,25 @@ func (service *Service) RecoverExpiredOnce(ctx context.Context) (Command, error)
 }
 
 type managementOperationResult struct {
-	Generation       int  `json:"generation"`
-	ReimageApplied   bool `json:"reimage_applied"`
-	RollbackRestored bool `json:"rollback_restored"`
-	Connection       struct {
+	Platform                    string `json:"platform"`
+	State                       string `json:"state"`
+	Generation                  int    `json:"generation"`
+	ReimageApplied              bool   `json:"reimage_applied"`
+	RuntimeProfileUpdateApplied bool   `json:"runtime_profile_update_applied"`
+	RollbackRestored            bool   `json:"rollback_restored"`
+	Connection                  struct {
 		Serial         string `json:"serial"`
+		ProviderID     string `json:"provider_id"`
 		ADBEndpoint    string `json:"adb_endpoint"`
 		AppiumEndpoint string `json:"appium_endpoint"`
 		AppiumUDID     string `json:"appium_udid"`
 	} `json:"connection"`
 	Health struct {
-		Online        bool `json:"online"`
-		ADBOnline     bool `json:"adb_online"`
-		BootCompleted bool `json:"boot_completed"`
-		AppiumHealthy bool `json:"appium_healthy"`
+		Online        bool              `json:"online"`
+		ADBOnline     bool              `json:"adb_online"`
+		BootCompleted bool              `json:"boot_completed"`
+		AppiumHealthy bool              `json:"appium_healthy"`
+		Components    map[string]string `json:"components"`
 	} `json:"health"`
 }
 
@@ -525,12 +827,14 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if err := json.Unmarshal(record.Payload, &payload); err != nil {
 		return err
 	}
-	if commandPayloadString(payload, "operation_source") != "management" {
+	operationSource := commandPayloadString(payload, "operation_source")
+	if operationSource != "management" && operationSource != "self_healing" {
 		return nil
 	}
 	deviceID := commandPayloadString(payload, "device_id")
 	providerRef := commandPayloadString(payload, "provider_ref")
 	expectedState := domain.DeviceLifecycleStatus(commandPayloadString(payload, "operation_state"))
+	operationKind := commandPayloadString(payload, "operation_kind")
 	if len(deviceID) < 16 || providerRef == "" || expectedState == "" {
 		return ErrInvalidArgument
 	}
@@ -544,8 +848,10 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		}
 		return err
 	}
+	runtimeProfileHeartbeatAdvanced := operationKind == "runtime_profile_update" && expectedState == domain.DeviceProvisioning &&
+		(lifecycle == domain.DeviceBooting || lifecycle == domain.DeviceReady || lifecycle == domain.DeviceQuarantined)
 	if lifecycle != expectedState && !(record.CommandType == "rebuild" &&
-		expectedState == domain.DeviceProvisioning && lifecycle == domain.DeviceBooting) {
+		expectedState == domain.DeviceProvisioning && lifecycle == domain.DeviceBooting) && !runtimeProfileHeartbeatAdvanced {
 		return nil
 	}
 	now, err := database.ClockNow(ctx, tx)
@@ -555,10 +861,16 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if record.CommandType == "delete" {
 		return service.reconcileManagementDelete(ctx, tx, record, deviceID, lifecycle, health, now)
 	}
-	if commandPayloadString(payload, "operation_kind") == "reimage" {
+	if operationKind == "reimage" {
 		return service.reconcileManagementReimage(ctx, tx, record, payload, deviceID, lifecycle, health, now)
 	}
-	code, reason := "", "management "+record.CommandType+" command completed"
+	if operationKind == "runtime_profile_update" {
+		return service.reconcileManagementRuntimeProfileUpdate(ctx, tx, record, payload, deviceID, lifecycle, health, now)
+	}
+	if record.CommandType == "stop" {
+		return service.reconcileManagementStop(ctx, tx, record, deviceID, lifecycle, health, now)
+	}
+	code, reason := "", "设备管理命令执行完成："+record.CommandType
 	var result managementOperationResult
 	succeeded := record.Status == domain.CommandSucceeded && json.Unmarshal(record.Result, &result) == nil &&
 		validManagementOperationResult(result)
@@ -569,7 +881,7 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 		} else if record.Status == domain.CommandSucceeded {
 			code = "COMMAND_RESULT_INVALID"
 		}
-		reason = code + ": management " + record.CommandType + " command did not produce a healthy device"
+		reason = code + "：设备管理命令未产生健康设备（" + record.CommandType + "）"
 	}
 	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 	if err != nil {
@@ -593,18 +905,19 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 			return err
 		}
 		var healthReason *string
-		if record.CommandType == "create" || record.CommandType == "rebuild" {
+		if (record.CommandType == "create" || record.CommandType == "rebuild") && !strings.EqualFold(result.Platform, "ios") {
 			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
 				return err
 			}
 			value := domain.STFReadinessStabilizationReason
 			healthReason = &value
 		}
-		if _, err := tx.Exec(ctx, `UPDATE devices SET serial=$2,adb_endpoint=$3,appium_endpoint=$4,
-			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($5::text),true),
-			lifecycle_status=$6,health_status=$7,health_reason=$8,consecutive_failures=0,
-			last_seen_at=$9,updated_at=$9 WHERE id=$1 AND lifecycle_status=$10`,
-			deviceID, result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint,
+		if _, err := tx.Exec(ctx, `UPDATE devices SET provider_ref=CASE WHEN $2<>'' THEN $2 ELSE provider_ref END,
+			serial=$3,adb_endpoint=NULLIF($4,''),appium_endpoint=$5,
+			capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+			lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,
+			last_seen_at=$10,updated_at=$10 WHERE id=$1 AND lifecycle_status=$11`,
+			deviceID, result.Connection.ProviderID, result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint,
 			result.Connection.AppiumUDID, aggregate.Lifecycle(), aggregate.Health(), healthReason, now, lifecycle); err != nil {
 			return err
 		}
@@ -635,6 +948,119 @@ func (service *Service) reconcileManagementOperation(ctx context.Context, tx pgx
 	if err != nil {
 		return err
 	}
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
+	return err
+}
+
+func (service *Service) reconcileManagementRuntimeProfileUpdate(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
+	payload map[string]any, deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
+	var result managementOperationResult
+	resultValid := json.Unmarshal(record.Result, &result) == nil && validManagementOperationResult(result)
+	applied := record.Status == domain.CommandSucceeded && resultValid && result.RuntimeProfileUpdateApplied
+	restored := record.Status == domain.CommandFailed && resultValid && result.RollbackRestored
+	code := ""
+	if record.ErrorCode != nil {
+		code = *record.ErrorCode
+	}
+	if code == "" && !applied {
+		code = "RUNTIME_PROFILE_UPDATE_FAILED"
+	}
+	reason := "management runtime profile update applied"
+	if restored {
+		reason = code + ": target failed; previous runtime profile was restored"
+	}
+	if !applied && !restored {
+		reason = code + ": target and previous runtime profile restore did not produce a healthy device"
+	}
+
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if applied || restored {
+		if aggregate.Health() != domain.HealthHealthy {
+			if err := aggregate.UpdateHealth(domain.HealthHealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceProvisioning, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceProvisioning {
+			if err := aggregate.Transition(domain.DeviceBooting, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() == domain.DeviceBooting {
+			if err := aggregate.Transition(domain.DeviceReady, reason, now); err != nil {
+				return err
+			}
+		} else if aggregate.Lifecycle() != domain.DeviceReady {
+			return nil
+		}
+		if err := aggregate.UpdateHealth(domain.HealthUnhealthy, domain.STFReadinessStabilizationReason, now); err != nil {
+			return err
+		}
+		if applied {
+			targetProfile, marshalErr := json.Marshal(mapValue(payload, "runtime_profile"))
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err := tx.Exec(ctx, `UPDATE devices SET runtime_profile_override=$2,pending_runtime_profile=NULL,
+				runtime_profile_update_status='idle',runtime_profile_update_error=NULL,
+				serial=$3,adb_endpoint=$4,appium_endpoint=$5,
+				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+				lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,last_seen_at=$10,updated_at=$10
+				WHERE id=$1 AND lifecycle_status=$11`, deviceID, targetProfile, result.Connection.Serial,
+				result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET pending_runtime_profile=NULL,
+				runtime_profile_update_status='failed',runtime_profile_update_error=$2,
+				serial=$3,adb_endpoint=$4,appium_endpoint=$5,
+				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($6::text),true),
+				lifecycle_status=$7,health_status=$8,health_reason=$9,consecutive_failures=0,last_seen_at=$10,updated_at=$10
+				WHERE id=$1 AND lifecycle_status=$11`, deviceID, reason, result.Connection.Serial,
+				result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				return err
+			}
+		}
+	} else {
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceQuarantined {
+			if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET pending_runtime_profile=NULL,
+			runtime_profile_update_status='failed',runtime_profile_update_error=$2,
+			lifecycle_status=$3,health_status=$4,health_reason=$2,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,
+			deviceID, reason, aggregate.Lifecycle(), aggregate.Health(), now, lifecycle); err != nil {
+			return err
+		}
+	}
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	severity, eventType := "info", "device_runtime_profile_update_succeeded"
+	if !applied {
+		severity, eventType = "error", "device_runtime_profile_update_failed"
+	}
+	eventPayload, _ := json.Marshal(map[string]any{"command_id": record.ID, "command_type": record.CommandType,
+		"rollback_restored": restored, "error_code": code})
 	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
 		(id,device_id,source,event_type,severity,reason,payload,observed_at)
 		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
@@ -691,14 +1117,22 @@ func (service *Service) reconcileManagementReimage(ctx context.Context, tx pgx.T
 			if marshalErr != nil {
 				return marshalErr
 			}
+			targetCapabilities := mapValue(payload, "capabilities")
+			if targetCapabilities == nil {
+				targetCapabilities = map[string]any{}
+			}
+			targetCapabilitiesJSON, marshalErr := json.Marshal(targetCapabilities)
+			if marshalErr != nil {
+				return marshalErr
+			}
 			if _, err := tx.Exec(ctx, `UPDATE devices SET image_id=$2,runtime_profile_override=$3,
 				pending_image_id=NULL,pending_runtime_profile=NULL,reimage_status='idle',reimage_error=NULL,
 				serial=$4,adb_endpoint=$5,appium_endpoint=$6,
-				capabilities=jsonb_set(capabilities,'{appiumUdid}',to_jsonb($7::text),true),
+				capabilities=jsonb_set(capabilities || $13::jsonb,'{appiumUdid}',to_jsonb($7::text),true),
 				lifecycle_status=$8,health_status=$9,health_reason=$10,consecutive_failures=0,last_seen_at=$11,updated_at=$11
 				WHERE id=$1 AND lifecycle_status=$12`, deviceID, commandPayloadString(payload, "image_id"), targetProfile,
 				result.Connection.Serial, result.Connection.ADBEndpoint, result.Connection.AppiumEndpoint, result.Connection.AppiumUDID,
-				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle); err != nil {
+				aggregate.Lifecycle(), aggregate.Health(), domain.STFReadinessStabilizationReason, now, lifecycle, targetCapabilitiesJSON); err != nil {
 				return err
 			}
 		} else {
@@ -809,9 +1243,86 @@ func (service *Service) reconcileManagementDelete(ctx context.Context, tx pgx.Tx
 }
 
 func validManagementOperationResult(value managementOperationResult) bool {
-	return value.Generation > 0 && value.Connection.Serial != "" && value.Connection.ADBEndpoint != "" &&
-		value.Connection.AppiumEndpoint != "" && value.Connection.AppiumUDID != "" && value.Health.Online &&
-		value.Health.ADBOnline && value.Health.BootCompleted && value.Health.AppiumHealthy
+	baseValid := value.Generation > 0 && value.Connection.Serial != "" && value.Connection.AppiumEndpoint != "" &&
+		value.Connection.AppiumUDID != "" && value.Health.Online && value.Health.BootCompleted && value.Health.AppiumHealthy
+	if strings.EqualFold(value.Platform, "ios") {
+		return baseValid && value.State == string(providers.StateRunning) &&
+			value.Health.Components[providers.ProbeTransport] == string(providers.ProbePassed) &&
+			value.Health.Components[providers.ProbeOSReady] == string(providers.ProbePassed) &&
+			value.Health.Components[providers.ProbeAutomation] == string(providers.ProbePassed) &&
+			value.Health.Components[providers.ProbeRouter] == string(providers.ProbePassed)
+	}
+	return baseValid && value.Connection.ADBEndpoint != "" && value.Health.ADBOnline
+}
+
+func (service *Service) reconcileManagementStop(ctx context.Context, tx pgx.Tx, record repository.CommandRecord,
+	deviceID string, lifecycle domain.DeviceLifecycleStatus, health domain.HealthStatus, now time.Time) error {
+	var result managementOperationResult
+	succeeded := record.Status == domain.CommandSucceeded && json.Unmarshal(record.Result, &result) == nil &&
+		strings.EqualFold(result.Platform, "ios") && result.State == string(providers.StateStopped) &&
+		result.Generation > 0 && result.Connection.Serial != "" && result.Connection.AppiumEndpoint != "" &&
+		result.Connection.AppiumUDID != ""
+	code, reason := "", "Simulator 已停止"
+	if !succeeded {
+		code = "AGENT_COMMAND_FAILED"
+		if record.ErrorCode != nil && *record.ErrorCode != "" {
+			code = *record.ErrorCode
+		} else if record.Status == domain.CommandSucceeded {
+			code = "COMMAND_RESULT_INVALID"
+		}
+		reason = code + "：停止 Simulator 失败"
+	}
+
+	aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
+	if err != nil {
+		return err
+	}
+	if succeeded {
+		if aggregate.Health() != domain.HealthUnknown {
+			if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
+				return err
+			}
+		}
+		if aggregate.Lifecycle() != domain.DeviceStopped {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET health_status=$2,health_reason=$3,
+			consecutive_failures=0,last_seen_at=$4,updated_at=$4 WHERE id=$1 AND lifecycle_status=$5`,
+			deviceID, aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+	} else {
+		if aggregate.Health() != domain.HealthUnhealthy {
+			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, reason, now); err != nil {
+				return err
+			}
+		}
+		if err := aggregate.Transition(domain.DeviceQuarantined, reason, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,health_reason=$4,
+			consecutive_failures=consecutive_failures+1,updated_at=$5 WHERE id=$1 AND lifecycle_status=$6`,
+			deviceID, aggregate.Lifecycle(), aggregate.Health(), reason, now, lifecycle); err != nil {
+			return err
+		}
+	}
+
+	eventID, err := service.newID()
+	if err != nil {
+		return err
+	}
+	severity, eventType := "info", "device_management_operation_succeeded"
+	if !succeeded {
+		severity, eventType = "error", "device_management_operation_failed"
+	}
+	eventPayload, err := json.Marshal(map[string]any{"command_id": record.ID, "command_type": record.CommandType, "error_code": code})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO device_health_events
+		(id,device_id,source,event_type,severity,reason,payload,observed_at)
+		VALUES($1,$2,'agent',$3,$4,$5,$6::jsonb,$7)`, eventID, deviceID, eventType, severity, reason, eventPayload, now)
+	return err
 }
 
 func commandPayloadString(payload map[string]any, key string) string {

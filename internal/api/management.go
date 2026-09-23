@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/correlation"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
@@ -45,10 +46,14 @@ func RegisterManagement(mux *http.ServeMux, service *management.Service) {
 
 	mux.HandleFunc("GET /api/v1/devices", handler.listDevices)
 	mux.HandleFunc("GET /api/v1/devices/{id}", handler.getDevice)
+	mux.HandleFunc("PATCH /api/v1/devices/{id}", handler.updateDeviceName)
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", handler.deleteDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/starts", handler.startDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/stops", handler.stopDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/restarts", handler.restartDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/rebuilds", handler.rebuildDevice)
 	mux.HandleFunc("POST /api/v1/devices/{id}/reimages", handler.reimageDevice)
+	mux.HandleFunc("POST /api/v1/devices/{id}/runtime-profile-updates", handler.updateDeviceRuntimeProfile)
 	mux.HandleFunc("POST /api/v1/devices/{id}/quarantines", handler.quarantineDevice)
 	mux.HandleFunc("DELETE /api/v1/devices/{id}/quarantines", handler.unquarantineDevice)
 }
@@ -250,9 +255,13 @@ func (handler *managementHandler) selectPoolDefaultImage(writer http.ResponseWri
 	handler.write(writer, request, http.StatusOK, value, err)
 }
 func (handler *managementHandler) selectPoolBaseDevice(writer http.ResponseWriter, request *http.Request) {
-	if !handler.available(writer, request) { return }
+	if !handler.available(writer, request) {
+		return
+	}
 	var input poolBaseDeviceInput
-	if !decode(writer, request, &input) { return }
+	if !decode(writer, request, &input) {
+		return
+	}
 	value, err := handler.service.SetPoolBaseDevice(request.Context(), request.PathValue("id"), input.DeviceID, input.Reason,
 		requestActor(request), correlation.FromContext(request.Context()).RequestID)
 	handler.write(writer, request, http.StatusOK, value, err)
@@ -328,7 +337,7 @@ func (handler *managementHandler) listDevices(writer http.ResponseWriter, reques
 	}
 	filter, ok := deviceFilter(request)
 	if !ok {
-		writeInvalid(writer, request, "lifecycle_status or health_status is invalid")
+		writeInvalid(writer, request, "平台、设备状态或健康状态筛选值无效")
 		return
 	}
 	value, err := handler.service.ListDevices(request.Context(), page, filter)
@@ -337,7 +346,10 @@ func (handler *managementHandler) listDevices(writer http.ResponseWriter, reques
 
 func deviceFilter(request *http.Request) (management.DeviceFilter, bool) {
 	query := request.URL.Query()
-	filter := management.DeviceFilter{PoolID: query.Get("pool_id")}
+	filter := management.DeviceFilter{PoolID: query.Get("pool_id"), Platform: strings.ToLower(strings.TrimSpace(query.Get("platform")))}
+	if filter.Platform != "" && filter.Platform != "android" && filter.Platform != "ios" {
+		return management.DeviceFilter{}, false
+	}
 	if value := query.Get("lifecycle_status"); value != "" {
 		filter.LifecycleStatus = domain.DeviceLifecycleStatus(value)
 		switch filter.LifecycleStatus {
@@ -364,8 +376,26 @@ func (handler *managementHandler) getDevice(writer http.ResponseWriter, request 
 	value, err := handler.service.GetDevice(request.Context(), request.PathValue("id"))
 	handler.write(writer, request, http.StatusOK, value, err)
 }
+func (handler *managementHandler) updateDeviceName(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) {
+		return
+	}
+	var input management.DeviceNameInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.UpdateDeviceName(request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID)
+	handler.write(writer, request, http.StatusOK, value, err)
+}
 func (handler *managementHandler) restartDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "restart")
+}
+func (handler *managementHandler) startDevice(writer http.ResponseWriter, request *http.Request) {
+	handler.deviceAction(writer, request, "start")
+}
+func (handler *managementHandler) stopDevice(writer http.ResponseWriter, request *http.Request) {
+	handler.deviceAction(writer, request, "stop")
 }
 func (handler *managementHandler) rebuildDevice(writer http.ResponseWriter, request *http.Request) {
 	handler.deviceAction(writer, request, "rebuild")
@@ -382,6 +412,18 @@ func (handler *managementHandler) reimageDevice(writer http.ResponseWriter, requ
 		return
 	}
 	value, err := handler.service.ReimageDeviceAudited(request.Context(), request.PathValue("id"), input,
+		requestActor(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
+	handler.write(writer, request, http.StatusAccepted, value, err)
+}
+func (handler *managementHandler) updateDeviceRuntimeProfile(writer http.ResponseWriter, request *http.Request) {
+	if !handler.available(writer, request) || !requireIdempotencyKey(writer, request) {
+		return
+	}
+	var input management.DeviceRuntimeProfileUpdateInput
+	if !decode(writer, request, &input) {
+		return
+	}
+	value, err := handler.service.UpdateDeviceRuntimeProfileAudited(request.Context(), request.PathValue("id"), input,
 		requestActor(request), correlation.FromContext(request.Context()).RequestID, request.Header.Get("Idempotency-Key"))
 	handler.write(writer, request, http.StatusAccepted, value, err)
 }
@@ -402,7 +444,7 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	if !decode(writer, request, &input) {
 		return
 	}
-	if (action == "restart" || action == "rebuild" || action == "delete") && !requireIdempotencyKey(writer, request) {
+	if (action == "start" || action == "stop" || action == "restart" || action == "rebuild" || action == "delete") && !requireIdempotencyKey(writer, request) {
 		return
 	}
 	var value management.Device
@@ -410,6 +452,10 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 	actor := requestActor(request)
 	requestID := correlation.FromContext(request.Context()).RequestID
 	switch action {
+	case "start":
+		value, err = handler.service.StartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
+	case "stop":
+		value, err = handler.service.StopDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "restart":
 		value, err = handler.service.RestartDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID, request.Header.Get("Idempotency-Key"))
 	case "rebuild":
@@ -422,7 +468,7 @@ func (handler *managementHandler) deviceAction(writer http.ResponseWriter, reque
 		value, err = handler.service.UnquarantineDeviceAudited(request.Context(), request.PathValue("id"), input.Reason, actor, requestID)
 	}
 	status := http.StatusOK
-	if action == "restart" || action == "rebuild" || action == "delete" {
+	if action == "start" || action == "stop" || action == "restart" || action == "rebuild" || action == "delete" {
 		status = http.StatusAccepted
 	}
 	handler.write(writer, request, status, value, err)
@@ -438,7 +484,7 @@ type poolDefaultImageInput struct {
 }
 type poolBaseDeviceInput struct {
 	DeviceID string `json:"device_id"`
-	Reason string `json:"reason"`
+	Reason   string `json:"reason"`
 }
 type poolDeviceInput struct {
 	DeviceID string `json:"device_id"`
@@ -448,7 +494,7 @@ func (handler *managementHandler) available(writer http.ResponseWriter, request 
 	if handler.service != nil {
 		return true
 	}
-	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "management service is not configured", Retryable: true})
+	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "设备管理服务尚未配置", Retryable: true})
 	return false
 }
 
@@ -464,7 +510,7 @@ func decode(writer http.ResponseWriter, request *http.Request, target any) bool 
 	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeInvalid(writer, request, err.Error())
+		writeInvalid(writer, request, "请求正文格式无效")
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -482,18 +528,18 @@ func requireIdempotencyKey(writer http.ResponseWriter, request *http.Request) bo
 	if len(request.Header.Get("Idempotency-Key")) >= 8 {
 		return true
 	}
-	writeInvalid(writer, request, "Idempotency-Key header must contain at least 8 characters")
+	writeInvalid(writer, request, "Idempotency-Key 请求头至少需要 8 个字符")
 	return false
 }
 
 func writeManagementError(writer http.ResponseWriter, request *http.Request, err error) {
-	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error", Retryable: false}
+	apiError := httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误", Retryable: false}
 	status := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, management.ErrInvalidArgument):
 		status, apiError = http.StatusBadRequest, httpx.APIError{Code: "INVALID_ARGUMENT", Message: err.Error()}
 	case errors.Is(err, management.ErrNotFound):
-		status, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "resource not found"}
+		status, apiError = http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Message: "未找到指定资源"}
 	case errors.Is(err, management.ErrConflict):
 		status, apiError = http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()}
 	case errors.Is(err, management.ErrInsufficientHostResources):

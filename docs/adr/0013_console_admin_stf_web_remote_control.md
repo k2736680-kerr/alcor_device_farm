@@ -31,6 +31,6 @@ DeviceFarmer/STF 3.7.9 已提供完整的原生看屏、点击、滑动、输入
 ## 后果与限制
 
 - 关闭 STF 标签页不会释放设备，管理员需在 Console 明确点击“挂断”；Console 整体退出或失联时由短租约和 Reaper 在限定时间内兜底，不承诺浏览器进程退出瞬间完成网络请求。
-- Reservation 最大租期仍受 Pool `max_lease_seconds` 约束；达到上限后管理员需要重新连接。
+- Reservation 的未来占用窗口仍受 Pool `max_lease_seconds` 约束；按 ADR-0023，管理员持续发送有效心跳时窗口滑动续约，停止心跳后由 Reaper 在有限窗口内回收。
 - STF Web 登录身份必须与 STF API Token 的设备所有者一致，否则原生控制页无法访问已 claim 的设备。
 - 新功能只编排 Device、Pool、Reservation、STF claim/release 和设备域审计，不创建 Alcor Run/Result，也不实现 Appium 或 DaFit 业务步骤。

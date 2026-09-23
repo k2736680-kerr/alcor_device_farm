@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -172,7 +173,11 @@ func (service *Service) StartImageValidation(ctx context.Context, id string) (Im
 }
 
 func (service *Service) CreateHost(ctx context.Context, clientID, key string, input HostInput) (Host, error) {
+	input.HostOS = normalizedHostOS(input.HostOS)
+	input.HostArch = normalizedHostArch(input.HostArch)
 	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" ||
+		!validHostType(input.HostType) || input.HostOS == "" || input.HostArch == "" ||
+		(input.HostType == "appium_device_farm_ios" && input.HostOS != "macos") ||
 		sensitive.ContainsMap(input.Capabilities) || sensitive.ContainsMap(input.Capacity) {
 		return Host{}, ErrInvalidArgument
 	}
@@ -180,7 +185,7 @@ func (service *Service) CreateHost(ctx context.Context, clientID, key string, in
 	if err != nil {
 		return Host{}, err
 	}
-	host := Host{ID: id, Name: input.Name, HostType: input.HostType, Address: input.Address,
+	host := Host{ID: id, Name: input.Name, HostType: input.HostType, HostOS: input.HostOS, HostArch: input.HostArch, Address: input.Address,
 		Capabilities: cloneMap(input.Capabilities), Capacity: cloneMap(input.Capacity), UsedCapacity: map[string]any{}, Status: domain.HostOffline}
 	meta, err := idempotency(clientID, "create_device_host", key, "device_host", id, input, 201)
 	if err != nil {
@@ -202,6 +207,7 @@ func (service *Service) GetHost(ctx context.Context, id string) (Host, error) {
 
 func (service *Service) UpdateHost(ctx context.Context, id string, input HostInput) (Host, error) {
 	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.HostType) == "" ||
+		!validHostType(input.HostType) ||
 		sensitive.ContainsMap(input.Capabilities) || sensitive.ContainsMap(input.Capacity) {
 		return Host{}, ErrInvalidArgument
 	}
@@ -209,7 +215,21 @@ func (service *Service) UpdateHost(ctx context.Context, id string, input HostInp
 	if err != nil {
 		return Host{}, err
 	}
-	current.Name, current.HostType, current.Address = input.Name, input.HostType, input.Address
+	if strings.TrimSpace(input.HostOS) == "" {
+		input.HostOS = current.HostOS
+	} else {
+		input.HostOS = normalizedHostOS(input.HostOS)
+	}
+	if strings.TrimSpace(input.HostArch) == "" {
+		input.HostArch = current.HostArch
+	} else {
+		input.HostArch = normalizedHostArch(input.HostArch)
+	}
+	if input.HostOS == "" || input.HostArch == "" ||
+		(input.HostType == "appium_device_farm_ios" && input.HostOS != "macos") {
+		return Host{}, ErrInvalidArgument
+	}
+	current.Name, current.HostType, current.HostOS, current.HostArch, current.Address = input.Name, input.HostType, input.HostOS, input.HostArch, input.Address
 	current.Capabilities, current.Capacity = cloneMap(input.Capabilities), cloneMap(input.Capacity)
 	return service.store.UpdateHost(ctx, current, current.Status)
 }
@@ -239,6 +259,11 @@ func (service *Service) SetHostDraining(ctx context.Context, id string, draining
 }
 
 func (service *Service) CreatePool(ctx context.Context, clientID, key string, input PoolInput) (Pool, error) {
+	if strings.TrimSpace(input.Platform) == "" {
+		input.Platform = "android"
+	} else {
+		input.Platform = normalizedPlatform(input.Platform)
+	}
 	totalTarget, minReady := input.MaxConcurrency, input.MaxConcurrency
 	if input.TotalTarget != nil {
 		totalTarget = *input.TotalTarget
@@ -251,6 +276,9 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 	}
 	var defaultImageID *string
 	if input.DefaultImageID != nil && strings.TrimSpace(*input.DefaultImageID) != "" {
+		if input.Platform != "android" {
+			return Pool{}, ErrInvalidArgument
+		}
 		imageID := strings.TrimSpace(*input.DefaultImageID)
 		image, err := service.store.GetImage(ctx, imageID)
 		if err != nil || image.Status != domain.ImageReady {
@@ -266,7 +294,7 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 	if input.Enabled != nil && !*input.Enabled {
 		status = domain.PoolDisabled
 	}
-	pool := Pool{ID: id, Name: input.Name, DefaultLeaseSeconds: input.DefaultLeaseSeconds,
+	pool := Pool{ID: id, Name: input.Name, Platform: input.Platform, DefaultLeaseSeconds: input.DefaultLeaseSeconds,
 		MaxLeaseSeconds: input.MaxLeaseSeconds, MaxConcurrency: input.MaxConcurrency,
 		TotalTarget: totalTarget, MinReady: minReady, DefaultImageID: defaultImageID, Status: status}
 	meta, err := idempotency(clientID, "create_device_pool", key, "device_pool", id, input, 201)
@@ -293,6 +321,11 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 		return Pool{}, err
 	}
 	oldTotalTarget := current.TotalTarget
+	if strings.TrimSpace(input.Platform) == "" {
+		input.Platform = current.Platform
+	} else {
+		input.Platform = normalizedPlatform(input.Platform)
+	}
 	totalTarget, minReady := current.TotalTarget, current.MinReady
 	if input.TotalTarget != nil {
 		totalTarget = *input.TotalTarget
@@ -308,6 +341,9 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 	}
 	defaultImageID := current.DefaultImageID
 	if input.DefaultImageID != nil {
+		if input.Platform != "android" {
+			return Pool{}, ErrInvalidArgument
+		}
 		imageID := strings.TrimSpace(*input.DefaultImageID)
 		if imageID == "" {
 			return Pool{}, ErrInvalidArgument
@@ -340,6 +376,7 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 		}
 	}
 	current.Name, current.DefaultLeaseSeconds = input.Name, input.DefaultLeaseSeconds
+	current.Platform = input.Platform
 	current.MaxLeaseSeconds, current.MaxConcurrency = input.MaxLeaseSeconds, input.MaxConcurrency
 	current.TotalTarget, current.MinReady, current.DefaultImageID = totalTarget, minReady, defaultImageID
 	reason := strings.TrimSpace(input.Reason)
@@ -464,8 +501,12 @@ func (service *Service) AddDeviceToPool(ctx context.Context, poolID, deviceID st
 	if pool.Status != domain.PoolActive {
 		return ErrConflict
 	}
-	if _, err := service.store.GetDevice(ctx, deviceID); err != nil {
+	device, err := service.store.GetDevice(ctx, deviceID)
+	if err != nil {
 		return err
+	}
+	if pool.Platform != device.Platform {
+		return ErrInvalidArgument
 	}
 	return service.store.AddDeviceToPool(ctx, poolID, deviceID)
 }
@@ -483,6 +524,23 @@ func (service *Service) GetDevice(ctx context.Context, id string) (Device, error
 	return service.store.GetDevice(ctx, id)
 }
 
+func (service *Service) UpdateDeviceName(ctx context.Context, id string, input DeviceNameInput, actor audit.Actor, requestID string) (Device, error) {
+	name := strings.TrimSpace(input.Name)
+	if !validDeviceName(name) {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	event, err := service.deviceAudit(actor, requestID, "update_device_name", "device display name updated")
+	if err != nil {
+		return Device{}, err
+	}
+	current.Name = name
+	return service.store.UpdateDeviceName(ctx, current, event)
+}
+
 func (service *Service) ProvisionMockDevice(ctx context.Context, input ProvisionMockDeviceInput) (Device, error) {
 	if service.provider == nil {
 		return Device{}, ErrProviderUnavailable
@@ -494,17 +552,46 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 	if host.Status != domain.HostOnline || host.Draining {
 		return Device{}, ErrHostUnavailable
 	}
-	image, err := service.store.GetImage(ctx, input.ImageID)
-	if err != nil {
-		return Device{}, err
+	if strings.TrimSpace(input.Platform) == "" {
+		input.Platform = "android"
+	} else {
+		input.Platform = normalizedPlatform(input.Platform)
 	}
-	if image.Status != domain.ImageReady {
-		return Device{}, ErrImageUnavailable
+	if input.Platform == "" {
+		return Device{}, ErrInvalidArgument
+	}
+	if input.DeviceKind == "" {
+		input.DeviceKind = "emulator"
+		if input.Platform == "ios" {
+			input.DeviceKind = "simulator"
+		}
+	}
+	var image *Image
+	if input.Platform == "android" {
+		value, imageErr := service.store.GetImage(ctx, input.ImageID)
+		if imageErr != nil {
+			return Device{}, imageErr
+		}
+		if value.Status != domain.ImageReady {
+			return Device{}, ErrImageUnavailable
+		}
+		image = &value
+	} else if input.ImageID != "" || (input.DeviceKind != "simulator" && input.DeviceKind != "physical") {
+		return Device{}, ErrInvalidArgument
+	}
+	capabilities := cloneMap(input.Capabilities)
+	capabilities["platformName"] = canonicalPlatformName(input.Platform)
+	request := providers.CreateRequest{
+		DeviceID: input.ID, HostID: input.HostID, ImageID: input.ImageID, Platform: providers.Platform(input.Platform), DeviceKind: input.DeviceKind,
+		ProviderRef: input.ProviderRef, Capabilities: capabilities,
+	}
+	if image != nil {
+		request.RuntimeImage = image.DockerImage
+		request.RuntimeProfile = mustRuntimeProfile(image.ResourceConfig)
 	}
 	snapshot, err := service.provider.Create(ctx, providers.CreateRequest{
-		DeviceID: input.ID, HostID: input.HostID, ImageID: input.ImageID,
-		RuntimeImage: image.DockerImage, ProviderRef: input.ProviderRef, Capabilities: cloneMap(input.Capabilities),
-		RuntimeProfile: mustRuntimeProfile(image.ResourceConfig),
+		DeviceID: request.DeviceID, HostID: request.HostID, ImageID: request.ImageID, Platform: request.Platform, DeviceKind: request.DeviceKind,
+		RuntimeImage: request.RuntimeImage, ProviderRef: request.ProviderRef, Capabilities: request.Capabilities, RuntimeProfile: request.RuntimeProfile,
 	})
 	if err != nil {
 		return Device{}, err
@@ -522,11 +609,14 @@ func (service *Service) ProvisionMockDevice(ctx context.Context, input Provision
 		}
 		return Device{}, ErrConflict
 	}
-	imageID := input.ImageID
-	adb, appium := snapshot.Connection.ADBEndpoint, snapshot.Connection.AppiumEndpoint
-	device := Device{ID: input.ID, HostID: input.HostID, ImageID: &imageID, DeviceKind: "emulator",
+	var imageID *string
+	if input.ImageID != "" {
+		value := input.ImageID
+		imageID = &value
+	}
+	device := Device{ID: input.ID, HostID: input.HostID, Platform: input.Platform, ImageID: imageID, DeviceKind: input.DeviceKind,
 		ProviderType: "mock", ProviderRef: input.ProviderRef, LifecycleMode: "rebuild", Serial: snapshot.Connection.Serial,
-		ADBEndpoint: &adb, AppiumEndpoint: &appium, Capabilities: cloneMap(input.Capabilities),
+		ADBEndpoint: stringPointer(snapshot.Connection.ADBEndpoint), AppiumEndpoint: stringPointer(snapshot.Connection.AppiumEndpoint), Capabilities: capabilities,
 		LifecycleStatus: domain.DeviceReady, HealthStatus: domain.HealthHealthy}
 	created, err := service.store.CreateDevice(ctx, device)
 	if err != nil {
@@ -559,6 +649,80 @@ func (service *Service) RestartDeviceAudited(ctx context.Context, id, reason str
 	return service.restartDevice(ctx, id, reason, idempotencyKey, event)
 }
 
+func (service *Service) StartDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "start_ios_simulator", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.iosSimulatorLifecycle(ctx, id, reason, idempotencyKey, "start", event)
+}
+
+func (service *Service) StopDeviceAudited(ctx context.Context, id, reason string, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "stop_ios_simulator", reason)
+	if err != nil {
+		return Device{}, err
+	}
+	return service.iosSimulatorLifecycle(ctx, id, reason, idempotencyKey, "stop", event)
+}
+
+func (service *Service) iosSimulatorLifecycle(ctx context.Context, id, reason, idempotencyKey, operation string, event DeviceAudit) (Device, error) {
+	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 || (operation != "start" && operation != "stop") {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	if current.Platform != "ios" || current.DeviceKind != "simulator" || current.ProviderType != "appium_device_farm_ios" {
+		return Device{}, ErrInvalidArgument
+	}
+	allowlisted, _ := current.Capabilities["allowlisted"].(bool)
+	if !allowlisted {
+		return Device{}, ErrInvalidArgument
+	}
+	wantFrom, target := domain.DeviceStopped, domain.DeviceBooting
+	if operation == "stop" {
+		wantFrom, target = domain.DeviceReady, domain.DeviceStopped
+	}
+	commandKey := operationCommandKey(operation, event.ActorID, idempotencyKey)
+	requestHash := operationRequestHash(operation, current.ID, reason)
+	if replayed, found, replayErr := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, operation, requestHash); replayErr != nil {
+		return Device{}, replayErr
+	} else if found {
+		return replayed, nil
+	}
+	if current.LifecycleStatus != wantFrom {
+		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(target)}
+	}
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
+	if err != nil {
+		return Device{}, err
+	}
+	now := time.Now().UTC()
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, reason, now); err != nil {
+			return Device{}, err
+		}
+	}
+	if err := aggregate.Transition(target, reason, now); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	current.HealthReason = stringPointer(reason)
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: operation, IdempotencyKey: commandKey, MaxAttempts: 3,
+		Payload: map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
+			"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
+		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true,
+	})
+}
+
 func (service *Service) restartDevice(ctx context.Context, id, reason, idempotencyKey string, audit DeviceAudit) (Device, error) {
 	if strings.TrimSpace(reason) == "" || len(strings.TrimSpace(idempotencyKey)) < 8 {
 		return Device{}, ErrInvalidArgument
@@ -574,7 +738,7 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 	} else if found {
 		return replayed, nil
 	}
-	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped {
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped && current.LifecycleStatus != domain.DeviceQuarantined {
 		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: "restart"}
 	}
 	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
@@ -587,7 +751,11 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 			return Device{}, err
 		}
 	}
-	if current.LifecycleStatus == domain.DeviceStopped {
+	if current.LifecycleStatus == domain.DeviceQuarantined {
+		if err := aggregate.Transition(domain.DeviceProvisioning, reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	} else if current.LifecycleStatus == domain.DeviceStopped {
 		if err := aggregate.Transition(domain.DeviceBooting, reason, time.Now().UTC()); err != nil {
 			return Device{}, err
 		}
@@ -604,7 +772,8 @@ func (service *Service) restartDevice(ctx context.Context, id, reason, idempoten
 		IdempotencyKey: commandKey, MaxAttempts: 3,
 		Payload: map[string]any{"operation_source": "management", "operation_state": current.LifecycleStatus,
 			"request_hash": requestHash,
-			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef},
+			"device_id":    current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
+			"runtime_profile": current.EffectiveRuntimeProfile},
 		Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: audit,
 	})
 }
@@ -657,7 +826,7 @@ func (service *Service) ReimageDeviceAudited(ctx context.Context, id string, inp
 	if err != nil {
 		return Device{}, ErrInvalidArgument
 	}
-	capacityResult, err := service.store.CheckDeviceReimageCapacity(ctx, current, currentProfile, targetProfile, targetImage.ID)
+	capacityResult, err := service.store.CheckDeviceReplacementCapacity(ctx, current, currentProfile, targetProfile, targetImage.ID)
 	if err != nil {
 		return Device{}, err
 	}
@@ -689,19 +858,103 @@ func (service *Service) ReimageDeviceAudited(ctx context.Context, id string, inp
 	if err != nil {
 		return Device{}, err
 	}
+	targetCapabilities := reimageCapabilities(current.Capabilities, targetImage, targetProfile)
 	payload := map[string]any{
 		"operation_source": "management", "operation_kind": "reimage", "operation_state": current.LifecycleStatus,
 		"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
 		"image_id": targetImage.ID, "docker_image": targetImage.DockerImage, "docker_digest": targetImage.DockerDigest,
-		"capabilities": cloneMap(current.Capabilities), "runtime_profile": targetProfile.Map(),
+		"capabilities": targetCapabilities, "runtime_profile": targetProfile.Map(),
 		"rollback": map[string]any{"image_id": oldImage.ID, "docker_image": oldImage.DockerImage,
-			"docker_digest": oldImage.DockerDigest, "runtime_profile": currentProfile.Map()},
+			"docker_digest": oldImage.DockerDigest, "runtime_profile": currentProfile.Map(),
+			"capabilities": cloneMap(current.Capabilities)},
 	}
 	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
 		CommandID: commandID, CommandType: "rebuild", IdempotencyKey: commandKey, MaxAttempts: 1,
 		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
 		RequireNoActiveReservation: true, RequireNoActiveCommand: true, Reimage: true,
 		PendingImageID: targetImage.ID, PendingRuntimeProfile: targetProfile.Map(),
+	})
+}
+
+func (service *Service) UpdateDeviceRuntimeProfileAudited(ctx context.Context, id string, input DeviceRuntimeProfileUpdateInput, actor audit.Actor, requestID, idempotencyKey string) (Device, error) {
+	event, err := service.deviceAudit(actor, requestID, "update_device_runtime_profile", input.Reason)
+	if err != nil {
+		return Device{}, err
+	}
+	if len(strings.TrimSpace(idempotencyKey)) < 8 {
+		return Device{}, ErrInvalidArgument
+	}
+	current, err := service.store.GetDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	requestHash := operationStructuredRequestHash("runtime_profile_update", current.ID, input)
+	commandKey := operationCommandKey("runtime-profile-update", event.ActorID, idempotencyKey)
+	if replayed, found, replayErr := service.store.ReplayDeviceOperation(ctx, current.ID, current.HostID, commandKey, "restart", requestHash); replayErr != nil {
+		return Device{}, replayErr
+	} else if found {
+		return replayed, nil
+	}
+	if current.Platform != "android" || current.DeviceKind != "emulator" || current.ProviderType != "docker_emulator" || current.ImageID == nil {
+		return Device{}, ErrInvalidArgument
+	}
+	if current.LifecycleStatus != domain.DeviceReady && current.LifecycleStatus != domain.DeviceStopped && current.LifecycleStatus != domain.DeviceQuarantined {
+		return Device{}, &domain.TransitionError{Resource: "device", ID: id, Field: "lifecycle_status", From: string(current.LifecycleStatus), To: string(domain.DeviceProvisioning)}
+	}
+	currentProfile, err := runtimeprofile.Parse(current.EffectiveRuntimeProfile)
+	if err != nil {
+		return Device{}, ErrInvalidArgument
+	}
+	targetValues := currentProfile.Map()
+	targetValues["container_cpu_cores"] = input.ContainerCPUCores
+	targetValues["container_memory_mb"] = input.ContainerMemoryMB
+	targetValues["guest_cpu_cores"] = input.GuestCPUCores
+	targetValues["guest_memory_mb"] = input.GuestMemoryMB
+	targetProfile, err := runtimeprofile.Parse(targetValues)
+	if err != nil {
+		return Device{}, ErrInvalidArgument
+	}
+	// 幂等：目标 profile 与当前完全相同，视为成功操作返回当前状态即可，
+	// 不触发重启也不报错。控制台重复点"确认调整"或两次填了相同数值都应通过。
+	if reflect.DeepEqual(targetProfile.Map(), currentProfile.Map()) {
+		return current, nil
+	}
+	capacityResult, err := service.store.CheckDeviceReplacementCapacity(ctx, current, currentProfile, targetProfile, *current.ImageID)
+	if err != nil {
+		return Device{}, err
+	}
+	if !capacityResult.Fits {
+		return Device{}, &CapacityError{Result: capacityResult}
+	}
+
+	oldLifecycle, oldHealth := current.LifecycleStatus, current.HealthStatus
+	aggregate, err := domain.RestoreDevice(current.ID, current.LifecycleStatus, current.HealthStatus)
+	if err != nil {
+		return Device{}, err
+	}
+	if aggregate.Health() != domain.HealthUnknown {
+		if err := aggregate.UpdateHealth(domain.HealthUnknown, input.Reason, time.Now().UTC()); err != nil {
+			return Device{}, err
+		}
+	}
+	if err := aggregate.Transition(domain.DeviceProvisioning, input.Reason, time.Now().UTC()); err != nil {
+		return Device{}, err
+	}
+	current.LifecycleStatus, current.HealthStatus = aggregate.Lifecycle(), aggregate.Health()
+	commandID, err := service.newID()
+	if err != nil {
+		return Device{}, err
+	}
+	payload := map[string]any{
+		"operation_source": "management", "operation_kind": "runtime_profile_update", "operation_state": current.LifecycleStatus,
+		"request_hash": requestHash, "device_id": current.ID, "host_id": current.HostID, "provider_ref": current.ProviderRef,
+		"runtime_profile": targetProfile.Map(), "rollback": map[string]any{"runtime_profile": currentProfile.Map()},
+	}
+	return service.store.QueueDeviceOperation(ctx, DeviceOperation{
+		CommandID: commandID, CommandType: "restart", IdempotencyKey: commandKey, MaxAttempts: 1,
+		Payload: payload, Device: current, ExpectedLifecycle: oldLifecycle, ExpectedHealth: oldHealth, Audit: event,
+		RequireNoActiveReservation: true, RequireNoActiveCommand: true, RuntimeProfileUpdate: true,
+		PendingRuntimeProfile: targetProfile.Map(),
 	})
 }
 
@@ -889,6 +1142,18 @@ func validAuditIdentity(value string) bool {
 	return true
 }
 
+func validDeviceName(value string) bool {
+	if utf8.RuneCountInString(value) < 2 || utf8.RuneCountInString(value) > 40 || sensitive.Contains(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
 func validReason(reason string) bool {
 	reason = strings.TrimSpace(reason)
 	return len(reason) >= 3 && len(reason) <= 500 && !sensitive.Contains(reason)
@@ -918,10 +1183,75 @@ func mustRuntimeProfile(values map[string]any) runtimeprofile.Profile {
 func validatePoolInput(input PoolInput, totalTarget, minReady int) error {
 	if strings.TrimSpace(input.Name) == "" || input.DefaultLeaseSeconds < 60 ||
 		input.MaxLeaseSeconds < input.DefaultLeaseSeconds || input.MaxConcurrency < 1 || totalTarget < 0 ||
-		minReady < 0 || minReady > totalTarget {
+		minReady < 0 || minReady > totalTarget || normalizedPlatform(input.Platform) == "" {
 		return ErrInvalidArgument
 	}
 	return nil
+}
+
+func normalizedPlatform(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "android":
+		return "android"
+	case "ios":
+		return "ios"
+	default:
+		return ""
+	}
+}
+
+func canonicalPlatformName(value string) string {
+	if value == "ios" {
+		return "iOS"
+	}
+	return "Android"
+}
+
+func normalizedHostOS(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "linux"
+	}
+	switch value {
+	case "linux", "macos", "windows":
+		return value
+	default:
+		return ""
+	}
+}
+
+func normalizedHostArch(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("_.-", character) {
+			continue
+		}
+		return ""
+	}
+	if len(value) > 32 {
+		return ""
+	}
+	return value
+}
+
+func validHostType(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "docker_emulator", "usb_android", "hybrid", "appium_device_farm_ios":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringPointer(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
 }
 
 func idempotency(clientID, scope, key, resourceType, resourceID string, request any, status int) (Idempotency, error) {
@@ -945,5 +1275,19 @@ func cloneMap(source map[string]any) map[string]any {
 	for key, value := range source {
 		result[key] = value
 	}
+	return result
+}
+
+// reimageCapabilities keeps the selected Phone hardware identity while making
+// image and runtime fields describe the instance that will actually be built.
+func reimageCapabilities(current map[string]any, image Image, profile runtimeprofile.Profile) map[string]any {
+	result := cloneMap(current)
+	for key, value := range profile.Map() {
+		result[key] = value
+	}
+	result["platformName"] = "Android"
+	result["apiLevel"] = image.APILevel
+	result["abi"] = image.ABI
+	result["resolution"] = fmt.Sprintf("%dx%d", profile.Width, profile.Height)
 	return result
 }

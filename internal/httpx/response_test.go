@@ -50,7 +50,25 @@ func TestWriteErrorUsesUnifiedEnvelope(t *testing.T) {
 	if envelope.Data != nil || envelope.Error == nil || envelope.Error.Code != "INVALID_ARGUMENT" {
 		t.Fatalf("envelope = %+v", envelope)
 	}
+	if envelope.Error.Message != "请求参数或凭证无效" {
+		t.Fatalf("error message = %q", envelope.Error.Message)
+	}
 	if got := response.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestWriteErrorPreservesDetailedChineseMessage(t *testing.T) {
+	response := httptest.NewRecorder()
+	WriteError(response, httptest.NewRequest(http.MethodGet, "/", nil), http.StatusConflict, APIError{
+		Code: "INSUFFICIENT_HOST_RESOURCES", Message: "宿主机资源不足：磁盘还缺 1024 MB",
+	})
+
+	var envelope Envelope
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if envelope.Error == nil || envelope.Error.Message != "宿主机资源不足：磁盘还缺 1024 MB" {
+		t.Fatalf("envelope = %+v", envelope)
 	}
 }

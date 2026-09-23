@@ -25,6 +25,22 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 设备池没有 ready 且 healthy 的设备
+      - alert: DeviceFarmIOSPoolNoAvailableDevice
+        expr: >-
+          device_farm_pool_devices{platform="ios",availability="available"} < 1
+          and on(pool_id,platform) device_farm_pool_target{platform="ios",objective="total"} > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: iOS 设备池没有可立即预约的 Simulator
+      - alert: DeviceFarmPoolCapacityDeficit
+        expr: >-
+          sum by(pool_id,platform) (device_farm_pool_devices{availability=~"available|in_use|recovering"})
+          < on(pool_id,platform) device_farm_pool_target{objective="total"}
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 设备池可服务容量低于配置目标
       - alert: DeviceFarmReservationBacklog
         expr: device_farm_scheduler_oldest_pending_seconds > 60
         for: 2m
@@ -57,3 +73,9 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: Device Farm 指标采集不完整
+      - alert: DeviceFarmBuildUnknown
+        expr: device_farm_build_info{commit="unknown"} == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Device Farm 部署缺少可追溯 Git commit

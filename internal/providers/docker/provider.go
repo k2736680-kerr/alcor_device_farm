@@ -151,6 +151,10 @@ func (provider *Provider) Create(ctx context.Context, request providers.CreateRe
 }
 
 func (provider *Provider) create(ctx context.Context, request providers.CreateRequest, generation int) (providers.Snapshot, error) {
+	return provider.createWithOptions(ctx, request, generation, false)
+}
+
+func (provider *Provider) createWithOptions(ctx context.Context, request providers.CreateRequest, generation int, preserveResources bool) (providers.Snapshot, error) {
 	if request.RuntimeProfile == (runtimeprofile.Profile{}) {
 		request.RuntimeProfile = runtimeprofile.Default()
 	}
@@ -175,8 +179,10 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 	if !errors.Is(err, errNotFound) {
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot inspect existing emulator", true, err)
 	}
-	if err := provider.delete(ctx, request.ProviderRef); err != nil {
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot clean stale emulator resources", true, err)
+	if !preserveResources {
+		if err := provider.delete(ctx, request.ProviderRef); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot clean stale emulator resources", true, err)
+		}
 	}
 
 	capabilities, err := json.Marshal(request.Capabilities)
@@ -193,17 +199,19 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		labelGeneration: strconv.Itoa(generation), labelCapabilities: string(capabilities), labelRuntimeProfile: string(encodedProfile),
 	}
 	resourceLabels := map[string]string{labelManaged: "true", labelProviderRef: request.ProviderRef, labelHostID: request.HostID}
-	if err := provider.backend.CreateNetwork(ctx, networkName, resourceLabels); err != nil {
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator network", true, err)
-	}
-	if err := provider.backend.CreateVolume(ctx, volumeName, resourceLabels); err != nil {
-		provider.cleanup(request.ProviderRef)
-		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
+	if !preserveResources {
+		if err := provider.backend.CreateNetwork(ctx, networkName, resourceLabels); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator network", true, err)
+		}
+		if err := provider.backend.CreateVolume(ctx, volumeName, resourceLabels); err != nil {
+			provider.cleanup(request.ProviderRef)
+			return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator data volume", true, err)
+		}
 	}
 	environment := cloneStringMap(provider.config.Environment)
 	graphics, renderDevice, err := provider.resolveGraphics(request.RuntimeProfile.Graphics)
 	if err != nil {
-		provider.cleanup(request.ProviderRef)
+		provider.cleanupCreateFailure(ctx, request.ProviderRef, preserveResources)
 		return providers.Snapshot{}, err
 	}
 	applyRuntimeEnvironment(environment, request.RuntimeProfile, graphics)
@@ -219,19 +227,34 @@ func (provider *Provider) create(ctx context.Context, request providers.CreateRe
 		Labels: labels, Environment: environment,
 	})
 	if err != nil {
-		provider.cleanup(request.ProviderRef)
+		provider.cleanupCreateFailure(ctx, request.ProviderRef, preserveResources)
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot create emulator container", true, err)
 	}
 	created, err := provider.backend.InspectContainer(ctx, name)
 	if err != nil {
-		provider.cleanup(request.ProviderRef)
+		provider.cleanupCreateFailure(ctx, request.ProviderRef, preserveResources)
 		return providers.Snapshot{}, providerError(providers.OperationCreate, "EMULATOR_CREATE_FAILED", "cannot inspect created emulator", true, err)
 	}
 	return provider.snapshot(created)
 }
 
+func (provider *Provider) cleanupCreateFailure(ctx context.Context, providerRef string, preserveResources bool) {
+	if !preserveResources {
+		provider.cleanup(providerRef)
+		return
+	}
+	name, _, _ := resourceNames(providerRef)
+	_ = provider.backend.RemoveContainer(ctx, name)
+}
+
 func (provider *Provider) Start(ctx context.Context, providerRef string) (providers.Snapshot, error) {
-	return provider.changeState(ctx, providers.OperationStart, providerRef, provider.backend.StartContainer)
+	snapshot, err := provider.changeState(ctx, providers.OperationStart, providerRef, provider.backend.StartContainer)
+	if err != nil {
+		return snapshot, err
+	}
+	name, _, _ := resourceNames(providerRef)
+	provider.ensureAVDGuard(ctx, name)
+	return snapshot, nil
 }
 
 func (provider *Provider) Stop(ctx context.Context, providerRef string) (providers.Snapshot, error) {
@@ -239,7 +262,82 @@ func (provider *Provider) Stop(ctx context.Context, providerRef string) (provide
 }
 
 func (provider *Provider) Restart(ctx context.Context, providerRef string) (providers.Snapshot, error) {
-	return provider.changeState(ctx, providers.OperationRestart, providerRef, provider.backend.RestartContainer)
+	snapshot, err := provider.changeState(ctx, providers.OperationRestart, providerRef, provider.backend.RestartContainer)
+	if err != nil {
+		return snapshot, err
+	}
+	name, _, _ := resourceNames(providerRef)
+	provider.ensureAVDGuard(ctx, name)
+	return snapshot, nil
+}
+
+// RestartWithProfile replaces only the container while retaining its network
+// and data volume, so a changed runtime profile can be applied non-destructively.
+func (provider *Provider) RestartWithProfile(ctx context.Context, providerRef string, profile runtimeprofile.Profile) (providers.Snapshot, error) {
+	value, err := provider.find(ctx, providers.OperationRestart, providerRef)
+	if err != nil {
+		return providers.Snapshot{}, err
+	}
+	request, generation, err := requestFromContainer(value)
+	if err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "DOCKER_METADATA_INVALID", "cannot read emulator metadata", false, err)
+	}
+	if err := profile.Validate(); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "INVALID_RUNTIME_PROFILE", err.Error(), false, err)
+	}
+	if value.State == "running" {
+		_, flushErr := provider.backend.Exec(ctx, value.Name, provider.adbArgs("shell", "sync")...)
+		if flushErr != nil && provider.adbReachable(ctx, value.Name) {
+			// 运行时仍在线：冲刷失败可能只是 adb 瞬时抖动，维持原保护
+			// 行为（中止重启），避免白白丢掉容器数据卷里的用户状态。
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "RUNTIME_PROFILE_DATA_FLUSH_FAILED", "cannot flush emulator data before replacing its container", false, flushErr)
+		}
+		// 冲刷成功，或运行时已僵死（ADB 不可达且不会自愈）：僵死场景下
+		// 继续中止只会把设备永久卡在隔离态、必须人工登宿主机重启容器，
+		// 因此放弃冲刷直接硬替换。
+		if err := provider.backend.StopContainer(ctx, value.Name); err != nil {
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot stop emulator before replacing its container", true, err)
+		}
+	}
+	request.RuntimeProfile = profile
+	if err := provider.backend.RemoveContainer(ctx, value.Name); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot replace emulator container", true, err)
+	}
+	created, err := provider.createWithOptions(ctx, request, generation+1, true)
+	if err != nil {
+		targetErr := err
+		restored, restoreErr := provider.createWithOptions(ctx, requestFromProfile(request, value), generation+1, true)
+		if restoreErr != nil {
+			return providers.Snapshot{}, providerError(providers.OperationRestart, "RUNTIME_PROFILE_ROLLBACK_FAILED", "cannot restore the previous emulator container after target creation failed", false, errors.Join(targetErr, restoreErr))
+		}
+		name, _, _ := resourceNames(restored.ProviderRef)
+		if restoreErr = provider.backend.StartContainer(ctx, name); restoreErr == nil {
+			provider.ensureAVDGuard(ctx, name)
+			value, restoreErr = provider.backend.InspectContainer(ctx, name)
+			if restoreErr == nil {
+				restored, restoreErr = provider.snapshot(value)
+			}
+		}
+		return restored, providerError(providers.OperationRestart, "RUNTIME_PROFILE_TARGET_CREATE_FAILED_ROLLBACK_STARTED", "target container creation failed and the previous container was restored", false, errors.Join(targetErr, restoreErr))
+	}
+	name, _, _ := resourceNames(created.ProviderRef)
+	if err := provider.backend.StartContainer(ctx, name); err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_OPERATION_FAILED", "cannot start replaced emulator container", true, err)
+	}
+	provider.ensureAVDGuard(ctx, name)
+	value, err = provider.backend.InspectContainer(ctx, name)
+	if err != nil {
+		return providers.Snapshot{}, providerError(providers.OperationRestart, "EMULATOR_INSPECT_FAILED", "cannot inspect replaced emulator", true, err)
+	}
+	return provider.snapshot(value)
+}
+
+func requestFromProfile(request providers.CreateRequest, previous container) providers.CreateRequest {
+	previousRequest, _, err := requestFromContainer(previous)
+	if err == nil {
+		return previousRequest
+	}
+	return request
 }
 
 func (provider *Provider) Rebuild(ctx context.Context, providerRef string) (providers.Snapshot, error) {
@@ -350,7 +448,10 @@ func (provider *Provider) find(ctx context.Context, operation providers.Operatio
 }
 
 func (provider *Provider) inspectContainerHealth(ctx context.Context, value container) (providers.Health, error) {
-	health := providers.Health{Online: value.State == "running"}
+	health := providers.Health{Platform: providers.PlatformAndroid, Online: value.State == "running"}
+	if value.OOMKilled {
+		return health, providerError(providers.OperationInspectHealth, "EMULATOR_OOM_KILLED", "emulator container was OOM-killed", true, nil)
+	}
 	if !health.Online {
 		return health, providerError(providers.OperationInspectHealth, "DEVICE_NOT_RUNNING", "emulator container is not running", true, nil)
 	}
@@ -387,6 +488,108 @@ func (provider *Provider) adbArgs(args ...string) []string {
 	return append(result, args...)
 }
 
+// adbReachable 判断容器内安卓运行时是否仍然可达。运行时僵死（qemu 崩溃、
+// adbd 无响应）时返回 false，此时冲刷/健康检查都不可能成功。
+func (provider *Provider) adbReachable(ctx context.Context, name string) bool {
+	state, err := provider.backend.Exec(ctx, name, provider.adbArgs("get-state")...)
+	return err == nil && strings.TrimSpace(state) == "device"
+}
+
+// ensureAVDGuard 尽力在运行中的容器内安装 AVD 守护补丁（内容见 avdGuardScript）。
+// 刻意不把失败向上传播：补丁装在设备持久卷上，一次安装覆盖之后所有启动，
+// 错过本次启动的下一个启动路径（自愈重启、下次 Start）会再次尝试；设备异常
+// 由健康检查与隔离机制兜底暴露。
+func (provider *Provider) ensureAVDGuard(ctx context.Context, name string) {
+	_, _ = provider.backend.Exec(ctx, name, "sh", "-c", avdGuardScript)
+}
+
+// avdGuardScript 在容器内执行，把守护逻辑写进持久卷上的镜像启动脚本
+// （docker-android 的 run.sh，随 /home/androidusr 数据卷持久化），并为当前这
+// 次启动立即生效。背景（2026-09-15 事故）：
+//
+//  1. docker-android 的 is_initialized() 以持久卷上 config.ini 的
+//     hw.device.name 是否匹配 EMULATOR_DEVICE 为准，匹配时跳过 avdmanager
+//     创建流程。但 avdmanager 实际写入的是设备模板 id（pixel_9），与
+//     EMULATOR_DEVICE（Pixel 9）永不匹配 → 每次启动都重建 AVD 并附加
+//     -wipe-data，用户安装的 APK 与数据全部丢失。
+//  2. 手工把标记修正为 "Pixel 9" 后，AVD 根 ini（/root/.android/avd/<avd>.ini）
+//     只存在于容器临时层——硬重启回退/换 profile 会重建容器，临时层随之丢失，
+//     镜像又因标记已初始化而永远不再创建它 → qemu 报 "Unknown AVD name" 秒退。
+//  3. qemu 崩溃（而非干净退出）会在持久卷 AVD 目录留下陈旧的多实例/PID 锁
+//     文件；容器重启后 PID 空间重新编号，陈旧 PID 恰好指向新容器里的活进程，
+//     下次启动报 "Running multiple emulators with the same AVD" 拒绝运行。
+//  4. docker-android 的 create() 调 avdmanager create avd -p <持久卷 AVD 目录>
+//     重建 AVD，而 avdmanager 在指定 -p 时不会写根 ini；全新数据卷的首次启动
+//     因此必然死于 "Unknown AVD name"（重建/扩容的每条命令尝试都是全新卷）。
+//     在 emulator.py 的 deploy() 里、qemu 启动前补写根 ini 兜底。
+//
+// 守护逻辑在每次启动的最早期（镜像启动脚本开头）修复前三点：写入指向持久卷
+// AVD 目录的根 ini、把标记归一化为 EMULATOR_DEVICE、清理陈旧锁文件（本系统
+// 单容器独占 AVD 数据卷，启动时刻不存在合法的第二模拟器实例）。首次启动
+// （卷上尚无 config.ini）不动标记，走镜像正常创建流程，根 ini 由第 4 条补丁
+// 在 qemu 启动前写入；exec 时机早于 python 导入 emulator.py，补丁对本次启动
+// 即生效。
+const avdGuardScript = `AVD_GUARD_BODY=/tmp/alcor-avd-guard-body.sh
+cat > "$AVD_GUARD_BODY" <<'AVD_GUARD_EOF'
+# alcor-avd-guard: installed by alcor-device-farm provider (internal/providers/docker/provider.go).
+# 1) The AVD root ini lives in the ephemeral /root/.android/avd and disappears
+#    when the container is recreated, while docker-android skips AVD creation
+#    once its persistent marker claims initialization -> qemu dies with
+#    "Unknown AVD name" on every boot. Rewrite the root ini on every boot.
+# 2) avdmanager writes hw.device.name=<device template id> (e.g. pixel_9) but
+#    docker-android matches EMULATOR_DEVICE (e.g. Pixel 9), so every boot
+#    recreated the AVD with -wipe-data and destroyed user data. Normalize the
+#    marker to EMULATOR_DEVICE before the emulator checks it.
+# 3) A crashed qemu leaves stale multiinstance/PID lock files in the persistent
+#    AVD dir; with a recycled in-container PID the next boot aborts with
+#    "Running multiple emulators with the same AVD". Clear them at boot.
+if [ -n "${EMULATOR_DEVICE:-}" ]; then
+    DATA_HOME="${WORK_PATH:-/home/androidusr}"
+    AVD_NAME="$(printf '%s' "$EMULATOR_DEVICE" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')_${EMULATOR_ANDROID_VERSION:-15.0}"
+    AVD_DIR="${ANDROID_AVD_HOME:-/root/.android/avd}"
+    mkdir -p "$AVD_DIR"
+    printf 'avd.ini.encoding=UTF-8\npath=%s/emulator\ntarget=android-35\n' "$DATA_HOME" > "$AVD_DIR/$AVD_NAME.ini"
+    rm -f "$DATA_HOME/emulator/multiinstance.lock" "$DATA_HOME/emulator/hardware-qemu.ini.lock" || true
+    if [ -f "$DATA_HOME/emulator/config.ini" ]; then
+        sed -i "s/^hw\.device\.name.*/hw.device.name = $EMULATOR_DEVICE/" "$DATA_HOME/emulator/config.ini" || true
+    fi
+fi
+AVD_GUARD_EOF
+sh "$AVD_GUARD_BODY" || true
+RUN_SH="${WORK_PATH:-/home/androidusr}/docker-android/mixins/scripts/run.sh"
+if [ -f "$RUN_SH" ] && ! grep -q "alcor-avd-guard" "$RUN_SH"; then
+    sed -i "1r $AVD_GUARD_BODY" "$RUN_SH" || true
+fi
+EMU_PY="${WORK_PATH:-/home/androidusr}/docker-android/cli/src/device/emulator.py"
+if [ -f "$EMU_PY" ] && ! grep -q "alcor-avd-rootini" "$EMU_PY"; then
+    python3 - "$EMU_PY" <<'AVD_ROOTINI_EOF'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+anchor = "        subprocess.Popen(start_cmd.split())"
+if anchor not in src:
+    raise SystemExit(0)
+fix = (
+    "        # alcor-avd-rootini-fix: avdmanager create with -p never writes the\n"
+    "        # AVD root ini, so the first boot on a fresh volume dies with\n"
+    "        # \"Unknown AVD name\" before qemu starts. Write it right before launch.\n"
+    "        try:\n"
+    "            _avd_home = os.environ.get(\"ANDROID_AVD_HOME\") or os.path.join(os.path.expanduser(\"~\"), \".android\", \"avd\")\n"
+    "            os.makedirs(_avd_home, exist_ok=True)\n"
+    "            with open(os.path.join(_avd_home, self.name + \".ini\"), \"w\") as _ini:\n"
+    "                _ini.write(\"avd.ini.encoding=UTF-8\\npath=%s\\ntarget=android-%s\\n\" % (self.path_emulator, self.api_level))\n"
+    "        except Exception as _e:\n"
+    "            self.logger.warning(\"alcor-avd-rootini failed: %s\", _e)\n"
+)
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src.replace(anchor, fix + anchor, 1))
+AVD_ROOTINI_EOF
+fi
+rm -f "$AVD_GUARD_BODY"
+`
+
 func (provider *Provider) snapshot(value container) (providers.Snapshot, error) {
 	generation, err := strconv.Atoi(value.Labels[labelGeneration])
 	if err != nil || generation < 1 {
@@ -418,14 +621,15 @@ func (provider *Provider) snapshot(value container) (providers.Snapshot, error) 
 	}
 	return providers.Snapshot{
 		DeviceID: value.Labels[labelDeviceID], HostID: value.Labels[labelHostID], ImageID: value.Labels[labelImageID],
+		Platform:    providers.PlatformAndroid,
 		ProviderRef: value.Labels[labelProviderRef], State: state, Generation: generation,
 		Capabilities: capabilities, RuntimeProfile: runtimeProfile,
-		Health: providers.Health{Online: state == providers.StateRunning}, Connection: connection,
+		Health: providers.Health{Platform: providers.PlatformAndroid, Online: state == providers.StateRunning}, Connection: connection,
 	}, nil
 }
 
 func (provider *Provider) connection(value container) (providers.ConnectionInfo, error) {
-	connection := providers.ConnectionInfo{}
+	connection := providers.ConnectionInfo{Platform: providers.PlatformAndroid, ProviderID: value.Labels[labelProviderRef]}
 	adbHostPort := value.Ports[provider.config.ContainerADBPort]
 	if adbHostPort == 0 {
 		return connection, errors.New("ADB host port is missing")
@@ -438,6 +642,7 @@ func (provider *Provider) connection(value container) (providers.ConnectionInfo,
 	}
 	connection.AppiumEndpoint = "http://" + net.JoinHostPort(provider.config.AdvertiseHost, strconv.Itoa(appiumHostPort))
 	connection.AppiumUDID = provider.config.ContainerADBSerial
+	connection.DeviceUDID = connection.AppiumUDID
 	return connection, nil
 }
 

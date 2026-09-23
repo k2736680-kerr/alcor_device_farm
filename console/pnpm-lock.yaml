@@ -27,15 +27,6 @@ importers:
         specifier: ^7.8.2
         version: 7.18.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
-      '@orval/core':
-        specifier: ^7.11.2
-        version: 7.21.0(openapi-types@12.1.3)(typescript@5.9.3)
-      '@orval/query':
-        specifier: ^7.11.2
-        version: 7.21.0(openapi-types@12.1.3)(typescript@5.9.3)
-      '@orval/zod':
-        specifier: ^7.11.2
-        version: 7.21.0(openapi-types@12.1.3)(typescript@5.9.3)
       '@playwright/test':
         specifier: ^1.55.0
         version: 1.62.1

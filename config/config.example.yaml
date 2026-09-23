@@ -23,6 +23,7 @@ reconcile:
   interval: 2s
   host_timeout: 30s
   stf_visibility_grace: 30s
+  host_recovery_grace: 90s
   failure_threshold: 3
 
 # The controller turns device_pool_images min_ready/max_instances targets into
@@ -47,8 +48,8 @@ console:
   enabled: false
   users_file: ""
   development_insecure: false
-  session_max_age: 8h
-  session_idle_timeout: 30m
+  session_max_age: 720h
+  session_idle_timeout: 720h
   cleanup_interval: 10m
   login_window: 15m
   login_max_failures: 5

@@ -7,8 +7,9 @@ if [ -z "${DEVICE_FARM_DATABASE_URL:-}" ] || [ "$#" -ne 1 ]; then
 fi
 backup_directory=$1
 pg_dump_binary="${DEVICE_FARM_PG_DUMP:-pg_dump}"
+sha256sum_binary="${DEVICE_FARM_SHA256SUM:-sha256sum}"
 "$pg_dump_binary" --version >/dev/null
-sha256sum --version >/dev/null
+command -v "$sha256sum_binary" >/dev/null
 mkdir -p "$backup_directory"
 backup_directory=$(CDPATH= cd -- "$backup_directory" && pwd)
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -20,6 +21,6 @@ trap 'rm -f "$temporary_file"' EXIT HUP INT TERM
 chmod 0600 "$temporary_file"
 mv "$temporary_file" "$final_file"
 trap - EXIT HUP INT TERM
-sha256sum "$final_file" > "$final_file.sha256"
+"$sha256sum_binary" "$final_file" > "$final_file.sha256"
 chmod 0600 "$final_file.sha256"
 echo "$final_file"

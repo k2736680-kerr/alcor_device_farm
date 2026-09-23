@@ -35,7 +35,7 @@
 | SameSite=Strict | 会话与 CSRF Cookie 均 `SameSiteStrictMode` | 跨站请求不带 Cookie |
 | CSRF 双提交 | 登录返回 `device_farm_csrf` Cookie + JSON 中的 CSRF Token；写请求需 `X-CSRF-Token` 头等于 Cookie 值，且服务端用会话绑定的 `csrf_hash` 校验（consoleauth:159） | 无头或错误头返回 401/`CSRF_VALIDATION_FAILED` |
 | 登录限流 | `console.login_window` / `login_max_failures`，按 userID + 来源地址限流 | 连续错误密码触发拒绝 |
-| 会话过期 | `console.session_max_age`（8h）与 `session_idle_timeout`（30m），过期后 401 | 过期会话调用 API 返回 401 |
+| 会话过期 | `console.session_max_age` 与 `session_idle_timeout` 默认均为 30 天；Cookie 仅保存随机会话令牌，不保存明文密码，过期后 401 | 30 天内浏览器重开仍可复用；过期会话调用 API 返回 401 |
 
 ## 4. 防缓存与静态资源版本
 

@@ -4,23 +4,27 @@
 
 本表把 [设备农场方案](reference/app_evaluation_device_farm_design.md) 中仍有效的设备域能力映射到当前 `alcor_device_farm` 工作区。Alcor 平台对象和接入边界同时受 [新版 Alcor 方案](reference/alcor_next_generation_plan.txt) 约束，冲突裁决见 [三方对齐说明](03_alcor_generation_alignment.md)。
 
-当前单独建仓是因为新版 Alcor 明确把 Device Farm 放在第六阶段，相关 Adapter 尚未开发。设备域可以先行验证，但不得复制新版 Alcor 的评估业务。
+当前单独建仓起因于新版 Alcor 将 Device Farm 放在第六阶段，相关 Adapter 尚未开发。该阶段已经完成本地真实联调和统一入口；仓库仍保持独立设备域边界，不复制新版 Alcor 的评估业务。
+
+Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-2026-08-17` 冻结；本地第二版从该基线使用 `codex/device-farm-v2` 开发。分支变化不改变仓库、数据库或部署边界，详见 ADR-0020。DF-039～DF-069 已完成多平台宿主机、iOS Simulator、统一容量、受控远控、长期设备恢复、控制面预部署和 Console 回归；真实 iPhone 与 iOS 业务 Runner 仍不属于本仓库范围。
 
 ## 2. 组件逐项对齐
 
 | 组件 | 当前工作区处理 | 新版 Alcor 接入方式 | 禁止跑偏 |
 |---|---|---|---|
-| Device Farm Console | 当前新增可独立使用的设备控制后台；按 ADR-0013 为管理员编排 Reservation 绑定的 STF 原生 Web 远控，仍不展示 STF `remoteConnect` TCP 地址 | Alcor 以同源受控代理嵌入现有 Console；钉钉会话只在 Alcor 校验，Alcor 服务端使用 Service Token 和受控操作者 Header 调用同一设备 API | 不实现 Alcor 评估业务页面，不复制 STF 远控，不让浏览器接触 Service/STF Token 或签名 Secret |
-| Console Gateway 与会话 | 当前在 Device Farm Server 新增 `console` Principal、配置用户和 PostgreSQL 短时会话 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表 |
+| Device Farm Console | 当前新增可独立使用的设备控制后台；为 operator/admin 编排 Reservation 绑定的 STF 或 Baguette 原生 Web 远控，viewer 保持只读，仍不展示内部连接地址 | Alcor 以同源受控代理嵌入现有 Console；钉钉会话只在 Alcor 校验，Alcor 服务端使用 Service Token 和受控操作者 Header 调用同一设备 API | 不实现 Alcor 评估业务页面，不复制远控，不让浏览器接触 Service/STF Token 或签名 Secret |
+| Console Gateway 与会话 | Device Farm Server 使用 `console` Principal、配置用户和 PostgreSQL 会话；独立 Console 默认以 HttpOnly/SameSite Cookie 安全保持登录 30 天 | 未来可替换用户认证来源，设备 API 和角色边界保持稳定 | 不让 Server 用 Service Token 回调自身，不创建 Alcor users/RBAC 表，不在浏览器保存明文密码 |
 | Eval Console 设备入口 | 设备农场保持独立交付；嵌入模式复用同一前端构建和设备 API | Alcor 一级导航提供“设备农场”及设备域二级菜单，通过认证代理按路由加载 `/console/`；APK 版本作为“应用版本”二级入口，仍由 Alcor 管理 | 不将 Device/Reservation 数据复制到 Alcor，不把 APK 业务索引写入设备农场 |
 | Case、Dataset、Target、Config | 当前不开发 | 由新版 `/api/v1` 和 PostgreSQL/ClickHouse 管理 | 不建临时替代业务表和 API |
 | Run、RunAttempt、Result、Artifact | 当前不开发正式业务模型 | 由独立 Worker、PostgreSQL、ClickHouse、Supabase Storage 管理 | DaFit 报告只作为联调产物 |
 | Device Farm Adapter | 提供北向 OpenAPI 和 Mock | 由新版 Worker 在第六阶段实现 | 不直接依赖旧 `eval_tasks` 或共享数据库 |
 | Device Scheduler | 当前新增并独立测试 | Adapter 通过预约 API 使用 | 不混入 Run 队列、用例执行和评分 |
 | Reconciler、Reaper、回池重建 | 当前新增并独立测试 | 设备农场内部能力 | 状态和重建命令以 PostgreSQL 为真相；Server 不访问 Docker Socket，不以 STF 数据替代真相 |
-| 动态容量扩缩容 | Console 设置 Pool 总目标和基础设备；Server 按基础设备当前已生效的 Phone、Image 与 runtime profile，结合 Host 实际 CPU、内存、磁盘与在途预留创建干净新实例 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或数据卷 |
+| 动态容量扩缩容 | Console 为 Android、iOS 单平台 Pool 设置目标和扩容模板设备；Android 复用基础设备的 Phone、Image 与 runtime profile，iOS 复用模板 Simulator 的 Mac Host、Runtime 与 iPhone Device Type；两者均结合 Host 实际内存、磁盘、槽位与在途预留创建全新实例，并只安全删除空闲设备 | 新版 Alcor 仍只通过 Reservation 使用已经收敛的容量 | 不用目标数伪造 Host 槽位；不要求浏览器或 Server 登录 Host；不强删占用设备；不物理删除 Device 审计记录；不复制 APK、账号或设备数据 |
 | Android 官方目录、Phone 硬件模板与受控创建 | Console 的四步 Phone 向导提交 `catalog_id`、硬件模板、Pool 和 runtime profile；持久化 provisioning job 自动复用或排队既有镜像准备，验证成功后事务登记 `create` Host Command，Agent 创建后沿既有健康链路收敛 | 新版 Alcor 只选择已可用 Device，不直接操作 Docker/SDK/AVD | 浏览器和 Server 不直连 Google；不接受任意 URL/命令；job 幂等重试不得重复下载、创建设备或增加 Pool 目标；未验证、无 digest 的候选项不得写入 `device_images`；首期不暴露 TV、Wear、Automotive、Desktop、XR |
 | 长期设备与人工删除 | Reservation release 只归还 STF 占用并把 Device 直接恢复为 ready，保留 APK、账号、缓存和数据卷；管理员可删除无活动预约的 ready/quarantined/stopped Device，Server 原子退出 Pool 并降低该 Pool 目标，Agent 复用 delete Host Command 清理 Provider 资源 | 新版 Alcor 无需感知该设备域运维动作 | 不允许删除 reserved/busy/recycling；不物理删库；不新增 Docker 直连；只有显式 rebuild/reimage 才恢复出厂 |
+| 长期虚拟设备自愈 | 已登记且未显式删除的 Emulator/Simulator 始终占用 Pool 登记容量；系统隔离优先重探原机，Android 持续故障且空闲时最多复用一次非破坏 `restart` Host Command，iOS 故障保留原 Simulator 等待恢复或人工处理 | 新版 Alcor 只看到当前可预约 Device；故障恢复属于设备域内部状态收敛 | 不因健康异常自动 delete/rebuild/reimage 或补建替代设备；不自动解除人工隔离；不清空 APK、账号、缓存、文件或数据卷 |
+| Android CPU/内存无损改配 | Console 只提交容器/Guest CPU 和内存；Server 复用动态容量与持久化 `restart` Host Command，Agent 复用 `RestartWithProfile` 保留数据卷替换容器并完成 ADB/STF/Appium 健康验证 | 新版 Alcor 仍只读取改配完成后的 Device 有效规格，不感知 Docker 实现 | 不接受 Image、数据盘、图形或任意参数；不提前提交目标规格；不把重启描述为热更新；失败只恢复旧规格一次 |
 | Host Agent | 当前新增 | 只调用 `/internal/v1` | 不向 Agent 暴露业务数据库、钉钉身份或 Target 密钥 |
 | Device Image 运行选择 | 当前新增并由 Device Farm Console 管理 | 未来 Eval Console 如提供入口也调用同一设备 API；Host Command 下发该 Image 的 `docker_image + docker_digest` | 不使用 Agent 全局镜像替代后台选择，不把镜像仓库逻辑写进 Scheduler |
 | Device Image 生命周期与默认选择 | Console 只展示可用 Image 作为默认选择；管理员可将未被活动设备或 Pool 默认引用的旧 Image 受控停用并查看归档 | 新版 Alcor 只会获得当前可用 Image；历史 Run/Artifact 不由本项目处理 | 不物理删除 Device/Image 审计链；不从 Server/浏览器删除 Registry 或 Docker 数据；切换默认值不重装已有设备 |
@@ -28,8 +32,11 @@
 | USB 真机 Provider | 只保留统一接口和扩展点 | 后续新增 `USBPhysicalDeviceProvider` | 不改 Scheduler、Reservation、STF、Appium 上层模型 |
 | STF + RethinkDB | Adapter 和部署配置；Host Agent 只把重建后的动态 ADB Endpoint 注册到同机 STF ADB server；Server 可为已绑定 Reservation 的管理员签发短时 STF Web 登录 | 继续作为原生远控/可见性工具 | 不作为预约和占用真相源，不让 Agent 执行 claim/release/remoteConnect，不把 JWT 签名 Secret 下发浏览器 |
 | Appium 2 + UiAutomator2 | Adapter 管理 Endpoint 和健康 | Worker 获得设备后使用 Appium 执行器 | 不重写 WebDriver 协议 |
+| macOS Host Agent + CoreSimulator + Appium Device Farm / iOS | ADR-0021/0022 保留发现、技术 busy、健康和明确 UDID 自动化 Session 路由；ADR-0024 管理 CoreSimulator 生命周期；ADR-0026 以 Baguette Adapter 挂载原生人工远控 | 现有 Reservation 先返回明确 Device/UDID/Host；可信 iOS Executor 再申请 Session Grant；人工远控使用 Reservation 绑定的 Baguette 签名 Gateway | 不在 Docker 中伪造 iOS，不控制或暴露 macOS 桌面，不接受任意命令/Runtime ID/Device Type ID，不启用插件跨 Host 自由分配，不替代 PostgreSQL Scheduler/Pool/Reservation，不自动下载 Runtime，不公开 Mac/Fence/Appium/WDA/Baguette 回环地址或自研远控页面 |
 | DaFit 自动化执行器 | 通过 Harness 做首个真实联调 | 为未来 Android Executor 提供成熟实现和验证样本 | 不复制页面、动作、断言、证据和报告形成双实现 |
 | 设备域 PostgreSQL | 保存 Host、Device、Pool、Reservation、健康状态 | Alcor 通过 `owner_type=run_attempt`、`owner_id` 关联；人工/DaFit 使用受控类型 | 不保存 Run/Result，不与 Alcor 跨库建外键 |
+| 控制面预部署与数据库隔离 | 220 以同级 `/data/stacks/alcor-device-farm` 独立 Compose 项目运行 Device Farm Server、Console 和专用 PostgreSQL；数据库仅在项目网络内暴露，预部署使用 18180/18181 | 新版 Alcor 通过稳定设备 API/Adapter 接入；正式切换前不要求 Alcor 或 171 Agent 改配 | 不复用 220 现有 PostgreSQL、`alcor` 数据库、共享 Schema/账号/卷，不修改 171 正式服务，不把模拟器迁到 220 |
+| 瞬时切换端点 | 220 预留 18182 作为 Host Agent 私网 API；18180 保持 HTTPS 控制台入口，18181 保持 iOS Gateway | 171/未来 Host Agent 在维护窗口切换主动连接地址；NPS 只代理浏览器/iOS 入口 | 不把 18182 暴露公网，不让两个 Server 同时写同一数据库，不在准备阶段复制生产 STF/RethinkDB |
 
 ## 3. 当前必须实现的设备域
 
@@ -38,22 +45,28 @@
 - Host Agent 注册、心跳、命令领取、回报和排空；
 - Docker Emulator 生命周期和 USB Provider 扩展接口；
 - Scheduler、租约、续租、释放、数据库并发约束；
+- Device 的可编辑显示名称和指定设备预约；名称只用于人机识别，引用和并发约束仍使用不可变 ID；`requested_device_id` 只收窄既有 Scheduler 候选集，目标忙碌时 Reservation 保持 pending；
 - Reconciler、Reaper、健康事件、隔离和重建；
 - 控制台统一 Pool 总目标、按真实资源动态扩容和最旧空闲 Emulator 安全缩容；
+- iOS Pool 使用同一 `total_target/min_ready/max_concurrency` 目标模型；选择健康 Simulator 作为扩容模板后自动创建或安全删除 CoreSimulator，不另建 iOS 容量表；
+- iOS Pool 的故障 Simulator 不满足可用容量；按 ADR-0028 先安全删除受管资源，再使用已验证模板配置补建，删除失败时保留隔离并显式暴露缺口；
 - Host 实际 CPU/内存/磁盘心跳、设备有效运行规格、Server/Agent 双重资源预检和可解释容量结果；
 - 官方稳定 Android System Image 目录同步、后台按需准备、内部缓存、不可变 digest 验证，以及空闲 Emulator 受控重装；
 - Phone 硬件模板搜索、系统镜像选择、完整 runtime profile 与加入 Pool 的受控 Emulator 创建；
 - Android Studio 式创建向导、自动镜像准备、每 Pool 基础设备和基于其配置的干净扩容；
+- 持久化创建任务在宿主机容量不足时保存结构化 CPU、内存、磁盘或设备名额缺口，保持可重试并在容量恢复后自动继续；Console 必须即时显示中文原因，不得静默等待；
 - Reservation 释放后的数据保留，以及不经缩容配置的管理员直接删除；
+- Android Emulator 容器/Guest CPU 和内存的受控无损改配、失败恢复与异步状态；镜像、数据盘和图形模式仍走破坏性 reimage；
 - 隔离/已停止 Device 的管理员受控删除、Host Command 资源清理、失败回隔离和设备域审计；
 - STF inventory/claim/release/remoteConnect Adapter，以及动态 Emulator ADB Endpoint 的受限注册；
 - Appium Endpoint、端口和健康状态 Adapter；
+- 平台中立 Host/Pool/Device/连接与健康模型、macOS Agent 适配、iOS inventory/health、固定 allowlist Simulator 的受控 start/stop Host Command 和 Reservation Session Fence；
 - `/api/v1/device-*` 与 `/internal/v1` 契约；
 - UUID/ULID Owner ID、幂等键和统一错误响应；
 - 设备 API 通用幂等记录，只保存请求哈希和设备资源 ID；
 - `X-Eval-Run-Id`、`X-Eval-Attempt-Id`、`traceparent` 透传；
 - Device Farm Console、浏览器安全访问、资源状态展示、人工预约和设备操作；
-- 管理员单设备 STF 原生 Web 远控编排、短租约心跳、标签页关闭检测和 Reaper 兜底；
+- operator/admin 单设备 STF/Baguette 原生 Web 远控编排、短租约心跳、明确挂断和 Reaper 兜底；
 - `device_console_sessions` 技术会话表、`viewer/operator/admin` 设备域权限和 CSRF 防护；
 - DaFit 端到端 Harness。
 
@@ -64,16 +77,25 @@
 | `cmd/device-farm-server` | 设备农场 Server 二进制入口 | 新版 Worker 的 Device Farm Adapter 调用 |
 | `cmd/device-host-agent` | 宿主机 Agent 二进制入口 | 只和设备农场 `/internal/v1` 通信 |
 | `internal/api/service/repository` | 设备北向 API、业务编排和设备域持久化 | 对 Alcor 只暴露 OpenAPI |
-| `internal/scheduler/reconciler/reaper` | 设备分配、租约和状态收敛 | 对 Alcor 保持内部不可见 |
+| `internal/scheduler/reconciler/reaper` | 设备分配、租约和状态收敛；按 ADR-0029 对系统健康隔离执行原机重探和一次非破坏 restart | 对 Alcor 保持内部不可见 |
 | `internal/providers` | Docker Emulator、Mock、USB 扩展 | 上层统一 Device 模型不变 |
 | `internal/adapters/stf` | STF API 封装 | 由设备农场内部调用 |
-| `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server | 只负责可见性接入，不处理 claim、release、远控或占用真相 |
+| `internal/adapters/stfadb` | 通过既有 `adb connect` 将 Agent 已发现的 Endpoint 注册到同机 STF ADB server。多宿主机下只有 STF 所在宿主机（当前 171）的 Agent 能做本地注册；远程宿主机的设备由 STF 宿主机侧统一 `adb connect` 汇入（ADR-0037） | 只负责可见性接入，不处理 claim、release、远控或占用真相 | 不放开回环校验，不把 5037/5038 暴露到办公网或公网；不以 STF 可见性充当镜像可用性门禁 |
 | `internal/adapters/appium` | Endpoint、端口和健康管理 | Endpoint 随 Reservation 返回 Worker |
+| `internal/adapters/appiumdevicefarm` | 固定 12.0.1 的 iOS inventory、busy 漂移和 Node 健康；通过 CoreSimulator 受控实现动态 Simulator 生命周期 | 只由 macOS Host Agent/Session Fence 使用，不向浏览器暴露插件 API、完整 UDID 或内部 Endpoint |
+| `internal/adapters/baguette` | 固定 0.1.92 的健康、booted UDID 检查和 Reservation 受控原生 Web Gateway；按 UDID 隔离浏览器会话并把原生 App 上传固定到页面目标 | 只服务 iOS Simulator 人工远控与上游临时安装；不创建 Appium Session，不保存占用真相，不实现画面、触控或 IPA 安装 |
+| `internal/iossession` | 签发/消费一次性 Grant、保存 Appium Session ID、释放前清理和 busy 漂移收敛 | 复用现有 Reservation、Device Session、Reaper 和审计；不保存业务用例或 Apple Secret |
+| `internal/iossessionfence` | macOS Agent 内置的受控反向代理；只允许 `POST /session` 和精确绑定 Session 路径 | 每次向 Server 校验 Grant/Reservation，透明转发其余 WebDriver 请求，不解释或执行页面步骤 |
+| `POST /api/v1/device-reservations/{id}/session-grants` | Service Principal 为 active iOS Reservation 申请 15～120 秒单次 Grant | Console/浏览器禁止；明文只返回一次，数据库只保存摘要 |
+| `/internal/v1/ios-session-fence/*` | Host Fence 消费 Grant、绑定/校验/关闭 Session | 只接受 Agent Principal；Host、UDID、Endpoint 和 Session ID 必须与快照一致 |
 | `internal/metrics` | 设备域 Prometheus 指标和数据库就绪检查 | 只暴露基础设施聚合状态，不保存或计算 Alcor 业务指标 |
 | `migrations` | 设备域表和约束 | 不并入新版 Run/Case migration，不跨库外键 |
 | `deploy` | STF、Agent、模拟器和设备服务部署 | 独立部署细节对 Alcor Adapter 不可见 |
 | `console` | Device Farm Console 源码、页面测试和构建配置 | 后续可由 Eval Console 链接、嵌入或复用设备域模块；继续调用稳定设备 API |
-| `harness/dafit` | Alcor 接入前真实联调 | 不进入 Eval Console 或 Run 业务模型 |
+| `harness/dafit` | Alcor 接入前真实联调；运行期间按 ADR-0023 周期续约、结束后立即释放 | 不进入 Eval Console 或 Run 业务模型，不复制 DaFit Runner |
+| 控制面 iOS 隧道与 TLS Gateway | 220 预部署的 iOS 远控入口 | 固定版本 SSH tunnel sidecar 与独立 Nginx TLS Gateway；18181 只提供 HTTPS iOS Gateway，Server 8081 仅 Compose 内部可达，18182 仍是 Host Agent 私网 API；不改变 171/NPS，不新增业务对象 |
+| 多宿主机接入与登记 | 后台新增 Linux/macOS Host 的设备域入口 | Console 调用既有 Host 创建 API，登记后由 Agent 主动 heartbeat；安装提示不携带 Token，Server 不 SSH/Docker 直连远端，不新增表或注册协议 |
+| 宿主机接入引导与预检 | 登记后按平台完成 Agent 配置并确认在线 | Console 只展示脱敏配置项和现有安装/预检命令；安装、Secret 注入和启动仍在目标主机本地完成 |
 
 新版方案未确定设备农场最终是否与 Alcor 合仓，因此当前目录不预设迁入旧 `eval_server/internal/devicefarm`，也不预设永远不能合仓。第六阶段只以稳定 API 契约作为必需边界。
 
@@ -86,6 +108,7 @@
 - RunResult、用例级结果、评分、门禁、对比和复核；
 - Supabase Storage Artifact、LLM 报告和 HyperDX/WeData 观测；
 - Eval Console 的 Case、Dataset、Run、Result、报告页面和 CI/发布门禁入口。
+- iOS Executor、IPA/Build/Case/Run/Result/Artifact、Windows/Linux iOS Host、tvOS 和跨 Host Appium Hub。
 
 这些能力由新版 Alcor 实施。Device Farm Console 只提供设备域操作入口，不建立等待同步的 Alcor 业务对象。
 
@@ -95,10 +118,13 @@
 2. Alcor 保存 Run/RunAttempt/Result/Artifact 业务真相，设备农场保存 Device/Reservation 技术资源真相；
 3. STF 只负责设备可见性和远程控制；Docker 只负责运行载体；
 4. 上层只依赖统一 Device，模拟器和真机使用相同的池、预约、Session 和 Appium 链路；
-5. Worker 通过 Device Farm Adapter 和 API 申请设备，不共享数据库；
-6. Alcor Reservation Owner 使用 RunAttempt UUID/ULID；人工和 DaFit 可使用 `manual/test_run`，但不得固化旧整数 Task ID；
-7. 业务报告和测试结果由 Alcor 写入 Supabase Storage/ClickHouse，设备农场不留副本；
-8. DaFit 是成熟执行能力的复用来源和首个联调负载，不是设备农场业务模块。
+5. iOS Pool 是单平台 Pool；Appium Device Farm busy 只作技术锁，不能创建、续租或结束 PostgreSQL Reservation；
+6. iOS Session 的 `appium:udid`、单值字符串 `df:udids`、Device serial 和连接快照必须相同；共享 Appium Endpoint 不能放宽 UDID 唯一约束；
+7. Worker 通过 Device Farm Adapter 和 API 申请设备，不共享数据库；
+8. Alcor Reservation Owner 使用 RunAttempt UUID/ULID；人工和 DaFit 可使用 `manual/test_run`，但不得固化旧整数 Task ID；
+9. 业务报告和测试结果由 Alcor 写入 Supabase Storage/ClickHouse，设备农场不留副本；
+10. DaFit 是成熟执行能力的复用来源和首个联调负载，不是设备农场业务模块。
+11. 已登记且未显式删除的虚拟设备始终占用 Pool 登记容量；故障只停止调度，不允许设备农场自动 delete/rebuild/reimage 或以新设备替代。
 
 ## 7. 文档优先级
 

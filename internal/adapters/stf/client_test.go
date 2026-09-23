@@ -77,6 +77,35 @@ func TestClientUsesOfficialInventoryClaimReleaseAndRemoteConnectAPIs(t *testing.
 	}
 }
 
+func TestClaimRejectsDeviceBeforeSTFVisibilityIsReady(t *testing.T) {
+	var claims atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/devices" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{
+				{"serial": "host:32771", "present": true, "ready": false, "using": false},
+			}})
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/user/devices" {
+			claims.Add(1)
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+	client, err := New(Config{BaseURL: server.URL, Token: "token", Attempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.Claim(context.Background(), "host:32771", time.Minute)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Code != "STF_CLAIM_FAILED" || !typed.Retryable {
+		t.Fatalf("claim error=%#v", err)
+	}
+	if claims.Load() != 0 {
+		t.Fatalf("claim endpoint called before inventory readiness: %d", claims.Load())
+	}
+}
+
 func TestClientRetriesTransientFailureAndDoesNotLeakToken(t *testing.T) {
 	const token = "never-print-this-token"
 	var attempts atomic.Int32
@@ -100,6 +129,12 @@ func TestClientRetriesTransientFailureAndDoesNotLeakToken(t *testing.T) {
 	}
 
 	server.Config.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/devices" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{
+				{"serial": "host:32771", "present": true, "ready": true, "using": false},
+			}})
+			return
+		}
 		http.Error(writer, token, http.StatusBadRequest)
 	})
 	err = client.Claim(context.Background(), "host:32771", time.Minute)
@@ -130,7 +165,10 @@ func TestClientRejectsUnsafeConfigurationAndTreatsDeleteNotFoundAsReleased(t *te
 }
 
 func TestClientTreatsForbiddenReleaseAsIdempotentOnlyWhenInventoryIsFree(t *testing.T) {
+	var present atomic.Bool
 	var using atomic.Bool
+	var missing atomic.Bool
+	present.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.Method + " " + request.URL.Path {
 		case "DELETE /api/v1/user/devices/host:32771":
@@ -139,9 +177,13 @@ func TestClientTreatsForbiddenReleaseAsIdempotentOnlyWhenInventoryIsFree(t *test
 				"success": false, "description": "You cannot release this device. Not owned by you",
 			})
 		case "GET /api/v1/devices":
-			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{
-				"serial": "host:32771", "present": true, "ready": true, "using": using.Load(),
-			}}})
+			devices := []map[string]any{}
+			if !missing.Load() {
+				devices = append(devices, map[string]any{
+					"serial": "host:32771", "present": present.Load(), "ready": present.Load(), "using": using.Load(),
+				})
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": devices})
 		default:
 			http.NotFound(writer, request)
 		}
@@ -161,6 +203,16 @@ func TestClientTreatsForbiddenReleaseAsIdempotentOnlyWhenInventoryIsFree(t *test
 	var typed *Error
 	if !errors.As(err, &typed) || typed.StatusCode != http.StatusForbidden || typed.Code != "STF_RELEASE_FAILED" {
 		t.Fatalf("claimed-device release error=%#v", err)
+	}
+
+	present.Store(false)
+	if err := client.Release(context.Background(), "host:32771"); err != nil {
+		t.Fatalf("absent-device release error=%v", err)
+	}
+
+	missing.Store(true)
+	if err := client.Release(context.Background(), "host:32771"); err != nil {
+		t.Fatalf("missing-device release error=%v", err)
 	}
 }
 

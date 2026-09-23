@@ -1,12 +1,17 @@
-import { Alert, App as AntApp, Button, Card, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Card, Collapse, Dropdown, Form, Input, InputNumber, Modal, Segmented, Select, Space, Steps, Table, Tag, Tooltip, Typography } from 'antd'
+import type { MenuProps } from 'antd'
 import type { TableColumnsType } from 'antd'
+import { DownOutlined } from '@ant-design/icons'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getListDevicesQueryKey,
+  getListDevicePoolsQueryKey,
   useCreateDeviceProvisioning,
+  useCreateIOSSimulator,
   useDeleteDevice,
+  useGetIOSSimulatorCatalog,
   useListAndroidHardwareProfiles,
   useListAndroidSystemImages,
   useGetDeviceProvisioning,
@@ -18,12 +23,17 @@ import {
   useRebuildDevice,
   useReimageDevice,
   useRestartDevice,
+  useStartDevice,
+  useStopDevice,
   useUnquarantineDevice,
+  useUpdateDeviceName,
+  useUpdateDeviceRuntimeProfile,
 } from '../api/generated/device-farm'
-import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile } from '../api/generated/models'
+import type { AndroidHardwareProfile, AndroidSystemImage, ConsoleRole, Device, DeviceHost, DeviceImage, DevicePool, EmulatorRuntimeProfile, IOSSimulatorCatalog } from '../api/generated/models'
 import { unwrapData, unwrapPage } from '../api/unwrap'
 import { useServerPage } from '../api/useServerPage'
-import { formatTime, shortID } from '../api/format'
+import { androidVersionLabel, formatTime, iosSystemVersionLabel, shortID } from '../api/format'
+import { deviceHeadline, deviceModelLabel, hostLabel, hostOSLabel } from '../api/describe'
 import {
   deviceKindLabel,
   healthReasonLabel,
@@ -32,35 +42,23 @@ import {
   lifecycleStatusLabel,
   providerTypeLabel,
 } from '../api/labels'
+import { apiErrorText, detailText, platformLabel, responseRequestID } from '../api/presentation'
 import { PageTable } from '../components/PageTable'
 import { useRemoteControl } from '../remote/RemoteControlProvider'
+import { PageQueryError, ResourceDetailDrawer, ResourcePageHeader } from '../components/ResourcePage'
 
-const lifecycleColor: Record<string, string> = {
-  ready: 'green',
-  reserved: 'blue',
-  busy: 'cyan',
-  provisioning: 'orange',
-  booting: 'orange',
-  recycling: 'purple',
-  quarantined: 'red',
-  stopped: 'default',
-  deleted: 'default',
-}
+type DeviceAction = 'start' | 'stop' | 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
+type DeviceView = 'available' | 'busy' | 'quarantined'
+type PlatformView = 'all' | 'android' | 'ios'
 
-const healthColor: Record<string, string> = {
-  healthy: 'green',
-  degraded: 'orange',
-  unhealthy: 'red',
-  unknown: 'default',
-}
-
-type DeviceAction = 'restart' | 'rebuild' | 'quarantine' | 'unquarantine' | 'delete'
-type DeviceView = 'available' | 'busy' | 'quarantined' | 'deleted' | 'all'
-
-const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined', 'deleted', 'all']
+const deviceViews: DeviceView[] = ['available', 'busy', 'quarantined']
 
 function deviceViewFromQuery(value: string | null): DeviceView {
   return deviceViews.includes(value as DeviceView) ? value as DeviceView : 'available'
+}
+
+function platformFromQuery(value: string | null): PlatformView {
+  return value === 'android' || value === 'ios' ? value : 'all'
 }
 
 interface ActionState {
@@ -72,8 +70,20 @@ interface ReasonValues {
   reason: string
 }
 
+interface DeviceNameValues {
+  name: string
+}
+
 interface ReimageValues extends EmulatorRuntimeProfile {
   image_id: string
+  reason: string
+}
+
+interface RuntimeProfileUpdateValues {
+  container_cpu_cores: number
+  container_memory_mb: number
+  guest_cpu_cores: number
+  guest_memory_mb: number
   reason: string
 }
 
@@ -83,11 +93,22 @@ interface CreateDeviceValues extends EmulatorRuntimeProfile {
   hardware_profile_id: string
 }
 
+interface CreateIOSSimulatorValues {
+  host_id: string
+  pool_id: string
+  runtime_id: string
+  device_type_id: string
+  display_name?: string
+  reason: string
+}
+
 interface DevicesPageProps {
   role?: ConsoleRole
 }
 
 const actionTitles: Record<DeviceAction, string> = {
+  start: '启动设备',
+  stop: '停止设备',
   restart: '重启设备',
   rebuild: '重建设备',
   quarantine: '隔离设备',
@@ -100,15 +121,62 @@ function actionable(device: Device, action: DeviceAction): boolean {
     return false
   }
   switch (action) {
+    case 'start':
+      return device.platform === 'ios' && device.lifecycle_status === 'stopped'
+    case 'stop':
+      return device.platform === 'ios' && device.lifecycle_status === 'ready'
+    case 'restart':
+      return ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status)
+    case 'rebuild':
+      return (device.platform === 'android' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator')
+        || (device.platform === 'ios' && device.device_kind === 'simulator' && device.provider_type === 'appium_device_farm_ios')
     case 'quarantine':
-      return device.lifecycle_status !== 'quarantined'
+      return device.platform !== 'ios' && device.lifecycle_status !== 'quarantined'
     case 'unquarantine':
-      return device.lifecycle_status === 'quarantined'
+      return device.platform !== 'ios' && device.lifecycle_status === 'quarantined'
     case 'delete':
       return device.lifecycle_status === 'ready' || device.lifecycle_status === 'quarantined' || device.lifecycle_status === 'stopped'
     default:
       return true
   }
+}
+
+function availabilityTag(device: Device) {
+  const detail = `${lifecycleStatusLabel(device.lifecycle_status)} / ${healthStatusLabel(device.health_status)}`
+  if (device.lifecycle_status === 'deleted') return <Tag title={detail}>历史记录</Tag>
+  if (device.lifecycle_status === 'ready' && device.health_status === 'healthy') return <Tag color="green" title={detail}>可用</Tag>
+  if ((device.lifecycle_status === 'reserved' || device.lifecycle_status === 'busy') && device.health_status === 'healthy') {
+    return <Tag color="blue" title={detail}>使用中</Tag>
+  }
+  if (['provisioning', 'booting'].includes(device.lifecycle_status)
+    || (device.lifecycle_status === 'recycling' && device.health_status === 'healthy')) {
+    return <Tag color="processing" title={detail}>恢复中</Tag>
+  }
+  return <Tag color="red" title={detail}>故障</Tag>
+}
+
+function androidCatalogStatus(value: string): string {
+  const labels: Record<string, string> = {
+    downloadable: '可下载', preparing: '下载或构建中', validating: '验证中', cached: '已缓存可用',
+    failed: '准备失败', official_updated: '官方版本已更新',
+  }
+  return labels[value] ?? '未知状态'
+}
+
+function androidImageType(value: string): string {
+  if (value === 'google_play') return 'Google Play'
+  if (value === 'google_apis') return 'Google APIs'
+  return '其他镜像类型'
+}
+
+function androidCatalogOptionLabel(image: AndroidSystemImage): string {
+  return `Android ${image.api_level - 20} / API ${image.api_level} · ${androidImageType(image.image_type)} · ${image.abi} · ${androidCatalogStatus(image.status)}`
+}
+
+function defaultAndroidCatalogID(catalog: AndroidSystemImage[]): string | undefined {
+  return catalog.find((image) => image.api_level === 36 && image.image_type === 'google_apis' && image.abi === 'x86_64')?.id
+    ?? catalog.find((image) => image.status === 'cached')?.id
+    ?? catalog[0]?.id
 }
 
 export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
@@ -117,23 +185,39 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [form] = Form.useForm<ReasonValues>()
   const [actionState, setActionState] = useState<ActionState | null>(null)
+  const [detailDevice, setDetailDevice] = useState<Device | null>(null)
+  const [nameForm] = Form.useForm<DeviceNameValues>()
   const [reimageDevice, setReimageDevice] = useState<Device | null>(null)
   const [reimageForm] = Form.useForm<ReimageValues>()
+  const [runtimeProfileDevice, setRuntimeProfileDevice] = useState<Device | null>(null)
+  const [runtimeProfileForm] = Form.useForm<RuntimeProfileUpdateValues>()
   const [createDevice, setCreateDevice] = useState(false)
   const [createForm] = Form.useForm<CreateDeviceValues>()
   const [createStep, setCreateStep] = useState(0)
   const [profileSearch, setProfileSearch] = useState('')
   const [provisioningID, setProvisioningID] = useState<string | null>(null)
+  const [createIOS, setCreateIOS] = useState(false)
+  const [iosCreateStep, setIOSCreateStep] = useState(0)
+  const [iosForm] = Form.useForm<CreateIOSSimulatorValues>()
+  // 创建向导切换步骤会卸载第一步的表单项；保留已选 Mac，避免第二步停止读取其目录。
+  const selectedIOSHostID = Form.useWatch('host_id', { form: iosForm, preserve: true })
+  const selectedIOSRuntimeID = Form.useWatch('runtime_id', { form: iosForm, preserve: true })
   const remote = useRemoteControl()
   const view = deviceViewFromQuery(searchParams.get('view'))
+  const platformView = platformFromQuery(searchParams.get('platform'))
 
+  const start = useStartDevice()
+  const stop = useStopDevice()
   const restart = useRestartDevice()
   const rebuild = useRebuildDevice()
   const reimage = useReimageDevice()
+  const updateRuntimeProfile = useUpdateDeviceRuntimeProfile()
   const provision = useCreateDeviceProvisioning()
   const quarantine = useQuarantineDevice()
   const unquarantine = useUnquarantineDevice()
   const deleteDevice = useDeleteDevice()
+  const createIOSSimulator = useCreateIOSSimulator()
+  const updateDeviceName = useUpdateDeviceName()
   const imagesQuery = useListDeviceImages({ page: 1, page_size: 200, status: 'ready' })
   const hostsQuery = useListDeviceHosts({ page: 1, page_size: 200 })
   const images = unwrapPage<DeviceImage>(imagesQuery.data)?.items ?? []
@@ -144,6 +228,23 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const hardwareProfiles = unwrapData<AndroidHardwareProfile[]>(hardwareQuery.data) ?? []
   const catalog = unwrapData<AndroidSystemImage[]>(catalogQuery.data) ?? []
   const pools = unwrapPage<DevicePool>(poolsQuery.data)?.items ?? []
+  const androidPools = pools.filter((pool) => pool.platform === 'android' && pool.status === 'active')
+  const iosHosts = hosts.filter((host) => host.host_os === 'macos' && host.status === 'online' && !host.draining)
+  const iosPools = pools.filter((pool) => pool.platform === 'ios' && pool.status === 'active')
+  const iosCatalogQuery = useGetIOSSimulatorCatalog(
+    { host_id: selectedIOSHostID ?? '' },
+    { query: { enabled: Boolean(selectedIOSHostID), retry: false } },
+  )
+  const iosCatalog = unwrapData<IOSSimulatorCatalog>(iosCatalogQuery.data)
+  const compatibleIOSDeviceTypes = useMemo(() => {
+    const supported = new Set(iosCatalog?.runtimes.find((runtime) => runtime.id === selectedIOSRuntimeID)?.device_type_ids ?? [])
+    return (iosCatalog?.device_types ?? []).filter((deviceType) => supported.has(deviceType.id))
+  }, [iosCatalog, selectedIOSRuntimeID])
+  const defaultIOSHostID = iosHosts[0]?.id
+  const defaultIOSPoolID = iosPools[0]?.id
+  const imageByID = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
+  const poolByID = useMemo(() => new Map(pools.map((pool) => [pool.id, pool])), [pools])
+  const hostByID = useMemo(() => new Map(hosts.map((host) => [host.id, host])), [hosts])
   const filteredHardwareProfiles = useMemo(() => {
     const needle = profileSearch.trim().toLowerCase()
     return needle === '' ? hardwareProfiles : hardwareProfiles.filter((profile) => profile.name.toLowerCase().includes(needle) || profile.id.includes(needle))
@@ -151,10 +252,47 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   const provisioningQuery = useGetDeviceProvisioning(provisioningID ?? '', {
     query: { enabled: provisioningID !== null, refetchInterval: provisioningID ? 2_000 : false },
   })
-  const provisioningState = unwrapData<{ id: string; status: string; error_stage?: string; error_code?: string }>(provisioningQuery.data)
+  const provisioningState = unwrapData<{
+    id: string
+    status: string
+    error_stage?: string
+    error_code?: string
+    capacity_result?: { limiting_resource?: string; shortfall?: Record<string, number> }
+  }>(provisioningQuery.data)
+  const provisioningRequestID = responseRequestID(provisioningQuery.data)
+
+  const capacityMessage = useMemo(() => {
+    const result = provisioningState?.capacity_result
+    if (!result) return '当前没有满足条件且容量充足的宿主机，请检查宿主机在线状态和资源上报。'
+    const shortfall = result.shortfall ?? {}
+    const parts: string[] = []
+    if ((shortfall.memory_mb ?? 0) > 0) parts.push(`内存还缺 ${shortfall.memory_mb} MB`)
+    if ((shortfall.disk_mb ?? 0) > 0) parts.push(`磁盘还缺 ${shortfall.disk_mb} MB`)
+    if ((shortfall.cpu_millicores ?? 0) > 0) parts.push(`CPU 还缺 ${(shortfall.cpu_millicores / 1000).toFixed(3)} 核`)
+    if ((shortfall.device_slots ?? 0) > 0) parts.push(`设备名额还缺 ${shortfall.device_slots} 个`)
+    return parts.length > 0 ? `宿主机资源不足：${parts.join('，')}。容量恢复后会自动继续创建。` : '当前没有满足条件且容量充足的宿主机，请检查宿主机在线状态和资源上报。'
+  }, [provisioningState])
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: getListDevicesQueryKey() })
   }, [queryClient])
+
+  const openDetail = (device: Device) => {
+    setDetailDevice(device)
+    nameForm.setFieldsValue({ name: device.name })
+  }
+
+  const submitName = ({ name }: DeviceNameValues) => {
+    if (!detailDevice) return
+    const nextName = name.trim()
+    updateDeviceName.mutate({ id: detailDevice.id, data: { name: nextName } }, {
+      onSuccess: (data) => {
+        message.success(`设备名称已更新（请求编号：${responseRequestID(data)}）`)
+        setDetailDevice((current) => current ? { ...current, name: nextName } : current)
+        invalidate()
+      },
+      onError: (error) => message.error(`更新失败：${apiErrorText(error)}`),
+    })
+  }
 
   const executeAction = (reason: string) => {
     if (!actionState) {
@@ -162,7 +300,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     }
     const { device, action } = actionState
     const mutation =
-      action === 'restart' ? restart
+      action === 'start' ? start
+      : action === 'stop' ? stop
+      : action === 'restart' ? restart
       : action === 'rebuild' ? rebuild
       : action === 'quarantine' ? quarantine
       : action === 'unquarantine' ? unquarantine
@@ -172,14 +312,12 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       { id: device.id, data: { reason } },
       {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`${action === 'delete' ? '删除任务' : '操作'}已受理（request_id: ${requestID}）`)
+          message.success(`${action === 'delete' ? '删除任务' : '设备操作'}已受理（请求编号：${responseRequestID(data)}）`)
           setActionState(null)
           invalidate()
         },
         onError: (error) => {
-          const err = error as { code?: string; requestId?: string; message?: string }
-          message.error(`操作被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+          message.error(`操作被拒绝：${apiErrorText(error)}`)
         },
       },
     )
@@ -196,7 +334,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     }
     modal.confirm({
       title: '确认删除这台设备？',
-      content: '系统将通过宿主代理清理容器、网络和数据卷，并把设备转入已删除历史，同时把所属设备池的目标数量减少一台，不会自动补建。',
+      content: actionState.device.platform === 'ios'
+        ? '系统将通过 Mac 宿主代理关闭并删除 CoreSimulator 虚拟 iPhone，同时减少设备池目标数量。删除后不再出现在设备列表，操作仍可在审计中追溯。'
+        : '系统将通过宿主代理清理容器、网络和数据卷，同时把所属设备池的目标数量减少一台，不会自动补建。删除后不再出现在设备列表，操作仍可在审计中追溯。',
       okText: '确认删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -224,6 +364,38 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     })
   }
 
+  const openRuntimeProfileUpdate = (device: Device) => {
+    const profile = device.effective_runtime_profile ?? {}
+    setRuntimeProfileDevice(device)
+    runtimeProfileForm.setFieldsValue({
+      reason: '',
+      container_cpu_cores: profile.container_cpu_cores ?? 4,
+      container_memory_mb: profile.container_memory_mb ?? 5120,
+      guest_cpu_cores: profile.guest_cpu_cores ?? 4,
+      guest_memory_mb: profile.guest_memory_mb ?? 4096,
+    })
+  }
+
+  const submitRuntimeProfileUpdate = (values: RuntimeProfileUpdateValues) => {
+    if (!runtimeProfileDevice) return
+    modal.confirm({
+      title: '确认调整 CPU/内存并重启？',
+      content: '模拟器会短暂中断并以新规格重新启动，数据卷不会重建；已安装应用、账号、缓存和设备文件都会保留。',
+      okText: '确认调整并重启',
+      cancelText: '取消',
+      onOk: () => updateRuntimeProfile.mutate({ id: runtimeProfileDevice.id, data: { ...values, reason: values.reason.trim() } }, {
+        onSuccess: (data) => {
+          message.success(`CPU/内存调整任务已受理（请求编号：${responseRequestID(data)}）`)
+          setRuntimeProfileDevice(null)
+          invalidate()
+        },
+        onError: (error) => {
+          message.error(`CPU/内存调整被拒绝：${apiErrorText(error)}`)
+        },
+      }),
+    })
+  }
+
   const submitReimage = (values: ReimageValues) => {
     if (!reimageDevice) return
     const { image_id, reason, ...runtime_profile } = values
@@ -235,14 +407,12 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
       cancelText: '取消',
       onOk: () => reimage.mutate({ id: reimageDevice.id, data: { image_id, runtime_profile, reason: reason.trim() } }, {
         onSuccess: (data) => {
-          const requestID = (data as { request_id?: string } | undefined)?.request_id ?? '-'
-          message.success(`重装任务已受理（request_id: ${requestID}）`)
+          message.success(`重装任务已受理（请求编号：${responseRequestID(data)}）`)
           setReimageDevice(null)
           invalidate()
         },
         onError: (error) => {
-          const err = error as { code?: string; requestId?: string; message?: string }
-          message.error(`重装被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+          message.error(`重装被拒绝：${apiErrorText(error)}`)
         },
       }),
     })
@@ -250,8 +420,9 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
 
   const openCreateDevice = () => {
     createForm.setFieldsValue({
-      pool_id: pools.find((pool) => pool.status === 'active')?.id,
+      pool_id: androidPools[0]?.id,
       hardware_profile_id: 'pixel_9',
+      catalog_id: defaultAndroidCatalogID(catalog),
       container_cpu_cores: 4, container_memory_mb: 5120, guest_cpu_cores: 4, guest_memory_mb: 4096,
       data_disk_mb: 4096, image_disk_mb: 0, width: 1080, height: 2424, density_dpi: 420, vm_heap_mb: 512, graphics: 'auto',
     })
@@ -264,16 +435,42 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
     const { pool_id, catalog_id, hardware_profile_id, ...runtime_profile } = values
     provision.mutate({ data: { pool_id, catalog_id, hardware_profile_id, runtime_profile } }, {
       onSuccess: (data) => {
-        const response = data as { data?: { request_id?: string; data?: { id?: string } } }
-        const requestID = response.data?.request_id ?? '-'
-        const jobID = response.data?.data?.id
+        const response = data as { request_id?: string; data?: { id?: string } }
+        const jobID = response.data?.id
         if (jobID) setProvisioningID(jobID)
-        message.success(`设备创建流程已受理（request_id: ${requestID}）`)
+        message.success(`Android 模拟器创建流程已受理（请求编号：${responseRequestID(data)}）`)
         setCreateDevice(false)
       },
       onError: (error) => {
-        const err = error as { code?: string; requestId?: string; message?: string }
-        message.error(`创建被拒绝（${err.code ?? 'ERROR'}，request_id: ${err.requestId ?? '-'}）：${err.message ?? ''}`)
+        message.error(`Android 模拟器创建被拒绝：${apiErrorText(error)}`)
+      },
+    })
+  }
+
+  const openCreateIOS = () => {
+    iosForm.resetFields()
+    setIOSCreateStep(0)
+    setCreateIOS(true)
+  }
+
+  const submitCreateIOS = (values: CreateIOSSimulatorValues) => {
+    createIOSSimulator.mutate({ data: {
+      host_id: values.host_id,
+      pool_id: values.pool_id,
+      runtime_id: values.runtime_id,
+      device_type_id: values.device_type_id,
+      display_name: values.display_name?.trim() || undefined,
+      reason: values.reason.trim(),
+    } }, {
+      onSuccess: (data) => {
+        message.success(`iOS 模拟器创建任务已受理（请求编号：${responseRequestID(data)}）`)
+        setCreateIOS(false)
+        iosForm.resetFields()
+        void queryClient.invalidateQueries({ queryKey: getListDevicePoolsQueryKey() })
+        invalidate()
+      },
+      onError: (error) => {
+        message.error(`iOS 模拟器创建被拒绝：${apiErrorText(error)}`)
       },
     })
   }
@@ -282,147 +479,286 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
   useEffect(() => {
     if (!provisioningState) return
     if (provisioningState.status === 'ready') {
-      message.success('设备已通过 ADB、STF 和 Appium 检查，可以使用')
+	  message.destroy('device-provision-capacity')
+      message.success('Android 模拟器已通过 ADB、STF 和 Appium 检查，可以使用')
       setProvisioningID(null)
       invalidate()
     }
     if (provisioningState.status === 'failed') {
-      message.error(`设备创建失败：${provisioningState.error_stage ?? 'unknown'} ${provisioningState.error_code ?? ''}`)
-      setProvisioningID(null)
+	  message.destroy('device-provision-capacity')
+	  message.error(`设备创建失败（错误代码：${provisioningState.error_code ?? '未知'}；请求编号：${provisioningRequestID}），请联系管理员检查宿主机创建日志`)
+	  setProvisioningID(null)
     }
-  }, [invalidate, message, provisioningState])
+    if (provisioningState.status === 'waiting_capacity') {
+	  message.warning({ key: 'device-provision-capacity', content: capacityMessage, duration: 0 })
+    }
+  }, [capacityMessage, invalidate, message, provisioningRequestID, provisioningState])
 
-  const pending = restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
+  const initializeIOSCreateForm = (open: boolean) => {
+    if (!open) return
+    iosForm.setFieldsValue({
+      host_id: iosForm.getFieldValue('host_id') || defaultIOSHostID,
+      pool_id: iosForm.getFieldValue('pool_id') || defaultIOSPoolID,
+      display_name: iosForm.getFieldValue('display_name') ?? '',
+      reason: iosForm.getFieldValue('reason') ?? '',
+    })
+  }
+
+  useEffect(() => {
+    if (!createIOS || !defaultIOSHostID) return
+    initializeIOSCreateForm(true)
+  }, [createIOS, defaultIOSHostID, defaultIOSPoolID])
+
+  useLayoutEffect(() => {
+    if (!createDevice || createForm.getFieldValue('catalog_id') || catalog.length === 0) return
+    createForm.setFieldValue('catalog_id', defaultAndroidCatalogID(catalog))
+  }, [catalog, createDevice, createForm])
+
+  useEffect(() => {
+    if (!createIOS || !iosCatalog || iosCatalog.runtimes.length === 0) return
+    const currentRuntimeID = iosForm.getFieldValue('runtime_id')
+    const runtime = iosCatalog.runtimes.find((item) => item.id === currentRuntimeID) ?? iosCatalog.runtimes[0]
+    const supportedTypes = new Set(runtime.device_type_ids ?? [])
+    const currentDeviceTypeID = iosForm.getFieldValue('device_type_id')
+    const deviceType = iosCatalog.device_types.find((item) => item.id === currentDeviceTypeID && supportedTypes.has(item.id))
+      ?? iosCatalog.device_types.find((item) => supportedTypes.has(item.id))
+    iosForm.setFieldsValue({ runtime_id: runtime.id, device_type_id: deviceType?.id })
+  }, [createIOS, iosCatalog, iosForm])
+
+  const pending = start.isPending || stop.isPending || restart.isPending || rebuild.isPending || quarantine.isPending || unquarantine.isPending || deleteDevice.isPending
 
   const actionColumn: TableColumnsType<Device>[number] = {
     title: '操作',
     key: 'actions',
-    width: 340,
+    width: 190,
     fixed: 'right',
-    render: (_, device) => (
-      <Space size={4} wrap>
-        {role === 'admin' && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
-          <Button
-            type="primary"
-            size="small"
-            loading={remote.isStarting && remote.device?.id === device.id}
-            disabled={remote.device !== null && remote.device.id !== device.id}
-            onClick={() => remote.start(device)}
-          >远程连接</Button>
-        )}
-        {role === 'admin' && remote.device?.id === device.id && (
-          <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
-            {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
-          </Button>
-        )}
-        {role === 'admin' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
-          && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status) && device.reimage_status !== 'pending' && (
-          <Button size="small" onClick={() => openReimage(device)}>编辑配置</Button>
-        )}
-        {actionable(device, 'restart') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'restart' })}>重启</Button>
-        )}
-        {actionable(device, 'rebuild') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'rebuild' })}>重建</Button>
-        )}
-        {actionable(device, 'quarantine') && (
-          <Button size="small" danger onClick={() => setActionState({ device, action: 'quarantine' })}>隔离</Button>
-        )}
-        {actionable(device, 'unquarantine') && (
-          <Button size="small" onClick={() => setActionState({ device, action: 'unquarantine' })}>解除隔离</Button>
-        )}
-        {actionable(device, 'delete') && (
-          <Button size="small" danger onClick={() => setActionState({ device, action: 'delete' })}>删除</Button>
-        )}
-      </Space>
-    ),
+    render: (_, device) => {
+      // 低频与危险操作收进「更多」下拉，常驻按钮只留 详情 / 远程连接 / 挂断。
+      const moreItems: MenuProps['items'] = []
+      if (role === 'admin' && device.device_kind === 'emulator' && device.provider_type === 'docker_emulator'
+        && ['ready', 'stopped', 'quarantined'].includes(device.lifecycle_status)
+        && device.reimage_status !== 'pending' && device.runtime_profile_update_status !== 'pending') {
+        moreItems.push({ key: 'runtime-profile', label: '调整 CPU/内存' })
+        moreItems.push({ key: 'reimage', label: '更换镜像/重建数据', danger: true })
+      }
+      if (role !== 'viewer' && actionable(device, 'start')) moreItems.push({ key: 'start', label: '启动' })
+      if (role !== 'viewer' && actionable(device, 'stop')) moreItems.push({ key: 'stop', label: '停止' })
+      if (role !== 'viewer' && actionable(device, 'restart')) moreItems.push({ key: 'restart', label: '重启' })
+      if (role === 'admin' && actionable(device, 'rebuild')) moreItems.push({ key: 'rebuild', label: '重建' })
+      if (role === 'admin' && actionable(device, 'quarantine')) moreItems.push({ key: 'quarantine', label: '隔离', danger: true })
+      if (role === 'admin' && actionable(device, 'unquarantine')) moreItems.push({ key: 'unquarantine', label: '解除隔离' })
+      if (role === 'admin' && actionable(device, 'delete')) moreItems.push({ key: 'delete', label: '删除', danger: true })
+      const onMoreClick: MenuProps['onClick'] = ({ key }) => {
+        if (key === 'runtime-profile') { openRuntimeProfileUpdate(device); return }
+        if (key === 'reimage') { openReimage(device); return }
+        if (key === 'start' || key === 'stop' || key === 'restart' || key === 'rebuild' || key === 'quarantine' || key === 'unquarantine' || key === 'delete') {
+          setActionState({ device, action: key })
+        }
+      }
+      return (
+        <Space size={4}>
+          {role === 'viewer' ? <Typography.Text type="secondary">只读</Typography.Text> : <>
+            <Button size="small" onClick={() => openDetail(device)}>详情</Button>
+          </>}
+          {role !== 'viewer' && (device.platform === 'android' || (device.platform === 'ios' && device.device_kind === 'simulator'))
+            && device.lifecycle_status === 'ready' && device.health_status === 'healthy' && (
+            <Button
+              type="primary"
+              size="small"
+              loading={remote.isStarting && remote.device?.id === device.id}
+              disabled={remote.device !== null && remote.device.id !== device.id}
+              onClick={() => remote.start(device)}
+            >远程连接</Button>
+          )}
+          {role !== 'viewer' && remote.device?.id === device.id && (
+            <Button size="small" danger loading={remote.isEnding} onClick={() => remote.end(true)}>
+              {remote.view?.status === 'connected' ? '挂断' : '取消连接'}
+            </Button>
+          )}
+          {moreItems.length > 0 && (
+            <Dropdown menu={{ items: moreItems, onClick: onMoreClick }} trigger={['click']}>
+              <Button size="small">更多<DownOutlined /></Button>
+            </Dropdown>
+          )}
+        </Space>
+      )
+    },
   }
 
   const columns: TableColumnsType<Device> = [
-    { title: '设备编号', dataIndex: 'id', width: 180, render: (value: string) => <Typography.Text code>{shortID(value)}</Typography.Text> },
-    { title: 'Phone 型号', width: 160, render: (_, device) => String(device.capabilities.hardware_profile_name ?? device.capabilities.hardware_profile_id ?? '-') },
-    { title: 'Android 版本', width: 130, render: (_, device) => `API ${String(device.capabilities.apiLevel ?? '-')}` },
-    { title: '设备池', dataIndex: 'pool_name', width: 150, render: (value?: string) => value ?? '-' },
-    { title: '基础设备', dataIndex: 'is_pool_base', width: 100, render: (value?: boolean) => value ? <Tag color="blue">基础设备</Tag> : '-' },
-    { title: '设备标识', dataIndex: 'serial', width: 170, ellipsis: true },
-    { title: '设备类型', dataIndex: 'device_kind', width: 120, render: (value: string) => deviceKindLabel(value) },
-    { title: '运行方式', dataIndex: 'provider_type', width: 130, render: (value: string) => providerTypeLabel(value) },
-    { title: '设备状态', dataIndex: 'lifecycle_status', width: 110, render: (value: string) => <Tag color={lifecycleColor[value] ?? 'default'}>{lifecycleStatusLabel(value)}</Tag> },
-    { title: '健康状态', dataIndex: 'health_status', width: 110, render: (value: string) => <Tag color={healthColor[value] ?? 'default'}>{healthStatusLabel(value)}</Tag> },
-    { title: '配置状态', dataIndex: 'reimage_status', width: 130, render: (value: string, device) => value === 'pending'
-      ? <Tag color="processing">正在换镜像</Tag>
-      : value === 'failed' ? <Tag color="red" title={device.reimage_error}>上次重装失败</Tag> : <Tag>已生效</Tag> },
-    { title: '清理方式', dataIndex: 'lifecycle_mode', width: 110, render: (value: string) => lifecycleModeLabel(value) },
-    { title: '所属宿主机', dataIndex: 'host_id', width: 150, render: (value: string) => shortID(value) },
-    { title: 'ADB 地址', dataIndex: 'adb_endpoint', width: 170, ellipsis: true, render: (value?: string) => value ?? '-' },
-    { title: '状态说明', dataIndex: 'health_reason', width: 220, ellipsis: true, render: (value?: string) => healthReasonLabel(value) },
-    { title: '创建时间', dataIndex: 'created_at', width: 160, render: (value: string) => formatTime(value) },
+    {
+      title: '设备', dataIndex: 'id', width: 240, render: (_, device) => (
+        <div className="primary-resource">
+          <Space size={4}>
+            <Typography.Text strong>{device.name}</Typography.Text>
+            {device.is_pool_base && (
+              <Tooltip title={`该设备是「${device.pool_name ?? '所属设备池'}」的扩容模板，后续自动扩容会沿用它的系统版本和硬件规格`}>
+                <Tag color="blue">扩容模板</Tag>
+              </Tooltip>
+            )}
+          </Space>
+          <small>
+            <span>{deviceModelLabel(device)}</span>
+            <span aria-hidden="true"> · </span>
+            <span>{platformLabel(device.platform)}</span>
+            <span aria-hidden="true"> · </span>
+            <span title={device.platform === 'ios' && device.serial.length > 20 ? '完整模拟器标识请在详情中复制' : undefined}>
+              {device.platform === 'ios' && device.serial.length > 20 ? `模拟器 ${shortID(device.serial)}` : device.serial}
+            </span>
+          </small>
+        </div>
+      ),
+    },
+    {
+      title: '系统与配置', width: 210, render: (_, device) => {
+        if (device.platform === 'ios') {
+          return <Space direction="vertical" size={0}><Typography.Text>{iosSystemVersionLabel(device.capabilities)}</Typography.Text><Typography.Text type="secondary">CoreSimulator</Typography.Text><Typography.Text type="secondary">按预约建立受控会话</Typography.Text></Space>
+        }
+        const image = device.image_id ? imageByID.get(device.image_id) : undefined
+        const configState = device.runtime_profile_update_status === 'pending'
+          ? '正在调整 CPU/内存'
+          : device.runtime_profile_update_status === 'failed'
+            ? '上次 CPU/内存调整失败'
+            : device.reimage_status === 'pending'
+              ? '正在更换镜像/重建数据'
+              : device.reimage_status === 'failed'
+                ? '上次镜像/数据重建失败'
+                : undefined
+        const configFailed = device.runtime_profile_update_status === 'failed' || device.reimage_status === 'failed'
+        return <Space direction="vertical" size={0}>
+          <Typography.Text title={image?.name}>{androidVersionLabel(image?.api_level ?? device.capabilities.apiLevel)}</Typography.Text>
+          <Typography.Text type="secondary">{providerTypeLabel(device.provider_type)}{image ? ` · ${image.abi}` : ''}</Typography.Text>
+          {configState && <Typography.Text type={configFailed ? 'danger' : 'warning'}>{configState}</Typography.Text>}
+        </Space>
+      },
+    },
+    {
+      title: '设备池', dataIndex: 'pool_name', width: 220, render: (value: string | undefined, device) => {
+        const pool = device.pool_id ? poolByID.get(device.pool_id) : undefined
+        if (!pool) return <Typography.Text type="secondary">未加入设备池</Typography.Text>
+        return (
+          <Space direction="vertical" size={0}>
+            <Typography.Text>{value ?? pool.name}</Typography.Text>
+            {!pool.base_device_id && !device.is_pool_base && (
+              <span className="table-secondary">
+                扩容模板：<Typography.Text type="warning">未设置，自动扩容已暂停</Typography.Text>
+              </span>
+            )}
+          </Space>
+        )
+      },
+    },
+    {
+      title: '宿主机', dataIndex: 'host_id', width: 160, render: (value: string) => {
+        const host = hostByID.get(value)
+        return (
+          <div className="primary-resource">
+            <Typography.Text>{host?.name ?? '未知宿主机'}</Typography.Text>
+            <small>{hostOSLabel(host) || '未上报系统'}{host?.host_arch ? ` · ${host.host_arch}` : ''}</small>
+          </div>
+        )
+      },
+    },
+    {
+      title: '可用性', key: 'availability', width: 150, render: (_, device) => (
+        <Space direction="vertical" size={2}>
+          {availabilityTag(device)}
+          {device.health_status !== 'healthy' && device.health_reason && (
+            <Typography.Text className="table-secondary" ellipsis={{ tooltip: healthReasonLabel(device.health_reason) }}>
+              {healthReasonLabel(device.health_reason)}
+            </Typography.Text>
+          )}
+        </Space>
+      ),
+    },
     actionColumn,
   ]
 
   const { page, pageSize, onPageChange } = useServerPage()
   const deviceQueryOptions = { query: { refetchInterval: 5_000, refetchOnWindowFocus: true, refetchOnReconnect: true } }
-  const availableCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
-  const busyCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'busy' }, deviceQueryOptions)
-  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'quarantined' }, deviceQueryOptions)
-  const deletedCountQuery = useListDevices({ page: 1, page_size: 1, lifecycle_status: 'deleted' }, deviceQueryOptions)
-  const allCountQuery = useListDevices({ page: 1, page_size: 1 }, deviceQueryOptions)
+  const platformFilter = platformView === 'all' ? {} : { platform: platformView }
+  const availableCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'ready', health_status: 'healthy' }, deviceQueryOptions)
+  const busyCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'busy' }, deviceQueryOptions)
+  const quarantinedCountQuery = useListDevices({ page: 1, page_size: 1, ...platformFilter, lifecycle_status: 'quarantined' }, deviceQueryOptions)
   const availableCount = unwrapPage<Device>(availableCountQuery.data)?.total ?? 0
   const busyCount = unwrapPage<Device>(busyCountQuery.data)?.total ?? 0
   const quarantinedCount = unwrapPage<Device>(quarantinedCountQuery.data)?.total ?? 0
-  const deletedCount = unwrapPage<Device>(deletedCountQuery.data)?.total ?? 0
-  const allCount = unwrapPage<Device>(allCountQuery.data)?.total ?? 0
   const viewFilter =
     view === 'available' ? { lifecycle_status: 'ready' as const, health_status: 'healthy' as const }
     : view === 'busy' ? { lifecycle_status: 'busy' as const }
     : view === 'quarantined' ? { lifecycle_status: 'quarantined' as const }
-    : view === 'deleted' ? { lifecycle_status: 'deleted' as const }
     : {}
-  const { data, isLoading } = useListDevices({ page, page_size: pageSize, ...viewFilter }, deviceQueryOptions)
-  const result = unwrapPage<Device>(data)
+  const query = useListDevices({ page, page_size: pageSize, ...platformFilter, ...viewFilter }, deviceQueryOptions)
+  const result = unwrapPage<Device>(query.data)
+  const supportingQueries = [imagesQuery, hostsQuery, poolsQuery, availableCountQuery, busyCountQuery, quarantinedCountQuery]
+  const supportingError = supportingQueries.find((item) => item.isError)
 
   return (
     <>
       <Space direction="vertical" size={14} style={{ display: 'flex' }}>
-        <Card size="small" variant="borderless" styles={{ body: { padding: 0 } }} extra={role === 'admin' ? <Button type="primary" onClick={openCreateDevice}>新增设备</Button> : undefined} title="我的 Phone 设备">
-          <Typography.Text type="secondary">设备数据会长期保留；只有你明确选择“编辑配置/更换镜像”或删除时才清空。</Typography.Text>
-        </Card>
+        <ResourcePageHeader
+          title="Android 与 iOS 设备"
+          description="这里只显示当前可用、使用中和故障设备；已删除资源不再占用日常页面，相关操作仍可在审计中追溯。"
+          dataUpdatedAt={query.dataUpdatedAt}
+          isFetching={query.isFetching}
+          onRefresh={() => void query.refetch()}
+          autoRefreshText="每 5 秒自动更新"
+          actions={role === 'admin' ? <Space>
+          <Button type="primary" onClick={openCreateDevice}>新增 Android 模拟器</Button>
+          <Button type="primary" onClick={openCreateIOS}>新增 iOS 模拟器</Button>
+          </Space> : undefined}
+        />
+        {query.isError && <PageQueryError error={query.error} onRetry={() => void query.refetch()} />}
+        {supportingError && <PageQueryError error={supportingError.error} onRetry={() => void Promise.all(supportingQueries.map((item) => item.refetch()))} />}
         {provisioningState && <Alert
           type={provisioningState.status === 'failed' ? 'error' : provisioningState.status === 'ready' ? 'success' : 'info'}
           showIcon
-          message={`设备创建进度：${({ preparing_image: '准备系统镜像', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? provisioningState.status}`}
-          description={provisioningState.status === 'failed' ? `${provisioningState.error_stage ?? 'unknown'} ${provisioningState.error_code ?? ''}` : '可关闭页面；创建流程由服务端持续执行。'}
+          message={`设备创建进度：${({ preparing_image: '准备系统镜像', waiting_capacity: '等待宿主机容量', creating_emulator: '创建模拟器', adb_check: 'ADB 检查', stf_registration: 'STF 注册', appium_check: 'Appium 检查', ready: '可用', failed: '失败' } as Record<string, string>)[provisioningState.status] ?? '未知状态'}`}
+          description={provisioningState.status === 'waiting_capacity' ? `${capacityMessage}（请求编号：${provisioningRequestID}）` : provisioningState.status === 'failed' ? `设备创建没有完成（错误代码：${provisioningState.error_code ?? '未知'}；请求编号：${provisioningRequestID}）。` : `可关闭页面；创建流程由服务端持续执行。（请求编号：${provisioningRequestID}）`}
         />}
-        <Alert
-          type="info"
-          showIcon
-          message="默认只显示当前可以预约的设备"
-          description="隔离设备用于排查故障，已删除设备只保留历史记录；它们都不会计入可用设备数量。"
-        />
-        <Segmented<DeviceView>
-          value={view}
-          options={[
-            { label: `可用设备（${availableCount}）`, value: 'available' },
-            { label: `使用中（${busyCount}）`, value: 'busy' },
-            { label: `隔离设备（${quarantinedCount}）`, value: 'quarantined' },
-            { label: `已删除历史（${deletedCount}）`, value: 'deleted' },
-            { label: `全部记录（${allCount}）`, value: 'all' },
-          ]}
-          onChange={(nextView) => {
-            const nextSearchParams = new URLSearchParams(searchParams)
-            if (nextView === 'available') {
-              nextSearchParams.delete('view')
-            } else {
-              nextSearchParams.set('view', nextView)
-            }
-            setSearchParams(nextSearchParams, { replace: true })
-            onPageChange(1, pageSize)
-          }}
-        />
+        <Card className="filter-card" size="small">
+          <Space wrap size="middle">
+            <span className="filter-label">平台</span>
+            <Segmented<PlatformView>
+              value={platformView}
+              options={[
+                { label: '全部平台', value: 'all' },
+                { label: 'Android', value: 'android' },
+                { label: 'iOS', value: 'ios' },
+              ]}
+              onChange={(nextPlatform) => {
+                const nextSearchParams = new URLSearchParams(searchParams)
+                if (nextPlatform === 'all') nextSearchParams.delete('platform')
+                else nextSearchParams.set('platform', nextPlatform)
+                setSearchParams(nextSearchParams, { replace: true })
+                onPageChange(1, pageSize)
+              }}
+            />
+            <span className="filter-label">状态</span>
+            <Segmented<DeviceView>
+              value={view}
+              options={[
+                { label: `可用设备（${availableCount}）`, value: 'available' },
+                { label: `使用中（${busyCount}）`, value: 'busy' },
+                { label: `故障（${quarantinedCount}）`, value: 'quarantined' },
+              ]}
+              onChange={(nextView) => {
+                const nextSearchParams = new URLSearchParams(searchParams)
+                if (nextView === 'available') {
+                  nextSearchParams.delete('view')
+                } else {
+                  nextSearchParams.set('view', nextView)
+                }
+                setSearchParams(nextSearchParams, { replace: true })
+                onPageChange(1, pageSize)
+              }}
+            />
+          </Space>
+        </Card>
         <PageTable<Device>
           columns={columns}
           dataSource={result?.items}
-          loading={isLoading}
+          loading={query.isLoading}
           total={result?.total ?? 0}
           page={result?.page ?? page}
           pageSize={result?.page_size ?? pageSize}
@@ -430,9 +766,59 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
           locale={{ emptyText: '当前分类下没有设备' }}
         />
       </Space>
+      <ResourceDetailDrawer
+        open={detailDevice !== null}
+        title={detailDevice ? `设备详情 · ${detailDevice.name}` : '设备详情'}
+        onClose={() => setDetailDevice(null)}
+        items={detailDevice ? [
+          {
+            key: 'name',
+            label: '设备名称',
+            children: role === 'admin' ? (
+              <Form<DeviceNameValues> form={nameForm} layout="vertical" onFinish={submitName}>
+                <Form.Item
+                  name="name"
+                  extra="用于运行时选择和日常识别，例如：DaFit回归-Pixel9-01。"
+                  rules={[
+                    { required: true, whitespace: true, message: '请输入设备名称' },
+                    { min: 2, max: 40, message: '名称请保持在 2–40 个字符' },
+                  ]}
+                >
+                  <Input aria-label="设备名称" maxLength={40} showCount placeholder="例如：DaFit回归-Pixel9-01" />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" loading={updateDeviceName.isPending}>保存</Button>
+              </Form>
+            ) : detailDevice.name,
+          },
+          { key: 'id', label: '完整设备编号', children: <Typography.Text code copyable>{detailDevice.id}</Typography.Text> },
+          { key: 'serial', label: '设备标识', children: <Typography.Text code copyable>{detailDevice.serial}</Typography.Text> },
+          { key: 'platform', label: '平台与类型', children: `${platformLabel(detailDevice.platform)} · ${deviceKindLabel(detailDevice.device_kind)}` },
+          { key: 'availability', label: '当前可用性', children: availabilityTag(detailDevice) },
+          { key: 'state', label: '内部状态', children: `${lifecycleStatusLabel(detailDevice.lifecycle_status)} / ${healthStatusLabel(detailDevice.health_status)}` },
+          { key: 'reason', label: '状态说明', children: healthReasonLabel(detailDevice.health_reason) },
+          { key: 'pool', label: '设备池', children: detailDevice.pool_name ?? (detailDevice.pool_id ? poolByID.get(detailDevice.pool_id)?.name : '-') ?? '-' },
+          { key: 'pool_base', label: '扩容模板', children: detailDevice.is_pool_base
+            ? <Tag color="blue">本设备是当前设备池的扩容模板</Tag>
+            : (poolByID.get(detailDevice.pool_id ?? '')?.base_device_id
+              ? '否；设备池已指定其他设备作为模板'
+              : <Typography.Text type="warning">否；设备池尚未设置扩容模板</Typography.Text>) },
+          { key: 'host', label: '宿主机', children: `${hostLabel(detailDevice.host_id, hostByID)} · ${hostOSLabel(hostByID.get(detailDevice.host_id)) || '未上报系统'}` },
+          { key: 'host_id', label: '完整宿主机编号', children: <Typography.Text code copyable>{detailDevice.host_id}</Typography.Text> },
+          { key: 'provider', label: '运行方式', children: `${providerTypeLabel(detailDevice.provider_type)} · ${lifecycleModeLabel(detailDevice.lifecycle_mode)}` },
+          { key: 'failures', label: '连续失败次数', children: detailDevice.consecutive_failures },
+          { key: 'capabilities', label: '设备能力', children: detailText(detailDevice.capabilities) },
+          { key: 'runtime', label: '生效运行规格', children: detailText(detailDevice.effective_runtime_profile as Record<string, unknown>) },
+          ...(role === 'admin' ? [
+            { key: 'adb', label: 'ADB Endpoint', children: detailDevice.adb_endpoint ?? '-' },
+            { key: 'appium', label: 'Appium Endpoint', children: detailDevice.appium_endpoint ?? '-' },
+          ] : []),
+          { key: 'created', label: '创建时间', children: formatTime(detailDevice.created_at) },
+          { key: 'updated', label: '最后变化', children: formatTime(detailDevice.updated_at) },
+        ] : []}
+      />
       <Modal
         open={createDevice}
-        title="新增 Phone 设备"
+        title="新增 Android 模拟器"
         footer={[
           <Button key="cancel" onClick={() => setCreateDevice(false)}>取消</Button>,
           createStep > 0 && <Button key="previous" onClick={() => setCreateStep((current) => current - 1)}>上一步</Button>,
@@ -451,7 +837,6 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <Steps current={createStep} size="small" style={{ marginBottom: 20 }} items={[{ title: '选择 Phone' }, { title: '选择 Android' }, { title: '选择设备池' }, { title: '高级配置' }]} />
         <Form<CreateDeviceValues> form={createForm} layout="vertical" onFinish={submitCreateDevice}>
           <Form.Item name="hardware_profile_id" hidden rules={[{ required: true, message: '请选择 Phone 模板' }]}><Input /></Form.Item>
-          <Form.Item name="catalog_id" hidden rules={[{ required: true, message: '请选择 Android 版本' }]}><Input /></Form.Item>
           {createStep === 0 && <>
             <Input.Search placeholder="搜索 Pixel 或 Phone 型号" value={profileSearch} onChange={(event) => setProfileSearch(event.target.value)} style={{ marginBottom: 12 }} />
             <Table<AndroidHardwareProfile> size="small" loading={hardwareQuery.isFetching} rowKey="id" pagination={{ pageSize: 8 }} dataSource={filteredHardwareProfiles} rowSelection={{ type: 'radio', selectedRowKeys: [createForm.getFieldValue('hardware_profile_id')].filter(Boolean), onChange: (keys) => {
@@ -461,11 +846,27 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
             } }} columns={[{ title: 'Phone 名称', dataIndex: 'name' }, { title: '宽', dataIndex: 'width', width: 90 }, { title: '高', dataIndex: 'height', width: 90 }, { title: 'DPI', dataIndex: 'density_dpi', width: 90 }, { title: '最低 API', width: 100, render: () => '26+' }]} />
           </>}
           {createStep === 1 && <>
-            <Typography.Paragraph type="secondary">未缓存版本也可选择。服务端将持续完成“准备系统镜像 → 创建模拟器 → ADB → STF → Appium”流程，无需保持此页面开启。</Typography.Paragraph>
-            <Table<AndroidSystemImage> size="small" loading={catalogQuery.isFetching} rowKey="id" pagination={{ pageSize: 8 }} dataSource={catalog} rowSelection={{ type: 'radio', selectedRowKeys: [createForm.getFieldValue('catalog_id')].filter(Boolean), onChange: (keys) => createForm.setFieldValue('catalog_id', String(keys[0] ?? '')) }} columns={[{ title: 'Android / API', render: (_, image) => `Android API ${image.api_level}` }, { title: '类型', dataIndex: 'image_type' }, { title: 'ABI', dataIndex: 'abi' }, { title: '修订', dataIndex: 'revision' }, { title: '缓存状态', render: (_, image) => <Tag color={image.status === 'cached' ? 'green' : image.status === 'failed' ? 'red' : 'default'}>{image.status === 'cached' ? '已缓存可用' : image.status}</Tag> }]} />
+            <Typography.Paragraph type="secondary">Android 系统列表已经收进新增设备流程。未缓存版本也可选择，服务端会继续完成“准备系统镜像 → 创建模拟器 → ADB → STF → Appium”，无需保持此页面开启。</Typography.Paragraph>
+            <Form.Item
+              name="catalog_id"
+              label="Android 系统版本"
+              extra={catalogQuery.isError ? '系统目录读取失败，请刷新后重试或联系管理员同步目录。' : undefined}
+              rules={[{ required: true, message: '请选择 Android 系统版本' }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                loading={catalogQuery.isLoading || catalogQuery.isFetching}
+                disabled={catalog.length === 0}
+                placeholder={catalog.length > 0
+                  ? '选择 Android 系统版本'
+                  : catalogQuery.isError ? 'Android 系统目录读取失败' : '当前没有可选的 Android 系统版本'}
+                options={catalog.map((image) => ({ value: image.id, label: androidCatalogOptionLabel(image) }))}
+              />
+            </Form.Item>
           </>}
-          {createStep === 2 && <Form.Item name="pool_id" label="活动设备池" rules={[{ required: true, message: '请选择活动设备池' }]}>
-            <Select loading={poolsQuery.isFetching} options={pools.filter((pool) => pool.status === 'active').map((pool) => ({ value: pool.id, label: `${pool.name} · 目标 ${pool.total_target} · ${pool.base_device_id ? '已设置基础设备' : '待设置基础设备'}` }))} />
+          {createStep === 2 && <Form.Item name="pool_id" label="Android 设备池" rules={[{ required: true, message: '请选择活动的 Android 设备池' }]}>
+            <Select loading={poolsQuery.isFetching} placeholder={androidPools.length > 0 ? '选择 Android 设备池' : '当前没有活动的 Android 设备池'} options={androidPools.map((pool) => ({ value: pool.id, label: `${pool.name} · 目标 ${pool.total_target} · ${pool.base_device_id ? '已设置扩容模板' : '待设置扩容模板'}` }))} />
           </Form.Item>}
           {createStep === 3 && <Collapse defaultActiveKey={['runtime']} items={[{ key: 'runtime', label: '高级选项（CPU、内存、磁盘、分辨率和 GPU）', children: <Space wrap align="start">
             <Form.Item name="container_cpu_cores" label="容器 CPU（核）" rules={[{ required: true }]}><InputNumber min={1} max={64} /></Form.Item>
@@ -482,8 +883,71 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         </Form>
       </Modal>
       <Modal
+        open={createIOS}
+        title="新增 iOS 模拟器"
+        width={760}
+        destroyOnHidden
+        onCancel={() => setCreateIOS(false)}
+        afterOpenChange={initializeIOSCreateForm}
+        footer={[
+          <Button key="cancel-ios" onClick={() => setCreateIOS(false)}>取消</Button>,
+          iosCreateStep > 0 && <Button key="previous-ios" onClick={() => setIOSCreateStep((step) => step - 1)}>上一步</Button>,
+          iosCreateStep < 2
+            ? <Button key="next-ios" type="primary" onClick={() => {
+              const fields: (keyof CreateIOSSimulatorValues)[] = iosCreateStep === 0 ? ['host_id'] : ['runtime_id', 'device_type_id']
+              void iosForm.validateFields(fields).then(() => setIOSCreateStep((step) => step + 1)).catch(() => undefined)
+            }}>下一步</Button>
+            : <Button key="create-ios" type="primary" loading={createIOSSimulator.isPending} onClick={() => iosForm.submit()}>创建模拟器</Button>,
+        ]}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="iOS 使用 Mac 宿主机内的 Xcode CoreSimulator"
+          description="系统会在后台创建、启动并登记虚拟 iPhone；不安装第二层 macOS 虚拟机，也不向浏览器暴露 Appium、WDA 或会话授权。"
+        />
+        <Steps current={iosCreateStep} size="small" style={{ marginBottom: 20 }} items={[{ title: '选择 Mac' }, { title: '选择系统与机型' }, { title: '设备池与审计' }]} />
+        <Form<CreateIOSSimulatorValues> form={iosForm} layout="vertical" onFinish={() => submitCreateIOS(iosForm.getFieldsValue(true) as CreateIOSSimulatorValues)}>
+          {iosCreateStep === 0 && <Form.Item name="host_id" label="可用 Mac 宿主机" rules={[{ required: true, message: '请选择在线且可接收任务的 Mac 宿主机' }]}>
+            <Select
+              loading={hostsQuery.isFetching}
+              placeholder={iosHosts.length > 0 ? '选择 Mac 宿主机' : '当前没有可用于创建的 Mac 宿主机'}
+              options={iosHosts.map((host) => ({ value: host.id, label: `${host.name}${host.address ? ` · ${host.address}` : ''} · ${host.host_arch}` }))}
+              onChange={() => iosForm.setFieldsValue({ runtime_id: undefined, device_type_id: undefined })}
+            />
+          </Form.Item>}
+          {iosCreateStep === 1 && <>
+            {iosCatalogQuery.isError && <Alert
+              type="error"
+              showIcon
+              message="无法读取这台 Mac 的 iOS 目录"
+              description={apiErrorText(iosCatalogQuery.error)}
+              style={{ marginBottom: 12 }}
+            />}
+            <Form.Item name="runtime_id" label="iOS 运行时" rules={[{ required: true, message: '请选择 iOS 运行时' }]}>
+              <Select loading={iosCatalogQuery.isFetching} placeholder="选择宿主机已安装的 iOS 运行时" options={(iosCatalog?.runtimes ?? []).map((runtime, index) => ({ value: runtime.id, label: `${runtime.name} · ${runtime.version}${index === 0 ? '（默认）' : ''}` }))} onChange={() => iosForm.setFieldValue('device_type_id', undefined)} />
+            </Form.Item>
+            <Form.Item name="device_type_id" label="iPhone 机型" rules={[{ required: true, message: '请选择 iPhone 机型' }]}>
+              <Select loading={iosCatalogQuery.isFetching} disabled={!selectedIOSRuntimeID} showSearch optionFilterProp="label" placeholder={selectedIOSRuntimeID ? '选择与当前 iOS 运行时兼容的 iPhone 机型' : '请先选择 iOS 运行时'} options={compatibleIOSDeviceTypes.map((deviceType, index) => ({ value: deviceType.id, label: `${deviceType.name}${index === 0 ? '（默认模板）' : ''}` }))} />
+            </Form.Item>
+          </>}
+          {iosCreateStep === 2 && <>
+            <Form.Item name="pool_id" label="iOS 设备池" rules={[{ required: true, message: '请选择活动的 iOS 设备池' }]}>
+              <Select placeholder={iosPools.length > 0 ? '选择 iOS 设备池' : '当前没有活动的 iOS 设备池'} options={iosPools.map((pool) => ({ value: pool.id, label: `${pool.name} · 当前目标 ${pool.total_target}` }))} />
+            </Form.Item>
+            <Form.Item name="display_name" label="显示名称（可选）">
+              <Input maxLength={128} placeholder="例如：iOS 26 回归机" />
+            </Form.Item>
+            <Form.Item name="reason" label="创建原因（必填，将写入审计）" rules={[{ required: true, whitespace: true, message: '请填写创建原因' }, { min: 3, message: '创建原因至少填写 3 个字' }]}>
+              <Input.TextArea rows={3} maxLength={200} placeholder="例如：新增 iOS 26 自动化验证设备" />
+            </Form.Item>
+          </>}
+        </Form>
+      </Modal>
+      <Modal
         open={actionState !== null}
-        title={actionState ? `${actionTitles[actionState.action]} · ${shortID(actionState.device.id)}` : ''}
+        title={actionState ? `${actionTitles[actionState.action]} · ${deviceHeadline(actionState.device, { imageByID })}` : ''}
         okText={actionState?.action === 'delete' ? '下一步' : '确认执行'}
         cancelText="取消"
         confirmLoading={pending}
@@ -494,9 +958,11 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         <Typography.Paragraph type="secondary">
           {actionState?.action === 'quarantine' && '隔离后设备将不再接受新预约，已激活会话不受影响。'}
           {actionState?.action === 'unquarantine' && '解除隔离后设备可重新进入调度池。'}
-          {actionState?.action === 'rebuild' && '重建会销毁并重新拉起设备运行实例，属于危险操作。'}
-          {actionState?.action === 'restart' && '重启会中断当前设备上的会话。'}
-          {actionState?.action === 'delete' && '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源并转入已删除历史，同时把设备池目标数量减少一台，不会自动补建。'}
+          {actionState?.action === 'start' && '启动会在 Mac 宿主机中拉起这台 CoreSimulator 虚拟 iPhone。'}
+          {actionState?.action === 'stop' && '停止只关闭空闲的 CoreSimulator，不删除设备和数据。'}
+          {actionState?.action === 'rebuild' && (actionState.device.platform === 'ios' ? '重建会关闭、擦除并重新启动 CoreSimulator，UDID 保持不变但设备数据全部清空。' : '重建会销毁并重新拉起设备运行实例，属于危险操作。')}
+          {actionState?.action === 'restart' && '重启原设备会保留 Device ID、已安装应用、账号、缓存和文件，不会删除数据卷。'}
+          {actionState?.action === 'delete' && (actionState.device.platform === 'ios' ? '删除只允许没有活动预约或会话的受管 Simulator；成功后 CoreSimulator UDID 将消失，设备不再出现在列表中。' : '删除允许空闲、隔离或已停止且没有活动预约的设备。成功后会清理运行资源、不再出现在设备列表，同时把设备池目标数量减少一台，不会自动补建。')}
         </Typography.Paragraph>
         <Form<ReasonValues> form={form} layout="vertical" onFinish={submitAction}>
           <Form.Item name="reason" label="操作原因（必填，将写入审计）" rules={[
@@ -508,8 +974,40 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         </Form>
       </Modal>
       <Modal
+        open={runtimeProfileDevice !== null}
+        title={runtimeProfileDevice ? `调整 CPU/内存 · ${deviceHeadline(runtimeProfileDevice, { imageByID })}` : ''}
+        okText="下一步"
+        cancelText="取消"
+        confirmLoading={updateRuntimeProfile.isPending}
+        onCancel={() => setRuntimeProfileDevice(null)}
+        onOk={() => runtimeProfileForm.submit()}
+        width={640}
+        destroyOnHidden
+      >
+        <Alert type="info" showIcon message="应用新规格需要重启模拟器，已安装应用、账号、缓存和设备文件会保留" style={{ marginBottom: 16 }} />
+        <Typography.Paragraph type="secondary">
+          只允许没有预约、没有其他处理中操作的设备调整。服务端会按宿主机最新资源重新计算容量；新规格启动失败时会用同一数据卷恢复旧规格。
+        </Typography.Paragraph>
+        <Form<RuntimeProfileUpdateValues> form={runtimeProfileForm} layout="vertical" onFinish={submitRuntimeProfileUpdate}>
+          <Space wrap align="start">
+            <Form.Item name="container_cpu_cores" label="容器 CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={64} step={0.5} /></Form.Item>
+            <Form.Item name="container_memory_mb" label="容器内存 MB" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={512} /></Form.Item>
+            <Form.Item name="guest_cpu_cores" label="Android CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
+            <Form.Item name="guest_memory_mb" label="Android 内存 MB" rules={[{ required: true }]}><InputNumber min={1536} max={261632} step={512} /></Form.Item>
+          </Space>
+          <Typography.Paragraph type="secondary">
+            当前宿主机：{hostLabel(runtimeProfileDevice?.host_id, hostByID)}。16 GB 宿主机运行两台时，建议每台容器 4608 MB、Android 3584 MB，并为系统和管理服务保留余量。
+          </Typography.Paragraph>
+          <Form.Item name="reason" label="调整原因（必填，将写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写调整原因' }, { min: 3, message: '调整原因至少填写 3 个字' },
+          ]}>
+            <Input.TextArea rows={3} maxLength={200} placeholder="例如：为双设备并行运行释放宿主机内存" />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
         open={reimageDevice !== null}
-        title={reimageDevice ? `编辑配置/更换镜像 · ${shortID(reimageDevice.id)}` : ''}
+        title={reimageDevice ? `更换镜像/重建数据 · ${deviceHeadline(reimageDevice, { imageByID })}` : ''}
         okText="下一步"
         cancelText="取消"
         confirmLoading={reimage.isPending}
@@ -518,7 +1016,7 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
         width={720}
         destroyOnHidden
       >
-        <Alert type="warning" showIcon message="重装会清空这台模拟器里的 APK 和全部设备数据" style={{ marginBottom: 16 }} />
+        <Alert type="warning" showIcon message="更换镜像、数据盘或图形模式会清空这台模拟器里的 APK 和全部设备数据" style={{ marginBottom: 16 }} />
         <Typography.Paragraph type="secondary">
           只允许没有预约、没有其他处理中操作的空闲设备修改。提交时服务端会按宿主机最新 CPU、内存和磁盘重新计算；空间不足会直接拒绝，不会先删除旧设备。
         </Typography.Paragraph>
@@ -528,24 +1026,37 @@ export function DevicesPage({ role = 'admin' }: DevicesPageProps) {
               value: image.id, label: `${image.name} · Android API ${image.api_level} · ${image.abi}`,
             }))} onChange={(imageID) => {
               const image = images.find((item) => item.id === imageID)
-              if (image?.resource_config) reimageForm.setFieldsValue(image.resource_config)
+              if (image?.resource_config) reimageForm.setFieldsValue({
+                data_disk_mb: image.resource_config.data_disk_mb,
+                image_disk_mb: image.resource_config.image_disk_mb,
+                width: image.resource_config.width,
+                height: image.resource_config.height,
+                density_dpi: image.resource_config.density_dpi,
+                vm_heap_mb: image.resource_config.vm_heap_mb,
+                graphics: image.resource_config.graphics,
+              })
             }} />
           </Form.Item>
+          <Form.Item name="container_cpu_cores" hidden><InputNumber /></Form.Item>
+          <Form.Item name="container_memory_mb" hidden><InputNumber /></Form.Item>
+          <Form.Item name="guest_cpu_cores" hidden><InputNumber /></Form.Item>
+          <Form.Item name="guest_memory_mb" hidden><InputNumber /></Form.Item>
+          <Form.Item name="image_disk_mb" hidden><InputNumber /></Form.Item>
+          <Form.Item name="width" hidden><InputNumber /></Form.Item>
+          <Form.Item name="height" hidden><InputNumber /></Form.Item>
+          <Form.Item name="density_dpi" hidden><InputNumber /></Form.Item>
+          <Form.Item name="vm_heap_mb" hidden><InputNumber /></Form.Item>
           <Space wrap align="start">
-            <Form.Item name="container_cpu_cores" label="容器 CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={64} step={0.5} /></Form.Item>
-            <Form.Item name="container_memory_mb" label="容器内存 MB" rules={[{ required: true }]}><InputNumber min={2048} max={262144} step={512} /></Form.Item>
-            <Form.Item name="guest_cpu_cores" label="Android CPU 核数" rules={[{ required: true }]}><InputNumber min={1} max={32} /></Form.Item>
-            <Form.Item name="guest_memory_mb" label="Android 内存 MB" rules={[{ required: true }]}><InputNumber min={1536} max={261632} step={512} /></Form.Item>
             <Form.Item name="data_disk_mb" label="设备数据盘 MB" rules={[{ required: true }]}><InputNumber min={2048} max={1048576} step={1024} /></Form.Item>
             <Form.Item name="graphics" label="图形加速" rules={[{ required: true }]}><Select style={{ width: 130 }} options={[
               { value: 'auto', label: '自动' }, { value: 'host', label: '宿主机 GPU' }, { value: 'software', label: '软件渲染' },
             ]} /></Form.Item>
           </Space>
           <Typography.Paragraph type="secondary">
-            当前宿主机：{hosts.find((host) => host.id === reimageDevice?.host_id)?.name ?? shortID(reimageDevice?.host_id ?? '')}。页面显示的是配置值，最终容量以提交瞬间服务端重新计算为准。
+            当前宿主机：{hostLabel(reimageDevice?.host_id, hostByID)}。页面显示的是配置值，最终容量以提交瞬间服务端重新计算为准。
           </Typography.Paragraph>
-          <Form.Item name="reason" label="修改原因（必填，将写入审计）" rules={[
-            { required: true, whitespace: true, message: '请填写修改原因' }, { min: 3, message: '修改原因至少填写 3 个字' },
+          <Form.Item name="reason" label="重建原因（必填，将写入审计）" rules={[
+            { required: true, whitespace: true, message: '请填写重建原因' }, { min: 3, message: '重建原因至少填写 3 个字' },
           ]}>
             <Input.TextArea rows={3} maxLength={200} placeholder="例如：需要验证 Android 15 兼容性" />
           </Form.Item>

@@ -36,6 +36,8 @@ func TestDatabaseMetricsExposeDeviceSchedulerAgentAndReservationState(t *testing
 		INSERT INTO devices (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,lifecycle_status,health_status)
 		VALUES ('device_metrics_000001','host_metrics_00000001','image_metrics_0000001','emulator','docker_emulator',
 		'metrics-container','rebuild','metrics-serial','ready','healthy');
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES ('pool_metrics_00000001','device_metrics_000001',true);
 		INSERT INTO device_reservations (id,client_id,pool_id,owner_type,owner_id,lease_seconds,status,idempotency_key)
 		VALUES ('reservation_metrics_01','metrics-client','pool_metrics_00000001','test_run','attempt_metrics_00001',600,'pending','metrics-reservation-key');
 		INSERT INTO device_health_events (id,device_id,source,event_type,severity,reason,observed_at)
@@ -50,7 +52,9 @@ func TestDatabaseMetricsExposeDeviceSchedulerAgentAndReservationState(t *testing
 	}
 	for _, want := range []string{
 		"device_farm_database_ready 1",
-		`device_farm_devices{health_status="healthy",lifecycle_status="ready"} 1`,
+		`device_farm_devices{health_status="healthy",lifecycle_status="ready",platform="android"} 1`,
+		`device_farm_pool_target{objective="total",platform="android",pool_id="pool_metrics_00000001"} 1`,
+		`device_farm_pool_devices{availability="available",platform="android",pool_id="pool_metrics_00000001"} 1`,
 		`device_farm_reservations{status="pending"} 1`,
 		`device_farm_agents{status="online"} 1`,
 		`device_farm_host_commands{status="pending"} 1`,

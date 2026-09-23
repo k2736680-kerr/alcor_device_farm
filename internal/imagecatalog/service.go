@@ -24,10 +24,10 @@ import (
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid Android system image request")
-	ErrNoBuildAgent    = errors.New("no online Build Agent is available")
-	ErrNotFound        = errors.New("Android system image catalog entry not found")
-	ErrConflict        = errors.New("Android system image preparation conflict")
+	ErrInvalidArgument = errors.New("安卓系统镜像请求无效")
+	ErrNoBuildAgent    = errors.New("当前没有在线的镜像构建代理")
+	ErrNotFound        = errors.New("未找到安卓系统镜像目录项")
+	ErrConflict        = errors.New("安卓系统镜像准备发生冲突")
 )
 
 type Entry struct {
@@ -396,9 +396,12 @@ func reconcileValidation(ctx context.Context, tx pgx.Tx, record repository.Comma
 	var result struct {
 		DigestVerified bool `json:"digest_verified"`
 		Ready          bool `json:"ready"`
-		STFRegistered  bool `json:"stf_registered"`
+		// STFRegistered 仅作为诊断信息保留，不参与镜像可用性判定。
+		// 多宿主机下，宿主机无法也不应注册到 171 的 STF（见 ADR-0037）；
+		// 设备在 STF 中的可见性由 reconcile 的 stf_not_visible 对实际运行的设备持续把关。
+		STFRegistered bool `json:"stf_registered"`
 	}
-	if json.Unmarshal(record.Result, &result) != nil || !result.DigestVerified || !result.Ready || !result.STFRegistered {
+	if json.Unmarshal(record.Result, &result) != nil || !result.DigestVerified || !result.Ready {
 		return failPreparation(ctx, tx, job.ID, "IMAGE_VALIDATION_INCOMPLETE")
 	}
 	profile, err := runtimeprofile.Parse(job.RuntimeProfile)

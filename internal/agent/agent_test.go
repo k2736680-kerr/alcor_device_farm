@@ -23,6 +23,18 @@ type fakeClient struct {
 	lastHeartbeat hostcommand.HeartbeatInput
 }
 
+type registrarSpy struct {
+	mu        sync.Mutex
+	endpoints []string
+}
+
+func (spy *registrarSpy) Register(_ context.Context, endpoint string) error {
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+	spy.endpoints = append(spy.endpoints, endpoint)
+	return nil
+}
+
 func (client *fakeClient) Heartbeat(_ context.Context, _ string, input hostcommand.HeartbeatInput) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -32,6 +44,51 @@ func (client *fakeClient) Heartbeat(_ context.Context, _ string, input hostcomma
 }
 
 type fakeCapacityProbe struct{}
+
+type fakeEnvironmentProbe struct {
+	values map[string]any
+	err    error
+}
+
+func (probe fakeEnvironmentProbe) Snapshot(context.Context) (map[string]any, error) {
+	return probe.values, probe.err
+}
+
+type blockingEnvironmentProbe struct {
+	started chan struct{}
+}
+
+func (probe blockingEnvironmentProbe) Snapshot(ctx context.Context) (map[string]any, error) {
+	select {
+	case probe.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type readyThenBlockingEnvironmentProbe struct {
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+}
+
+func (probe *readyThenBlockingEnvironmentProbe) Snapshot(ctx context.Context) (map[string]any, error) {
+	probe.mu.Lock()
+	probe.calls++
+	call := probe.calls
+	probe.mu.Unlock()
+	if call == 1 {
+		return map[string]any{"host_os": "macos", "host_arch": "arm64",
+			"host_readiness": map[string]any{"ready": true, "reasons": []any{}}}, nil
+	}
+	select {
+	case probe.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
 
 func (fakeCapacityProbe) Snapshot(context.Context) (map[string]any, map[string]any, error) {
 	return map[string]any{"resource_model": "dynamic_v1", "cpu_cores": 8, "memory_total_mb": 16000,
@@ -114,6 +171,178 @@ func TestAgentHeartbeatUsesMeasuredCapacityInsteadOfCommandConcurrency(t *testin
 	defer client.mu.Unlock()
 	if client.lastHeartbeat.Capacity["resource_model"] != "dynamic_v1" || client.lastHeartbeat.Capacity["device_slots"] != nil ||
 		client.lastHeartbeat.Environment["gpu_render"] != true {
+		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
+	}
+}
+
+func TestAgentEnvironmentProbeDoesNotBlockHeartbeat(t *testing.T) {
+	client := &fakeClient{}
+	probe := blockingEnvironmentProbe{started: make(chan struct{}, 1)}
+	runtime, err := agent.New(agent.Config{
+		HostID: "host_000000000000001", ProviderType: "appium_device_farm_ios", HeartbeatInterval: 5 * time.Millisecond,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second, ShutdownTimeout: time.Second,
+		EnvironmentProbe: probe, EnvironmentProbeInterval: 5 * time.Millisecond,
+		EnvironmentProbeTimeout: 40 * time.Millisecond, EnvironmentSnapshotMaxAge: 80 * time.Millisecond,
+	}, client, providermock.New(providermock.Config{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	select {
+	case <-probe.started:
+	case <-time.After(time.Second):
+		t.Fatal("环境探测未启动")
+	}
+	time.Sleep(25 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	readiness, _ := client.lastHeartbeat.Environment["host_readiness"].(map[string]any)
+	if client.heartbeats < 4 || readiness["ready"] != false {
+		t.Fatalf("heartbeats=%d heartbeat=%+v", client.heartbeats, client.lastHeartbeat)
+	}
+}
+
+func TestAgentUsesRecentEnvironmentSnapshotAndFailsClosedWhenItExpires(t *testing.T) {
+	client := &fakeClient{}
+	probe := &readyThenBlockingEnvironmentProbe{started: make(chan struct{}, 1)}
+	runtime, err := agent.New(agent.Config{
+		HostID: "host_000000000000001", ProviderType: "appium_device_farm_ios", HeartbeatInterval: 5 * time.Millisecond,
+		LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1, CommandTimeout: time.Second, ShutdownTimeout: time.Second,
+		EnvironmentProbe: probe, EnvironmentProbeInterval: 5 * time.Millisecond,
+		EnvironmentProbeTimeout: 20 * time.Millisecond, EnvironmentSnapshotMaxAge: 45 * time.Millisecond,
+	}, client, providermock.New(providermock.Config{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	select {
+	case <-probe.started:
+	case <-time.After(time.Second):
+		t.Fatal("第二次环境探测未启动")
+	}
+	time.Sleep(15 * time.Millisecond)
+	client.mu.Lock()
+	recentHeartbeat := client.lastHeartbeat
+	recentCount := client.heartbeats
+	client.mu.Unlock()
+	recentReadiness, _ := recentHeartbeat.Environment["host_readiness"].(map[string]any)
+	if recentReadiness["ready"] != true {
+		t.Fatalf("最近快照未被使用: %+v", recentHeartbeat)
+	}
+	time.Sleep(55 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	staleReadiness, _ := client.lastHeartbeat.Environment["host_readiness"].(map[string]any)
+	if client.heartbeats <= recentCount+5 || staleReadiness["ready"] != false {
+		t.Fatalf("heartbeats=%d recent=%d heartbeat=%+v", client.heartbeats, recentCount, client.lastHeartbeat)
+	}
+}
+
+func TestAgentHeartbeatIncludesHostReadinessAndDoesNotChargeIOSAsAndroidEmulator(t *testing.T) {
+	provider := providermock.New(providermock.Config{SharedAppiumEndpoint: "http://127.0.0.1:4723"})
+	if _, err := provider.Create(context.Background(), providers.CreateRequest{DeviceID: "device_0000000000001", HostID: "host_000000000000001",
+		Platform: providers.PlatformIOS, DeviceKind: "simulator", ProviderRef: "IOS-UDID-1", Serial: "IOS-UDID-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), "IOS-UDID-1"); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{}
+	runtime, err := agent.New(agent.Config{HostID: "host_000000000000001", ProviderType: "appium_device_farm_ios",
+		HeartbeatInterval: 10 * time.Millisecond, LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		EnvironmentProbe: fakeEnvironmentProbe{values: map[string]any{"host_os": "macos", "host_arch": "arm64",
+			"host_readiness": map[string]any{"ready": true, "reasons": []any{}}}},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(15 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.lastHeartbeat.Environment["host_os"] != "macos" || client.lastHeartbeat.Environment["host_arch"] != "arm64" ||
+		len(client.lastHeartbeat.Devices) != 1 || len(client.lastHeartbeat.Devices[0].RuntimeProfile) != 0 ||
+		client.lastHeartbeat.Devices[0].Platform != "ios" || client.lastHeartbeat.Devices[0].Connection["adb_endpoint"] != nil {
+		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
+	}
+}
+
+func TestAgentRegistersAndroidEndpointBeforeHealthIsReady(t *testing.T) {
+	provider := providermock.New(providermock.Config{Scenario: providermock.Scenario{AppiumUnhealthy: true}})
+	request := providers.CreateRequest{DeviceID: "device_000000000000001", HostID: "host_000000000000001",
+		ImageID: "image_000000000000001", ProviderRef: "emulator-device-1"}
+	if _, err := provider.Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Start(context.Background(), request.ProviderRef); err != nil {
+		t.Fatal(err)
+	}
+	registrar := &registrarSpy{}
+	runtime, err := agent.New(agent.Config{HostID: request.HostID, ProviderType: "docker",
+		HeartbeatInterval: 5 * time.Millisecond, LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second, STFADBRegistrar: registrar},
+		&fakeClient{}, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	registrar.mu.Lock()
+	defer registrar.mu.Unlock()
+	if len(registrar.endpoints) == 0 || registrar.endpoints[0] == "" {
+		t.Fatalf("unhealthy Android endpoint was not registered: %+v", registrar.endpoints)
+	}
+}
+
+func TestAgentReportsMaintenanceReadinessWhenIOSInventoryFails(t *testing.T) {
+	client := &fakeClient{}
+	provider := providermock.New(providermock.Config{Scenario: providermock.Scenario{Offline: true}})
+	runtime, err := agent.New(agent.Config{HostID: "host_000000000000001", ProviderType: "appium_device_farm_ios",
+		HeartbeatInterval: 10 * time.Millisecond, LeaseSeconds: 30, WaitSeconds: 1, Concurrency: 1,
+		CommandTimeout: time.Second, ShutdownTimeout: time.Second, Capacity: map[string]any{"device_slots": 1},
+		EnvironmentProbe: fakeEnvironmentProbe{values: map[string]any{"host_os": "macos", "host_arch": "arm64",
+			"host_readiness": map[string]any{"ready": true, "reasons": []any{}}}},
+	}, client, provider, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	time.Sleep(15 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	readiness, _ := client.lastHeartbeat.Environment["host_readiness"].(map[string]any)
+	if readiness["ready"] != false || len(client.lastHeartbeat.Devices) != 0 {
 		t.Fatalf("heartbeat=%+v", client.lastHeartbeat)
 	}
 }

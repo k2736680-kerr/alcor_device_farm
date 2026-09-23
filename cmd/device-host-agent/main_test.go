@@ -1,12 +1,26 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	providerdocker "github.com/Ad-Quanta/alcor-device-farm/internal/providers/docker"
 )
+
+type componentRunnerFunc func(context.Context) error
+
+func (run componentRunnerFunc) Run(ctx context.Context) error { return run(ctx) }
+
+func TestRunComponentsTreatsMissingIOSFenceAsNil(t *testing.T) {
+	want := errors.New("runtime stopped")
+	err := runComponents(context.Background(), componentRunnerFunc(func(context.Context) error { return want }), nil)
+	if !errors.Is(err, want) {
+		t.Fatalf("runComponents() error=%v, want %v", err, want)
+	}
+}
 
 func TestAgentConcurrencyDefaultsToSingleSlotAndSupportsConfiguration(t *testing.T) {
 	t.Setenv("DEVICE_FARM_AGENT_CONCURRENCY", "")
@@ -35,33 +49,43 @@ func TestAgentLeaseAndCommandTimeoutSupportEnvironmentConfiguration(t *testing.T
 }
 
 func TestBuildProviderRequiresExplicitProvider(t *testing.T) {
-	provider, err := buildProvider(" ", providerdocker.Config{})
-	if err == nil || provider != nil || !strings.Contains(err.Error(), "required") {
+	provider, err := buildProvider(" ", providerdocker.Config{}, nil)
+	if err == nil || provider != nil || !strings.Contains(err.Error(), "必须配置设备 Provider") {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }
 
 func TestBuildProviderAcceptsExplicitMock(t *testing.T) {
-	provider, err := buildProvider(" MOCK ", providerdocker.Config{})
+	provider, err := buildProvider(" MOCK ", providerdocker.Config{}, nil)
 	if err != nil || provider == nil {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }
 
 func TestBuildProviderRejectsUnknownProvider(t *testing.T) {
-	provider, err := buildProvider("unknown", providerdocker.Config{})
-	if err == nil || provider != nil || !strings.Contains(err.Error(), "unsupported provider") {
+	provider, err := buildProvider("unknown", providerdocker.Config{}, nil)
+	if err == nil || provider != nil || !strings.Contains(err.Error(), "不支持的 Provider") {
 		t.Fatalf("provider=%T error=%v", provider, err)
 	}
 }
 
+func TestSplitCSVRemovesEmptyUDIDs(t *testing.T) {
+	values := splitCSV(" SIM-1, ,SIM-2 ")
+	if len(values) != 2 || values[0] != "SIM-1" || values[1] != "SIM-2" {
+		t.Fatalf("values=%#v", values)
+	}
+}
+
 func TestDockerEnvironmentEnablesAppiumAndDisablesBuiltInVNC(t *testing.T) {
-	values := dockerEnvironment(" Pixel 9 ")
+	values := dockerEnvironment(" Pixel 9 ", "")
 	if values["EMULATOR_DEVICE"] != "Pixel 9" || values["WEB_VNC"] != "false" || values["WEB_LOG"] != "false" || values["APPIUM"] != "true" || values["USER_BEHAVIOR_ANALYTICS"] != "false" {
 		t.Fatalf("docker environment=%#v", values)
 	}
-	values = dockerEnvironment(" ")
+	values = dockerEnvironment(" ", "--allow-insecure uiautomator2:chromedriver_autodownload")
 	if _, exists := values["EMULATOR_DEVICE"]; exists {
 		t.Fatalf("empty emulator device must not be injected: %#v", values)
+	}
+	if values["APPIUM_ADDITIONAL_ARGS"] != "--allow-insecure uiautomator2:chromedriver_autodownload" {
+		t.Fatalf("appium additional args=%q", values["APPIUM_ADDITIONAL_ARGS"])
 	}
 }

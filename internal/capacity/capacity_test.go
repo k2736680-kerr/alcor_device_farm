@@ -27,3 +27,11 @@ func TestEvaluateChargesImageOnceButDataDiskPerDevice(t *testing.T) {
 		t.Fatalf("cold=%+v warm=%+v", cold, warm)
 	}
 }
+
+func TestChineseMessageReportsMemoryAndDiskShortfalls(t *testing.T) {
+	result := Result{Limiting: "memory", Shortfall: map[string]int64{"memory_mb": 2048, "disk_mb": 8192}}
+	message := ChineseMessage(result)
+	if message != "宿主机资源不足：内存还缺 2048 MB，磁盘还缺 8192 MB" {
+		t.Fatalf("message=%q", message)
+	}
+}

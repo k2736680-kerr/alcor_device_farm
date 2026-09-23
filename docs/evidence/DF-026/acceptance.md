@@ -24,7 +24,7 @@
 
 ## 环境
 
-- Windows 11；Go 1.26.5（`E:/AutoTestTools/Tools/go1.26.5`）；PostgreSQL 17.10（临时实例 127.0.0.1:55432，库 `device_farm_df004`，auth=trust）
+- Windows 11；Go 1.26.5（`D:/AutoTestTools/Tools/go1.26.5`）；PostgreSQL 17.10（临时实例 127.0.0.1:55432，库 `device_farm_df004`，auth=trust）
 - Node 22.22.2（托管）；pnpm 锁文件 pnpm-lock.yaml（依赖已安装）
 - 测试用户：admin（Argon2id PHC v19 哈希）
 

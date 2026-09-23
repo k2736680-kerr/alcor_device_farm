@@ -33,13 +33,11 @@ func RestoreImage(id string, status ImageStatus) (*Image, error) {
 	return &Image{state: state}, nil
 }
 
-func (image *Image) ID() string          { return image.state.idValue() }
 func (image *Image) Status() ImageStatus { return image.state.statusValue() }
 func (image *Image) Transition(to ImageStatus, reason string, at time.Time) error {
 	return image.state.transition(to, reason, at)
 }
 func (image *Image) Events() []TransitionEvent { return image.state.eventsCopy() }
-func (image *Image) ClearEvents()              { image.state.clearEvents() }
 
 func validImageStatus(status ImageStatus) bool {
 	_, ok := imageTransitions[status]

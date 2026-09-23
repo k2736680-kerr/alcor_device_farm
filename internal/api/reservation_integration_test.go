@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ type fakeSTFController struct {
 	remoteCalls       int
 	disconnectCalls   int
 	lastReleaseSerial string
+	lastRemoteSerial  string
 }
 
 func (controller *fakeSTFController) Claim(context.Context, string, time.Duration) error {
@@ -37,10 +39,11 @@ func (controller *fakeSTFController) Release(_ context.Context, serial string) e
 	return controller.releaseErr
 }
 
-func (controller *fakeSTFController) RemoteConnect(context.Context, string) (stf.RemoteConnection, error) {
+func (controller *fakeSTFController) RemoteConnect(_ context.Context, serial string) (stf.RemoteConnection, error) {
 	controller.mutex.Lock()
 	defer controller.mutex.Unlock()
 	controller.remoteCalls++
+	controller.lastRemoteSerial = serial
 	return stf.RemoteConnection{URL: "10.0.0.20:7401"}, nil
 }
 
@@ -98,6 +101,31 @@ func TestReservationAPIStoresListsAndReplaysPendingRequest(t *testing.T) {
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations", conflict, serviceToken, "reservation-api-key-01"), http.StatusConflict)
 	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/device-reservations", body, serviceToken, ""), http.StatusBadRequest)
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/device-reservations?owner_type=wrong", nil, serviceToken, ""), http.StatusBadRequest)
+}
+
+func TestReservationAPIAcceptsTargetDeviceWithoutLeakingInternalSelector(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	seedReservationDevice(t, environment)
+	response := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"pool_id": "pool_000000000000001", "requested_device_id": "device_0000000000001",
+		"owner_type": "run_attempt", "owner_id": "attempt_000000000777", "lease_seconds": 600,
+		"requested_capabilities": map[string]any{"platformName": "Android"},
+	}, serviceToken, "targeted-api-create-001")
+	assertStatus(t, response, http.StatusCreated)
+	var created reservation.View
+	decodeData(t, response, &created)
+	if created.Status != "pending" || created.DeviceID != nil {
+		t.Fatalf("targeted reservation=%#v", created)
+	}
+	if _, exists := created.RequestedCapabilities["_device_farm_target_device_id"]; exists {
+		t.Fatal("internal target device selector leaked through API")
+	}
+
+	wrongPool := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"pool_id": "pool_000000000000001", "requested_device_id": "device_not_in_this_pool",
+		"owner_type": "run_attempt", "owner_id": "attempt_000000000778", "lease_seconds": 600,
+	}, serviceToken, "targeted-api-create-002")
+	assertStatus(t, wrongPool, http.StatusNotFound)
 }
 
 func TestReservationAPIRejectsDisabledPoolAndExcessLease(t *testing.T) {
@@ -186,6 +214,67 @@ func TestReservationAPIExtendsAndReleasesActiveReservation(t *testing.T) {
 		releaseBody, serviceToken, "reservation-release-01"), http.StatusOK)
 }
 
+func TestReservationAPISlidesLeaseBeyondFourHoursWithoutExceedingFutureWindow(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	seedReservationDevice(t, environment)
+	createdResponse := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"pool_id": "pool_000000000000001", "owner_type": "test_run",
+		"owner_id": "attempt_lease_over_4h01", "lease_seconds": 600,
+		"requested_capabilities": map[string]any{"platformName": "Android", "apiLevel": 34},
+	}, serviceToken, "reservation-long-run-create")
+	assertStatus(t, createdResponse, http.StatusCreated)
+	var created reservation.View
+	decodeData(t, createdResponse, &created)
+	if _, err := scheduler.New(environment.db, nil, nil).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(),
+		"UPDATE device_pools SET max_lease_seconds=3600 WHERE id=$1", "pool_000000000000001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_reservations
+		SET starts_at=clock_timestamp()-interval '5 hours',expires_at=clock_timestamp()+interval '10 minutes'
+		WHERE id=$1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var last reservation.View
+	for index := 1; index <= 5; index++ {
+		response := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/extensions",
+			map[string]any{"additional_seconds": 900}, serviceToken, "reservation-long-run-extend-"+string(rune('0'+index)))
+		assertStatus(t, response, http.StatusOK)
+		decodeData(t, response, &last)
+	}
+	var databaseNow time.Time
+	if err := environment.db.Pool().QueryRow(context.Background(), "SELECT clock_timestamp()").Scan(&databaseNow); err != nil {
+		t.Fatal(err)
+	}
+	if last.StartsAt == nil || last.ExpiresAt == nil || databaseNow.Sub(*last.StartsAt) < 4*time.Hour {
+		t.Fatalf("预约没有覆盖四小时以上的逻辑运行时间：%#v", last)
+	}
+	if last.ExpiresAt.After(databaseNow.Add(3600*time.Second+2*time.Second)) || !last.ExpiresAt.After(databaseNow.Add(55*time.Minute)) {
+		t.Fatalf("到期时间未落在滑动安全窗口内：当前=%s 到期=%s", databaseNow, last.ExpiresAt)
+	}
+
+	overMaximum := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/extensions",
+		map[string]any{"additional_seconds": 3601}, serviceToken, "reservation-long-run-too-large")
+	assertStatus(t, overMaximum, http.StatusBadRequest)
+	if overMaximum.Error == nil || !strings.Contains(overMaximum.Error.Message, "最大续约窗口") {
+		t.Fatalf("超出窗口错误未使用明确中文提示：%#v", overMaximum.Error)
+	}
+
+	if _, err := environment.db.Pool().Exec(context.Background(),
+		"UPDATE device_reservations SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", created.ID); err != nil {
+		t.Fatal(err)
+	}
+	expired := environment.request(t, http.MethodPost, "/api/v1/device-reservations/"+created.ID+"/extensions",
+		map[string]any{"additional_seconds": 900}, serviceToken, "reservation-long-run-expired")
+	assertStatus(t, expired, http.StatusConflict)
+	if expired.Error == nil || !strings.Contains(expired.Error.Message, "已经过期") {
+		t.Fatalf("过期预约错误未使用明确中文提示：%#v", expired.Error)
+	}
+}
+
 func TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds(t *testing.T) {
 	controller := &fakeSTFController{releaseErr: retryableSTFError{}}
 	environment := newManagementEnvironment(t, controller)
@@ -222,7 +311,7 @@ func TestReservationReleaseKeepsDatabaseActiveUntilSTFReleaseSucceeds(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != "released" || controller.lastReleaseSerial != "emulator-api-lifecycle" {
+	if stored.Status != "released" || controller.lastReleaseSerial != "stf-api-lifecycle" {
 		t.Fatalf("reservation=%#v release serial=%q", stored, controller.lastReleaseSerial)
 	}
 }
@@ -256,7 +345,7 @@ func TestReservationReleasePreservesQuarantinedDeviceAndClosesReservation(t *tes
 	if lifecycle != "quarantined" || health != "unhealthy" || sessionStatus != "closed" {
 		t.Fatalf("device lifecycle=%s health=%s session=%s", lifecycle, health, sessionStatus)
 	}
-	if controller.releaseCalls != 1 || controller.lastReleaseSerial != "emulator-api-lifecycle" {
+	if controller.releaseCalls != 1 || controller.lastReleaseSerial != "stf-api-lifecycle" {
 		t.Fatalf("release calls=%d serial=%q", controller.releaseCalls, controller.lastReleaseSerial)
 	}
 }
@@ -281,7 +370,7 @@ func TestRemoteSessionIsOwnerBoundIdempotentAndDisconnectedAfterExpiry(t *testin
 	assertStatus(t, replayed, http.StatusCreated)
 	var replayedRemote reservation.RemoteSessionView
 	decodeData(t, replayed, &replayedRemote)
-	if replayedRemote.ID != remote.ID || controller.remoteCalls != 1 {
+	if replayedRemote.ID != remote.ID || controller.remoteCalls != 1 || controller.lastRemoteSerial != "stf-api-lifecycle" {
 		t.Fatalf("replayed=%#v remote calls=%d", replayedRemote, controller.remoteCalls)
 	}
 	wrongOwner := map[string]any{
@@ -387,9 +476,9 @@ func seedReservationDevice(t *testing.T, environment *managementEnvironment) {
 		`INSERT INTO device_pools (id,name,default_lease_seconds,max_lease_seconds,max_concurrency,status)
             VALUES ('pool_000000000000001','reservation-lifecycle-pool',600,1200,1,'active')`,
 		`INSERT INTO devices (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,
-            serial,adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status)
-            VALUES ('device_0000000000001','host_000000000000001','image_00000000000001','emulator','mock',
-            'mock-api-lifecycle','rebuild','emulator-api-lifecycle','127.0.0.1:5555','http://127.0.0.1:4723',
+			serial,stf_serial,adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status)
+			VALUES ('device_0000000000001','host_000000000000001','image_00000000000001','emulator','mock',
+			'mock-api-lifecycle','rebuild','emulator-api-lifecycle','stf-api-lifecycle','127.0.0.1:5555','http://127.0.0.1:4723',
             '{"platformName":"Android","apiLevel":34}'::jsonb,'ready','healthy')`,
 		`INSERT INTO device_pool_devices (pool_id,device_id,enabled)
             VALUES ('pool_000000000000001','device_0000000000001',true)`,

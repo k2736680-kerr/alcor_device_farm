@@ -41,7 +41,7 @@ func (value fixedVisibility) Visible(context.Context, string) (bool, error) {
 
 func TestProviderMissingQuarantinesReadyDatabaseDevice(t *testing.T) {
 	environment := newEnvironment(t, false)
-	service := reconcile.New(environment.db, environment.provider, nil, 3, 0, testLogger())
+	service := reconcile.New(environment.db, environment.provider, nil, 3, 0, 0, testLogger())
 	result, err := service.RunOnce(context.Background(), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -53,26 +53,28 @@ func TestProviderMissingQuarantinesReadyDatabaseDevice(t *testing.T) {
 	assertEvent(t, environment.db, "provider_device_missing")
 }
 
-func TestStaleHostGoesOfflineAndDeviceStopsScheduling(t *testing.T) {
+func TestStaleDrainingHostKeepsOperatorDrainIntent(t *testing.T) {
 	environment := newEnvironment(t, true)
 	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_hosts
-        SET last_heartbeat_at=clock_timestamp()-interval '31 seconds' WHERE id='host_000000000000001'`); err != nil {
+		SET status='draining',draining=true,last_heartbeat_at=clock_timestamp()-interval '31 seconds'
+		WHERE id='host_000000000000001'`); err != nil {
 		t.Fatal(err)
 	}
-	service := reconcile.New(environment.db, environment.provider, nil, 3, 0, testLogger())
+	service := reconcile.New(environment.db, environment.provider, nil, 3, 0, 0, testLogger())
 	result, err := service.RunOnce(context.Background(), 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.HostsMarkedOffline != 1 {
+	if result.HostsMarkedOffline != 0 {
 		t.Fatalf("result=%+v", result)
 	}
 	var hostStatus string
-	if err := environment.db.Pool().QueryRow(context.Background(), "SELECT status FROM device_hosts WHERE id='host_000000000000001'").Scan(&hostStatus); err != nil {
+	var draining bool
+	if err := environment.db.Pool().QueryRow(context.Background(), "SELECT status,draining FROM device_hosts WHERE id='host_000000000000001'").Scan(&hostStatus, &draining); err != nil {
 		t.Fatal(err)
 	}
-	if hostStatus != "offline" {
-		t.Fatalf("host status=%s", hostStatus)
+	if hostStatus != "draining" || !draining {
+		t.Fatalf("host status=%s draining=%v", hostStatus, draining)
 	}
 	var schedulable int
 	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM devices d
@@ -93,7 +95,7 @@ func TestRecoveredHostAndSTFVisibilityClearStaleFailureCounter(t *testing.T) {
 		SET last_heartbeat_at=clock_timestamp()-interval '31 seconds' WHERE id='host_000000000000001'`); err != nil {
 		t.Fatal(err)
 	}
-	service := reconcile.New(environment.db, nil, fixedVisibility{visible: true}, 3, 0, testLogger())
+	service := reconcile.New(environment.db, nil, fixedVisibility{visible: true}, 3, 0, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -110,10 +112,36 @@ func TestRecoveredHostAndSTFVisibilityClearStaleFailureCounter(t *testing.T) {
 	assertEvent(t, environment.db, "health_recovered")
 }
 
+func TestRecentlyOfflineHostDoesNotMutateDeviceDuringRecoveryGrace(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_hosts
+		SET status='offline',last_heartbeat_at=clock_timestamp()-interval '31 seconds'
+		WHERE id='host_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, time.Minute, testLogger())
+	result, err := service.RunOnce(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EventsRecorded != 0 || result.DevicesQuarantined != 0 {
+		t.Fatalf("recovery grace result=%+v", result)
+	}
+	assertDevice(t, environment.db, "ready", "healthy", 0)
+	var events int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id='device_0000000000001'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 {
+		t.Fatalf("recovery grace health events=%d", events)
+	}
+}
+
 func TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter(t *testing.T) {
 	environment := newEnvironment(t, true)
 	environment.provider.SetScenario(providermock.Scenario{AppiumUnhealthy: true})
-	service := reconcile.New(environment.db, environment.provider, nil, 2, 0, testLogger())
+	service := reconcile.New(environment.db, environment.provider, nil, 2, 0, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -131,9 +159,9 @@ func TestRepeatedAppiumFailureQuarantinesAndManualRecoveryResetsCounter(t *testi
 	assertDevice(t, environment.db, "provisioning", "unknown", 0)
 }
 
-func TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover(t *testing.T) {
+func TestSTFInvisibleConvergesToQuarantineAndSameDeviceAutoRecovers(t *testing.T) {
 	environment := newEnvironment(t, true)
-	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 2, 0, testLogger())
+	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 2, 0, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -143,11 +171,77 @@ func TestSTFInvisibleConvergesToQuarantineButHealthyDoesNotAutoRecover(t *testin
 	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
 	assertEvent(t, environment.db, "stf_not_visible")
 
-	healthyService := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: true}, 2, 0, testLogger())
+	healthyService := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: true}, 2, 0, 0, testLogger())
 	if _, err := healthyService.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+	assertDevice(t, environment.db, "ready", "healthy", 0)
+	assertEvent(t, environment.db, "health_recovered")
+}
+
+func TestIOSDeviceDoesNotUseAndroidProviderOrSTFHealthChain(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `
+		DELETE FROM device_pool_devices WHERE device_id='device_0000000000001';
+		UPDATE device_pools SET platform='ios' WHERE id='pool_000000000000001';
+		UPDATE device_hosts SET host_type='appium_device_farm_ios',host_os='macos',host_arch='arm64'
+		WHERE id='host_000000000000001';
+		UPDATE devices SET platform='ios',image_id=NULL,device_kind='simulator',
+			provider_type='appium_device_farm_ios',provider_ref='SIM-IOS-1',serial='SIM-IOS-1',
+			capabilities='{"componentHealth":{"transport":"passed","automation":"passed","router":"passed"}}',
+			lifecycle_status='ready',health_status='healthy',health_reason=NULL,consecutive_failures=0
+		WHERE id='device_0000000000001';
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_0000000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+	visibility := &sequenceVisibility{failures: 10}
+	service := reconcile.New(environment.db, environment.provider, visibility, 2, 0, 0, testLogger())
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibility.calls != 0 || result.EventsRecorded != 0 || result.DevicesQuarantined != 0 {
+		t.Fatalf("iOS reconcile result=%+v STF calls=%d", result, visibility.calls)
+	}
+	assertDevice(t, environment.db, "ready", "healthy", 0)
+}
+
+func TestIOSSharedAutomationStabilizationDoesNotQuarantineSimulator(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `
+		DELETE FROM device_pool_devices WHERE device_id='device_0000000000001';
+		UPDATE device_pools SET platform='ios' WHERE id='pool_000000000000001';
+		UPDATE device_hosts SET host_type='appium_device_farm_ios',host_os='macos',host_arch='arm64'
+		WHERE id='host_000000000000001';
+		UPDATE devices SET platform='ios',image_id=NULL,device_kind='simulator',provider_type='appium_device_farm_ios',
+			provider_ref='SIM-IOS-1',serial='SIM-IOS-1',lifecycle_status='ready',health_status='degraded',
+			health_reason='agent heartbeat reported degraded',consecutive_failures=0
+		WHERE id='device_0000000000001';
+		INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','device_0000000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 3, 0, 0, testLogger())
+	for range 5 {
+		result, err := service.RunOnce(context.Background(), time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.DevicesQuarantined != 0 {
+			t.Fatalf("iOS stabilization quarantined device: %+v", result)
+		}
+	}
+	assertDevice(t, environment.db, "ready", "degraded", 0)
+	assertEvent(t, environment.db, "ios_automation_stabilizing")
+	var events int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_health_events
+		WHERE device_id='device_0000000000001' AND event_type='ios_automation_stabilizing'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Fatalf("deduplicated iOS stabilization events=%d", events)
+	}
 }
 
 func TestSTFVisibilityGraceDoesNotConsumeFailureBudgetAfterProvisioning(t *testing.T) {
@@ -159,7 +253,7 @@ func TestSTFVisibilityGraceDoesNotConsumeFailureBudgetAfterProvisioning(t *testi
 		'{}',clock_timestamp())`); err != nil {
 		t.Fatal(err)
 	}
-	service := reconcile.New(environment.db, nil, fixedVisibility{visible: false}, 2, 30*time.Second, testLogger())
+	service := reconcile.New(environment.db, nil, fixedVisibility{visible: false}, 2, 30*time.Second, 0, testLogger())
 	result, err := service.RunOnce(context.Background(), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +334,7 @@ func TestSTFReadinessStabilizationBlocksSchedulingUntilGraceExpires(t *testing.T
 	if stored.Status != "pending" || stored.DeviceID != nil {
 		t.Fatalf("reservation during stabilization=%#v", stored)
 	}
-	service := reconcile.New(environment.db, nil, fixedVisibility{visible: true}, 2, 30*time.Second, testLogger())
+	service := reconcile.New(environment.db, nil, fixedVisibility{visible: true}, 2, 30*time.Second, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -266,10 +360,32 @@ func TestSTFReadinessStabilizationBlocksSchedulingUntilGraceExpires(t *testing.T
 	}
 }
 
+func TestRuntimeProfileUpdateInFlightBlocksHealthReconcile(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices
+		SET lifecycle_status='provisioning',health_status='unknown',health_reason=NULL
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	commandService := hostcommand.New(environment.db)
+	if _, err := commandService.Create(context.Background(), "host_000000000000001", "restart", map[string]any{
+		"operation_source": "management", "operation_kind": "runtime_profile_update",
+		"device_id": "device_0000000000001", "provider_ref": "mock-reconcile-device", "operation_state": "provisioning",
+	}, 1, "runtime-profile-update-in-flight"); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, environment.provider, nil, 1, 0, 0, testLogger())
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil || result.DevicesChecked != 0 || result.DevicesQuarantined != 0 || result.RestartsQueued != 0 {
+		t.Fatalf("reconcile result=%+v error=%v", result, err)
+	}
+	assertDevice(t, environment.db, "provisioning", "unknown", 0)
+}
+
 func TestRecoveredSTFVisibilityClearsReconcilerFailureBeforeQuarantine(t *testing.T) {
 	environment := newEnvironment(t, true)
 	visibility := &sequenceVisibility{failures: 1}
-	service := reconcile.New(environment.db, nil, visibility, 3, 0, testLogger())
+	service := reconcile.New(environment.db, nil, visibility, 3, 0, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +400,7 @@ func TestRecoveredSTFVisibilityClearsReconcilerFailureBeforeQuarantine(t *testin
 func TestRecoveredSTFVisibilityClearsFailuresEvenAfterCountThresholdDuringGrace(t *testing.T) {
 	environment := newEnvironment(t, true)
 	visibility := &sequenceVisibility{failures: 3}
-	service := reconcile.New(environment.db, nil, visibility, 2, 30*time.Second, testLogger())
+	service := reconcile.New(environment.db, nil, visibility, 2, 30*time.Second, 0, testLogger())
 	for range 3 {
 		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 			t.Fatal(err)
@@ -300,7 +416,7 @@ func TestRecoveredSTFVisibilityClearsFailuresEvenAfterCountThresholdDuringGrace(
 
 func TestPersistentSTFVisibilityFailureQuarantinesAfterGrace(t *testing.T) {
 	environment := newEnvironment(t, true)
-	service := reconcile.New(environment.db, nil, fixedVisibility{visible: false}, 2, 30*time.Second, testLogger())
+	service := reconcile.New(environment.db, nil, fixedVisibility{visible: false}, 2, 30*time.Second, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +434,7 @@ func TestPersistentSTFVisibilityFailureQuarantinesAfterGrace(t *testing.T) {
 
 func TestHealthReportValidationAndMissingDevice(t *testing.T) {
 	environment := newEnvironment(t, true)
-	service := reconcile.New(environment.db, environment.provider, nil, 3, 0, testLogger())
+	service := reconcile.New(environment.db, environment.provider, nil, 3, 0, 0, testLogger())
 	if _, err := service.Report(context.Background(), "bad", reconcile.EventInput{}); !errors.Is(err, reconcile.ErrInvalidArgument) {
 		t.Fatalf("invalid event error=%v", err)
 	}
@@ -336,7 +452,7 @@ func TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess(t *testing
 		WHERE id='device_0000000000001'`); err != nil {
 		t.Fatal(err)
 	}
-	service := reconcile.New(environment.db, nil, nil, 2, 0, testLogger())
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
 	if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -344,6 +460,150 @@ func TestAgentReportedUnhealthyQuarantinesWithoutServerProviderAccess(t *testing
 		t.Fatal(err)
 	}
 	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+}
+
+func TestPersistentSystemQuarantineQueuesOnlyNonDestructiveRestart(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET health_status='unhealthy'
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil || result.RestartsQueued != 1 {
+		t.Fatalf("self-healing result=%+v error=%v", result, err)
+	}
+	assertDevice(t, environment.db, "provisioning", "unknown", 2)
+	var restartCommands, destructiveCommands int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT
+		count(*) FILTER (WHERE command_type='restart' AND payload->>'operation_source'='self_healing'),
+		count(*) FILTER (WHERE command_type IN ('delete','rebuild','create'))
+		FROM device_host_commands WHERE payload->>'device_id'='device_0000000000001'`).Scan(&restartCommands, &destructiveCommands); err != nil {
+		t.Fatal(err)
+	}
+	if restartCommands != 1 || destructiveCommands != 0 {
+		t.Fatalf("restart commands=%d destructive commands=%d", restartCommands, destructiveCommands)
+	}
+	if result, err = service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 0 {
+		t.Fatalf("duplicate self-healing result=%+v error=%v", result, err)
+	}
+}
+
+func TestPersistentSystemQuarantineDoesNotQueueSecondRestartWithoutRecovery(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET health_status='unhealthy'
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result, err := service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 1 {
+		t.Fatalf("first self-healing result=%+v error=%v", result, err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_host_commands
+		SET status='succeeded',completed_at=clock_timestamp(),updated_at=clock_timestamp(),
+		result='{"state":"running"}'::jsonb
+		WHERE payload->>'device_id'='device_0000000000001' AND payload->>'operation_source'='self_healing'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices
+		SET lifecycle_status='quarantined',health_status='unhealthy',health_reason='device is not visible through STF',
+		last_seen_at=(SELECT completed_at FROM device_host_commands
+			WHERE payload->>'device_id'='device_0000000000001' AND payload->>'operation_source'='self_healing'
+			ORDER BY created_at DESC LIMIT 1)
+		WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 0 {
+		t.Fatalf("second self-healing result=%+v error=%v", result, err)
+	}
+	var restartCommands int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_host_commands
+		WHERE payload->>'device_id'='device_0000000000001' AND payload->>'operation_source'='self_healing'`).Scan(&restartCommands); err != nil {
+		t.Fatal(err)
+	}
+	if restartCommands != 1 {
+		t.Fatalf("self-healing restart commands=%d", restartCommands)
+	}
+}
+
+func TestIdleBootingUnhealthyDeviceQueuesOnlyNonDestructiveRestart(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE devices SET
+		lifecycle_status='booting',health_status='unhealthy' WHERE id='device_0000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, 0, testLogger())
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDevice(t, environment.db, "quarantined", "unhealthy", 2)
+	result, err := service.RunOnce(context.Background(), time.Hour)
+	if err != nil || result.RestartsQueued != 1 {
+		t.Fatalf("self-healing result=%+v error=%v", result, err)
+	}
+	var providerRef string
+	var restartCommands, destructiveCommands int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT provider_ref FROM devices
+		WHERE id='device_0000000000001'`).Scan(&providerRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT
+		count(*) FILTER (WHERE command_type='restart' AND payload->>'operation_source'='self_healing'),
+		count(*) FILTER (WHERE command_type IN ('delete','rebuild','create'))
+		FROM device_host_commands WHERE payload->>'device_id'='device_0000000000001'`).Scan(&restartCommands, &destructiveCommands); err != nil {
+		t.Fatal(err)
+	}
+	if providerRef == "" || restartCommands != 1 || destructiveCommands != 0 {
+		t.Fatalf("provider_ref=%q restart commands=%d destructive commands=%d", providerRef, restartCommands, destructiveCommands)
+	}
+	if result, err = service.RunOnce(context.Background(), time.Hour); err != nil || result.RestartsQueued != 0 {
+		t.Fatalf("duplicate self-healing result=%+v error=%v", result, err)
+	}
+}
+
+func TestAutomaticHostMaintenanceUsesRecoveryGraceBeforeQuarantine(t *testing.T) {
+	environment := newEnvironment(t, true)
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_hosts SET status='maintenance',
+		capabilities=capabilities || jsonb_build_object('host_readiness_auto_maintenance',true,
+		'host_readiness_failure_started_at',clock_timestamp()) WHERE id='host_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, nil, nil, 2, 0, time.Minute, testLogger())
+	for range 3 {
+		result, err := service.RunOnce(context.Background(), time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.DevicesQuarantined != 0 {
+			t.Fatalf("恢复宽限期内发生隔离：%+v", result)
+		}
+	}
+	assertDevice(t, environment.db, "ready", "degraded", 0)
+
+	if _, err := environment.db.Pool().Exec(context.Background(), `UPDATE device_hosts SET
+		capabilities=jsonb_set(capabilities,'{host_readiness_failure_started_at}',to_jsonb(clock_timestamp()-interval '2 minutes'))
+		WHERE id='host_000000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := service.RunOnce(context.Background(), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDevice(t, environment.db, "quarantined", "degraded", 2)
 }
 
 func TestInFlightCreateOrRebuildIsNotQuarantinedWhileBooting(t *testing.T) {
@@ -356,7 +616,7 @@ func TestInFlightCreateOrRebuildIsNotQuarantinedWhileBooting(t *testing.T) {
 		'{"device_id":"device_0000000000001","provider_ref":"missing-provider-device"}','pending',3,'rebuild-in-flight')`); err != nil {
 		t.Fatal(err)
 	}
-	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 2, 0, testLogger())
+	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 2, 0, 0, testLogger())
 	for range 3 {
 		result, err := service.RunOnce(context.Background(), time.Hour)
 		if err != nil {
@@ -367,6 +627,28 @@ func TestInFlightCreateOrRebuildIsNotQuarantinedWhileBooting(t *testing.T) {
 		}
 	}
 	assertDevice(t, environment.db, "booting", "unhealthy", 0)
+}
+
+func TestInFlightDeleteIsNotQuarantinedAfterProviderResourceDisappears(t *testing.T) {
+	environment := newEnvironment(t, false)
+	if _, err := environment.db.Pool().Exec(context.Background(), `INSERT INTO device_host_commands
+		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+		VALUES('command_000000000001','host_000000000000001','delete',
+		'{"device_id":"device_0000000000001","provider_ref":"missing-provider-device"}',
+		'pending',3,'delete-in-flight')`); err != nil {
+		t.Fatal(err)
+	}
+	service := reconcile.New(environment.db, environment.provider, fixedVisibility{visible: false}, 1, 0, 0, testLogger())
+	for range 3 {
+		result, err := service.RunOnce(context.Background(), time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.DevicesChecked != 0 || result.EventsRecorded != 0 || result.DevicesQuarantined != 0 {
+			t.Fatalf("删除中的 reconcile 结果=%+v", result)
+		}
+	}
+	assertDevice(t, environment.db, "ready", "healthy", 0)
 }
 
 type environment struct {

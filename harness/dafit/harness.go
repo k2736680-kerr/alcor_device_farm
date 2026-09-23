@@ -34,6 +34,7 @@ type Config struct {
 	WaitTimeout           time.Duration
 	PollInterval          time.Duration
 	RunTimeout            time.Duration
+	LeaseRenewInterval    time.Duration
 }
 
 type Result struct {
@@ -69,7 +70,7 @@ func (runner OSRunner) Run(ctx context.Context, spec RunSpec) error {
 		connect := exec.CommandContext(ctx, spec.ADBExecutable, "connect", spec.ADBEndpoint)
 		connect.Dir, connect.Stdout, connect.Stderr = spec.Directory, runner.Stdout, runner.Stderr
 		if err := connect.Run(); err != nil {
-			return fmt.Errorf("connect assigned ADB endpoint: %w", err)
+			return fmt.Errorf("连接已分配的 ADB 端点失败：%w", err)
 		}
 	}
 	command := exec.CommandContext(ctx, spec.PythonExecutable, "tools/run_full.py", "--case", spec.CaseID)
@@ -80,7 +81,7 @@ func (runner OSRunner) Run(ctx context.Context, spec RunSpec) error {
 		"DAFIT_REPORT_DIR": spec.ReportDirectory,
 	})
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("DaFit run failed: %w", err)
+		return fmt.Errorf("DaFit 运行失败：%w", err)
 	}
 	return nil
 }
@@ -134,7 +135,7 @@ func (harness *Harness) Run(ctx context.Context, config Config) (result Result, 
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := harness.release(cleanupCtx, config, reservation.ID); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("release reservation %s: %w", reservation.ID, err))
+			returnErr = errors.Join(returnErr, fmt.Errorf("释放预约 %s 失败：%w", reservation.ID, err))
 		}
 	}()
 
@@ -151,22 +152,60 @@ func (harness *Harness) Run(ctx context.Context, config Config) (result Result, 
 	}
 	appiumUDID, _ := device.Capabilities["appiumUdid"].(string)
 	if strings.TrimSpace(appiumUDID) == "" || device.ADBEndpoint == "" || device.AppiumEndpoint == "" {
-		return result, errors.New("active device connection snapshot is incomplete")
+		return result, errors.New("已激活设备的连接信息不完整")
 	}
-	runCtx, cancelRun := context.WithTimeout(ctx, config.RunTimeout)
-	runErr := harness.runner.Run(runCtx, RunSpec{
-		Directory: config.DaFitDirectory, ReportDirectory: config.ReportDirectory,
-		PythonExecutable: config.PythonExecutable, ADBExecutable: config.ADBExecutable,
-		ADBEndpoint: device.ADBEndpoint, AppiumUDID: appiumUDID,
-		AppiumEndpoint: device.AppiumEndpoint, CaseID: config.CaseID,
-	})
+	var runCtx context.Context
+	var cancelRun context.CancelFunc
+	if config.RunTimeout > 0 {
+		runCtx, cancelRun = context.WithTimeout(ctx, config.RunTimeout)
+	} else {
+		runCtx, cancelRun = context.WithCancel(ctx)
+	}
+	renewCtx, cancelRenew := context.WithCancel(runCtx)
+	renewErrors := make(chan error, 1)
+	renewStopped := make(chan struct{})
+	go func() {
+		defer close(renewStopped)
+		if keepAliveErr := harness.keepAlive(renewCtx, config, reservation.ID); keepAliveErr != nil {
+			renewErrors <- keepAliveErr
+		}
+	}()
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- harness.runner.Run(runCtx, RunSpec{
+			Directory: config.DaFitDirectory, ReportDirectory: config.ReportDirectory,
+			PythonExecutable: config.PythonExecutable, ADBExecutable: config.ADBExecutable,
+			ADBEndpoint: device.ADBEndpoint, AppiumUDID: appiumUDID,
+			AppiumEndpoint: device.AppiumEndpoint, CaseID: config.CaseID,
+		})
+	}()
+	var runErr error
+	select {
+	case runErr = <-runDone:
+	case renewErr := <-renewErrors:
+		runErr = fmt.Errorf("预约自动续约失败：%w", renewErr)
+		cancelRun()
+		if stoppedRunErr := <-runDone; stoppedRunErr != nil {
+			runErr = errors.Join(runErr, stoppedRunErr)
+		}
+	case <-runCtx.Done():
+		cancelRun()
+		runErr = <-runDone
+	}
+	cancelRenew()
+	<-renewStopped
+	select {
+	case renewErr := <-renewErrors:
+		runErr = errors.Join(runErr, fmt.Errorf("预约自动续约失败：%w", renewErr))
+	default:
+	}
 	cancelRun()
 	result.ReportHTML = filepath.Join(config.ReportDirectory, "report.html")
 	result.ReportJSON = filepath.Join(config.ReportDirectory, "report.json")
 	var reportErr error
 	for _, path := range []string{result.ReportHTML, result.ReportJSON} {
 		if info, err := os.Stat(path); err != nil || info.IsDir() {
-			reportErr = errors.Join(reportErr, fmt.Errorf("expected DaFit report missing: %s", path))
+			reportErr = errors.Join(reportErr, fmt.Errorf("缺少预期的 DaFit 报告：%s", path))
 		}
 	}
 	if runErr != nil {
@@ -218,15 +257,15 @@ func (harness *Harness) waitActive(ctx context.Context, config Config, id string
 		switch reservation.Status {
 		case "active":
 			if reservation.DeviceID == "" {
-				return reservationView{}, errors.New("active reservation did not contain device_id")
+				return reservationView{}, errors.New("已激活预约未包含设备 ID")
 			}
 			return reservation, nil
 		case "failed", "released", "force_released", "expired":
-			return reservationView{}, fmt.Errorf("reservation entered terminal status %s", reservation.Status)
+			return reservationView{}, fmt.Errorf("预约已进入终态：%s", reservation.Status)
 		}
 		select {
 		case <-ctx.Done():
-			return reservationView{}, fmt.Errorf("wait for active reservation: %w", ctx.Err())
+			return reservationView{}, fmt.Errorf("等待预约激活失败：%w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -238,16 +277,45 @@ func (harness *Harness) getDevice(ctx context.Context, config Config, id string)
 	return device, err
 }
 
+func (harness *Harness) keepAlive(ctx context.Context, config Config, id string) error {
+	interval := config.LeaseRenewInterval
+	if interval <= 0 {
+		interval = time.Duration(config.LeaseSeconds) * time.Second / 3
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for counter := 1; ; counter++ {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			var extended reservationView
+			key := fmt.Sprintf("dafit-extend-%s-%d", config.OwnerID, counter)
+			if err := harness.request(ctx, config, http.MethodPost,
+				"/api/v1/device-reservations/"+url.PathEscape(id)+"/extensions", key,
+				map[string]any{"additional_seconds": config.LeaseSeconds}, &extended); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+			if extended.Status != "active" {
+				return fmt.Errorf("续约后预约状态异常：%s", extended.Status)
+			}
+		}
+	}
+}
+
 func (harness *Harness) release(ctx context.Context, config Config, id string) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		var released reservationView
 		err := harness.request(ctx, config, http.MethodPost, "/api/v1/device-reservations/"+url.PathEscape(id)+"/releases",
-			"dafit-release-"+config.OwnerID, map[string]any{"reason": "DaFit Harness finished or stopped"}, &released)
-		if err == nil || strings.Contains(err.Error(), "reservation not found") {
+			"dafit-release-"+config.OwnerID, map[string]any{"reason": "DaFit Harness 已运行结束或停止"}, &released)
+		if err == nil || strings.Contains(err.Error(), "NOT_FOUND") {
 			return nil
 		}
-		if !strings.Contains(err.Error(), "claim is in progress") || time.Now().After(deadline) {
+		if !strings.Contains(err.Error(), "CONFLICT") || time.Now().After(deadline) {
 			return err
 		}
 		select {
@@ -286,17 +354,17 @@ func (harness *Harness) request(ctx context.Context, config Config, method, path
 	defer response.Body.Close()
 	var envelope apiEnvelope
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&envelope); err != nil {
-		return fmt.Errorf("decode Device Farm response: %w", err)
+		return fmt.Errorf("解析设备农场响应失败：%w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || envelope.Error != nil {
 		if envelope.Error != nil {
-			return fmt.Errorf("Device Farm %s: %s", envelope.Error.Code, envelope.Error.Message)
+			return fmt.Errorf("设备农场 %s：%s", envelope.Error.Code, envelope.Error.Message)
 		}
-		return fmt.Errorf("Device Farm HTTP %d", response.StatusCode)
+		return fmt.Errorf("设备农场请求失败，HTTP 状态码：%d", response.StatusCode)
 	}
 	if target != nil {
 		if err := json.Unmarshal(envelope.Data, target); err != nil {
-			return fmt.Errorf("decode Device Farm data: %w", err)
+			return fmt.Errorf("解析设备农场数据失败：%w", err)
 		}
 	}
 	return nil
@@ -305,21 +373,21 @@ func (harness *Harness) request(ctx context.Context, config Config, method, path
 func validate(config Config) error {
 	parsed, err := url.Parse(strings.TrimSpace(config.ServerURL))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("server URL must be an absolute HTTP(S) URL without credentials, query or fragment")
+		return errors.New("服务地址必须是无凭据、查询参数和片段的绝对 HTTP(S) 地址")
 	}
 	if config.ServiceToken == "" || !identifierPattern.MatchString(config.PoolID) || !identifierPattern.MatchString(config.OwnerID) {
-		return errors.New("service token, pool ID and owner ID are required")
+		return errors.New("必须提供服务令牌、设备池 ID 和所有者 ID")
 	}
-	if config.LeaseSeconds < 60 || config.WaitTimeout <= 0 || config.PollInterval <= 0 || config.RunTimeout <= 0 {
-		return errors.New("lease and timeout values must be positive")
+	if config.LeaseSeconds < 60 || config.WaitTimeout <= 0 || config.PollInterval <= 0 || config.RunTimeout < 0 || config.LeaseRenewInterval < 0 {
+		return errors.New("租期、等待超时和轮询间隔必须为正数，运行超时不能为负数")
 	}
-	for name, value := range map[string]string{"DaFit directory": config.DaFitDirectory, "report directory": config.ReportDirectory} {
+	for name, value := range map[string]string{"DaFit 目录": config.DaFitDirectory, "报告目录": config.ReportDirectory} {
 		if !filepath.IsAbs(value) {
-			return fmt.Errorf("%s must be absolute", name)
+			return fmt.Errorf("%s 必须使用绝对路径", name)
 		}
 	}
 	if config.PythonExecutable == "" || config.ADBExecutable == "" || config.CaseID == "" {
-		return errors.New("python, adb and case ID are required")
+		return errors.New("必须提供 Python、ADB 和用例 ID")
 	}
 	return nil
 }

@@ -17,9 +17,12 @@ import (
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/config"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/database"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/domain"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/hostcommand"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/httpx"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/imagecatalog"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossession"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/iossimulator"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/management"
 	managementpostgres "github.com/Ad-Quanta/alcor-device-farm/internal/management/postgres"
 	farmmetrics "github.com/Ad-Quanta/alcor-device-farm/internal/metrics"
@@ -175,6 +178,24 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(t, environment.request(t, http.MethodGet, "/api/v1/devices", nil, serviceToken, ""), http.StatusOK)
+	updatedDeviceResponse := environment.request(t, http.MethodPatch, "/api/v1/devices/"+device.ID,
+		map[string]any{"name": "DaFit专项环境-Pixel9-01"}, serviceToken, "")
+	assertStatus(t, updatedDeviceResponse, http.StatusOK)
+	var updatedDevice management.Device
+	decodeData(t, updatedDeviceResponse, &updatedDevice)
+	if updatedDevice.Name != "DaFit专项环境-Pixel9-01" {
+		t.Fatalf("updated device name=%q", updatedDevice.Name)
+	}
+	assertStatus(t, environment.request(t, http.MethodPatch, "/api/v1/devices/"+device.ID,
+		map[string]any{"name": "x"}, serviceToken, ""), http.StatusBadRequest)
+	var nameAuditCount int
+	if err := environment.db.Pool().QueryRow(context.Background(), `SELECT count(*) FROM device_audit_events
+		WHERE resource_type='device' AND resource_id=$1 AND action='update_device_name'`, device.ID).Scan(&nameAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if nameAuditCount != 1 {
+		t.Fatalf("device name audit rows=%d", nameAuditCount)
+	}
 	assertPageTotal(t, environment.request(t, http.MethodGet,
 		"/api/v1/devices?lifecycle_status=ready&health_status=healthy", nil, serviceToken, ""), 1)
 	assertPageTotal(t, environment.request(t, http.MethodGet,
@@ -231,7 +252,15 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	if err != nil || len(schedulable) != 0 {
 		t.Fatalf("schedulable after quarantine = %d, error=%v", len(schedulable), err)
 	}
-	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-02"), http.StatusConflict)
+	quarantineRestart := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/restarts", reasonBody(), serviceToken, "device-restart-02")
+	assertStatus(t, quarantineRestart, http.StatusAccepted)
+	var recovering management.Device
+	decodeData(t, quarantineRestart, &recovering)
+	if recovering.LifecycleStatus != "provisioning" || recovering.HealthStatus != "unknown" {
+		t.Fatalf("queued quarantine restart device = %#v", recovering)
+	}
+	completeNextManagementCommand(t, environment, host.ID, "restart", true)
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/quarantines", reasonBody(), serviceToken, ""), http.StatusOK)
 	rebuildResponse := environment.request(t, http.MethodPost, "/api/v1/devices/"+device.ID+"/rebuilds", reasonBody(), serviceToken, "device-rebuild-01")
 	assertStatus(t, rebuildResponse, http.StatusAccepted)
 	var rebuilding management.Device
@@ -324,7 +353,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&auditedActions, &missingFields); err != nil {
 		t.Fatal(err)
 	}
-	if auditedActions != 6 || missingFields != 0 {
+	if auditedActions != 9 || missingFields != 0 {
 		t.Fatalf("device audit actions=%d missing fields=%d", auditedActions, missingFields)
 	}
 	var alcorActorActions int
@@ -341,7 +370,7 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 		Scan(&commandEvents); err != nil {
 		t.Fatal(err)
 	}
-	if commandEvents != 4 {
+	if commandEvents != 5 {
 		t.Fatalf("management command health events=%d", commandEvents)
 	}
 
@@ -379,6 +408,109 @@ func TestManagementAPICompleteMockFlow(t *testing.T) {
 	}
 }
 
+func TestIOSSimulatorStartAndStopOnlyQueueControlledHostCommands(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	ctx := context.Background()
+	hostID := "ios_host_lifecycle_0001"
+	readyID := "ios_device_ready_000001"
+	stoppedID := "ios_device_stopped_001"
+	unknownID := "ios_device_unknown_001"
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_hosts
+		(id,name,host_type,host_os,host_arch,status,draining,last_heartbeat_at)
+		VALUES($1,'iOS 生命周期宿主机','appium_device_farm_ios','macos','arm64','online',false,clock_timestamp())`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	for _, device := range []struct {
+		id, udid, lifecycle, health string
+		allowlisted                 bool
+	}{
+		{id: readyID, udid: "SIM-READY", lifecycle: "ready", health: "healthy", allowlisted: true},
+		{id: stoppedID, udid: "SIM-STOPPED", lifecycle: "stopped", health: "unknown", allowlisted: true},
+		{id: unknownID, udid: "SIM-UNKNOWN", lifecycle: "stopped", health: "unknown", allowlisted: false},
+	} {
+		capabilities, _ := json.Marshal(map[string]any{"platformName": "iOS", "allowlisted": device.allowlisted, "providerState": "Shutdown"})
+		if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
+			(id,host_id,platform,device_kind,provider_type,provider_ref,lifecycle_mode,serial,appium_endpoint,capabilities,lifecycle_status,health_status)
+			VALUES($1,$2,'ios','simulator','appium_device_farm_ios',$3,'rebuild',$3,'http://127.0.0.1:4723',$4,$5,$6)`,
+			device.id, hostID, device.udid, capabilities, device.lifecycle, device.health); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stopped := environment.request(t, http.MethodPost, "/api/v1/devices/"+readyID+"/stops",
+		map[string]any{"reason": "管理员停止 Simulator"}, serviceToken, "ios-simulator-stop-key")
+	assertStatus(t, stopped, http.StatusAccepted)
+	var stoppedDevice management.Device
+	decodeData(t, stopped, &stoppedDevice)
+	if stoppedDevice.LifecycleStatus != domain.DeviceStopped || stoppedDevice.HealthStatus != domain.HealthUnknown {
+		t.Fatalf("停止受理后的设备状态=%#v", stoppedDevice)
+	}
+	started := environment.request(t, http.MethodPost, "/api/v1/devices/"+stoppedID+"/starts",
+		map[string]any{"reason": "管理员启动 Simulator"}, serviceToken, "ios-simulator-start-key")
+	assertStatus(t, started, http.StatusAccepted)
+	var startedDevice management.Device
+	decodeData(t, started, &startedDevice)
+	if startedDevice.LifecycleStatus != domain.DeviceBooting || startedDevice.HealthStatus != domain.HealthUnknown {
+		t.Fatalf("启动受理后的设备状态=%#v", startedDevice)
+	}
+	replayed := environment.request(t, http.MethodPost, "/api/v1/devices/"+stoppedID+"/starts",
+		map[string]any{"reason": "管理员启动 Simulator"}, serviceToken, "ios-simulator-start-key")
+	assertStatus(t, replayed, http.StatusAccepted)
+
+	rejected := environment.request(t, http.MethodPost, "/api/v1/devices/"+unknownID+"/starts",
+		map[string]any{"reason": "尝试启动未知 Simulator"}, serviceToken, "ios-simulator-unknown-key")
+	assertStatus(t, rejected, http.StatusBadRequest)
+
+	claimed, err := environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 2})
+	if err != nil || len(claimed) != 2 {
+		t.Fatalf("领取 Simulator 生命周期命令=%#v 错误=%v", claimed, err)
+	}
+	for _, command := range claimed {
+		state, bootCompleted := "running", true
+		osReady := "passed"
+		if command.CommandType == "stop" {
+			state, bootCompleted, osReady = "stopped", false, "failed"
+		}
+		providerRef, _ := command.Payload["provider_ref"].(string)
+		result := map[string]any{
+			"platform": "ios", "device_kind": "simulator", "state": state, "generation": 1,
+			"connection": map[string]any{"serial": providerRef, "device_udid": providerRef, "provider_id": providerRef,
+				"adb_endpoint": "", "appium_endpoint": "http://127.0.0.1:4723", "appium_udid": providerRef},
+			"health": map[string]any{"online": true, "adb_online": false, "boot_completed": bootCompleted, "appium_healthy": true,
+				"components": map[string]string{"transport": "passed", "os_ready": osReady, "automation": "passed", "router": "passed", "remote_control": "unsupported"}},
+		}
+		if command.LeaseToken == nil {
+			t.Fatalf("命令 %s 没有租约", command.ID)
+		}
+		if _, err := environment.hostCommands.Complete(ctx, command.ID, hostcommand.CompletionInput{
+			LeaseToken: *command.LeaseToken, Attempt: command.Attempt, Status: "succeeded", Result: result,
+		}); err != nil {
+			t.Fatalf("完成 %s 命令失败：%v", command.CommandType, err)
+		}
+	}
+	readyAfterStart, err := environment.store.GetDevice(ctx, stoppedID)
+	if err != nil || readyAfterStart.LifecycleStatus != domain.DeviceReady || readyAfterStart.HealthStatus != domain.HealthHealthy {
+		t.Fatalf("启动完成后的设备=%#v 错误=%v", readyAfterStart, err)
+	}
+	stoppedAfterStop, err := environment.store.GetDevice(ctx, readyID)
+	if err != nil || stoppedAfterStop.LifecycleStatus != domain.DeviceStopped || stoppedAfterStop.HealthStatus != domain.HealthUnknown {
+		t.Fatalf("停止完成后的设备=%#v 错误=%v", stoppedAfterStop, err)
+	}
+
+	var commands, audits int
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_host_commands
+		WHERE host_id=$1 AND command_type IN ('start','stop') AND payload->>'operation_source'='management'`, hostID).Scan(&commands); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.db.Pool().QueryRow(ctx, `SELECT count(*) FROM device_audit_events
+		WHERE resource_id IN ($1,$2) AND action IN ('start_ios_simulator','stop_ios_simulator')`, readyID, stoppedID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if commands != 2 || audits != 2 {
+		t.Fatalf("受控命令数=%d 审计数=%d", commands, audits)
+	}
+}
+
 func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *testing.T) {
 	environment := newManagementEnvironment(t)
 	ctx := context.Background()
@@ -401,7 +533,9 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	}
 	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
 		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status,last_seen_at)
-		VALUES($1,$2,$3,'emulator','docker_emulator','provider-reimage-001','rebuild','serial-reimage-001','{"platformName":"Android"}','ready','healthy',clock_timestamp())`,
+		VALUES($1,$2,$3,'emulator','docker_emulator','provider-reimage-001','rebuild','serial-reimage-001',
+		'{"platformName":"Android","apiLevel":34,"abi":"x86_64","resolution":"720x1280","hardware_profile_id":"pixel_9"}',
+		'ready','healthy',clock_timestamp())`,
 		deviceID, hostID, oldImageID); err != nil {
 		t.Fatal(err)
 	}
@@ -418,6 +552,12 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
 		t.Fatalf("claim=%#v err=%v", commands, err)
 	}
+	targetCapabilities := commands[0].Payload["capabilities"].(map[string]any)
+	rollbackCapabilities := commands[0].Payload["rollback"].(map[string]any)["capabilities"].(map[string]any)
+	if targetCapabilities["apiLevel"] != float64(36) || targetCapabilities["resolution"] != "1080x2400" ||
+		targetCapabilities["hardware_profile_id"] != "pixel_9" || rollbackCapabilities["apiLevel"] != float64(34) {
+		t.Fatalf("target capabilities=%#v rollback capabilities=%#v", targetCapabilities, rollbackCapabilities)
+	}
 	result := map[string]any{"reimage_applied": true, "generation": 2,
 		"connection": map[string]any{"serial": "10.0.0.1:31001", "adb_endpoint": "10.0.0.1:31001", "appium_endpoint": "http://10.0.0.1:32001", "appium_udid": "emulator-5556"},
 		"health":     map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true}}
@@ -426,7 +566,8 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 		t.Fatal(err)
 	}
 	applied, err := environment.store.GetDevice(ctx, deviceID)
-	if err != nil || applied.ImageID == nil || *applied.ImageID != targetImageID || applied.ReimageStatus != "idle" || int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 8192 {
+	if err != nil || applied.ImageID == nil || *applied.ImageID != targetImageID || applied.ReimageStatus != "idle" ||
+		int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 8192 || applied.Capabilities["apiLevel"] != float64(36) {
 		t.Fatalf("applied=%#v err=%v", applied, err)
 	}
 
@@ -445,6 +586,124 @@ func TestDeviceReimageAppliesOnlyAfterSuccessAndKeepsOldConfigOnRollback(t *test
 	restored, err := environment.store.GetDevice(ctx, deviceID)
 	if err != nil || restored.ImageID == nil || *restored.ImageID != targetImageID || restored.ReimageStatus != "failed" || restored.ReimageError == nil || restored.LifecycleStatus != "ready" {
 		t.Fatalf("restored=%#v err=%v", restored, err)
+	}
+}
+
+func TestDeviceRuntimeProfileUpdateCommitsOnlyAfterSuccessAndReconcilesRollback(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	ctx := context.Background()
+	hostID, imageID, deviceID := "host_profile_update_001", "image_profile_update_01", "device_profile_update_1"
+	oldProfile := `{"container_cpu_cores":4,"container_memory_mb":5120,"guest_cpu_cores":4,"guest_memory_mb":4096,"data_disk_mb":4096,"width":1080,"height":2400,"density_dpi":420,"vm_heap_mb":512,"graphics":"auto"}`
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_hosts
+		(id,name,host_type,capacity,used_capacity,status,draining,last_heartbeat_at)
+		VALUES($1,'profile-update-host','docker_emulator',
+		'{"resource_model":"dynamic_v1","cpu_cores":16,"memory_total_mb":16384,"memory_available_mb":11000,"disk_total_mb":200000,"disk_available_mb":100000,"device_slots":2,"collected_at":"2099-01-01T00:00:00Z"}',
+		'{"cpu_cores":4,"memory_mb":5120,"data_disk_mb":4096,"device_slots":1}','online',false,clock_timestamp())`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO device_images
+		(id,name,docker_image,docker_digest,api_level,abi,resolution,resource_config,status)
+		VALUES($1,'android-profile','registry.example/alcor/android-emulator:api36',
+		'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',36,'x86_64','1080x2400',$2,'ready')`, imageID, oldProfile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.db.Pool().Exec(ctx, `INSERT INTO devices
+		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status,last_seen_at)
+		VALUES($1,$2,$3,'emulator','docker_emulator','provider-profile-update','rebuild','serial-profile-update',
+		'{"platformName":"Android","apiLevel":36,"appiumUdid":"emulator-5554"}','ready','healthy',clock_timestamp())`, deviceID, hostID, imageID); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidBody := map[string]any{"container_cpu_cores": 4, "container_memory_mb": 6144, "guest_cpu_cores": 4,
+		"guest_memory_mb": 4096, "graphics": "software", "reason": "不能通过无损入口修改图形模式"}
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", invalidBody, serviceToken, "profile-invalid-0001"), http.StatusBadRequest)
+
+	body := map[string]any{"container_cpu_cores": 4, "container_memory_mb": 6144, "guest_cpu_cores": 4,
+		"guest_memory_mb": 4096, "reason": "双设备并行时调整内存"}
+	response := environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0001")
+	assertStatus(t, response, http.StatusAccepted)
+	var pending management.Device
+	decodeData(t, response, &pending)
+	if pending.RuntimeProfileUpdateStatus != "pending" || pending.ReimageStatus != "idle" ||
+		int(pending.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 5120 ||
+		int(pending.PendingRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("pending update exposed target as effective: %#v", pending)
+	}
+	replay := environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0001")
+	assertStatus(t, replay, http.StatusAccepted)
+
+	commands, err := environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 2})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("claim=%#v err=%v", commands, err)
+	}
+	target := commands[0].Payload["runtime_profile"].(map[string]any)
+	rollback := commands[0].Payload["rollback"].(map[string]any)["runtime_profile"].(map[string]any)
+	if commands[0].CommandType != "restart" || commands[0].Payload["operation_kind"] != "runtime_profile_update" ||
+		int(target["container_memory_mb"].(float64)) != 6144 || int(target["data_disk_mb"].(float64)) != 4096 ||
+		int(rollback["container_memory_mb"].(float64)) != 5120 {
+		t.Fatalf("command=%#v", commands[0])
+	}
+	result := map[string]any{"runtime_profile_update_applied": true, "generation": 2,
+		"connection": map[string]any{"serial": "10.0.0.1:31001", "adb_endpoint": "10.0.0.1:31001", "appium_endpoint": "http://10.0.0.1:32001", "appium_udid": "emulator-5554"},
+		"health":     map[string]any{"online": true, "adb_online": true, "boot_completed": true, "appium_healthy": true}}
+	// Heartbeats may observe the old container disappearing before the Agent
+	// completes the replacement command. A successful result remains
+	// authoritative and must recover that transient quarantine atomically.
+	if _, err := environment.db.Pool().Exec(ctx, `UPDATE devices SET lifecycle_status='quarantined',health_status='unhealthy' WHERE id=$1`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "succeeded", Result: result}); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || applied.LifecycleStatus != "ready" || applied.HealthStatus != "unhealthy" ||
+		applied.RuntimeProfileUpdateStatus != "idle" || applied.PendingRuntimeProfile != nil ||
+		int(applied.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("applied=%#v err=%v", applied, err)
+	}
+
+	body["container_memory_mb"], body["guest_memory_mb"], body["reason"] = 7168, 5120, "验证目标失败后恢复旧规格"
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0002"), http.StatusAccepted)
+	commands, err = environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("rollback claim=%#v err=%v", commands, err)
+	}
+	result["runtime_profile_update_applied"], result["rollback_restored"] = false, true
+	if _, err := environment.db.Pool().Exec(ctx, `UPDATE devices SET lifecycle_status='ready',health_status='healthy' WHERE id=$1`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "failed", Result: result,
+		Error: &hostcommand.CompletionError{Code: "RUNTIME_PROFILE_TARGET_FAILED", Message: "target failed; old profile restored"}}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || restored.RuntimeProfileUpdateStatus != "failed" || restored.RuntimeProfileUpdateError == nil ||
+		restored.LifecycleStatus != "ready" || int(restored.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("restored=%#v err=%v", restored, err)
+	}
+
+	body["container_memory_mb"], body["reason"] = 8192, "验证目标和恢复都失败时隔离"
+	assertStatus(t, environment.request(t, http.MethodPost, "/api/v1/devices/"+deviceID+"/runtime-profile-updates", body, serviceToken, "profile-update-0003"), http.StatusAccepted)
+	commands, err = environment.hostCommands.Claim(ctx, hostID, hostcommand.ClaimInput{LeaseSeconds: 30, MaxCommands: 1})
+	if err != nil || len(commands) != 1 || commands[0].LeaseToken == nil {
+		t.Fatalf("failed rollback claim=%#v err=%v", commands, err)
+	}
+	result["rollback_restored"] = false
+	if _, err := environment.db.Pool().Exec(ctx, `UPDATE devices SET lifecycle_status='quarantined',health_status='unhealthy' WHERE id=$1`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.hostCommands.Complete(ctx, commands[0].ID, hostcommand.CompletionInput{LeaseToken: *commands[0].LeaseToken,
+		Attempt: commands[0].Attempt, Status: "failed", Result: result,
+		Error: &hostcommand.CompletionError{Code: "RUNTIME_PROFILE_ROLLBACK_FAILED", Message: "target and rollback failed"}}); err != nil {
+		t.Fatal(err)
+	}
+	quarantined, err := environment.store.GetDevice(ctx, deviceID)
+	if err != nil || quarantined.LifecycleStatus != "quarantined" || quarantined.HealthStatus != "unhealthy" ||
+		quarantined.RuntimeProfileUpdateStatus != "failed" || quarantined.PendingRuntimeProfile != nil ||
+		int(quarantined.EffectiveRuntimeProfile["container_memory_mb"].(float64)) != 6144 {
+		t.Fatalf("quarantined=%#v err=%v", quarantined, err)
 	}
 }
 
@@ -558,12 +817,14 @@ func TestEveryManagementRouteIsProtected(t *testing.T) {
 		{http.MethodPut, "/api/v1/device-pools/id/base-device"},
 		{http.MethodGet, "/api/v1/device-pools/id/images"}, {http.MethodPut, "/api/v1/device-pools/id/images/image-id"}, {http.MethodDelete, "/api/v1/device-pools/id/images/image-id"},
 		{http.MethodGet, "/api/v1/devices"}, {http.MethodGet, "/api/v1/devices/id"},
+		{http.MethodPost, "/api/v1/devices/id/starts"}, {http.MethodPost, "/api/v1/devices/id/stops"},
 		{http.MethodPost, "/api/v1/devices/id/restarts"}, {http.MethodPost, "/api/v1/devices/id/rebuilds"},
 		{http.MethodDelete, "/api/v1/devices/id"}, {http.MethodPost, "/api/v1/devices/id/quarantines"}, {http.MethodDelete, "/api/v1/devices/id/quarantines"},
 		{http.MethodGet, "/api/v1/device-reservations"}, {http.MethodPost, "/api/v1/device-reservations"},
 		{http.MethodGet, "/api/v1/device-reservations/id"},
 		{http.MethodPost, "/api/v1/device-reservations/id/extensions"},
 		{http.MethodPost, "/api/v1/device-reservations/id/releases"},
+		{http.MethodPost, "/api/v1/device-reservations/id/session-grants"},
 	}
 	for _, route := range routes {
 		assertStatus(t, environment.request(t, route.method, route.path, map[string]any{}, "", ""), http.StatusUnauthorized)
@@ -653,13 +914,17 @@ func newManagementEnvironment(t *testing.T, controllers ...reservation.STFContro
 	provider := providermock.New(providermock.Config{})
 	service := management.NewService(store, provider, generator)
 	reservationService := reservation.NewService(db, generator, controllers...)
+	iosSessions := iossession.New(db, agentToken)
+	iosSimulators := iossimulator.New(db, generator)
+	reservationService.SetIOSSessionController(iosSessions)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	healthService := reconcile.New(db, provider, nil, 3, 0, logger)
+	healthService := reconcile.New(db, provider, nil, 3, 0, 0, logger)
 	hostCommands := hostcommand.New(db)
 	imageCatalog := imagecatalog.New(db)
 	httpServer := httptest.NewServer(server.Handler(config.SecurityConfig{ServiceToken: serviceToken, AgentToken: agentToken}, logger, server.Services{
 		Management: service, Reservations: reservationService, Reconcile: healthService, HostCommands: hostCommands,
 		ImageCatalog: imageCatalog, Metrics: farmmetrics.New(db),
+		IOSSessions: iosSessions, IOSSimulators: iosSimulators,
 	}))
 	t.Cleanup(func() { httpServer.Close(); db.Close() })
 	return &managementEnvironment{db: db, store: store, service: service, server: httpServer, hostCommands: hostCommands, reservations: reservationService}

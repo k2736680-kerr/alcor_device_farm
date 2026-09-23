@@ -21,7 +21,7 @@ async function login(page: Page) {
   if (!password) throw new Error('DEVICE_FARM_E2E_PASSWORD is required for DF-031 E3')
   if (hstsSeedURL) await page.goto(hstsSeedURL)
   await page.goto(sessionBootstrapOrigin ? `${sessionBootstrapOrigin}/console/` : '/console/')
-  await page.getByLabel('用户 ID').fill(userID)
+  await page.getByLabel('用户账号').fill(userID)
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: /登\s*录/ }).click()
   await expect(page.getByRole('link', { name: '设备', exact: true }).first()).toBeVisible()

@@ -70,7 +70,7 @@ func (handler *hostCommandHandler) available(writer http.ResponseWriter, request
 	if handler.service != nil {
 		return true
 	}
-	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "host command service is not configured", Retryable: true})
+	httpx.WriteError(writer, request, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVICE_UNAVAILABLE", Message: "宿主机命令服务尚未配置", Retryable: true})
 	return false
 }
 
@@ -89,6 +89,6 @@ func (handler *hostCommandHandler) write(writer http.ResponseWriter, request *ht
 	case errors.Is(err, hostcommand.ErrDeviceIdentityConflict):
 		httpx.WriteError(writer, request, http.StatusConflict, httpx.APIError{Code: "DEVICE_IDENTITY_CONFLICT", Message: err.Error()})
 	default:
-		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "internal server error"})
+		httpx.WriteError(writer, request, http.StatusInternalServerError, httpx.APIError{Code: "INTERNAL_ERROR", Message: "服务器内部错误"})
 	}
 }
