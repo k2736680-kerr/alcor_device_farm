@@ -29,28 +29,13 @@ type CapacityUnavailableError struct {
 func (value *CapacityUnavailableError) Error() string { return capacity.ChineseMessage(value.Result) }
 func (value *CapacityUnavailableError) Unwrap() error { return ErrNoCapacity }
 
-// Long-lived devices keep their registered capacity slot until an explicit
-// delete completes. Health isolation stops scheduling but must never create a
-// replacement that would hide the original device or discard its data.
+// Provider resources keep their registered capacity slot until an explicit
+// delete completes. This prevents replacement creation while a failed cleanup
+// could still leave a real emulator consuming host capacity.
 const slotOccupyingDevicePredicate = `d.lifecycle_status<>'deleted'`
 
-// A create placeholder has never become a usable long-lived device. These
-// rows may be cleaned up after the create command exhausts its retries so
-// they cannot permanently block on-demand capacity. Endpoint or observation
-// evidence deliberately excludes devices that have ever entered service.
-const failedCreatePlaceholderPredicate = `d.lifecycle_status='quarantined'
-	AND d.serial LIKE 'pending-%'
-	AND d.adb_endpoint IS NULL
-	AND d.appium_endpoint IS NULL
-	AND d.last_seen_at IS NULL
-	AND EXISTS (SELECT 1 FROM device_host_commands failed_create
-		WHERE failed_create.payload->>'device_id'=d.id
-		AND failed_create.command_type='create'
-		AND failed_create.status IN ('failed','timed_out'))
-	AND NOT EXISTS (SELECT 1 FROM device_host_commands successful_create
-		WHERE successful_create.payload->>'device_id'=d.id
-		AND successful_create.command_type='create'
-		AND successful_create.status='succeeded')`
+const failedCreateCleanupSource = "warm_pool_failed_create_cleanup"
+const quarantinedCleanupSource = "warm_pool_quarantined_cleanup"
 
 type Result struct {
 	Configurations       int
@@ -542,10 +527,10 @@ type scaleDownDevice struct {
 func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Result, error) {
 	rows, err := controller.db.Pool().Query(ctx, `SELECT DISTINCT payload->>'device_id'
 		FROM device_host_commands WHERE command_type='delete'
-		AND payload->>'operation_source'='warm_pool_scale_down'
+		AND payload->>'operation_source' IN ('warm_pool_scale_down',$1,$2)
 		AND status IN ('succeeded','failed','timed_out','canceled')
 		AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
-		ORDER BY payload->>'device_id'`)
+		ORDER BY payload->>'device_id'`, failedCreateCleanupSource, quarantinedCleanupSource)
 	if err != nil {
 		return Result{}, err
 	}
@@ -566,16 +551,16 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 	result := Result{}
 	for _, deviceID := range deviceIDs {
 		err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
-			var commandID string
+			var commandID, operationSource string
 			var status domain.CommandStatus
 			var commandResult []byte
 			var errorCode *string
-			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code
+			if err := tx.QueryRow(ctx, `SELECT id,status,result,error_code,payload->>'operation_source'
 				FROM device_host_commands
-				WHERE command_type='delete' AND payload->>'operation_source'='warm_pool_scale_down'
+				WHERE command_type='delete' AND payload->>'operation_source' IN ('warm_pool_scale_down',$2,$3)
 				AND payload->>'device_id'=$1 AND COALESCE(payload->>'scale_down_reconciled','false')<>'true'
-				ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, deviceID).
-				Scan(&commandID, &status, &commandResult, &errorCode); err != nil {
+				ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, deviceID, failedCreateCleanupSource, quarantinedCleanupSource).
+				Scan(&commandID, &status, &commandResult, &errorCode, &operationSource); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return nil
 				}
@@ -605,6 +590,11 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 				deleted = json.Unmarshal(commandResult, &value) == nil && value.Deleted
 			}
 			eventType, severity, reason := "warm_pool_scale_down_completed", "info", "automatic scale down removed emulator resources"
+			if operationSource == failedCreateCleanupSource {
+				eventType, reason = "warm_pool_failed_create_cleanup_completed", "failed create cleanup removed provider resources"
+			} else if operationSource == quarantinedCleanupSource {
+				eventType, reason = "warm_pool_quarantined_cleanup_completed", "quarantined emulator resources removed"
+			}
 			if deleted {
 				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 				if err != nil {
@@ -619,6 +609,29 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 					adb_endpoint=NULL,appium_endpoint=NULL,stf_serial=NULL,updated_at=$3 WHERE id=$1`, deviceID, reason, now); err != nil {
 					return err
 				}
+				if operationSource == failedCreateCleanupSource || operationSource == quarantinedCleanupSource {
+					if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$2
+						WHERE device_id=$1 AND enabled`, deviceID, now); err != nil {
+						return err
+					}
+					if _, err := tx.Exec(ctx, `UPDATE device_pools SET base_device_id=NULL,updated_at=$2
+						WHERE base_device_id=$1`, deviceID, now); err != nil {
+						return err
+					}
+					if operationSource == failedCreateCleanupSource {
+						if _, err := tx.Exec(ctx, `UPDATE device_provisioning_jobs
+						SET status='failed',error_stage='device_creation',error_code='EMULATOR_CREATE_FAILED',updated_at=$2
+						WHERE device_id=$1 AND status NOT IN ('ready','failed')`, deviceID, now); err != nil {
+							return err
+						}
+						if _, err := tx.Exec(ctx, `UPDATE device_pools p SET total_target=GREATEST(p.total_target-1,0),updated_at=$2
+						WHERE p.id=(SELECT failed_create.payload->>'pool_id' FROM device_host_commands failed_create
+							WHERE failed_create.command_type='create' AND failed_create.payload->>'device_id'=$1
+							AND failed_create.payload ? 'provisioning_key' ORDER BY failed_create.created_at DESC LIMIT 1)`, deviceID, now); err != nil {
+							return err
+						}
+					}
+				}
 				result.DeletesCompleted++
 			} else {
 				code := "EMULATOR_DELETE_FAILED"
@@ -627,6 +640,9 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 				}
 				reason = code + ": automatic scale down could not remove emulator resources"
 				eventType, severity = "warm_pool_scale_down_failed", "error"
+				if operationSource == failedCreateCleanupSource {
+					eventType = "warm_pool_failed_create_cleanup_failed"
+				}
 				aggregate, err := domain.RestoreDevice(deviceID, lifecycle, health)
 				if err != nil {
 					return err
@@ -701,9 +717,7 @@ func (controller *Controller) queueScaleDown(
 				WHERE active_command.payload->>'device_id'=d.id AND active_command.status IN ('pending','leased'))
 			AND NOT EXISTS (SELECT 1 FROM device_pool_devices shared_membership
 				WHERE shared_membership.device_id=d.id AND shared_membership.enabled AND shared_membership.pool_id<>$1)
-			ORDER BY CASE WHEN %s THEN 0 ELSE 1 END,
-				d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate,
-			failedCreatePlaceholderPredicate),
+			ORDER BY d.created_at,d.id FOR UPDATE OF d,pd SKIP LOCKED LIMIT 1`, slotOccupyingDevicePredicate),
 			poolID, platform, target).Scan(&current.ID, &current.HostID, &current.Platform, &current.DeviceKind,
 			&current.ProviderType, &current.ImageID, &current.ProviderRef, &current.Lifecycle,
 			&current.Health, &current.HasActiveUse, &current.HasCommand, &current.Shared)
@@ -1267,25 +1281,36 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		}
 		result.DevicesReady = ready
 		result.DevicesFailed = invalid
-		failed, err := controller.quarantineFailedCreates(ctx, tx, poolID)
+		quarantinedQueued, err := controller.queueQuarantinedCleanup(ctx, tx, poolID)
+		if err != nil {
+			return err
+		}
+		result.DeletesQueued += quarantinedQueued
+		if quarantinedQueued > 0 {
+			return nil
+		}
+		failed, cleanupQueued, err := controller.cleanupFailedCreates(ctx, tx, poolID)
 		if err != nil {
 			return err
 		}
 		result.DevicesFailed += failed
+		result.DeletesQueued += cleanupQueued
+		if cleanupQueued > 0 {
+			return nil
+		}
 		backoff, err := creationBackoff(ctx, tx, poolID)
 		if err != nil {
 			return err
 		}
-		var activeInstances, readyOrCreating, defaultReadyOrCreating, failedCreateInstances int
+		var activeInstances, readyOrCreating, defaultReadyOrCreating int
 		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT
 			count(*) FILTER (WHERE %s),
 			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready')),
-			count(*) FILTER (WHERE d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting','ready')),
-			count(*) FILTER (WHERE %s)
+			count(*) FILTER (WHERE d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting','ready'))
 			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
 			JOIN device_hosts h ON h.id=d.host_id
 			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
-			slotOccupyingDevicePredicate, failedCreatePlaceholderPredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating, &failedCreateInstances); err != nil {
+			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating); err != nil {
 			return err
 		}
 		var pendingDemand, activeDemand int
@@ -1304,21 +1329,6 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		// pool and image limits.
 		demandTarget := min(activeDemand+pendingDemand, min(maxConcurrency, imageMaxInstances))
 		keepInstances := max(totalTarget, demandTarget)
-		// A failed create leaves a quarantined placeholder behind. It still
-		// represents provider capacity until deletion completes, but must not
-		// permanently satisfy demand for a usable instance. Devices that were
-		// created successfully and quarantined later remain untouched.
-		if failedCreateInstances > 0 && readyOrCreating < keepInstances {
-			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances,
-				min(failedCreateInstances, keepInstances-readyOrCreating))
-			if err != nil {
-				return err
-			}
-			result.DeletesQueued += queued
-			if queued > 0 {
-				return nil
-			}
-		}
 		if activeInstances > keepInstances {
 			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, activeInstances-keepInstances)
 			if err != nil {
@@ -1499,7 +1509,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, poolID, deviceID); err != nil {
 		return "", "", err
 	}
-	payloadMap := map[string]any{"device_id": deviceID, "image_id": imageID, "provider_ref": providerRef,
+	payloadMap := map[string]any{"device_id": deviceID, "pool_id": poolID, "image_id": imageID, "provider_ref": providerRef,
 		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities, "runtime_profile": profile.Map()}
 	if provisioningKey != "" {
 		payloadMap["provisioning_key"] = provisioningKey
@@ -1647,25 +1657,29 @@ func mapValue(values map[string]any, key string) map[string]any {
 	return nil
 }
 
-func (controller *Controller) quarantineFailedCreates(ctx context.Context, tx pgx.Tx, poolID string) (int, error) {
-	rows, err := tx.Query(ctx, `SELECT d.id,d.lifecycle_status,d.health_status
+func (controller *Controller) queueQuarantinedCleanup(ctx context.Context, tx pgx.Tx, poolID string) (int, error) {
+	rows, err := tx.Query(ctx, `SELECT d.id,d.host_id,d.provider_ref,d.image_id
 		FROM devices d JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
-		WHERE pd.pool_id=$1 AND d.lifecycle_status='provisioning'
-		AND EXISTS (SELECT 1 FROM device_host_commands c WHERE c.command_type='create'
-			AND c.payload->>'device_id'=d.id AND c.status IN ('failed','timed_out'))
-		FOR UPDATE OF d`, poolID)
+		WHERE pd.pool_id=$1 AND d.platform='android' AND d.device_kind='emulator'
+		AND d.provider_type='docker_emulator' AND d.lifecycle_status='quarantined'
+		AND d.health_status IN ('unhealthy','degraded')
+		AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
+		AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands cleanup WHERE cleanup.command_type='delete'
+			AND cleanup.payload->>'device_id'=d.id AND cleanup.payload->>'operation_source' IN ($2,$3))
+		FOR UPDATE OF d`, poolID, failedCreateCleanupSource, quarantinedCleanupSource)
 	if err != nil {
 		return 0, err
 	}
-	type failedDevice struct {
-		id        string
-		lifecycle domain.DeviceLifecycleStatus
-		health    domain.HealthStatus
+	type quarantinedDevice struct {
+		id, hostID, providerRef string
+		imageID                 *string
 	}
-	var devices []failedDevice
+	var devices []quarantinedDevice
 	for rows.Next() {
-		var device failedDevice
-		if err := rows.Scan(&device.id, &device.lifecycle, &device.health); err != nil {
+		var device quarantinedDevice
+		if err := rows.Scan(&device.id, &device.hostID, &device.providerRef, &device.imageID); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -1676,40 +1690,115 @@ func (controller *Controller) quarantineFailedCreates(ctx context.Context, tx pg
 		return 0, err
 	}
 	rows.Close()
+	queued := 0
+	for _, device := range devices {
+		commandID, err := controller.newID()
+		if err != nil {
+			return queued, err
+		}
+		payloadValues := map[string]any{"operation_source": quarantinedCleanupSource,
+			"device_id": device.id, "pool_id": poolID, "platform": "android",
+			"device_kind": "emulator", "provider_type": "docker_emulator", "provider_ref": device.providerRef}
+		if device.imageID != nil {
+			payloadValues["image_id"] = *device.imageID
+		}
+		payload, err := json.Marshal(payloadValues)
+		if err != nil {
+			return queued, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
+			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+			VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`, commandID, device.hostID, payload,
+			"quarantined-cleanup-"+commandID); err != nil {
+			return queued, err
+		}
+		queued++
+	}
+	return queued, nil
+}
+
+func (controller *Controller) cleanupFailedCreates(ctx context.Context, tx pgx.Tx, poolID string) (int, int, error) {
+	rows, err := tx.Query(ctx, `SELECT d.id
+		FROM devices d JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
+		WHERE pd.pool_id=$1 AND d.lifecycle_status IN ('provisioning','quarantined')
+		AND d.serial LIKE 'pending-%' AND d.adb_endpoint IS NULL AND d.appium_endpoint IS NULL AND d.last_seen_at IS NULL
+		AND EXISTS (SELECT 1 FROM device_host_commands c WHERE c.command_type='create'
+			AND c.payload->>'device_id'=d.id AND c.status IN ('failed','timed_out'))
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands succeeded WHERE succeeded.command_type='create'
+			AND succeeded.payload->>'device_id'=d.id AND succeeded.status='succeeded')
+		AND NOT EXISTS (SELECT 1 FROM device_host_commands cleanup WHERE cleanup.command_type='delete'
+			AND cleanup.payload->>'device_id'=d.id AND cleanup.payload->>'operation_source'=$2)
+		FOR UPDATE OF d`, poolID, failedCreateCleanupSource)
+	if err != nil {
+		return 0, 0, err
+	}
+	type failedDevice struct {
+		id string
+	}
+	var devices []failedDevice
+	for rows.Next() {
+		var device failedDevice
+		if err := rows.Scan(&device.id); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		devices = append(devices, device)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, err
+	}
+	rows.Close()
+	queued := 0
 	for _, current := range devices {
 		now, err := database.ClockNow(ctx, tx)
 		if err != nil {
-			return 0, err
+			return 0, queued, err
 		}
-		aggregate, err := domain.RestoreDevice(current.id, current.lifecycle, current.health)
+		commandID, err := controller.newID()
 		if err != nil {
-			return 0, err
+			return 0, queued, err
 		}
-		if err := aggregate.Transition(domain.DeviceQuarantined, "emulator create command exhausted retries", now); err != nil {
-			return 0, err
+		var hostID, providerRef string
+		var imageID *string
+		if err := tx.QueryRow(ctx, `SELECT host_id,provider_ref,image_id FROM devices WHERE id=$1`, current.id).
+			Scan(&hostID, &providerRef, &imageID); err != nil {
+			return 0, queued, err
 		}
-		if aggregate.Health() != domain.HealthUnhealthy {
-			if err := aggregate.UpdateHealth(domain.HealthUnhealthy, "emulator create command exhausted retries", now); err != nil {
-				return 0, err
-			}
+		payloadValues := map[string]any{"operation_source": failedCreateCleanupSource,
+			"device_id": current.id, "pool_id": poolID, "platform": "android",
+			"device_kind": "emulator", "provider_type": "docker_emulator", "provider_ref": providerRef}
+		if imageID != nil {
+			payloadValues["image_id"] = *imageID
 		}
-		if _, err := tx.Exec(ctx, `UPDATE devices SET lifecycle_status=$2,health_status=$3,
-			health_reason='emulator create command exhausted retries',consecutive_failures=consecutive_failures+1,updated_at=$4 WHERE id=$1`,
-			current.id, aggregate.Lifecycle(), aggregate.Health(), now); err != nil {
-			return 0, err
+		payload, err := json.Marshal(payloadValues)
+		if err != nil {
+			return 0, queued, err
+		}
+		hash := sha256.Sum256([]byte(poolID + "\x00" + current.id))
+		if _, err := tx.Exec(ctx, `INSERT INTO device_host_commands
+			(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
+			VALUES($1,$2,'delete',$3::jsonb,'pending',3,$4)`,
+			commandID, hostID, payload, "failed-create-cleanup-"+hex.EncodeToString(hash[:16])); err != nil {
+			return 0, queued, err
+		}
+		queued++
+		if _, err := tx.Exec(ctx, `UPDATE devices SET
+			health_reason='emulator create failed; cleanup queued',updated_at=$2 WHERE id=$1`, current.id, now); err != nil {
+			return 0, queued, err
 		}
 		eventID, err := controller.newID()
 		if err != nil {
-			return 0, err
+			return 0, queued, err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_health_events
 			(id,device_id,source,event_type,severity,reason,payload,observed_at)
-			VALUES($1,$2,'reconciler','warm_pool_create_failed','error','emulator create command exhausted retries','{}',$3)`,
-			eventID, current.id, now); err != nil {
-			return 0, err
+			VALUES($1,$2,'reconciler','warm_pool_create_failed','error','emulator create failed; cleanup queued',
+			jsonb_build_object('cleanup_command_id',$3::text),$4)`, eventID, current.id, commandID, now); err != nil {
+			return 0, queued, err
 		}
 	}
-	return len(devices), nil
+	return len(devices), queued, nil
 }
 
 func creationBackoff(ctx context.Context, tx pgx.Tx, poolID string) (bool, error) {
@@ -1719,6 +1808,7 @@ func creationBackoff(ctx context.Context, tx pgx.Tx, poolID string) (bool, error
 		JOIN devices d ON d.id=c.payload->>'device_id'
 		JOIN device_pool_devices pd ON pd.device_id=d.id AND pd.enabled
 		WHERE pd.pool_id=$1 AND c.command_type='create'
+		AND d.lifecycle_status<>'deleted'
 		AND c.status IN ('failed','timed_out') AND c.completed_at>clock_timestamp()-interval '1 hour'`, poolID).
 		Scan(&failures, &lastFailure)
 	if err != nil || failures == 0 || lastFailure == nil {
