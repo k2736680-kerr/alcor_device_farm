@@ -30,8 +30,8 @@ VALUES ('pool_e2e00000000000001','e2e-pool',1800,7200,1,'active');
 INSERT INTO device_pool_images (pool_id,image_id,min_ready,max_instances,enabled)
 VALUES ('pool_e2e00000000000001','image_e2e0000000000001',0,1,true);
 
-INSERT INTO devices (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,capabilities,lifecycle_status,health_status,consecutive_failures)
-VALUES ('device_e2e000000000001','host_e2e00000000000001','image_e2e0000000000001','emulator','docker_emulator','emulator-5554','rebuild','emulator-5554','emulator-5554','{}','ready','healthy',0);
+INSERT INTO devices (id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,stf_serial,adb_endpoint,appium_endpoint,capabilities,lifecycle_status,health_status,consecutive_failures)
+VALUES ('device_e2e000000000001','host_e2e00000000000001','image_e2e0000000000001','emulator','docker_emulator','emulator-5554','rebuild','emulator-5554','emulator-5554',NULL,'http://127.0.0.1:4723','{"appiumUdid":"emulator-5554"}','ready','healthy',0);
 
 INSERT INTO device_pool_devices (pool_id,device_id,enabled)
 VALUES ('pool_e2e00000000000001','device_e2e000000000001',true);
