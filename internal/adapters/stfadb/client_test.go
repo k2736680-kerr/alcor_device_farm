@@ -31,15 +31,15 @@ func (runner *fakeRunner) Run(_ context.Context, _ string, args ...string) (stri
 }
 
 func TestRegisterUsesExistingADBClientAndAcceptsIdempotentResponse(t *testing.T) {
-	runner := &fakeRunner{outputs: []string{"already connected to 10.0.30.171:32799"}}
+	runner := &fakeRunner{outputs: []string{"already connected to 10.0.20.56:32799"}}
 	client, err := New(Config{Binary: "adb", ServerAddress: "127.0.0.1:5038", Attempts: 1, runner: runner})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Register(context.Background(), "10.0.30.171:32799"); err != nil {
+	if err := client.Register(context.Background(), "10.0.20.56:32799"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-H", "127.0.0.1", "-P", "5038", "connect", "10.0.30.171:32799"}
+	want := []string{"-H", "127.0.0.1", "-P", "5038", "connect", "10.0.20.56:32799"}
 	if !reflect.DeepEqual(runner.args, want) {
 		t.Fatalf("args=%v", runner.args)
 	}
@@ -47,17 +47,17 @@ func TestRegisterUsesExistingADBClientAndAcceptsIdempotentResponse(t *testing.T)
 
 func TestRegisterRetriesAndRejectsUnsafeServerAddress(t *testing.T) {
 	runner := &fakeRunner{
-		outputs: []string{"", "connected to 10.0.30.171:32799"},
+		outputs: []string{"", "connected to 10.0.20.56:32799"},
 		errors:  []error{errors.New("temporary failure")},
 	}
 	client, err := New(Config{ServerAddress: "localhost:5038", Attempts: 2, RetryDelay: time.Millisecond, runner: runner})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Register(context.Background(), "10.0.30.171:32799"); err != nil || runner.attempts != 2 {
+	if err := client.Register(context.Background(), "10.0.20.56:32799"); err != nil || runner.attempts != 2 {
 		t.Fatalf("attempts=%d error=%v", runner.attempts, err)
 	}
-	for _, value := range []string{"", "10.0.30.171:5038", "127.0.0.1:0", "127.0.0.1:70000"} {
+	for _, value := range []string{"", "10.0.20.56:5038", "127.0.0.1:0", "127.0.0.1:70000"} {
 		if _, err := New(Config{ServerAddress: value}); err == nil {
 			t.Fatalf("unsafe server address %q accepted", value)
 		}

@@ -126,7 +126,7 @@ cat <<'NEXT'
      total_target : 1        # 内存实测只能稳挂 1 台
      min_ready    : 1
      base_device_id   : 需先在 55 上创建一台模板设备
-     default_image_id : 复用 android-10.0.30.171 池的镜像
+     default_image_id : 复用 android-10.0.20.56 池的镜像
 
 NEXT
 echo "DONE"

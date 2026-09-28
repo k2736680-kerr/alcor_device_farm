@@ -54,4 +54,4 @@ for path in / /simulators.json; do
 done
 echo "iOS TLS gateway rejects unauthenticated requests"
 
-echo "iOS predeployment checks passed; no Agent, NPS, database or 171 service was changed"
+echo "iOS predeployment checks passed; no Agent, NPS, database or worker-06 service was changed"

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # 在 STF 宿主机上安装「远程设备汇入」systemd timer（ADR-0037 决策 2）。
 #
-# 适用：运行着本仓库 deploy/stf 这一套 STF 的 Linux 宿主机（当前是 10.0.30.171）。
+# 适用：运行着本仓库 deploy/stf 这一套 STF 的 Linux 宿主机（当前是 10.0.20.56，主机名 worker-06）。
 # 作用：让该宿主机的 STF ADB server 周期性地把其它宿主机的 Android 设备纳入进来，
 #       从而让远程宿主机的设备也能通过 STF 被看到和远控。
 #

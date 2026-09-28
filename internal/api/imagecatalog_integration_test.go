@@ -70,7 +70,7 @@ func TestOfficialCatalogBuildValidationAndDigestCacheFlow(t *testing.T) {
 	}
 	completeClaimedCatalogCommand(t, environment, validation, map[string]any{
 		"digest_verified": true, "ready": true, "stf_registered": true,
-		"adb_endpoint": "10.0.30.171:31000", "appium_endpoint": "http://10.0.30.171:32000",
+		"adb_endpoint": "10.0.20.56:31000", "appium_endpoint": "http://10.0.20.56:32000",
 	})
 	assertImageCount(t, environment, 1)
 
@@ -131,7 +131,7 @@ func TestOfficialCatalogBuildValidationAndDigestCacheFlow(t *testing.T) {
 	}
 
 	// ADR-0037: stf_registered 不再作为镜像可用性的门禁。多宿主机下宿主机无法注册到
-	// 171 的 STF，设备在 STF 中的可见性由 reconcile 的 stf_not_visible 独立把关。
+	// worker-06 的 STF，设备在 STF 中的可见性由 reconcile 的 stf_not_visible 独立把关。
 	// 因此 stf_registered=false 的验证结果应仍然创建镜像。
 	withoutSTFRegisteredBody := map[string]any{"catalog_id": catalogID, "runtime_profile": map[string]any{
 		"container_cpu_cores": 4, "container_memory_mb": 7168, "guest_cpu_cores": 4, "guest_memory_mb": 6144,
