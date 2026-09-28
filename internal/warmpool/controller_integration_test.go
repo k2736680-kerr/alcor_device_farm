@@ -206,6 +206,42 @@ func TestProvisionPhoneCreatesOneCommandAndRaisesPoolTarget(t *testing.T) {
 	assertCount(t, db, "SELECT total_target FROM device_pools WHERE id='pool_000000000000001'", 2)
 }
 
+func TestFailedExplicitProvisionCleanupRollsBackPoolTarget(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 0, 1, 2)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_pools SET total_target=0`); err != nil {
+		t.Fatal(err)
+	}
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	_, err := controller.Provision(context.Background(), warmpool.ProvisionInput{
+		PoolID: "pool_000000000000001", ImageID: "image_00000000000001", HardwareProfileID: "pixel_9",
+		RuntimeProfile: runtimeprofile.Default(), IdempotencyKey: "failed-explicit-provision-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, db, "SELECT total_target FROM device_pools WHERE id='pool_000000000000001'", 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET
+		status='failed',error_code='KVM_UNAVAILABLE',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='create'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("cleanup queue result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"deleted":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete'; UPDATE device_hosts SET used_capacity='{"device_slots":0}',updated_at=clock_timestamp()`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesCompleted != 1 || result.DevicesCreated != 0 {
+		t.Fatalf("cleanup completion result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT total_target FROM device_pools WHERE id='pool_000000000000001'", 0)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='deleted'", 1)
+}
+
 func TestCatalogProvisioningReusesCachedAndroidVersionAcrossRuntimeProfiles(t *testing.T) {
 	db := openTestDatabase(t)
 	if _, err := db.Pool().Exec(context.Background(), `TRUNCATE TABLE device_provisioning_jobs,device_image_preparations,android_system_image_catalog CASCADE`); err != nil {
@@ -827,9 +863,9 @@ func TestHistoricalCreateResultDoesNotCompleteActiveManagementRebuild(t *testing
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning' AND health_status='unknown'", 1)
 }
 
-func TestFailedCreateIsQuarantinedAndKeepsRegisteredSlot(t *testing.T) {
+func TestFailedCreateIsRemovedBeforeReplacement(t *testing.T) {
 	db := openTestDatabase(t)
-	seedWarmPool(t, db, "ready", 2, 2, 2)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
 	controller := warmpool.New(db, sequentialGenerator(), nil)
 	if _, err := controller.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -840,26 +876,64 @@ func TestFailedCreateIsQuarantinedAndKeepsRegisteredSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := controller.RunOnce(context.Background())
-	if err != nil || result.DevicesFailed != 1 || result.BackoffSkips != 0 || result.DevicesCreated != 0 {
+	if err != nil || result.DevicesFailed != 1 || result.DeletesQueued != 1 || result.BackoffSkips != 0 || result.DevicesCreated != 0 {
 		t.Fatalf("backoff result=%+v error=%v", result, err)
 	}
-	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined' AND health_status='unhealthy'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined'", 0)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning'", 1)
 	assertCount(t, db, "SELECT count(*) FROM device_health_events WHERE event_type='warm_pool_create_failed'", 1)
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 2)
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET created_at=clock_timestamp()-interval '20 minutes',
-		completed_at=clock_timestamp()-interval '10 minutes',updated_at=clock_timestamp() WHERE status='failed'`); err != nil {
+	assertCount(t, db, `SELECT count(*) FROM device_host_commands WHERE command_type='delete' AND status='pending'
+		AND payload->>'operation_source'='warm_pool_failed_create_cleanup'`, 1)
+	assertCount(t, db, "SELECT count(*) FROM device_pool_devices WHERE enabled", 1)
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DevicesCreated != 0 || result.DeletesQueued != 0 {
+		t.Fatalf("cleanup in flight result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices", 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"deleted":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete' AND status='pending'`); err != nil {
 		t.Fatal(err)
 	}
 	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 0 {
-		t.Fatalf("registered quarantine result=%+v error=%v", result, err)
+	if err != nil || result.DeletesCompleted != 1 || result.DevicesCreated != 1 {
+		t.Fatalf("failed create replacement result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 2)
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands", 2)
-	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status<>'quarantined'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='deleted'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning'", 1)
 }
 
-func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *testing.T) {
+func TestFailedCreateCleanupFailureDoesNotOverbuild(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET
+		status='failed',error_code='KVM_UNAVAILABLE',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='create'`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := controller.RunOnce(context.Background()); err != nil || result.DeletesQueued != 1 {
+		t.Fatalf("cleanup queue result=%+v error=%v", result, err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET
+		status='failed',error_code='EMULATOR_DELETE_FAILED',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete'`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesFailed != 1 || result.DevicesCreated != 0 {
+		t.Fatalf("cleanup failure result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined' AND health_status='unhealthy'", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_pool_devices WHERE enabled", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices", 1)
+}
+
+func TestQuarantinedEmulatorIsDeletedBeforeReplacement(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 1, 1, 1)
 	controller := warmpool.New(db, sequentialGenerator(), nil)
@@ -885,24 +959,52 @@ func TestQuarantinedEmulatorDiscoveredByLatestHeartbeatStillOccupiesPoolSlot(t *
 		t.Fatal(err)
 	}
 	result, err := controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 0 || result.CapacityMisses != 0 {
-		t.Fatalf("present quarantined result=%+v error=%v", result, err)
-	}
-	assertCount(t, db, "SELECT count(*) FROM devices", 1)
-
-	// A fresh Agent heartbeat that omits the device does not authorize destructive
-	// replacement. The long-lived Device keeps its registered capacity slot.
-	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET
-		last_heartbeat_at=last_heartbeat_at+interval '1 second',used_capacity='{"device_slots":0}',
-		updated_at=clock_timestamp()`); err != nil {
-		t.Fatal(err)
-	}
-	result, err = controller.RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 0 {
-		t.Fatalf("missing quarantined preservation result=%+v error=%v", result, err)
+	if err != nil || result.DevicesCreated != 0 || result.DeletesQueued != 1 {
+		t.Fatalf("quarantined cleanup queue result=%+v error=%v", result, err)
 	}
 	assertCount(t, db, "SELECT count(*) FROM devices", 1)
 	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='quarantined'", 1)
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"deleted":true}',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+		WHERE command_type='delete'; UPDATE device_hosts SET used_capacity='{"device_slots":0}',updated_at=clock_timestamp()`); err != nil {
+		t.Fatal(err)
+	}
+	result, err = controller.RunOnce(context.Background())
+	if err != nil || result.DeletesCompleted != 1 || result.DevicesCreated != 1 {
+		t.Fatalf("quarantined cleanup replacement result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='deleted'", 1)
+	assertCount(t, db, "SELECT count(*) FROM devices WHERE lifecycle_status='provisioning'", 1)
+}
+
+func TestQuarantinedEmulatorCleanupWaitsForActiveReservation(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "ready", 1, 1, 1)
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET status='succeeded',
+		result='{"generation":1,"connection":{"serial":"10.0.0.20:31000","adb_endpoint":"10.0.0.20:31000",
+		"appium_endpoint":"http://10.0.0.20:32000","appium_udid":"emulator-5554"},
+		"health":{"online":true,"adb_online":true,"boot_completed":true,"appium_healthy":true}}',
+		completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE command_type='create'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE devices SET lifecycle_status='quarantined',health_status='unhealthy';
+		INSERT INTO device_reservations(id,client_id,pool_id,device_id,owner_type,owner_id,lease_seconds,status,idempotency_key,starts_at,expires_at)
+		SELECT 'reservation_cleanup_guard','service','pool_000000000000001',id,'test_run','owner_cleanup_guard',600,'active',
+		'cleanup-guard-key',clock_timestamp(),clock_timestamp()+interval '10 minutes' FROM devices LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := controller.RunOnce(context.Background())
+	if err != nil || result.DeletesQueued != 0 || result.DevicesCreated != 0 {
+		t.Fatalf("active reservation cleanup guard result=%+v error=%v", result, err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='delete'", 0)
 }
 
 func TestLatestAgentUsedCapacityBlocksUnknownProviderOverbuild(t *testing.T) {

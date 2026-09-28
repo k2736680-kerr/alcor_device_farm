@@ -91,6 +91,7 @@
 | DF-067 | 控制台宿主机登记与 Agent 引导 | completed | DF-066、ADR-0034 |
 | DF-068 | 宿主机接入安装引导与预检 | completed | DF-067、ADR-0035 |
 | DF-069 | 控制台本地 E2E 启动与发布前回归 | completed | DF-068、ADR-0036 |
+| DF-070 | 失败创建占位补偿与按需池恢复 | in_progress | DF-069、ADR-0038 |
 
 ## 3. 阶段 A：工程和契约基础
 
@@ -671,6 +672,23 @@
 产出：固定版本 tunnel Dockerfile、iOS TLS Gateway 配置、Compose Secret 挂载模板、server.env 示例、只读验证脚本和 `docs/evidence/DF-066/`。
 
 验收：`docker compose config` 通过；Server 不再直接映射 18181；tunnel 使用 `network_mode: service:device-farm-server`、非 root、只读 Secret、无 Docker Socket；Baguette `simulators.json` 链路可通过真实 Mac 隧道访问；18181 TLS 握手和未认证 API 401 通过；关闭 iOS 开关后可回滚到 disabled；220、171 和 NPS 均未切换。通过后单独提交简洁中文 commit。
+
+### DF-070 失败创建占位补偿与按需池恢复
+
+状态：in_progress。
+
+实施：按 ADR-0038 严格识别从未进入服务的 Android create 失败占位。有真实预约需求且
+该占位阻塞容量时，复用 Warm Pool 的 delete Host Command、Host Agent 和 Provider
+Delete 完成补偿清理；成功后按既有按需容量规则补建。不得自动删除任何曾成功创建、
+出现 Endpoint、被 Host 观察到或因运行期健康问题隔离的长期设备。
+
+产出：ADR-0038、真实 PostgreSQL 集成测试、正式发布后的 Linux KVM 与 Alcor UI 全链路
+证据。
+
+验收：数据库测试证明失败占位只产生一个 delete Command，删除成功后只新增一个
+replacement，历史 Device 保留为 deleted；长期隔离设备不产生 delete 或 replacement。
+正式发布后从 Alcor UI 投递 APK，证明 Reservation 触发创建、任务独占、Runner 完成、
+Reservation 释放、Emulator 删除且 Pool 回到零；并发请求不双占且不突破 Pool 上限。
 
 ## 12. 单任务完成定义
 
