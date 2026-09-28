@@ -33,16 +33,46 @@ func TestWarmPoolSkipsHostThatProvedItLacksPoolImage(t *testing.T) {
 	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 0)
 }
 
-// 观测会过期：宿主后来装上镜像之后，不需要人工清记录就能重新参与调度。
-func TestWarmPoolRetriesHostOnceImageStateExpires(t *testing.T) {
+// 负向记录刻意不过期：宿主「没有这个镜像」不会自己变好，让它过期只会把注定失败
+// 的调度放回去重来一遍。这个回归点来自正式服实际故障：池 android-10.0.30.55 被
+// 正确排除 30 分钟后记录过期、又被放回自动调度，把一条真实运行卡到 PENDING_TIMEOUT。
+func TestWarmPoolKeepsNegativeImageStateForever(t *testing.T) {
 	db := openTestDatabase(t)
 	seedWarmPool(t, db, "ready", 1, 1, 1)
-	seedHostImageState(t, db, false, time.Now().Add(-31*time.Minute))
+	// 远超任何 TTL 的一条陈旧负向记录，仍然必须挡住调度。
+	seedHostImageState(t, db, false, time.Now().Add(-72*time.Hour))
 	result, err := warmpool.New(db, sequentialGenerator(), nil).RunOnce(context.Background())
-	if err != nil || result.DevicesCreated != 1 || result.CapacityMisses != 0 {
-		t.Fatalf("result=%+v error=%v", result, err)
+	if err != nil || result.DevicesCreated != 0 || result.CapacityMisses != 1 {
+		t.Fatalf("陈旧的负向记录仍然必须挡住调度，result=%+v error=%v", result, err)
 	}
-	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 1)
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='create'", 0)
+}
+
+// 运维重新验证镜像成功之后，该宿主的负向记录必须被清掉，池才会重新可用 —— 这是
+// 负向记录不随时间失效之后，让宿主恢复的唯一正道。
+func TestWarmPoolClearsNegativeImageStateAfterSuccessfulValidation(t *testing.T) {
+	db := openTestDatabase(t)
+	seedWarmPool(t, db, "validating", 1, 1, 1)
+	seedHostImageState(t, db, false, time.Now())
+	controller := warmpool.New(db, sequentialGenerator(), nil)
+	// 第一轮：把 validate_image 命令派发出去（校验路径必须忽略负向记录，否则死锁）。
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, db, "SELECT count(*) FROM device_host_commands WHERE command_type='validate_image'", 1)
+	// 宿主回报校验成功。
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_commands SET
+		status='succeeded', result='{"digest_verified":true,"ready":true}'::jsonb,
+		completed_at=clock_timestamp(), updated_at=clock_timestamp()
+		WHERE command_type='validate_image'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, db, `SELECT count(*) FROM device_host_image_states
+		WHERE host_id='host_000000000000001' AND image_id='image_00000000000001'
+		AND available=false`, 0)
 }
 
 // 正向证据（宿主机上确实有镜像）不能反过来挡住调度。

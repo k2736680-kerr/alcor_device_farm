@@ -1150,10 +1150,11 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 		var commandStatus domain.CommandStatus
 		var commandResult []byte
 		var errorCode *string
-		err := tx.QueryRow(ctx, `SELECT status,result,error_code FROM device_host_commands
+		var validatedHostID string
+		err := tx.QueryRow(ctx, `SELECT status,result,error_code,host_id FROM device_host_commands
 			WHERE command_type='validate_image' AND payload->>'image_id'=$1 AND created_at >= $2
 			ORDER BY created_at DESC,id DESC LIMIT 1`, imageID, requestedAt).
-			Scan(&commandStatus, &commandResult, &errorCode)
+			Scan(&commandStatus, &commandResult, &errorCode, &validatedHostID)
 		if err == nil {
 			switch commandStatus {
 			case domain.CommandPending, domain.CommandLeased:
@@ -1165,6 +1166,14 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 				}
 				if json.Unmarshal(commandResult, &value) == nil && value.DigestVerified && value.Ready {
 					if err := transitionImage(ctx, tx, imageID, status, domain.ImageReady, nil); err != nil {
+						return err
+					}
+					// 这台宿主刚刚证明它确实有这个镜像，那么它之前「没有该镜像」的
+					// 负向记录必须清掉。负向记录不随时间失效（见 domain.ImageStateTTL），
+					// 所以这是运维「重新验证镜像」之后让宿主重新可用的正道。
+					if _, err := tx.Exec(ctx, `DELETE FROM device_host_image_states
+						WHERE host_id=$1 AND image_id=$2 AND available=false`,
+						validatedHostID, imageID); err != nil {
 						return err
 					}
 					result.ValidationsCompleted++
@@ -1587,11 +1596,13 @@ func (controller *Controller) recordHostImageOutcomes(ctx context.Context, tx pg
 // IMAGE_DIGEST_MISMATCH, so queuing a create there is a guaranteed wasted cycle.
 // Image validation deliberately does NOT set it -- its whole purpose is to ask a
 // host, so excluding hosts that previously failed would deadlock validating.
+//
+// Negative rows are deliberately NOT filtered by age: "this host does not have
+// the image" cannot fix itself, and letting it lapse only re-queues a create that
+// is certain to fail (observed in production: a pool correctly excluded for 30
+// minutes came back and stalled a run to PENDING_TIMEOUT). Recovery comes from a
+// newer success overwriting the row, or from an operator re-validating the image.
 func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile, respectImageState bool) (string, error) {
-	now, err := database.ClockNow(ctx, tx)
-	if err != nil {
-		return "", err
-	}
 	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT h.id,h.capacity,h.used_capacity,h.last_heartbeat_at,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('profile',COALESCE(d.runtime_profile_override,d.capabilities),'image_id',d.image_id))
 			FROM devices d WHERE d.host_id=h.id AND %s),'[]'::jsonb),
@@ -1600,9 +1611,9 @@ func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested 
 		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.host_id=h.id AND c.command_type='validate_image'
 			AND c.status='succeeded' AND c.payload->>'image_id'=$1),
 		COALESCE((SELECT s.available FROM device_host_image_states s
-			WHERE s.host_id=h.id AND s.image_id=$1 AND s.observed_at >= $2),true)
+			WHERE s.host_id=h.id AND s.image_id=$1),true)
 		FROM device_hosts h WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')
-		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate), imageID, now.Add(-domain.ImageStateTTL))
+		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate), imageID)
 	if err != nil {
 		return "", err
 	}

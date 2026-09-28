@@ -91,13 +91,24 @@ func TestPoolProvisionabilityReflectsObservedImageAvailability(t *testing.T) {
 		t.Fatalf("从没试过的池应当说「还没建过」而不是断言缺镜像，得到 %q", reason)
 	}
 
-	// 观测过期：宿主后来装上镜像之后不需要人工清记录就能恢复。
+	// 负向记录不过期：一条非常陈旧的「这台宿主没有该镜像」仍然必须让池保持不可供给。
+	// 曾经用 TTL 让负向记录过期，结果池被正确排除 30 分钟后又被放回自动调度，把一条
+	// 真实运行卡到 PENDING_TIMEOUT。恢复只靠更新的成功证据，或运维显式重新验证镜像。
 	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_image_states
-		SET observed_at=clock_timestamp()-interval '31 minutes'`); err != nil {
+		SET observed_at=clock_timestamp()-interval '72 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	if provisionable, _ := readPool(t, db, "pool_000000000000001"); provisionable {
+		t.Fatal("陈旧的负向记录仍然必须让池保持不可供给")
+	}
+
+	// 出现一条更新的成功证据后，池必须恢复可供给（这是唯一的设计恢复路径）。
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_host_image_states
+		SET available=true, error_code=NULL, observed_at=clock_timestamp()`); err != nil {
 		t.Fatal(err)
 	}
 	if provisionable, _ := readPool(t, db, "pool_000000000000001"); !provisionable {
-		t.Fatal("过期观测之后应当恢复可供给")
+		t.Fatal("成功证据覆盖负向记录后应当恢复可供给")
 	}
 
 	// iOS 池不适用镜像规则，必须保持「没评估」。

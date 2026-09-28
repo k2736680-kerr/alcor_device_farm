@@ -902,14 +902,17 @@ func fillPoolProvisionability(ctx context.Context, query database.Querier, pools
 	if len(ids) == 0 {
 		return nil
 	}
+	// 负向记录不按时间过滤（见 domain.ImageStateTTL 的说明）：宿主「没有这个镜像」
+	// 不会自己变好，让它过期只会把注定失败的调度放回去重来一遍。恢复靠一条更新的
+	// 成功证据覆盖，或运维显式重新验证镜像。
 	rows, err := query.Query(ctx, `SELECT p.id,
 		(SELECT count(*) FROM device_hosts h WHERE h.status='online' AND NOT h.draining
 			AND h.host_type IN ('docker_emulator','hybrid')),
 		(SELECT count(*) FROM device_hosts h WHERE h.status='online' AND NOT h.draining
 			AND h.host_type IN ('docker_emulator','hybrid')
 			AND NOT EXISTS (SELECT 1 FROM device_host_image_states s WHERE s.host_id=h.id
-				AND s.image_id=p.default_image_id AND s.available=false AND s.observed_at >= $1))
-		FROM device_pools p WHERE p.id=ANY($2::text[])`, time.Now().UTC().Add(-domain.ImageStateTTL), ids)
+				AND s.image_id=p.default_image_id AND s.available=false))
+		FROM device_pools p WHERE p.id=ANY($1::text[])`, ids)
 	if err != nil {
 		return normalize(err)
 	}
