@@ -87,8 +87,8 @@ func TestPoolProvisionabilityReflectsObservedImageAvailability(t *testing.T) {
 	if provisionable {
 		t.Fatal("所有在线宿主都缺该镜像时应当报告不可供给")
 	}
-	if !strings.Contains(reason, "镜像") {
-		t.Fatalf("原因要能让人看懂，得到 %q", reason)
+	if !strings.Contains(reason, "没有在任何在线宿主上成功建过") {
+		t.Fatalf("从没试过的池应当说「还没建过」而不是断言缺镜像，得到 %q", reason)
 	}
 
 	// 观测过期：宿主后来装上镜像之后不需要人工清记录就能恢复。
@@ -110,6 +110,45 @@ func TestPoolProvisionabilityReflectsObservedImageAvailability(t *testing.T) {
 		if pool.ID == "pool_000000000000002" && pool.Provisionable != nil {
 			t.Fatalf("非 Android 池不该被判为不可供给，得到 %v", *pool.Provisionable)
 		}
+	}
+}
+
+func TestPoolProvisionabilityDistinguishesProvenMissFromNeverTried(t *testing.T) {
+	db := openProvisionabilityDatabase(t)
+	seedProvisionabilityPool(t, db)
+
+	// A) 该池在掉线宿主上有设备，在线宿主上一台也没有。不能笼统说「所有在线宿主
+	//    都没有该镜像」，那会让运维去查一个不存在的问题 —— 准确原因是「设备都在
+	//    掉线的宿主上」。在线宿主既然会被选来建这个池的设备，它当然也被证明过没有
+	//    该镜像（否则调度早就成功了），所以这个现场本来就带一条 available=false。
+	if _, err := db.Pool().Exec(context.Background(), `UPDATE device_hosts SET status='offline'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_hosts(id,name,host_type,capacity,status)
+		VALUES('host_000000000000002','prov-host-2','docker_emulator','{"device_slots":4}','online')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_host_image_states
+		(host_id,image_id,available,error_code,observed_at)
+		VALUES('host_000000000000002','image_00000000000001',false,'IMAGE_NOT_FOUND',clock_timestamp())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO devices
+		(id,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,lifecycle_status,health_status)
+		VALUES('dev_prov_00000000001','host_000000000000001','image_00000000000001','emulator','docker_emulator',
+		'ref-1','rebuild','10.0.0.9:31001','{"platformName":"Android"}','ready','healthy')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_pool_devices(pool_id,device_id,enabled)
+		VALUES('pool_000000000000001','dev_prov_00000000001',true)`); err != nil {
+		t.Fatal(err)
+	}
+	provisionable, reason := readPool(t, db, "pool_000000000000001")
+	if provisionable {
+		t.Fatal("没有在线宿主能承载该池设备时应当报告不可供给")
+	}
+	if !strings.Contains(reason, "掉线") {
+		t.Fatalf("原因应当指出设备都在掉线宿主上，得到 %q", reason)
 	}
 }
 

@@ -927,6 +927,38 @@ func fillPoolProvisionability(ctx context.Context, query database.Querier, pools
 	if err := rows.Err(); err != nil {
 		return normalize(err)
 	}
+	// 宿主「有该池镜像」也是宿主上存在这个池设备的直接证据（在线 = 有心跳，且镜像是
+	// 宿主本地仓库里的）。反过来，一台在线的 Docker 宿主却完全没有该池的任何设备，
+	// 说明这个池从来没在它上面成功建过虚拟机 —— 这时候说「所有在线宿主都没有该镜像」
+	// 是把「没试过」当成了「已证明没有」，会误导运维去查根本不存在的问题。
+	// 用设备证据把「确定缺镜像」和「尚未尝试」分开说。
+	type evidence struct{ poolDevices, devicesOnUsableHosts int }
+	evidenceRows, err := query.Query(ctx, `SELECT p.id,
+		(SELECT count(*) FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			WHERE pd.pool_id=p.id AND pd.enabled AND d.lifecycle_status<>'deleted'),
+		(SELECT count(*) FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
+			JOIN device_hosts h ON h.id=d.host_id
+			WHERE pd.pool_id=p.id AND pd.enabled AND d.lifecycle_status<>'deleted'
+			AND h.status='online' AND NOT h.draining)
+		FROM device_pools p WHERE p.id=ANY($1::text[])`, ids)
+	if err != nil {
+		return normalize(err)
+	}
+	observed := make(map[string]evidence, len(ids))
+	for evidenceRows.Next() {
+		var id string
+		var value evidence
+		if err := evidenceRows.Scan(&id, &value.poolDevices, &value.devicesOnUsableHosts); err != nil {
+			evidenceRows.Close()
+			return normalize(err)
+		}
+		observed[id] = value
+	}
+	if err := evidenceRows.Err(); err != nil {
+		evidenceRows.Close()
+		return normalize(err)
+	}
+	evidenceRows.Close()
 	for index := range pools {
 		value, evaluated := values[pools[index].ID]
 		if !evaluated {
@@ -937,9 +969,16 @@ func fillPoolProvisionability(ctx context.Context, query database.Querier, pools
 		if provisionable {
 			continue
 		}
-		if value.candidates == 0 {
+		seen := observed[pools[index].ID]
+		switch {
+		case value.candidates == 0:
 			pools[index].ProvisionableReason = "没有在线的 Docker 模拟器宿主机，拉不起这个池的设备"
-		} else {
+		case seen.poolDevices > 0 && seen.devicesOnUsableHosts == 0:
+			// 该池目前只在掉线的宿主上有设备，没有任何一台在线宿主能承载它。
+			pools[index].ProvisionableReason = "这个池的设备都在已掉线的宿主机上，当前没有在线宿主能拉起它"
+		case seen.poolDevices == 0:
+			pools[index].ProvisionableReason = "这个池还没有在任何在线宿主上成功建过虚拟机，请先在在线宿主上构建或导入该池的镜像"
+		default:
 			pools[index].ProvisionableReason = "所有在线宿主上都没有这个池指定的镜像（镜像引用走宿主本地仓库，创建时不拉取）"
 		}
 	}
