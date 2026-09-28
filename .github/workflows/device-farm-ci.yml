@@ -1,0 +1,165 @@
+name: Device Farm CI
+
+# This repository had no CI before this workflow. Two facts from hands-on testing
+# shape it:
+#
+#   1. Every DB-backed test in internal/ reads DEVICE_FARM_TEST_DATABASE_URL and
+#      calls t.Skip(...) when it is empty, so the backend job always starts a
+#      PostgreSQL service, applies migrations/*.up.sql and exports that variable.
+#   2. The tests use `TRUNCATE ... CASCADE` on shared tables, so `go test` must
+#      run with `-p 1`; packages corrupt each other otherwise.
+
+on:
+  push:
+    branches:
+      - test
+      - master
+      - main
+      - codex/device-farm-v2
+      - codex/replace-failed-on-demand-device
+  pull_request:
+    branches:
+      - test
+      - master
+      - main
+      - codex/device-farm-v2
+      - codex/replace-failed-on-demand-device
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: Backend (Go + PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17.5-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGPASSWORD: postgres
+      # Migrations 000017/000018 contain UTF-8 bytes; pin the client encoding so
+      # a non-UTF-8 runner locale can never break the migration loop.
+      PGCLIENTENCODING: UTF8
+      DEVICE_FARM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/device_farm_ci?sslmode=disable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # internal/consoleui embeds internal/consoleui/dist via `//go:embed dist`
+      # and `dist/` is gitignored, so a fresh checkout cannot compile (or test)
+      # the whole module until the console has been built. The Dockerfile does
+      # exactly this, in this order, for the same reason.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # Reads `"packageManager": "pnpm@11.14.0"` from console/package.json.
+          package_json_file: console/package.json
+          cache: true
+          cache_dependency_path: console/pnpm-lock.yaml
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # The Dockerfile builds the console with node:24.14.0-alpine.
+          node-version: "24"
+
+      - name: Build console assets (embedded into the Go binary)
+        working-directory: console
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # go.mod declares `go 1.24.0`; keep this literal in sync with go.mod.
+          go-version: "1.24.0"
+          cache-dependency-path: go.sum
+
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet internal packages
+        run: go vet ./internal/...
+
+      - name: Create test database and apply migrations
+        run: |
+          psql "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" \
+            -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE device_farm_ci'
+          # Apply migrations/*.up.sql in filename order; the tests assume every
+          # table already exists.
+          applied=0
+          for migration in $(find migrations -maxdepth 1 -name '*.up.sql' | sort); do
+            echo "applying $migration"
+            psql "$DEVICE_FARM_TEST_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$migration" >/dev/null
+            applied=$((applied + 1))
+          done
+          if [ "$applied" -eq 0 ]; then
+            echo "no migrations/*.up.sql found" >&2
+            exit 1
+          fi
+          echo "applied $applied migration files"
+
+      - name: Run tests (serialized packages)
+        run: |
+          set -euo pipefail
+          # tmp/ is an untracked scratch tree holding a nested copy of this
+          # repository; without this filter `go test` reports
+          # "FAIL .../tmp/fix55b/alcor [setup failed]".
+          PKGS=$(go list ./... | grep -v '/tmp/')
+          # -p 1 is mandatory: the DB tests TRUNCATE shared tables and corrupt
+          # each other when Go runs packages in parallel.
+          go test $PKGS -count=1 -p 1
+
+  console:
+    name: Console (pnpm build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: console
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: console/package.json
+          cache: true
+          cache_dependency_path: console/pnpm-lock.yaml
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build console
+        run: pnpm build
