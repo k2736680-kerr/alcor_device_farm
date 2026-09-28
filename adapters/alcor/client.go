@@ -148,6 +148,20 @@ func (client *Client) Release(ctx context.Context, id, reason, idempotencyKey st
 	return result, err
 }
 
+// StopDevice 请求设备农场立即停止一台设备（Android 模拟器/实例），供超时回收用。
+// 这是控制面管理操作：device 会进入 stopped 状态、宿主上实例被真正停掉，但用户数据
+// 镜像/数据卷保留，下次重新调度时随实例恢复。需 Idempotency-Key。
+func (client *Client) StopDevice(ctx context.Context, id, reason, idempotencyKey string) (Device, error) {
+	if !identifierPattern.MatchString(id) || len(strings.TrimSpace(reason)) < 3 || len(strings.TrimSpace(reason)) > 500 ||
+		len(idempotencyKey) < 8 || len(idempotencyKey) > 128 {
+		return Device{}, errors.New("停止设备参数无效")
+	}
+	var result Device
+	err := client.do(ctx, http.MethodPost, "/api/v1/devices/"+url.PathEscape(id)+"/stops",
+		map[string]any{"reason": strings.TrimSpace(reason)}, idempotencyKey, RunContext{}, &result)
+	return result, err
+}
+
 func (client *Client) getDevice(ctx context.Context, id string, run RunContext) (Device, error) {
 	var result Device
 	err := client.do(ctx, http.MethodGet, "/api/v1/devices/"+url.PathEscape(id), nil, "", run, &result)

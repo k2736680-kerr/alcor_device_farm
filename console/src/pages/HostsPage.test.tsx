@@ -49,7 +49,7 @@ describe('HostsPage platform consistency', () => {
     // 回归背景：旧判定要求 capabilities.docker === true，但 Agent 心跳探针
     // （internal/hostcapacity/system.go 的 Snapshot）只上报 kvm / gpu_render，
     // 于是每台新登记的 Linux 宿主都被永久标成"自动化未就绪"（线上 55 宿主机即如此，
-    // 它的 capabilities 只有 kvm + gpu_render，171 的 docker 只是历史 jsonb 残留）。
+    // 它的 capabilities 只有 kvm + gpu_render，worker-06 的 docker 只是历史 jsonb 残留）。
     const common = {
       host_arch: 'amd64', address: '10.0.30.55', draining: false,
       created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',

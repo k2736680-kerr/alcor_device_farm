@@ -186,9 +186,9 @@ func (store *Store) CreatePool(ctx context.Context, meta management.Idempotency,
 	return createIdempotent(ctx, store.db, meta,
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `INSERT INTO device_pools
-				(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, pool.ID, pool.Name, pool.Platform, pool.DefaultLeaseSeconds,
-				pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.Status)
+				(id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,fresh_vm_per_run,status)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, pool.ID, pool.Name, pool.Platform, pool.DefaultLeaseSeconds,
+				pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.FreshVMPerRun, pool.Status)
 			return err
 		},
 		func(query database.Querier, id string) (management.Pool, error) { return getPool(ctx, query, id) },
@@ -230,11 +230,11 @@ func (store *Store) UpdatePool(ctx context.Context, pool management.Pool, expect
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET
 			name=$2,platform=$3,default_lease_seconds=$4,max_lease_seconds=$5,max_concurrency=$6,total_target=$7,
-			min_ready=$8,default_image_id=$9,base_device_id=$10,status=$11,updated_at=clock_timestamp()
-			WHERE id=$1 AND status=$12
+			min_ready=$8,default_image_id=$9,base_device_id=$10,fresh_vm_per_run=$11,status=$12,updated_at=clock_timestamp()
+			WHERE id=$1 AND status=$13
 			RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
-			default_image_id,base_device_id,status,created_at,updated_at`, pool.ID, pool.Name, pool.Platform, pool.DefaultLeaseSeconds,
-			pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.Status, expected))
+			default_image_id,base_device_id,fresh_vm_per_run,status,created_at,updated_at`, pool.ID, pool.Name, pool.Platform, pool.DefaultLeaseSeconds,
+			pool.MaxLeaseSeconds, pool.MaxConcurrency, pool.TotalTarget, pool.MinReady, pool.DefaultImageID, pool.BaseDeviceID, pool.FreshVMPerRun, pool.Status, expected))
 		if err != nil {
 			return err
 		}
@@ -359,7 +359,7 @@ func (store *Store) SelectPoolDefaultImage(
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET default_image_id=$2,updated_at=clock_timestamp()
 			WHERE id=$1 RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,
-			default_image_id,base_device_id,status,created_at,updated_at`, poolID, imageID))
+			default_image_id,base_device_id,fresh_vm_per_run,status,created_at,updated_at`, poolID, imageID))
 		if err != nil {
 			return err
 		}
@@ -395,7 +395,7 @@ func (store *Store) SetPoolBaseDevice(ctx context.Context, poolID, deviceID stri
 		}
 		var err error
 		value, err = scanPool(tx.QueryRow(ctx, `UPDATE device_pools SET base_device_id=$2,updated_at=clock_timestamp()
-			WHERE id=$1 RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at`, poolID, deviceID))
+			WHERE id=$1 RETURNING id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,fresh_vm_per_run,status,created_at,updated_at`, poolID, deviceID))
 		if err != nil {
 			return err
 		}
@@ -456,6 +456,8 @@ func (store *Store) ListDevices(ctx context.Context, page paging.Page, filter ma
 	if filter.LifecycleStatus != "" {
 		arguments = append(arguments, filter.LifecycleStatus)
 		conditions = append(conditions, fmt.Sprintf("devices.lifecycle_status=$%d", len(arguments)))
+	} else {
+		conditions = append(conditions, "devices.lifecycle_status<>'deleted'")
 	}
 	if filter.HealthStatus != "" {
 		arguments = append(arguments, filter.HealthStatus)
@@ -819,7 +821,7 @@ func maxInt(left, right int) int {
 
 const imageSelect = `SELECT id,name,COALESCE(docker_image,''),docker_digest,api_level,abi,resolution,resource_config,status,validation_error,created_at,updated_at FROM device_images`
 const hostSelect = `SELECT id,name,host_type,host_os,host_arch,COALESCE(address,''),capabilities,capacity,used_capacity,status,draining,last_heartbeat_at,created_at,updated_at FROM device_hosts`
-const poolSelect = `SELECT id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,status,created_at,updated_at FROM device_pools`
+const poolSelect = `SELECT id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,total_target,min_ready,default_image_id,base_device_id,fresh_vm_per_run,status,created_at,updated_at FROM device_pools`
 const poolImageSelect = `SELECT pool_id,image_id,min_ready,max_instances,enabled,created_at,updated_at FROM device_pool_images`
 const deviceSelect = `SELECT devices.id,devices.name,devices.host_id,devices.platform,devices.image_id,
     (SELECT pool.id FROM device_pool_devices membership JOIN device_pools pool ON pool.id=membership.pool_id
@@ -871,7 +873,7 @@ func scanHost(row rowScanner) (management.Host, error) {
 func scanPool(row rowScanner) (management.Pool, error) {
 	var v management.Pool
 	err := row.Scan(&v.ID, &v.Name, &v.Platform, &v.DefaultLeaseSeconds, &v.MaxLeaseSeconds, &v.MaxConcurrency,
-		&v.TotalTarget, &v.MinReady, &v.DefaultImageID, &v.BaseDeviceID, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+		&v.TotalTarget, &v.MinReady, &v.DefaultImageID, &v.BaseDeviceID, &v.FreshVMPerRun, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	return v, err
 }
 func scanPoolImage(row rowScanner) (management.PoolImage, error) {

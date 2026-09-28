@@ -1173,7 +1173,7 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/DevicePoolInput"}
-          example: {name: android-smoke, platform: android, default_lease_seconds: 1800, max_lease_seconds: 7200, total_target: 2, min_ready: 1, max_concurrency: 2, default_image_id: "01JDEVICEIMAGE000000000000", enabled: true}
+          example: {name: android-smoke, platform: android, default_lease_seconds: 1800, max_lease_seconds: 7200, total_target: 2, min_ready: 1, max_concurrency: 2, default_image_id: "01JDEVICEIMAGE000000000000", enabled: true, fresh_vm_per_run: false}
     DevicePoolImageInput:
       required: true
       content:
@@ -1724,7 +1724,7 @@ components:
     DevicePool:
       type: object
       additionalProperties: false
-      required: [id, name, platform, default_lease_seconds, max_lease_seconds, max_concurrency, total_target, min_ready, status, created_at, updated_at]
+      required: [id, name, platform, default_lease_seconds, max_lease_seconds, max_concurrency, total_target, min_ready, fresh_vm_per_run, status, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/Identifier"}
         name: {type: string}
@@ -1742,6 +1742,9 @@ components:
           allOf: [{$ref: "#/components/schemas/Identifier"}]
           nullable: true
           description: Long-lived Device whose effective configuration is used for future scale-out.
+        fresh_vm_per_run:
+          type: boolean
+          description: When true, releasing an Android emulator Reservation queues a destructive recycle (delete and recreate) so the next run starts from a factory-fresh VM. Defaults to false, which preserves the DF-038 non-destructive release behavior.
         status: {type: string, enum: [active, disabled]}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
@@ -2127,6 +2130,10 @@ components:
           allOf: [{$ref: "#/components/schemas/Identifier"}]
           description: Must be an enabled, ready Image associated with the Pool when updating.
         enabled: {type: boolean, default: true}
+        fresh_vm_per_run:
+          type: boolean
+          default: false
+          description: Opt-in destructive release policy for Android emulator Pools. When true, every Reservation release queues a container delete plus recreate so the next run starts from a factory-fresh VM. Omit to leave the current value unchanged when updating.
         reason:
           type: string
           maxLength: 500

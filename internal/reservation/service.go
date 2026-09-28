@@ -554,6 +554,128 @@ func (service *Service) ReapOnce(ctx context.Context, gracePeriod time.Duration)
 	return toView(result)
 }
 
+// ReapStalePendingOnce fails one 'pending' reservation that has waited for a
+// device longer than timeout.
+//
+// The scheduler only ever moves pending rows forward: it never expires them, and
+// a request the farm can never satisfy would otherwise leave the client waiting
+// forever. This is the bound that turns "waiting" into a terminal failure the
+// caller can observe.
+//
+// Only rows without a device are eligible. A pending row that already owns a
+// device is mid-claim and belongs to ReapOrphanedClaimOnce, which must also
+// release the device; splitting them keeps each sweep able to guarantee it never
+// strands a device.
+func (service *Service) ReapStalePendingOnce(ctx context.Context, timeout, claimGrace time.Duration) (View, error) {
+	if service == nil || service.db == nil || timeout <= 0 || claimGrace < 0 {
+		return View{}, ErrInvalidArgument
+	}
+	selected, err := service.repo.FindNextStalePending(
+		ctx, service.db.Pool(), int(timeout/time.Second), int(claimGrace/time.Second))
+	if errors.Is(err, repository.ErrNotFound) {
+		return View{}, ErrNothingToReap
+	}
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	requestID := "pending_reaper_" + selected.ID
+	var result repository.ReservationRecord
+	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		current, err := service.repo.LockByID(ctx, tx, selected.ID)
+		if err != nil {
+			return err
+		}
+		// Re-check under the row lock: the scheduler may have satisfied the
+		// reservation between the scan and this transaction.
+		if current.Status != domain.ReservationPending || current.DeviceID != nil {
+			return ErrNothingToReap
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if current.CreatedAt.Add(timeout).Add(claimGrace).After(now) {
+			return ErrNothingToReap
+		}
+		if err := service.repo.FailPendingReservation(
+			ctx, tx, current.ID, "PENDING_TIMEOUT", now); err != nil {
+			return err
+		}
+		auditID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		if err := service.repo.InsertAudit(ctx, tx, auditID, reaperActor().Type, reaperActor().ID,
+			"fail_stale_pending_reservation", current.ID, requestID,
+			"预约长时间未能分配设备，已超时失败"); err != nil {
+			return err
+		}
+		result, err = service.repo.Get(ctx, tx, current.ID)
+		return err
+	})
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	return toView(result)
+}
+
+// ReapOrphanedClaimOnce releases one reservation that was left 'pending' while
+// already holding a device, and restores that device to a schedulable state.
+//
+// This is the crash window between reserving a device and activating the claim.
+// The scheduler never re-picks a pending row that has a device_id, so without
+// this sweep both the reservation and the device leak permanently: the device
+// stays 'reserved' and can never be allocated again.
+func (service *Service) ReapOrphanedClaimOnce(ctx context.Context, grace time.Duration) (View, error) {
+	if service == nil || service.db == nil || grace < 0 {
+		return View{}, ErrInvalidArgument
+	}
+	selected, err := service.repo.FindNextOrphanedClaim(ctx, service.db.Pool(), int(grace/time.Second))
+	if errors.Is(err, repository.ErrNotFound) {
+		return View{}, ErrNothingToReap
+	}
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	requestID := "orphan_reaper_" + selected.ID
+	var result repository.ReservationRecord
+	err = service.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		current, err := service.repo.LockByID(ctx, tx, selected.ID)
+		if err != nil {
+			return err
+		}
+		if current.Status != domain.ReservationPending || current.DeviceID == nil {
+			return ErrNothingToReap
+		}
+		now, err := database.ClockNow(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if current.UpdatedAt.Add(grace).After(now) {
+			return ErrNothingToReap
+		}
+		if err := service.repo.FailPendingClaim(
+			ctx, tx, current.ID, *current.DeviceID, "CLAIM_ABANDONED", now); err != nil {
+			return err
+		}
+		auditID, err := service.newID()
+		if err != nil {
+			return err
+		}
+		if err := service.repo.InsertAudit(ctx, tx, auditID, reaperActor().Type, reaperActor().ID,
+			"fail_orphaned_device_claim", current.ID, requestID,
+			"设备分配中断，已释放设备并终止预约"); err != nil {
+			return err
+		}
+		result, err = service.repo.Get(ctx, tx, current.ID)
+		return err
+	})
+	if err != nil {
+		return View{}, translateRepositoryError(err)
+	}
+	return toView(result)
+}
+
 func (service *Service) CreateRemoteSession(
 	ctx context.Context,
 	actor audit.Actor,
@@ -802,6 +924,13 @@ func (service *Service) closeActiveLocked(
 	if err := sessionState.Transition(domain.SessionClosed, reason, now); err != nil {
 		return repository.ReservationRecord{}, err
 	}
+	// Lock order is reservation -> pool -> device, matching the scheduler
+	// (LockNextAllocatablePending -> LockPoolPolicy -> LockMatchingDevice) so the
+	// two paths can never take the same pair of rows in opposite order.
+	policy, err := service.repo.LockPoolPolicy(ctx, tx, current.PoolID)
+	if err != nil {
+		return repository.ReservationRecord{}, err
+	}
 	device, err := service.repo.LockDevice(ctx, tx, *current.DeviceID)
 	if err != nil {
 		return repository.ReservationRecord{}, err
@@ -810,12 +939,21 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	// Reconciler/Host heartbeats may have already restored the device to ready
-	// before the reservation is closed. Device transitions are intentionally
-	// strict, so avoid an invalid ready -> ready transition and keep release and
-	// Reaper retries idempotent.
-	if lifecycle := deviceState.Lifecycle(); lifecycle != domain.DeviceQuarantined && lifecycle != domain.DeviceReady {
-		if err := deviceState.Transition(domain.DeviceReady, "reservation released; device data retained", now); err != nil {
+	// A quarantined device keeps its lifecycle: it is already outside the
+	// schedulable set and the reconciler owns its recovery, so re-labeling it
+	// 'recycling' here would strip the administrator's quarantine signal.
+	recycle := policy.FreshVMPerRun && device.Platform == "android" &&
+		device.DeviceKind == "emulator" && deviceState.Lifecycle() != domain.DeviceQuarantined
+	target, deviceReason := domain.DeviceReady, "reservation released; device data retained"
+	if recycle {
+		target, deviceReason = domain.DeviceRecycling, "reservation released; pool requires a fresh VM for the next run"
+	}
+	// Reconciler/Host heartbeats may have already converged the device to the
+	// target lifecycle before the reservation is closed. Device transitions are
+	// intentionally strict, so skip the no-op ready -> ready case to keep release
+	// and Reaper retries idempotent.
+	if deviceState.Lifecycle() != domain.DeviceQuarantined && deviceState.Lifecycle() != target {
+		if err := deviceState.Transition(target, deviceReason, now); err != nil {
 			return repository.ReservationRecord{}, err
 		}
 	}
@@ -823,7 +961,7 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	closed, err := service.repo.CloseActive(ctx, tx, current.ID, *current.DeviceID, terminal, now)
+	closed, err := service.repo.CloseActive(ctx, tx, current.ID, *current.DeviceID, terminal, recycle, now)
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}

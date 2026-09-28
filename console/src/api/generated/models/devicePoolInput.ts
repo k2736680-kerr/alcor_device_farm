@@ -34,6 +34,8 @@ export interface DevicePoolInput {
   /** Must be an enabled, ready Image associated with the Pool when updating. */
   default_image_id?: Identifier;
   enabled?: boolean;
+  /** Opt-in destructive release policy for Android emulator Pools. When true, every Reservation release queues a container delete plus recreate so the next run starts from a factory-fresh VM. Omit to leave the current value unchanged when updating. */
+  fresh_vm_per_run?: boolean;
   /**
    * Required when lowering total_target because automatic scale down deletes idle emulator resources.
    * @maxLength 500

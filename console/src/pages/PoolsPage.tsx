@@ -10,6 +10,7 @@ import {
   Modal,
   Select,
   Space,
+  Switch,
   Tag,
   Typography,
 } from 'antd'
@@ -42,6 +43,7 @@ interface PoolFormValues {
   default_lease_seconds: number
   max_lease_seconds: number
   device_count: number
+  fresh_vm_per_run: boolean
   reason: string
 }
 
@@ -223,6 +225,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
           total_target: values.device_count,
           min_ready: values.device_count,
           max_concurrency: Math.max(1, values.device_count),
+          fresh_vm_per_run: values.fresh_vm_per_run,
           reason: values.reason,
         },
       },
@@ -368,6 +371,7 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
               default_lease_seconds: pool.default_lease_seconds,
               max_lease_seconds: pool.max_lease_seconds,
               device_count: pool.total_target,
+              fresh_vm_per_run: pool.fresh_vm_per_run,
               reason: '',
             })
           }}
@@ -467,6 +471,16 @@ export function PoolsPage({ role = 'admin' }: { role?: ConsoleRole }) {
               </Space>}
             />
           )}
+          <Form.Item
+            name="fresh_vm_per_run"
+            label="每次运行使用全新虚拟机"
+            valuePropName="checked"
+            extra={configPool?.platform === 'android'
+              ? '开启后，每次预约释放都会删除并重建这台 Android 模拟器，下一次任务从出厂状态的虚拟机开始。重建需要完整的容器删除、重建和冷启动，会比普通释放慢。关闭时沿用默认行为：只释放占用，保留设备数据。'
+              : 'iOS 模拟器不支持该策略，保持关闭。'}
+          >
+            <Switch disabled={configPool?.platform !== 'android'} />
+          </Form.Item>
           <Form.Item
             name="reason"
             label="调整原因（缩容时必填并写入审计）"

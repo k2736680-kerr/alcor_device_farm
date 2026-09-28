@@ -55,12 +55,17 @@ type PoolPolicy struct {
 	MaxLeaseSeconds    int
 	MaxConcurrency     int
 	ActiveReservations int
+	// FreshVMPerRun is the opt-in per-pool policy that makes release destructive.
+	// It defaults to false so DF-038 non-destructive release stays the norm.
+	FreshVMPerRun bool
 }
 
 type DeviceAssignment struct {
 	ID             string
 	HostID         string
 	Platform       string
+	DeviceKind     string
+	LifecycleMode  string
 	Lifecycle      domain.DeviceLifecycleStatus
 	Health         domain.HealthStatus
 	Serial         string
@@ -331,6 +336,128 @@ func (ReservationRepository) FindNextExpired(ctx context.Context, querier databa
 	return record, nil
 }
 
+// FindNextStalePending selects a reservation that has waited for a device
+// longer than the configured timeout. A pending reservation never receives
+// starts_at/expires_at, so the only usable age reference is created_at.
+//
+// Rows that already carry a device_id are excluded: those are mid-claim and are
+// recovered by FindNextOrphanedClaim instead, which also frees the device.
+func (ReservationRepository) FindNextStalePending(
+	ctx context.Context,
+	querier database.Querier,
+	timeoutSeconds, graceSeconds int,
+) (ReservationRecord, error) {
+	record, err := scanReservation(querier.QueryRow(ctx, `
+        SELECT id, client_id, pool_id, device_id, owner_type, owner_id,
+               requested_capabilities, lease_seconds, status, idempotency_key,
+               starts_at, expires_at, released_at, failure_code, created_at, updated_at
+        FROM device_reservations
+        WHERE status = 'pending' AND device_id IS NULL
+          AND created_at + make_interval(secs => $1) + make_interval(secs => $2) <= clock_timestamp()
+        ORDER BY created_at, id
+        LIMIT 1`, timeoutSeconds, graceSeconds))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("find stale pending reservation: %w", err)
+	}
+	return record, nil
+}
+
+// FindNextOrphanedClaim selects a pending reservation that already owns a
+// device but never reached active. This is the crash window between
+// ReserveForClaim and ActivateClaimed: the scheduler never re-picks a pending
+// row that has a device_id, and the device is stuck in 'reserved', so without
+// this sweep both the reservation and the device leak permanently.
+func (ReservationRepository) FindNextOrphanedClaim(
+	ctx context.Context,
+	querier database.Querier,
+	graceSeconds int,
+) (ReservationRecord, error) {
+	record, err := scanReservation(querier.QueryRow(ctx, `
+        SELECT id, client_id, pool_id, device_id, owner_type, owner_id,
+               requested_capabilities, lease_seconds, status, idempotency_key,
+               starts_at, expires_at, released_at, failure_code, created_at, updated_at
+        FROM device_reservations
+        WHERE status = 'pending' AND device_id IS NOT NULL
+          AND updated_at + make_interval(secs => $1) <= clock_timestamp()
+        ORDER BY updated_at, id
+        LIMIT 1`, graceSeconds))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReservationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return ReservationRecord{}, fmt.Errorf("find orphaned claim reservation: %w", err)
+	}
+	return record, nil
+}
+
+// FailPendingClaim releases a reservation that stalled mid-claim and restores
+// its device to a schedulable lifecycle.
+//
+// The device is never routed through 'recycling' here. A claim that never
+// reached active also never ran a single test, so there is no run residue to
+// remove and the fresh-VM policy does not apply. Restoring to 'ready' keeps this
+// path independent of the warm-pool recycler, which only adopts devices whose
+// reservation already reached a released/expired terminal state.
+//
+// An unhealthy device cannot legally become ready, so it is quarantined and the
+// reconciler's existing self-healing restart owns its recovery.
+func (ReservationRepository) FailPendingClaim(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationID, deviceID, failureCode string,
+	at time.Time,
+) error {
+	result, err := tx.Exec(ctx, `
+        UPDATE devices SET lifecycle_status=CASE
+                WHEN lifecycle_status <> 'reserved' THEN lifecycle_status
+                WHEN health_status = 'healthy' THEN 'ready'
+                ELSE 'quarantined' END,
+            updated_at=$2::timestamptz
+        WHERE id=$1 AND lifecycle_status='reserved'`, deviceID, at)
+	if err != nil {
+		return fmt.Errorf("restore device after orphaned claim: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	result, err = tx.Exec(ctx, `
+        UPDATE device_reservations
+        SET device_id=NULL,status='failed',failure_code=$3,updated_at=$4::timestamptz
+        WHERE id=$1 AND device_id=$2 AND status='pending'`, reservationID, deviceID, failureCode, at)
+	if err != nil {
+		return fmt.Errorf("fail orphaned claim reservation: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// FailPendingReservation expires a reservation that never received a device.
+// It is the timeout counterpart to MarkFailed and only ever touches rows that
+// still have no device, so it can never strand a device.
+func (ReservationRepository) FailPendingReservation(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationID, failureCode string,
+	at time.Time,
+) error {
+	result, err := tx.Exec(ctx, `
+        UPDATE device_reservations
+        SET status='failed',failure_code=$2,updated_at=$3::timestamptz
+        WHERE id=$1 AND status='pending' AND device_id IS NULL`, reservationID, failureCode, at)
+	if err != nil {
+		return fmt.Errorf("fail stale pending reservation: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (ReservationRepository) BeginOperation(ctx context.Context, tx pgx.Tx, params OperationParams) (bool, error) {
 	command, err := tx.Exec(ctx, `
         INSERT INTO device_idempotency_records
@@ -458,11 +585,12 @@ func (ReservationRepository) GetSession(ctx context.Context, querier database.Qu
 func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-		SELECT id,host_id,platform,lifecycle_status,health_status,serial,
+		SELECT id,host_id,platform,device_kind,lifecycle_mode,lifecycle_status,health_status,serial,
 		       COALESCE(NULLIF(stf_serial,''),serial),adb_endpoint,appium_endpoint,
 		       COALESCE(capabilities->>'appiumUdid',serial)
 		FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(
-		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
+		&device.ID, &device.HostID, &device.Platform, &device.DeviceKind, &device.LifecycleMode,
+		&device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -477,11 +605,12 @@ func (ReservationRepository) LockDevice(ctx context.Context, tx pgx.Tx, id strin
 func (ReservationRepository) GetDevice(ctx context.Context, querier database.Querier, id string) (DeviceAssignment, error) {
 	var device DeviceAssignment
 	err := querier.QueryRow(ctx, `
-		SELECT id,host_id,platform,lifecycle_status,health_status,serial,
+		SELECT id,host_id,platform,device_kind,lifecycle_mode,lifecycle_status,health_status,serial,
 		       COALESCE(NULLIF(stf_serial,''),serial),adb_endpoint,appium_endpoint,
 		       COALESCE(capabilities->>'appiumUdid',serial)
 		FROM devices WHERE id=$1`, id).Scan(
-		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
+		&device.ID, &device.HostID, &device.Platform, &device.DeviceKind, &device.LifecycleMode,
+		&device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -560,6 +689,7 @@ func (ReservationRepository) CloseActive(
 	tx pgx.Tx,
 	reservationID, deviceID string,
 	terminal domain.ReservationStatus,
+	recycle bool,
 	closedAt time.Time,
 ) (ReservationRecord, error) {
 	if _, err := tx.Exec(ctx, `
@@ -572,16 +702,28 @@ func (ReservationRepository) CloseActive(
         WHERE reservation_id=$1 AND status='closing'`, reservationID, closedAt); err != nil {
 		return ReservationRecord{}, fmt.Errorf("finish device session: %w", err)
 	}
+	// DF-038 remains the default: reservations only release access and must not
+	// erase the administrator-managed emulator data or queue a factory rebuild.
+	//
+	// recycle=true is the opt-in fresh-VM exception for pools whose automation
+	// cannot tolerate leftover state. It routes the device to 'recycling' and
+	// records lifecycle_mode='rebuild' in the same statement, because that mode
+	// is the durable authorization the warm-pool recycler checks before it is
+	// willing to delete and recreate the container. Setting the status without
+	// the mode would strand the device in 'recycling' forever.
 	result, err := tx.Exec(ctx, `
 		UPDATE devices SET
-			-- DF-038: reservations only release access. They must not erase the
-			-- administrator-managed emulator data or queue a factory rebuild.
-			lifecycle_status=CASE WHEN lifecycle_status='quarantined' THEN lifecycle_status ELSE 'ready' END,
+			lifecycle_status=CASE
+				WHEN lifecycle_status='quarantined' THEN lifecycle_status
+				WHEN $3::boolean THEN 'recycling'
+				ELSE 'ready' END,
+			lifecycle_mode=CASE WHEN $3::boolean THEN 'rebuild' ELSE lifecycle_mode END,
 			updated_at=$2::timestamptz
 		-- Host/Reconciler may already have converged an overdue device to ready.
 		-- Updating ready to ready is deliberate here: the affected-row check must
 		-- still prove that the bound device exists before the reservation closes.
-		WHERE id=$1 AND lifecycle_status IN ('ready','busy','reserved','quarantined')`, deviceID, closedAt)
+		WHERE id=$1 AND lifecycle_status IN ('ready','busy','reserved','recycling','quarantined')`,
+		deviceID, closedAt, recycle)
 	if err != nil {
 		return ReservationRecord{}, fmt.Errorf("release retained device: %w", err)
 	}
@@ -667,10 +809,11 @@ func (ReservationRepository) List(
 func (ReservationRepository) GetPoolPolicy(ctx context.Context, querier database.Querier, poolID string) (PoolPolicy, error) {
 	var policy PoolPolicy
 	err := querier.QueryRow(ctx, `
-		SELECT status, platform, max_lease_seconds, max_concurrency,
+		SELECT status, platform, max_lease_seconds, max_concurrency, fresh_vm_per_run,
                (SELECT count(*) FROM device_reservations WHERE pool_id = $1 AND status = 'active')
         FROM device_pools WHERE id = $1`, poolID).Scan(
-		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.ActiveReservations,
+		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.FreshVMPerRun,
+		&policy.ActiveReservations,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PoolPolicy{}, ErrNotFound
@@ -684,9 +827,9 @@ func (ReservationRepository) GetPoolPolicy(ctx context.Context, querier database
 func (ReservationRepository) LockPoolPolicy(ctx context.Context, tx pgx.Tx, poolID string) (PoolPolicy, error) {
 	var policy PoolPolicy
 	err := tx.QueryRow(ctx, `
-		SELECT status, platform, max_lease_seconds, max_concurrency
+		SELECT status, platform, max_lease_seconds, max_concurrency, fresh_vm_per_run
 		FROM device_pools WHERE id = $1 FOR UPDATE`, poolID).Scan(
-		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency,
+		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.FreshVMPerRun,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PoolPolicy{}, ErrNotFound
@@ -708,7 +851,7 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
 	}
 	var device DeviceAssignment
 	err := tx.QueryRow(ctx, `
-		SELECT d.id, d.host_id, d.platform, d.lifecycle_status, d.health_status, d.serial,
+		SELECT d.id, d.host_id, d.platform, d.device_kind, d.lifecycle_mode, d.lifecycle_status, d.health_status, d.serial,
 		       COALESCE(NULLIF(d.stf_serial,''),d.serial),d.adb_endpoint, d.appium_endpoint,
 		       COALESCE(d.capabilities->>'appiumUdid',d.serial)
         FROM devices d
@@ -726,7 +869,8 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
         ORDER BY d.created_at, d.id
         FOR UPDATE OF d SKIP LOCKED
         LIMIT 1`, poolID, capabilities).Scan(
-		&device.ID, &device.HostID, &device.Platform, &device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
+		&device.ID, &device.HostID, &device.Platform, &device.DeviceKind, &device.LifecycleMode,
+		&device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

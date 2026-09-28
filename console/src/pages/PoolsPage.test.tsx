@@ -93,6 +93,40 @@ describe('PoolsPage pool capacity', () => {
     }))
   }, 10_000)
 
+  it('submits the fresh-VM release policy for an Android pool', async () => {
+    let submitted: DevicePoolInput | undefined
+    server.use(http.put('/api/v1/device-pools/:id', async ({ request }) => {
+      submitted = await request.json() as DevicePoolInput
+      return poolResponse(submitted)
+    }))
+    const user = await openPoolEditor()
+    const toggle = screen.getByRole('switch', { name: '每次运行使用全新虚拟机' })
+    expect(toggle).toBeEnabled()
+    await user.click(toggle)
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() => expect(submitted).toMatchObject({
+      fresh_vm_per_run: true,
+    }))
+  }, 10_000)
+
+  it('keeps the fresh-VM release policy disabled for an iOS pool', async () => {
+    const iosPool: DevicePool = {
+      id: 'pool_ios_000000000001', name: 'default-ios', platform: 'ios', default_lease_seconds: 1800,
+      max_lease_seconds: 86400, total_target: 6, min_ready: 6, max_concurrency: 6,
+      base_device_id: 'device_ios_000000001', fresh_vm_per_run: false, status: 'active',
+      created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
+    }
+    server.use(http.get('/api/v1/device-pools', () => HttpResponse.json({
+      request_id: 'req_ios_fresh', data: { items: [iosPool], total: 1, page: 1, page_size: 20 }, error: null,
+    })))
+    const user = userEvent.setup()
+    renderWithProviders(<PoolsPage />)
+    await user.click((await screen.findAllByRole('button', { name: /配\s*置/ }))[0])
+
+    expect(await screen.findByRole('switch', { name: '每次运行使用全新虚拟机' })).toBeDisabled()
+  }, 10_000)
+
   it('requires a reason and a confirmation before shrinking', async () => {
     let submitted: DevicePoolInput | undefined
     server.use(http.put('/api/v1/device-pools/:id', async ({ request }) => {
@@ -143,7 +177,7 @@ describe('PoolsPage pool capacity', () => {
     const iosPool: DevicePool = {
       id: 'pool_ios_000000000001', name: 'default-ios', platform: 'ios', default_lease_seconds: 1800,
       max_lease_seconds: 86400, total_target: 6, min_ready: 6, max_concurrency: 6,
-      base_device_id: 'device_ios_000000001', status: 'active',
+      base_device_id: 'device_ios_000000001', fresh_vm_per_run: false, status: 'active',
       created_at: '2026-08-20T00:00:00Z', updated_at: '2026-08-20T00:00:00Z',
     }
     const iosTemplate: Device = {

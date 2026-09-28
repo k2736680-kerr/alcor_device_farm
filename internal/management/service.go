@@ -294,9 +294,16 @@ func (service *Service) CreatePool(ctx context.Context, clientID, key string, in
 	if input.Enabled != nil && !*input.Enabled {
 		status = domain.PoolDisabled
 	}
+	// fresh_vm_per_run defaults to false so an omitted field preserves the
+	// DF-038 non-destructive release behavior that existing pools rely on.
+	freshVMPerRun := false
+	if input.FreshVMPerRun != nil {
+		freshVMPerRun = *input.FreshVMPerRun
+	}
 	pool := Pool{ID: id, Name: input.Name, Platform: input.Platform, DefaultLeaseSeconds: input.DefaultLeaseSeconds,
 		MaxLeaseSeconds: input.MaxLeaseSeconds, MaxConcurrency: input.MaxConcurrency,
-		TotalTarget: totalTarget, MinReady: minReady, DefaultImageID: defaultImageID, Status: status}
+		TotalTarget: totalTarget, MinReady: minReady, DefaultImageID: defaultImageID,
+		FreshVMPerRun: freshVMPerRun, Status: status}
 	meta, err := idempotency(clientID, "create_device_pool", key, "device_pool", id, input, 201)
 	if err != nil {
 		return Pool{}, err
@@ -379,6 +386,12 @@ func (service *Service) UpdatePool(ctx context.Context, id string, input PoolInp
 	current.Platform = input.Platform
 	current.MaxLeaseSeconds, current.MaxConcurrency = input.MaxLeaseSeconds, input.MaxConcurrency
 	current.TotalTarget, current.MinReady, current.DefaultImageID = totalTarget, minReady, defaultImageID
+	// Only an explicit field in the request changes the fresh-VM policy; an
+	// omitted field leaves the current value untouched so unrelated pool
+	// updates cannot silently flip the destructive release behavior.
+	if input.FreshVMPerRun != nil {
+		current.FreshVMPerRun = *input.FreshVMPerRun
+	}
 	reason := strings.TrimSpace(input.Reason)
 	if reason == "" {
 		reason = "pool capacity configuration updated"

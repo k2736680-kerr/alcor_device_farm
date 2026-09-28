@@ -133,7 +133,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		services.Reservations.SetIOSSessionController(services.IOSSessions)
 		go services.IOSSessions.RunReconcile(ctx, cfg.Reconcile.Interval, logger)
 		go services.Scheduler.Run(ctx, cfg.Lease.SchedulerInterval)
-		reservationReaper := reaper.New(services.Reservations, cfg.Lease.GracePeriod, logger)
+		reservationReaper := reaper.New(services.Reservations, reaper.Policy{
+			GracePeriod:       cfg.Lease.GracePeriod,
+			PendingTimeout:    cfg.Lease.PendingTimeout,
+			PendingClaimGrace: cfg.Lease.PendingClaimGrace,
+		}, logger)
 		go reservationReaper.Run(ctx, cfg.Lease.ReaperInterval)
 		var visibility reconcile.Visibility
 		if stfClient != nil {

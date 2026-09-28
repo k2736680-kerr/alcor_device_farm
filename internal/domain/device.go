@@ -32,7 +32,12 @@ const HostUnavailableReason = "设备宿主机离线或暂不可用"
 var deviceTransitions = map[DeviceLifecycleStatus]map[DeviceLifecycleStatus]struct{}{
 	DeviceProvisioning: allowed(DeviceBooting, DeviceQuarantined, DeviceDeleted),
 	DeviceBooting:      allowed(DeviceReady, DeviceStopped, DeviceQuarantined),
-	DeviceReady:        allowed(DeviceProvisioning, DeviceReserved, DeviceStopped, DeviceQuarantined, DeviceDeleted),
+	// Ready -> Recycling is legal because a reservation can close after the
+	// reconciler has already converged the device back to ready. A pool with
+	// fresh_vm_per_run needs to recycle the device regardless of which of the
+	// two observed it first, otherwise an already-ready device would silently
+	// skip the fresh-VM guarantee.
+	DeviceReady:        allowed(DeviceProvisioning, DeviceReserved, DeviceRecycling, DeviceStopped, DeviceQuarantined, DeviceDeleted),
 	DeviceReserved:     allowed(DeviceBusy, DeviceReady, DeviceRecycling, DeviceQuarantined),
 	DeviceBusy:         allowed(DeviceReady, DeviceRecycling, DeviceQuarantined),
 	DeviceRecycling:    allowed(DeviceReady, DeviceStopped, DeviceQuarantined),

@@ -32,6 +32,8 @@ export interface DevicePool {
    * @nullable
    */
   base_device_id?: DevicePoolBaseDeviceId;
+  /** When true, releasing an Android emulator Reservation queues a destructive recycle (delete and recreate) so the next run starts from a factory-fresh VM. Defaults to false, which preserves the DF-038 non-destructive release behavior. */
+  fresh_vm_per_run: boolean;
   status: DevicePoolStatus;
   created_at: string;
   updated_at: string;

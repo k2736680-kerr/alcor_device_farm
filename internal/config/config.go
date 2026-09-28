@@ -59,6 +59,16 @@ type LeaseConfig struct {
 	SchedulerInterval time.Duration `yaml:"scheduler_interval" json:"scheduler_interval"`
 	ReaperInterval    time.Duration `yaml:"reaper_interval" json:"reaper_interval"`
 	GracePeriod       time.Duration `yaml:"grace_period" json:"grace_period"`
+	// PendingTimeout bounds how long a reservation may sit in 'pending' waiting
+	// for a device before it is failed. Without it a client that asks for a
+	// device the farm can never satisfy waits forever, because the scheduler
+	// only ever moves pending rows forward and never expires them.
+	PendingTimeout time.Duration `yaml:"pending_timeout" json:"pending_timeout"`
+	// PendingClaimGrace bounds how long a reservation may hold a device while
+	// still 'pending' (the crash window between reserving a device and
+	// activating the claim) before both the reservation and its device are
+	// released back to a schedulable state.
+	PendingClaimGrace time.Duration `yaml:"pending_claim_grace" json:"pending_claim_grace"`
 }
 
 type ReconcileConfig struct {
@@ -126,6 +136,8 @@ func Default() Config {
 			SchedulerInterval: 250 * time.Millisecond,
 			ReaperInterval:    time.Second,
 			GracePeriod:       30 * time.Second,
+			PendingTimeout:    10 * time.Minute,
+			PendingClaimGrace: 30 * time.Second,
 		},
 		Reconcile: ReconcileConfig{Interval: 2 * time.Second, HostTimeout: 30 * time.Second,
 			HostRecoveryGrace: 90 * time.Second, STFVisibilityGrace: 30 * time.Second, FailureThreshold: 3},
@@ -232,6 +244,8 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 		{"LEASE_SCHEDULER_INTERVAL", &cfg.Lease.SchedulerInterval},
 		{"LEASE_REAPER_INTERVAL", &cfg.Lease.ReaperInterval},
 		{"LEASE_GRACE_PERIOD", &cfg.Lease.GracePeriod},
+		{"LEASE_PENDING_TIMEOUT", &cfg.Lease.PendingTimeout},
+		{"LEASE_PENDING_CLAIM_GRACE", &cfg.Lease.PendingClaimGrace},
 		{"RECONCILE_INTERVAL", &cfg.Reconcile.Interval},
 		{"RECONCILE_HOST_TIMEOUT", &cfg.Reconcile.HostTimeout},
 		{"RECONCILE_HOST_RECOVERY_GRACE", &cfg.Reconcile.HostRecoveryGrace},
@@ -348,6 +362,12 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Lease.GracePeriod < 0 {
 		validationErrors = append(validationErrors, errors.New("lease.grace_period must not be negative"))
+	}
+	if cfg.Lease.PendingTimeout <= 0 {
+		validationErrors = append(validationErrors, errors.New("lease.pending_timeout must be greater than zero"))
+	}
+	if cfg.Lease.PendingClaimGrace < 0 {
+		validationErrors = append(validationErrors, errors.New("lease.pending_claim_grace must not be negative"))
 	}
 	if cfg.Reconcile.FailureThreshold < 1 {
 		validationErrors = append(validationErrors, errors.New("reconcile.failure_threshold must be greater than zero"))
@@ -541,6 +561,8 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Duration("lease_scheduler_interval", cfg.Lease.SchedulerInterval),
 		slog.Duration("lease_reaper_interval", cfg.Lease.ReaperInterval),
 		slog.Duration("lease_grace_period", cfg.Lease.GracePeriod),
+		slog.Duration("lease_pending_timeout", cfg.Lease.PendingTimeout),
+		slog.Duration("lease_pending_claim_grace", cfg.Lease.PendingClaimGrace),
 		slog.Duration("reconcile_interval", cfg.Reconcile.Interval),
 		slog.Duration("reconcile_host_timeout", cfg.Reconcile.HostTimeout),
 		slog.Duration("reconcile_host_recovery_grace", cfg.Reconcile.HostRecoveryGrace),

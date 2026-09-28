@@ -109,6 +109,7 @@ type Pool struct {
 	MinReady            int               `json:"min_ready"`
 	DefaultImageID      *string           `json:"default_image_id,omitempty"`
 	BaseDeviceID        *string           `json:"base_device_id,omitempty"`
+	FreshVMPerRun       bool              `json:"fresh_vm_per_run"`
 	Status              domain.PoolStatus `json:"status"`
 	CreatedAt           time.Time         `json:"created_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`
@@ -214,6 +215,7 @@ type PoolInput struct {
 	MinReady            *int    `json:"min_ready,omitempty"`
 	DefaultImageID      *string `json:"default_image_id,omitempty"`
 	Enabled             *bool   `json:"enabled,omitempty"`
+	FreshVMPerRun       *bool   `json:"fresh_vm_per_run,omitempty"`
 	Reason              string  `json:"reason,omitempty"`
 }
 

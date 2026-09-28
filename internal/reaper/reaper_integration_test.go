@@ -140,7 +140,7 @@ func TestReaperClosesReservationWhenDeviceIsAlreadyReady(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	worker := reaper.New(service, 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	worker := reaper.New(service, reaper.Policy{GracePeriod: 30 * time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	value, err := worker.RunOnce(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -159,8 +159,8 @@ func TestTwoReapersCloseExpiredReservationOnce(t *testing.T) {
         WHERE id=$1`, active.ID); err != nil {
 		t.Fatal(err)
 	}
-	first := reaper.New(service, 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	second := reaper.New(service, 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	first := reaper.New(service, reaper.Policy{GracePeriod: 30 * time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	second := reaper.New(service, reaper.Policy{GracePeriod: 30 * time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for _, worker := range []*reaper.Reaper{first, second} {
@@ -199,7 +199,7 @@ func TestReaperHonorsGracePeriod(t *testing.T) {
         WHERE id=$1`, active.ID); err != nil {
 		t.Fatal(err)
 	}
-	worker := reaper.New(service, 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	worker := reaper.New(service, reaper.Policy{GracePeriod: 30 * time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := worker.RunOnce(context.Background()); !errors.Is(err, reservation.ErrNothingToReap) {
 		t.Fatalf("reaper before grace error=%v", err)
 	}
