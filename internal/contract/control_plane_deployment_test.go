@@ -126,7 +126,7 @@ func TestControlPlaneIOSPredeploymentCheckIsReadOnly(t *testing.T) {
 		"Baguette simulators.json reachable through the shared Server namespace",
 		"expected unauthenticated iOS gateway $path to return 401",
 		"iOS TLS gateway rejects unauthenticated requests",
-		"no Agent, NPS, database or worker-06 service was changed",
+		"no Agent, NPS, database or 171 service was changed",
 	} {
 		if !strings.Contains(raw, required) {
 			t.Fatalf("iOS predeployment check is missing %q", required)
