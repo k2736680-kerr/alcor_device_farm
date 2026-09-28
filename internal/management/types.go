@@ -110,6 +110,12 @@ type Pool struct {
 	DefaultImageID      *string           `json:"default_image_id,omitempty"`
 	BaseDeviceID        *string           `json:"base_device_id,omitempty"`
 	FreshVMPerRun       bool              `json:"fresh_vm_per_run"`
+	// Provisionable 表示这个池当前是否真的能把设备供出来。为 false 时自动调度
+	// 不该再选中它：所有在线宿主都已被证明没有该池指定的镜像（镜像引用走宿主
+	// 本地仓库，创建时只校验不拉取），排队进去的 create 注定失败。字段为 nil
+	// 表示「没评估」（非 Android 池、没用镜像的池，或老版本行为），按可供给处理。
+	Provisionable       *bool             `json:"provisionable,omitempty"`
+	ProvisionableReason string            `json:"provisionable_reason,omitempty"`
 	Status              domain.PoolStatus `json:"status"`
 	CreatedAt           time.Time         `json:"created_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`

@@ -217,6 +217,9 @@ func (store *Store) ListPools(ctx context.Context, page paging.Page) ([]manageme
 	if err := rows.Err(); err != nil {
 		return nil, 0, normalize(err)
 	}
+	if err := fillPoolProvisionability(ctx, store.db.Pool(), result); err != nil {
+		return nil, 0, err
+	}
 	return result, total, nil
 }
 
@@ -847,7 +850,14 @@ func getHost(ctx context.Context, query database.Querier, id string) (management
 }
 func getPool(ctx context.Context, query database.Querier, id string) (management.Pool, error) {
 	value, err := scanPool(query.QueryRow(ctx, poolSelect+` WHERE id=$1`, id))
-	return value, rowError(err)
+	if err != nil {
+		return value, rowError(err)
+	}
+	pools := []management.Pool{value}
+	if err := fillPoolProvisionability(ctx, query, pools); err != nil {
+		return value, err
+	}
+	return pools[0], nil
 }
 
 type rowScanner interface{ Scan(...any) error }
@@ -875,6 +885,65 @@ func scanPool(row rowScanner) (management.Pool, error) {
 	err := row.Scan(&v.ID, &v.Name, &v.Platform, &v.DefaultLeaseSeconds, &v.MaxLeaseSeconds, &v.MaxConcurrency,
 		&v.TotalTarget, &v.MinReady, &v.DefaultImageID, &v.BaseDeviceID, &v.FreshVMPerRun, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	return v, err
+}
+
+// fillPoolProvisionability 标注每个 Android 池当前是否真的能把设备供出来。
+// 镜像引用走宿主本地仓库（127.0.0.1:5001），同一个 tag 在不同宿主上是不同内容，
+// 而 device_images.docker_digest 只钉住其中一个，创建时只 InspectImage 不拉取。
+// 所以「所有在线宿主都已被证明没有这个池的镜像」时该池就不该再被自动调度选中：
+// 排队进去的 create 注定失败，调用方只会白等到预约超时。
+func fillPoolProvisionability(ctx context.Context, query database.Querier, pools []management.Pool) error {
+	ids := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		if pool.Platform == "android" && pool.DefaultImageID != nil {
+			ids = append(ids, pool.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := query.Query(ctx, `SELECT p.id,
+		(SELECT count(*) FROM device_hosts h WHERE h.status='online' AND NOT h.draining
+			AND h.host_type IN ('docker_emulator','hybrid')),
+		(SELECT count(*) FROM device_hosts h WHERE h.status='online' AND NOT h.draining
+			AND h.host_type IN ('docker_emulator','hybrid')
+			AND NOT EXISTS (SELECT 1 FROM device_host_image_states s WHERE s.host_id=h.id
+				AND s.image_id=p.default_image_id AND s.available=false AND s.observed_at >= $1))
+		FROM device_pools p WHERE p.id=ANY($2::text[])`, time.Now().UTC().Add(-domain.ImageStateTTL), ids)
+	if err != nil {
+		return normalize(err)
+	}
+	defer rows.Close()
+	type availability struct{ candidates, usable int }
+	values := make(map[string]availability, len(ids))
+	for rows.Next() {
+		var id string
+		var value availability
+		if err := rows.Scan(&id, &value.candidates, &value.usable); err != nil {
+			return normalize(err)
+		}
+		values[id] = value
+	}
+	if err := rows.Err(); err != nil {
+		return normalize(err)
+	}
+	for index := range pools {
+		value, evaluated := values[pools[index].ID]
+		if !evaluated {
+			continue
+		}
+		provisionable := value.usable > 0
+		pools[index].Provisionable = &provisionable
+		if provisionable {
+			continue
+		}
+		if value.candidates == 0 {
+			pools[index].ProvisionableReason = "没有在线的 Docker 模拟器宿主机，拉不起这个池的设备"
+		} else {
+			pools[index].ProvisionableReason = "所有在线宿主上都没有这个池指定的镜像（镜像引用走宿主本地仓库，创建时不拉取）"
+		}
+	}
+	return nil
 }
 func scanPoolImage(row rowScanner) (management.PoolImage, error) {
 	var v management.PoolImage

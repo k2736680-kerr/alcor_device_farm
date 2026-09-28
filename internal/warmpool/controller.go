@@ -22,6 +22,15 @@ import (
 
 var ErrNoCapacity = errors.New("没有符合条件且容量充足的 Docker 模拟器宿主机")
 
+// imageOutcomeWindow bounds how far back create command outcomes are folded into
+// device_host_image_states. The reconciler ticks far more often than this, so no
+// outcome is missed in normal operation while the scan stays cheap.
+const imageOutcomeWindow = 5 * time.Minute
+
+// imageAvailabilityErrorCodes are the host error codes that prove a host does not
+// hold the image digest pinned for the pool.
+var imageAvailabilityErrorCodes = []string{"IMAGE_DIGEST_MISMATCH", "IMAGE_NOT_FOUND"}
+
 type CapacityUnavailableError struct {
 	Result capacity.Result
 }
@@ -302,7 +311,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			Scan(&runtimeImage, &digest, &api, &abi); err != nil {
 			return err
 		}
-		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile)
+		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile, true)
 		if err != nil {
 			return err
 		}
@@ -366,6 +375,11 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 		}
 		result.DevicesCreated += created
 		result.CapacityMisses += misses
+	}
+	if err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		return controller.recordHostImageOutcomes(ctx, tx)
+	}); err != nil {
+		return result, err
 	}
 	rows, err := controller.db.Pool().Query(ctx, `SELECT p.id,COALESCE(b.image_id,p.default_image_id)
 		FROM device_pools p
@@ -1185,7 +1199,7 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 		if err != nil {
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}
-		hostID, err := lockHostCapacity(ctx, tx, imageID, profile)
+		hostID, err := lockHostCapacity(ctx, tx, imageID, profile, false)
 		if errors.Is(err, ErrNoCapacity) {
 			return nil
 		}
@@ -1354,7 +1368,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}
 		for range missing {
-			hostID, err := lockHostCapacity(ctx, tx, imageID, profile)
+			hostID, err := lockHostCapacity(ctx, tx, imageID, profile, true)
 			if errors.Is(err, ErrNoCapacity) {
 				result.CapacityMisses++
 				break
@@ -1530,28 +1544,82 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	return deviceID, commandID, err
 }
 
-func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile) (string, error) {
+// recordHostImageOutcomes folds recent create outcomes into
+// device_host_image_states so host selection stops repeating a failure it has
+// already proven. A create that succeeded is positive proof the host holds the
+// pinned image; a create that failed with an image error code is proof it does
+// not. Only the newest observation per (host, image) pair survives, so a later
+// success clears an earlier miss.
+func (controller *Controller) recordHostImageOutcomes(ctx context.Context, tx pgx.Tx) error {
+	now, err := database.ClockNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	cutoff := now.Add(-imageOutcomeWindow)
+	if _, err := tx.Exec(ctx, `INSERT INTO device_host_image_states (host_id,image_id,available,error_code,observed_at)
+		SELECT d.host_id,d.image_id,true,NULL,c.completed_at
+		FROM device_host_commands c
+		JOIN devices d ON d.id=c.payload->>'device_id'
+		WHERE c.command_type='create' AND c.status='succeeded' AND c.completed_at IS NOT NULL
+		AND c.completed_at >= $1 AND d.image_id IS NOT NULL
+		ON CONFLICT (host_id,image_id) DO UPDATE
+		SET available=true,error_code=NULL,observed_at=EXCLUDED.observed_at
+		WHERE device_host_image_states.observed_at < EXCLUDED.observed_at`, cutoff); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO device_host_image_states (host_id,image_id,available,error_code,observed_at)
+		SELECT d.host_id,d.image_id,false,c.error_code,COALESCE(c.completed_at,c.updated_at)
+		FROM device_host_commands c
+		JOIN devices d ON d.id=c.payload->>'device_id'
+		WHERE c.command_type='create' AND c.status IN ('failed','timed_out')
+		AND c.error_code = ANY($2::text[]) AND d.image_id IS NOT NULL
+		AND COALESCE(c.completed_at,c.updated_at) >= $1
+		ON CONFLICT (host_id,image_id) DO UPDATE
+		SET available=false,error_code=EXCLUDED.error_code,observed_at=EXCLUDED.observed_at
+		WHERE device_host_image_states.observed_at < EXCLUDED.observed_at`, cutoff, imageAvailabilityErrorCodes)
+	return err
+}
+
+// respectImageState makes lockHostCapacity skip hosts that have already been
+// observed to lack the requested image. Device scheduling must set it, because
+// the pinned image reference resolves through a HOST-LOCAL registry and create
+// never pulls: a host without the pinned content can only fail with
+// IMAGE_DIGEST_MISMATCH, so queuing a create there is a guaranteed wasted cycle.
+// Image validation deliberately does NOT set it -- its whole purpose is to ask a
+// host, so excluding hosts that previously failed would deadlock validating.
+func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile, respectImageState bool) (string, error) {
+	now, err := database.ClockNow(ctx, tx)
+	if err != nil {
+		return "", err
+	}
 	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT h.id,h.capacity,h.used_capacity,h.last_heartbeat_at,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('profile',COALESCE(d.runtime_profile_override,d.capabilities),'image_id',d.image_id))
 			FROM devices d WHERE d.host_id=h.id AND %s),'[]'::jsonb),
 		COALESCE((SELECT jsonb_agg(c.payload) FROM device_host_commands c WHERE c.host_id=h.id
 			AND c.command_type='validate_image' AND c.status IN ('pending','leased')),'[]'::jsonb),
 		EXISTS (SELECT 1 FROM device_host_commands c WHERE c.host_id=h.id AND c.command_type='validate_image'
-			AND c.status='succeeded' AND c.payload->>'image_id'=$1)
+			AND c.status='succeeded' AND c.payload->>'image_id'=$1),
+		COALESCE((SELECT s.available FROM device_host_image_states s
+			WHERE s.host_id=h.id AND s.image_id=$1 AND s.observed_at >= $2),true)
 		FROM device_hosts h WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')
-		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate), imageID)
+		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate), imageID, now.Add(-domain.ImageStateTTL))
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
 	var bestResult *capacity.Result
+	imageBlocked := false
 	for rows.Next() {
 		var hostID string
 		var capacityJSON, usedJSON, deviceJSON, pendingJSON []byte
 		var lastHeartbeat *time.Time
-		var imageCached bool
-		if err := rows.Scan(&hostID, &capacityJSON, &usedJSON, &lastHeartbeat, &deviceJSON, &pendingJSON, &imageCached); err != nil {
+		var imageCached, imageUsable bool
+		if err := rows.Scan(&hostID, &capacityJSON, &usedJSON, &lastHeartbeat, &deviceJSON, &pendingJSON, &imageCached, &imageUsable); err != nil {
 			return "", err
+		}
+		if respectImageState && !imageUsable {
+			imageBlocked = true
+			continue
 		}
 		var capacityMap, usedMap map[string]any
 		var devices []struct {
@@ -1616,6 +1684,13 @@ func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested 
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
+	}
+	// Reaching here means no candidate host passed. A known image miss is the
+	// most actionable answer -- it cannot be fixed by freeing host resources --
+	// so it is reported ahead of any resource shortfall.
+	if imageBlocked {
+		return "", &CapacityUnavailableError{Result: capacity.Result{
+			Limiting: "image", Shortfall: map[string]int64{"image": 1}}}
 	}
 	if bestResult != nil {
 		return "", &CapacityUnavailableError{Result: *bestResult}

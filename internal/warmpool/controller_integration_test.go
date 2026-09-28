@@ -1151,7 +1151,7 @@ func seedWarmPool(t *testing.T, db *database.DB, imageStatus string, minReady, m
 	if _, err := db.Pool().Exec(context.Background(), `TRUNCATE TABLE
 		device_idempotency_records,device_audit_events,device_health_events,device_sessions,
 		device_reservations,device_pool_devices,devices,device_pool_images,device_pools,
-		device_host_commands,device_hosts,device_images RESTART IDENTITY CASCADE`); err != nil {
+		device_host_commands,device_hosts,device_images,device_host_image_states RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Pool().Exec(context.Background(), `INSERT INTO device_images

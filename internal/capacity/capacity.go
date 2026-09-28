@@ -123,6 +123,12 @@ func (result Result) Error() error {
 // message. Stable error codes remain English identifiers; all displayed text
 // is Chinese and preserves the exact shortfall reported by the Host heartbeat.
 func ChineseMessage(result Result) string {
+	// A known image miss is not a resource problem, so it is reported before any
+	// resource shortfall: the image reference resolves through a host-local
+	// registry and create never pulls, so freeing host resources cannot help.
+	if result.Shortfall["image"] > 0 {
+		return "宿主机上没有该设备池指定的镜像：镜像引用走宿主本地仓库且创建时不拉取，请先在在线宿主上构建或导入该镜像"
+	}
 	parts := make([]string, 0, 4)
 	if value := result.Shortfall["memory_mb"]; value > 0 {
 		parts = append(parts, fmt.Sprintf("内存还缺 %d MB", value))
