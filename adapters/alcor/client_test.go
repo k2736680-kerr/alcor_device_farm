@@ -78,6 +78,62 @@ func TestClientCompletesRunAttemptReservationLifecycleAgainstMock(t *testing.T) 
 	}
 }
 
+// 不传 pool_id 时，请求里就不能出现 pool_id 字段，由农场自己挑池。
+//
+// 这条是在保证「Alcor 只报能力、农场自己决定池」这条路真的走得通：
+// 只要客户端还偷偷塞一个空 pool_id 或随机池名，农场侧的选择逻辑就被绕过了。
+func TestClientReserveWithoutPoolIDDelegatesSelectionToFarm(t *testing.T) {
+	server := httptest.NewServer(mockserver.New(mockserver.Config{Token: mockToken}))
+	defer server.Close()
+	client := newClient(t, server.URL)
+
+	created, err := client.Reserve(context.Background(), alcor.ReserveRequest{
+		Run: runContext, LeaseSeconds: 600,
+		RequestedCapabilities: map[string]any{"platformName": "Android", "apiLevel": 34},
+		IdempotencyKey:        "reserve-auto-pool-0001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.PoolID != mockserver.AutoSelectedPoolID {
+		t.Fatalf("未指定池时应当由农场挑一个池，实际 pool_id=%q", created.PoolID)
+	}
+	if created.OwnerID != runContext.RunAttemptID || created.RequestedCapabilities["apiLevel"] != float64(34) {
+		t.Fatalf("created reservation=%#v", created)
+	}
+}
+
+// 指定了 pool_id 时行为必须完全不变：池名原样发给农场，不被自动选择覆盖。
+func TestClientReserveWithPoolIDKeepsCallerChoice(t *testing.T) {
+	server := httptest.NewServer(mockserver.New(mockserver.Config{Token: mockToken}))
+	defer server.Close()
+	client := newClient(t, server.URL)
+
+	created, err := client.Reserve(context.Background(), alcor.ReserveRequest{
+		PoolID: "pool_000000000000001", Run: runContext, LeaseSeconds: 600,
+		IdempotencyKey: "reserve-explicit-pool-0001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.PoolID != "pool_000000000000001" {
+		t.Fatalf("显式指定的池不能被改写，实际 %q", created.PoolID)
+	}
+}
+
+// pool_id 明确写错（不合法标识）时仍然要报错，不能当成「没指定」而静默自动选池。
+func TestClientReserveRejectsMalformedPoolID(t *testing.T) {
+	server := httptest.NewServer(mockserver.New(mockserver.Config{Token: mockToken}))
+	defer server.Close()
+	client := newClient(t, server.URL)
+
+	if _, err := client.Reserve(context.Background(), alcor.ReserveRequest{
+		PoolID: "no", Run: runContext, LeaseSeconds: 600, IdempotencyKey: "reserve-bad-pool-0001",
+	}); err == nil {
+		t.Fatal("不合法 pool_id 应当被拒绝")
+	}
+}
+
 func TestClientMapsCapacityAndInfrastructureFailures(t *testing.T) {
 	tests := []struct {
 		name        string

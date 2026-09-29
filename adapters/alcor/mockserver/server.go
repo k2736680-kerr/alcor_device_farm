@@ -26,6 +26,10 @@ const (
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
 
+// AutoSelectedPoolID 是请求没带 pool_id 时 mock 赋的池，用来模拟
+// 「农场自己挑了一个池」的结果。
+const AutoSelectedPoolID = "pool_mock_auto_selected"
+
 type Config struct {
 	Token        string
 	Scenario     string
@@ -53,6 +57,27 @@ type createInput struct {
 	OwnerID               string         `json:"owner_id"`
 	RequestedCapabilities map[string]any `json:"requested_capabilities"`
 	LeaseSeconds          int            `json:"lease_seconds"`
+
+	// 区分「没传 pool_id」和「传了空串」。两者语义不同：前者是委托农场选池，
+	// 后者是调用方写错了，必须报错，不能猜。
+	poolIDPresent bool
+}
+
+func (input *createInput) UnmarshalJSON(data []byte) error {
+	type raw createInput
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	_, present := probe["pool_id"]
+	var decoded raw
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	// 注意顺序：整体赋值会覆盖 poolIDPresent，所以必须在赋值之后再设置它。
+	*input = createInput(decoded)
+	input.poolIDPresent = present
+	return nil
 }
 
 func New(config Config) *Server {
@@ -125,9 +150,22 @@ func (server *Server) createReservation(writer http.ResponseWriter, request *htt
 		return
 	}
 	if input.OwnerType != alcor.OwnerTypeRunAttempt || !identifierPattern.MatchString(input.OwnerID) ||
-		input.OwnerID != request.Header.Get(correlation.HeaderAttemptID) || !identifierPattern.MatchString(input.PoolID) || input.LeaseSeconds < 60 {
+		input.OwnerID != request.Header.Get(correlation.HeaderAttemptID) || input.LeaseSeconds < 60 {
 		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Mock 请求必须使用匹配的 RunAttempt 所有者", false)
 		return
+	}
+	// pool_id 是选填的：字段缺席表示由农场自己挑池，和真实农场一致。
+	// 传了空串是调用方写错，必须报错，不能当成「没指定」。
+	if input.poolIDPresent && input.PoolID == "" {
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Mock pool_id 不能为空串", false)
+		return
+	}
+	if input.PoolID != "" && !identifierPattern.MatchString(input.PoolID) {
+		server.error(writer, request, http.StatusBadRequest, "INVALID_ARGUMENT", "Mock 请求必须使用匹配的 RunAttempt 所有者", false)
+		return
+	}
+	if input.PoolID == "" {
+		input.PoolID = AutoSelectedPoolID
 	}
 
 	server.mutex.Lock()

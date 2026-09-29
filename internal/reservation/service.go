@@ -47,6 +47,33 @@ type CreateInput struct {
 	OwnerID               string         `json:"owner_id"`
 	RequestedCapabilities map[string]any `json:"requested_capabilities,omitempty"`
 	LeaseSeconds          int            `json:"lease_seconds"`
+
+	// poolIDPresent 区分「没传 pool_id」和「传了空串」。
+	//
+	// 两者语义不同：字段缺席表示「由农场自己挑池」，而 pool_id:"" 是调用方写错了，
+	// 必须报错。如果把空串当成缺席，调用方一个拼错字段名的请求会被静默改写成
+	// 「随便挑个池」，问题会推迟到运行失败时才暴露。
+	poolIDPresent bool
+}
+
+// PoolIDProvided 报告请求里是否显式带了 pool_id 字段。
+func (input CreateInput) PoolIDProvided() bool { return input.poolIDPresent }
+
+func (input *CreateInput) UnmarshalJSON(data []byte) error {
+	type raw CreateInput
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	_, present := probe["pool_id"]
+	var decoded raw
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	// 顺序要紧：整体赋值会覆盖 poolIDPresent，所以要放在赋值之后。
+	*input = CreateInput(decoded)
+	input.poolIDPresent = present
+	return nil
 }
 
 type Filter struct {
@@ -180,6 +207,23 @@ func (service *Service) create(ctx context.Context, actor audit.Actor, key strin
 		return View{}, err
 	}
 	input.RequestedCapabilities = normalizedCapabilities
+	// 调用方没指定池时，由农场自己挑一个能服务这次请求的池。
+	//
+	// 这是首选路径：调用方只声明「我要什么设备」，至于哪个池现在供得出来，取决于
+	// 镜像在哪些宿主上、宿主是否在线、池里有没有匹配设备 —— 都是农场的内部状态，
+	// 由农场自己判断最准。指定了池时仍然尊重调用方的选择（向后兼容）。
+	switch {
+	case strings.TrimSpace(input.PoolID) == "":
+		// 显式传了空串是调用方写错了，直接报错，不能悄悄改成自动选池。
+		if input.PoolIDProvided() {
+			return View{}, fmt.Errorf("%w：pool_id 不能为空字符串（要自动选池请省略该字段）", ErrInvalidArgument)
+		}
+		selectedPoolID, selectErr := service.selectPoolForRequest(ctx, actor, input.RequestedCapabilities)
+		if selectErr != nil {
+			return View{}, selectErr
+		}
+		input.PoolID = selectedPoolID
+	}
 	if err := validateCreate(actor, key, input); err != nil {
 		return View{}, err
 	}

@@ -54,8 +54,13 @@ func New(config Config) (*Client, error) {
 }
 
 func (client *Client) Reserve(ctx context.Context, input ReserveRequest) (Reservation, error) {
-	if !identifierPattern.MatchString(input.PoolID) || !validRunContext(input.Run) ||
+	// PoolID 可以为空：这时由农场按 requested_capabilities 自己挑一个能服务的池。
+	// 指定了就照旧走指定池，行为完全不变。
+	if !validRunContext(input.Run) ||
 		input.LeaseSeconds < 60 || len(input.IdempotencyKey) < 8 || len(input.IdempotencyKey) > 128 {
+		return Reservation{}, errors.New("RunAttempt 预约请求无效")
+	}
+	if input.PoolID != "" && !identifierPattern.MatchString(input.PoolID) {
 		return Reservation{}, errors.New("RunAttempt 预约请求无效")
 	}
 	capabilities := input.RequestedCapabilities
@@ -63,9 +68,12 @@ func (client *Client) Reserve(ctx context.Context, input ReserveRequest) (Reserv
 		capabilities = map[string]any{}
 	}
 	payload := map[string]any{
-		"pool_id": input.PoolID, "owner_type": OwnerTypeRunAttempt,
-		"owner_id": input.Run.RunAttemptID, "requested_capabilities": capabilities,
+		"owner_type": OwnerTypeRunAttempt,
+		"owner_id":   input.Run.RunAttemptID, "requested_capabilities": capabilities,
 		"lease_seconds": input.LeaseSeconds,
+	}
+	if input.PoolID != "" {
+		payload["pool_id"] = input.PoolID
 	}
 	if input.RequestedDeviceID != "" {
 		if !identifierPattern.MatchString(input.RequestedDeviceID) {
