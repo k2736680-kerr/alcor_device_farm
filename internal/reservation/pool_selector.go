@@ -28,6 +28,41 @@ var schedulableCapabilityKeys = map[string]bool{
 	"hardware_profile_id": true,
 }
 
+// androidMinSdkLevelKey 是「设备 API 至少要到多少」的下限要求，不是精确匹配。
+//
+// 为什么需要它：调用方（Alcor）跑的是 APK，APK 的 minSdk 决定「设备 API >= minSdk」
+// 才装得上。而 apiLevel 在这套能力体系里是精确相等匹配，直接用 minSdk 填 apiLevel
+// 会变成「要一台正好 API 21 的设备」，把能装的 API 34 设备全排除掉。
+//
+// 所以它是一个独立键，只有明确携带它的请求才有下限语义；缺省时 apiLevel 仍然是
+// 原来的精确匹配，老调用方的行为完全不变。
+const androidMinSdkLevelKey = "androidMinSdkLevel"
+
+// minSDKLowerBound 从请求里取出 androidMinSdkLevel 的数值下限，没有则返回 0。
+func minSDKLowerBound(requested map[string]any) int {
+	value, exists := requested[androidMinSdkLevelKey]
+	if !exists {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(parsed)
+	}
+	return 0
+}
+
 // 自动选池：调用方只给能力要求，由农场自己挑一个池。
 //
 // 为什么这件事必须由农场做、而不是由 Alcor 隔着 API 做：
@@ -130,6 +165,7 @@ func (service *Service) listSelectablePools(
 	if err != nil {
 		return nil, err
 	}
+	minSDK := minSDKLowerBound(requested)
 	rows, err := service.db.Pool().Query(ctx, `
 		SELECT p.id, p.max_concurrency
 		FROM device_pools p
@@ -146,6 +182,9 @@ func (service *Service) listSelectablePools(
 		        AND h.status = 'online' AND NOT h.draining
 		        AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
 		        AND d.capabilities @> device_schedulable_capabilities($2::jsonb)
+		        -- androidMinSdkLevel 是下限：设备 API 必须 >= 它，而不是等于它。
+		        AND ($3 = 0 OR COALESCE(
+		              NULLIF(d.capabilities->>'apiLevel', '')::int, 0) >= $3)
 		    )
 		    OR (
 		      -- B. 池没有可直接分配的设备，但能按需拉起匹配的设备
@@ -169,6 +208,8 @@ func (service *Service) listSelectablePools(
 		          AND i.api_level::text = COALESCE(
 		              device_schedulable_capabilities($2::jsonb)->>'apiLevel',
 		              i.api_level::text)
+		          -- 下限要求：镜像的 API 也要 >= minSdk。
+		          AND ($3 = 0 OR i.api_level >= $3)
 		          -- 这台宿主没有被证明缺少该镜像（负向记录永久有效）
 		          AND NOT EXISTS (
 		            SELECT 1 FROM device_host_image_states s
@@ -178,7 +219,7 @@ func (service *Service) listSelectablePools(
 		      )
 		    )
 		  )
-		ORDER BY p.id`, platformName, encoded)
+		ORDER BY p.id`, platformName, encoded, minSDK)
 	if err != nil {
 		return nil, err
 	}
@@ -236,19 +277,25 @@ func poolSelectionWeight(candidate selectablePool) int {
 	return 1
 }
 
-// encodeRequestedCapabilities 把请求能力编码成 jsonb 字面量。
+// encodeRequestedCapabilities 把请求能力编码成 jsonb 字面量，供
+// device_schedulable_capabilities() 做精确包含匹配。
 //
-// 只保留 device_schedulable_capabilities() 白名单里的键：请求里若混入农场不认的
-// 键（例如 maxConcurrency），直接塞进 jsonb 不会影响 SQL 的 @> 语义，但会让排查
-// 噪音变大。这里统一经过白名单，让「请求能力」在农场内部只有一个形态。
+// 只保留那套白名单里的键：请求里若混入农场不认的键（例如 maxConcurrency），直接塞进
+// jsonb 不会影响 @> 语义，但会让排查噪音变大。这里统一经过白名单。
 //
-// 下划线开头的内部键（例如 _device_farm_target_device_id）一律剔除：那是农场自己
-// 在预约记录里存的内部标记，不是调用方可以要求的能力。
+// 下划线开头的内部键（例如 _device_farm_target_device_id）一律剔除：那是农场自己在
+// 预约记录里存的内部标记，不是调用方可以要求的能力。
+//
+// androidMinSdkLevel 也在这里剔除：它由 minSDKLowerBound 单独按「>=」处理，
+// 不能进 @> 匹配 —— 那是精确相等语义，会让 minSdk=21 变成「只要 API 21」。
 func encodeRequestedCapabilities(requested map[string]any) ([]byte, error) {
 	filtered := make(map[string]any, len(requested))
 	for key, value := range requested {
 		trimmed := strings.TrimSpace(key)
 		if trimmed == "" || strings.HasPrefix(trimmed, "_") {
+			continue
+		}
+		if trimmed == androidMinSdkLevelKey {
 			continue
 		}
 		if !schedulableCapabilityKeys[trimmed] {

@@ -516,6 +516,142 @@ func TestFarmEmptyPoolBranchRequiresNoExistingDevices(t *testing.T) {
 		t.Fatalf("池内已有设备（虽在离线宿主上），不该按「空池按需拉起」选中 %q", poolID)
 	}
 }
+// 跨仓库契约：Alcor 真实发出的预约载荷必须能被农场原样接受并选池。
+//
+// 这不是重复上面的用例，而是锁住两个仓库之间的**接口形状**。Alcor 侧
+// （android_executor.go / androidReservationCapabilities）在省略 device_pool_id 时
+// 会发这样一份 requested_capabilities：
+//
+//	{"platformName":"Android","androidMinSdkLevel":34}
+//
+// 农场必须：(1) 接受这个 payload，而不是报「参数无效」或「不支持的 key」；
+// (2) 把它当作下限语义选池。任何一侧单独改 key 名或类型，这条会失败 ——
+// 而两侧各自的单测都不会失败，这正是最容易被漏掉的集成风险。
+func TestFarmAcceptsAlcorDelegatedReservationPayload(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	// 两个池：一个只有 API 30 的设备（装不上 minSdk 34 的 APK），
+	// 一个只有 API 34 的设备。农场必须选后者。
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "", 2)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":30}`)
+	seedSelectorPool(t, db, "pool_0000000000002", "android", "", 2)
+	seedSelectorDevice(t, db, "device_00000000002", "pool_0000000000002", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":34}`)
+
+	// 这份 body 与 Alcor 发往 /api/v1/reservations 的形状一致：省略 pool_id。
+	body := `{
+		"owner_type":"run_attempt",
+		"owner_id":"attempt_000000000001",
+		"lease_seconds":600,
+		"requested_capabilities":{"platformName":"Android","androidMinSdkLevel":34}
+	}`
+	input, err := decodeCreateInput(t, body)
+	if err != nil {
+		t.Fatalf("农场不应拒绝 Alcor 的载荷：%v", err)
+	}
+	if input.PoolIDProvided() {
+		t.Fatal("该载荷不带 pool_id，应当被记为「未提供」以触发自动选池")
+	}
+	service := NewService(db, nil)
+	view, createErr := service.Create(context.Background(), testActor(), "idem-key-alcor-contract-01", input)
+	if createErr != nil {
+		t.Fatalf("农场应当接受 Alcor 的委派载荷并成功建预约：%v", createErr)
+	}
+	if view.PoolID != "pool_0000000000002" {
+		t.Fatalf("minSdk=34 应选中 API 34 的池 pool_0000000000002，实际 %q", view.PoolID)
+	}
+}
+
+// androidMinSdkLevel 是下限语义：设备 API >= 它就能用，不是「正好等于」。
+//
+// 这条最容易被写错成精确匹配 —— 那样 minSdk=21 的 APK 会变成「只要 API 21 的设备」，
+// 把 API 34 的设备全排除，运行反而找不到设备。
+func TestFarmTreatsMinSdkAsLowerBoundNotExactMatch(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "", 2)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":34}`)
+
+	// 设备是 API 34，要求「至少 API 21」——必须能选中。
+	got := selectedPoolID(t, db, map[string]any{
+		"platformName": "Android", androidMinSdkLevelKey: 21,
+	})
+	if got != "pool_0000000000001" {
+		t.Fatalf("API 34 的设备满足「至少 API 21」，应被选中，实际 %q", got)
+	}
+}
+
+// 下限高于设备 API -> 排除。
+func TestFarmRejectsDeviceBelowMinSdk(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 30)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "", 2)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":30}`)
+
+	service := newSelectorService(db)
+	_, err := service.selectPoolForRequest(context.Background(), testActor(), map[string]any{
+		"platformName": "Android", androidMinSdkLevelKey: 34,
+	})
+	if err == nil {
+		t.Fatal("设备 API 30 低于 minSdk 34，不应被选中")
+	}
+}
+
+// 按需拉起这条路也要遵守下限：镜像 API 必须 >= minSdk。
+func TestFarmRejectsOnDemandImageBelowMinSdk(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorImage(t, db, "image_00000000001", 30, "ready")
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 4)
+
+	service := newSelectorService(db)
+	if _, err := service.selectPoolForRequest(context.Background(), testActor(), map[string]any{
+		"platformName": "Android", androidMinSdkLevelKey: 34,
+	}); err == nil {
+		t.Fatal("镜像 API 30 低于 minSdk 34，不应被选中")
+	}
+}
+
+// 按需拉起且镜像 API 高于下限 -> 应当选中。
+func TestFarmAcceptsOnDemandImageAboveMinSdk(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorImage(t, db, "image_00000000001", 34, "ready")
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 4)
+
+	got := selectedPoolID(t, db, map[string]any{
+		"platformName": "Android", androidMinSdkLevelKey: 21,
+	})
+	if got != "pool_0000000000001" {
+		t.Fatalf("镜像 API 34 满足「至少 API 21」，应被选中，实际 %q", got)
+	}
+}
+
+// minSdk 不能进 @> 精确匹配：设备能力里没有 androidMinSdkLevel 这个键，
+// 若被一起送进 device_schedulable_capabilities()，任何设备都匹配不上。
+func TestFarmKeepsMinSdkOutOfExactCapabilityMatch(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "", 2)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":34}`)
+
+	got := selectedPoolID(t, db, map[string]any{
+		"platformName": "Android", "apiLevel": 34, androidMinSdkLevelKey: 34,
+	})
+	if got != "pool_0000000000001" {
+		t.Fatalf("minSdk 不该参与精确匹配，实际 %q", got)
+	}
+}
+
+// 请求里混入农场不认的键不能影响选池，也不能让 SQL 出错。
 //
 // 真实场景：调用方顺手带上 maxConcurrency（它不是设备能力，不在调度白名单里）。
 func TestFarmIgnoresNonSchedulableCapabilityKeys(t *testing.T) {
@@ -565,5 +701,56 @@ func TestFarmRejectsInactivePool(t *testing.T) {
 	service := newSelectorService(db)
 	if _, err := service.selectPoolForRequest(context.Background(), testActor(), androidCapabilities(34)); err == nil {
 		t.Fatal("非 active 池不应被选中")
+	}
+}
+
+// 端到端：省略 pool_id 时，create() 必须把自动选出的池落到预约记录上。
+//
+// 为什么必须有这个用例：其余选池用例（含 TestServiceAutoSelectsPoolWhenPoolIDOmitted）
+// 都是直接调 selectPoolForRequest，只证明「选池函数选得对」，不证明 create() 用了它。
+// 反向验证发现：把 create() 里的 input.PoolID = selectedPoolID 改成丢弃结果，
+// 那些用例照样全绿。这个盲区会让「pool_id 可选」在真实链路上静默失效 ——
+// 选池算出来了，预约却落在别的池（或空池）上。
+//
+// 所以这里必须走完整 create()，并且断言返回的 View.PoolID 就是选中的那个池。
+func TestFarmCreatePersistsAutoSelectedPool(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	// 两个同为 android 的可用池，容量不同。省略 pool_id 时 create() 必须选中其中一个，
+	// 并把它的 ID 写进预约 —— 而不是把 PoolID 留空。
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "", 1)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":34}`)
+	seedSelectorPool(t, db, "pool_0000000000002", "android", "", 3)
+	seedSelectorDevice(t, db, "device_00000000002", "pool_0000000000002", "host_0000000000001",
+		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":34}`)
+
+	input, err := decodeCreateInput(t, `{"owner_type":"run_attempt","owner_id":"attempt_000000000001","lease_seconds":600,"requested_capabilities":{"platformName":"Android","apiLevel":34}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.PoolIDProvided() {
+		t.Fatal("省略 pool_id 不该被记为「已提供」")
+	}
+	service := NewService(db, nil)
+	view, createErr := service.Create(context.Background(), testActor(), "idem-key-autoselect-01", input)
+	if createErr != nil {
+		t.Fatalf("省略 pool_id 时 create 应当成功（由农场自选池），实际 %v", createErr)
+	}
+	if view.PoolID == "" {
+		t.Fatal("create() 没有把自动选出的池落到预约上：PoolID 为空")
+	}
+	if view.PoolID != "pool_0000000000001" && view.PoolID != "pool_0000000000002" {
+		t.Fatalf("预约落在了一个不可用的池上：%q", view.PoolID)
+	}
+	// 库里那一行也必须是同一个池 —— 防止只在返回值上贴标签、没写库。
+	var stored string
+	if err := db.Pool().QueryRow(context.Background(),
+		`SELECT pool_id FROM device_reservations WHERE id = $1`, view.ID).Scan(&stored); err != nil {
+		t.Fatalf("读取预约行：%v", err)
+	}
+	if stored != view.PoolID {
+		t.Fatalf("返回值 PoolID=%q 与库里 pool_id=%q 不一致", view.PoolID, stored)
 	}
 }
