@@ -14,6 +14,58 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// minSDKLowerBoundSQL 是「设备 API >= androidMinSdkLevel 下限」的 SQL 条件，
+// 供**所有**参与设备分配/可分配性判断的查询共用。
+//
+// 为什么必须共用：androidMinSdkLevel 是「>=」语义的下限，不是精确匹配值，
+// 所以它不在 device_schedulable_capabilities() 的白名单里 —— 那个函数只保留
+// 精确包含匹配用的键，送进去的下限会被**静默丢弃**。
+//
+// 选池阶段（internal/reservation/pool_selector.go）一直显式带了这个下限，
+// 但分配阶段曾经只有 `d.capabilities @> device_schedulable_capabilities(...)`：
+// 于是池内同时有 API 30 和 API 34 设备时，池会因 API 34 设备被选中，
+// 随后却可能把 API 30 设备分配出去 —— 预约成功，装包必然失败。
+//
+// 把条件抽成常量，是为了让「选池」和「分配」两处无法再各自漂移：
+// 任何新增的分配查询都必须拼上它。
+//
+// 参数约定：$n 是请求能力的 jsonb。调用方必须同时传下限值，
+// 见 minSDKLowerBoundValue。下限为 0 时条件恒真（不做限制）。
+const minSDKLowerBoundSQL = ` AND ($%[1]d = 0 OR COALESCE(
+				NULLIF(d.capabilities->>'apiLevel', '')::int, 0) >= $%[1]d)`
+
+// minSDKLowerBoundValue 从请求能力里取出 androidMinSdkLevel 的数值下限。
+// 缺失、非法或非正数都视为「不设下限」(0)。
+//
+// 与 internal/reservation 的同名逻辑保持一致的语义：下限是**整数 API 等级**，
+// 不是字符串，也不参与 jsonb 精确匹配。
+func minSDKLowerBoundValue(requested map[string]any) int {
+	const key = "androidMinSdkLevel"
+	raw, exists := requested[key]
+	if !exists {
+		return 0
+	}
+	switch value := raw.(type) {
+	case int:
+		if value > 0 {
+			return value
+		}
+	case int64:
+		if value > 0 {
+			return int(value)
+		}
+	case float64:
+		if value > 0 {
+			return int(value)
+		}
+	case json.Number:
+		if parsed, err := value.Int64(); err == nil && parsed > 0 {
+			return int(parsed)
+		}
+	}
+	return 0
+}
+
 type CreateReservationParams struct {
 	ID                    string
 	ClientID              string
@@ -158,6 +210,8 @@ func (ReservationRepository) LockNextPending(ctx context.Context, tx pgx.Tx) (Re
 // a matching device right now. An unmatched old request therefore stays
 // pending without blocking a later request that the farm can satisfy.
 func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx pgx.Tx) (ReservationRecord, error) {
+	// 先把待分配预约的请求能力与下限读出来：下限不在
+	// device_schedulable_capabilities() 的白名单里，必须单独比较。
 	record, err := scanReservation(tx.QueryRow(ctx, `
         SELECT r.id, r.client_id, r.pool_id, r.device_id, r.owner_type, r.owner_id,
                r.requested_capabilities, r.lease_seconds, r.status, r.idempotency_key,
@@ -180,6 +234,12 @@ func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx 
 				AND (NOT r.requested_capabilities ? 'platformName'
 				     OR lower(r.requested_capabilities->>'platformName') = p.platform)
 				AND d.capabilities @> device_schedulable_capabilities(r.requested_capabilities)
+				-- androidMinSdkLevel 是「>=」下限，不在上面的白名单里，必须显式比较。
+				-- 少了这一条：池内有 API 30 + API 34 设备时，池会因 API 34 被选中，
+				-- 却可能把 API 30 的那台分配出去，minSdk 34 的 APK 装包必失败。
+				AND (COALESCE(NULLIF(r.requested_capabilities->>'androidMinSdkLevel', '')::int, 0) = 0
+				     OR COALESCE(NULLIF(d.capabilities->>'apiLevel', '')::int, 0)
+				        >= COALESCE(NULLIF(r.requested_capabilities->>'androidMinSdkLevel', '')::int, 0))
           )
         ORDER BY r.created_at, r.id
         FOR UPDATE OF r SKIP LOCKED
@@ -866,6 +926,13 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
                OR d.id = $2::jsonb->>'`+TargetDeviceCapability+`')
 		  AND (NOT $2::jsonb ? 'platformName' OR lower($2::jsonb->>'platformName') = p.platform)
 		  AND d.capabilities @> device_schedulable_capabilities($2::jsonb)
+		  -- androidMinSdkLevel 是「>=」下限，不在此函数白名单里（送进去会被丢弃），
+		  -- 必须与选池阶段（pool_selector.go）用同一口径显式比较。
+		  -- 少了这一条：池内 API 30 + API 34 设备并存时，会选中 API 34 证明池可用，
+		  -- 却可能把 API 30 设备分配给 minSdk 34 的运行 —— 装包必失败。
+		  AND (COALESCE(NULLIF($2::jsonb->>'androidMinSdkLevel', '')::int, 0) = 0
+		       OR COALESCE(NULLIF(d.capabilities->>'apiLevel', '')::int, 0)
+		          >= COALESCE(NULLIF($2::jsonb->>'androidMinSdkLevel', '')::int, 0))
         ORDER BY d.created_at, d.id
         FOR UPDATE OF d SKIP LOCKED
         LIMIT 1`, poolID, capabilities).Scan(
