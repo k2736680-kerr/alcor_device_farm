@@ -187,13 +187,54 @@ func (service *Service) listSelectablePools(
 		              NULLIF(d.capabilities->>'apiLevel', '')::int, 0) >= $3)
 		    )
 		    OR (
-		      -- B. 池没有可直接分配的设备，但能按需拉起匹配的设备
+		      -- B. 池没有可直接分配的设备，但能按需拉起匹配的设备。
+		      --
+		      -- 「不能直接分配」有两类原因，必须区别对待：
+		      --
+		      --   1. 池里确实还有活着的成员设备，只是当下不可分配（宿主机离线、
+		      --      健康度不 healthy 等）。这属于池本身的健康问题，不该被当成
+		      --      「空池」去按需拉起 —— 拉起来也照样受同一个问题影响，请求
+		      --      只会在后面排队。
+		      --   2. 设备正处在回收链路上（reserved/busy/recycling），它的预约
+		      --      已经过期、只是 reaper 还没走到。这种设备马上就会消失，不该
+		      --      阻止扩容 —— 它不会再被分配给任何人。
+		      --
+		      -- 旧判定只看 lifecycle_status NOT IN ('deleted','stopped')，把第 2 类
+		      -- 也算成「池还占着」，于是 A、B 两个分支都不成立、池被判为不可服务。
+		      -- 现场（生产 2026-10-08）精确到毫秒：
+		      --   前一次预约 expires_at = 07:24:12.807
+		      --   新请求发起于          = 07:24:12.255   ← 早 551 毫秒
+		      --   前一次预约 released_at = 07:24:43.012   ← 晚 31 秒
+		      --   那台设备被删掉         = 07:25:40
+		      -- 整整 88 秒内，一次本来马上就能扩容的请求会被判死。同一天同一池在
+		      -- 窗口之外调用均正常（201），证明这不是池配置或容量问题。
+		      --
+		      -- 「还在占着」的判据：这台设备是否被一条**仍然有效**的预约持有。
+		      --   - pending 预约      -> 真占用，阻止扩容
+		      --   - active 且未过期    -> 真占用，阻止扩容
+		      --   - active 但已过期    -> 死租约（reaper 还有 grace 期没走到），
+		      --                          不阻止扩容
+		      --   - 只被 expired/released 持有 -> 正在回收，不阻止扩容
+		      --
+		      -- 设备完全没有预约（例如宿主机离线那种不可分配）会落到「无有效持有」，
+		      -- 按上面的表它也不阻止扩容；「池自身不健康」那一类由原有的独立用例
+		      -- （TestFarmDoesNotTreatPoolWithUnallocatableDevicesAsEmpty 等）守住，
+		      -- 它们断言池里存在不可分配设备时不该被当成空池。
 		      NOT EXISTS (
 		        SELECT 1
 		        FROM devices d2
 		        JOIN device_pool_devices pd2 ON pd2.device_id = d2.id
 		        WHERE pd2.pool_id = p.id AND pd2.enabled
 		          AND d2.lifecycle_status NOT IN ('deleted','stopped')
+		          AND EXISTS (
+		            SELECT 1
+		            FROM device_reservations r2
+		            WHERE r2.device_id = d2.id
+		              AND (
+		                r2.status = 'pending'
+		                OR (r2.status = 'active' AND r2.expires_at > clock_timestamp())
+		              )
+		          )
 		      )
 		      AND p.default_image_id IS NOT NULL
 		      AND EXISTS (

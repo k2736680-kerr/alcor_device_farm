@@ -478,9 +478,8 @@ func TestFarmRejectsPoolWhoseOnlyDeviceIsUnhealthy(t *testing.T) {
 
 // 池里有设备（非 deleted/stopped），但一台都不能分配；同时池配了默认镜像。
 //
-// 分支 B 必须**不成立**：池里已经有设备记录，说明这个池不是「还没建过虚拟机」
-// 的空池，不该再按默认镜像走「按需拉起」这条路。否则会把运行送进一个已经被
-// 不可用设备占住的池，预约等不到设备。
+// 分支 B 必须**不成立**：唯一的宿主是离线的，没有任何在线宿主能拉起这个池的镜像。
+// 这正是 fillPoolProvisionability 里 candidates==0 的那一种，面板也会显示不可供给。
 func TestFarmDoesNotTreatPoolWithUnallocatableDevicesAsEmpty(t *testing.T) {
 	db := openSelectorDatabase(t)
 	seedSelectorHost(t, db, "host_0000000000001", "offline")
@@ -492,28 +491,44 @@ func TestFarmDoesNotTreatPoolWithUnallocatableDevicesAsEmpty(t *testing.T) {
 
 	service := newSelectorService(db)
 	poolID, err := service.selectPoolForRequest(context.Background(), testActor(), androidCapabilities(34))
-	// 分支 B 有条件豁免掉「池里有设备」的情况，但这个池的设备全在离线宿主上，
-	// 默认镜像的在线宿主列表也是空的（唯一宿主离线），所以任何分支都不成立。
+	// 唯一宿主离线 -> 默认镜像没有任何在线宿主可拉起，所以 B 也不成立。
 	if err == nil {
 		t.Fatalf("池内设备全不可分配、且没有在线宿主能拉起镜像，不应选中 %q", poolID)
 	}
 }
 
-// 明确验证「池内已有设备」会阻断按需拉起这条路：另一台在线宿主存在（镜像可拉起），
-// 但池里已经有一台不可分配的设备时，不能把它当空池去按需拉起。
-func TestFarmEmptyPoolBranchRequiresNoExistingDevices(t *testing.T) {
+// 池里有一台挂在**离线**宿主上的设备时，自动选池必须仍然成功 ——
+// 只要另有一台在线宿主真的能拉起这个池的镜像。
+//
+// 这条以前写的是相反的断言（「池内已有设备记录就不该按需拉起」），
+// 依据是「池不是空池就别扩容」。那个依据是错的，而且和生产现场冲突：
+//
+//   - 池「能不能供出设备」的权威定义在 management/postgres/store.go 的
+//     fillPoolProvisionability：provisionable = 有在线、非 draining、
+//     且没有被证明缺该镜像的 docker_emulator 宿主。它**不看**池里有没有设备记录。
+//   - 按旧断言，一台掉线宿主上的僵尸设备就能让整个池永远无法被自动选中，
+//     而面板上这个池明明显示「可供给」。两处口径必须一致。
+//   - 生产上真正踩到的也是这一类：设备还在池成员表里，但已经不会再被使用。
+//
+// 所以断言反过来：这里池可以服务，应该被选中。
+func TestFarmSelectsPoolWhenAnOnlineHostCanStillBuildItsImage(t *testing.T) {
 	db := openSelectorDatabase(t)
 	seedSelectorHost(t, db, "host_0000000000001", "offline")
 	seedSelectorHost(t, db, "host_0000000000002", "online")
 	seedSelectorImage(t, db, "image_00000000001", 34, "ready")
 	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 4)
+	// 这台设备挂在离线宿主上、且没有被任何预约持有：不是「被占用」，
+	// 只是暂时不可分配。池本身仍然可以由 host2 按需拉起。
 	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
 		"android", "ready", "healthy", `{"platformName":"Android","apiLevel":34}`)
 
 	service := newSelectorService(db)
 	poolID, err := service.selectPoolForRequest(context.Background(), testActor(), androidCapabilities(34))
-	if err == nil {
-		t.Fatalf("池内已有设备（虽在离线宿主上），不该按「空池按需拉起」选中 %q", poolID)
+	if err != nil {
+		t.Fatalf("另有一台在线宿主能拉起该池镜像时，池应可选，实际 err=%v", err)
+	}
+	if poolID != "pool_0000000000001" {
+		t.Fatalf("应选中 pool_0000000000001，实际 %q", poolID)
 	}
 }
 // 跨仓库契约：Alcor 真实发出的预约载荷必须能被农场原样接受并选池。
@@ -752,5 +767,109 @@ func TestFarmCreatePersistsAutoSelectedPool(t *testing.T) {
 	}
 	if stored != view.PoolID {
 		t.Fatalf("返回值 PoolID=%q 与库里 pool_id=%q 不一致", view.PoolID, stored)
+	}
+}
+
+// 池里只剩一台「租约刚过期、正等回收」的设备时，自动选池必须仍然成功。
+//
+// 现场（生产 2026-10-08，精确到毫秒）：
+//
+//	前一次预约 94b0f825  expires_at  = 07:24:12.807
+//	新请求              发起于        = 07:24:12.255   ← 早 551 毫秒
+//	94b0f825            released_at  = 07:24:43.012   ← 晚 31 秒
+//	那台设备被删掉                     = 07:25:40
+//
+// 那一刻池里只有这一台设备，它还挂在池成员表里、lifecycle 也还没变成 deleted，
+// 但它的预约已经终结（过期），不会再被任何人使用。旧判定把这种设备当成
+// 「池还占着」，于是 A（要有 ready 设备）和 B（要池内没有非 deleted 设备）
+// 两个分支都不成立，自动选池直接返回 DEVICE_POOL_UNAVAILABLE —— 一次本来马上
+// 就能扩容的请求被判死。整整 88 秒的窗口内都会这样。
+//
+// 这条用例锁住修复后的语义：正被回收的设备不阻止按需拉起。
+func TestFarmStillSelectsPoolWhileExpiredLeaseIsBeingReclaimed(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	// 池必须显式绑默认镜像，才能走「按需拉起」这条路。
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 1)
+
+	// 那台正在被回收的设备：池成员还在，lifecycle 也不是 deleted，
+	// 但它的预约已经过期终结（released_at 已写，reaper 还没删设备）。
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "busy", "healthy", `{"platformName":"Android","apiLevel":34}`)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_reservations
+			(id, client_id, pool_id, device_id, owner_type, owner_id, requested_capabilities,
+			 lease_seconds, status, idempotency_key, starts_at, expires_at, released_at)
+		VALUES ('reservation_expired0000001', 'device_farm_server', 'pool_0000000000001',
+		        'device_00000000001', 'run_attempt', 'attempt_000000000001', '{}'::jsonb,
+		        900, 'expired', 'idem-expired-lease-01',
+		        clock_timestamp() - interval '16 minutes', clock_timestamp() - interval '1 second',
+		        clock_timestamp() - interval '1 second')`); err != nil {
+		t.Fatalf("seed 已过期预约：%v", err)
+	}
+
+	got := selectedPoolID(t, db, androidCapabilities(34))
+	if got != "pool_0000000000001" {
+		t.Fatalf("租约已过期、设备待回收时，池仍应可选（能按需拉起），实际 %q", got)
+	}
+}
+
+// 反向：设备被一条**仍然有效**的预约持有时，池确实满，不能被当成「可扩容」。
+//
+// 没有这条，把上面那个 NOT EXISTS 写成恒真也能过 —— 那样池会被反复选中，
+// 每次都在等待回收的设备后面排队，等于把「选不出来」换成「看起来选出来了」。
+func TestFarmRejectsPoolHeldByLiveReservation(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 1)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "busy", "healthy", `{"platformName":"Android","apiLevel":34}`)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_reservations
+			(id, client_id, pool_id, device_id, owner_type, owner_id, requested_capabilities,
+			 lease_seconds, status, idempotency_key, starts_at, expires_at)
+		VALUES ('reservation_active00000001', 'device_farm_server', 'pool_0000000000001',
+		        'device_00000000001', 'run_attempt', 'attempt_000000000002', '{}'::jsonb,
+		        900, 'active', 'idem-live-lease-0001',
+		        clock_timestamp() - interval '1 minute', clock_timestamp() + interval '14 minutes')`); err != nil {
+		t.Fatalf("seed 有效预约：%v", err)
+	}
+
+	service := newSelectorService(db)
+	if _, err := service.selectPoolForRequest(context.Background(), testActor(), androidCapabilities(34)); err == nil {
+		t.Fatal("设备被有效预约持有时，池不应被选为「可扩容」")
+	}
+}
+
+// 生产现场那一刻的准确状态：预约还是 active，但 expires_at 已经过去，
+// reaper 还没走到（有 30 秒 grace）。这种「死租约」同样不该阻止扩容。
+//
+// 与上一条的区别：上一条 expires_at 在未来（真的还在用），这一条已经过期。
+// 少了这条，「active 一律算占用」的写法也能让另外两条通过，
+// 但生产上真正踩到的正是这个 active+已过期 的组合。
+func TestFarmStillSelectsPoolWhileActiveLeaseAlreadyExpired(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 1)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "busy", "healthy", `{"platformName":"Android","apiLevel":34}`)
+	// status 仍是 active（reaper 有 grace 期），但 expires_at 已经过去 551 毫秒以上。
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_reservations
+			(id, client_id, pool_id, device_id, owner_type, owner_id, requested_capabilities,
+			 lease_seconds, status, idempotency_key, starts_at, expires_at)
+		VALUES ('reservation_deadlease00001', 'device_farm_server', 'pool_0000000000001',
+		        'device_00000000001', 'run_attempt', 'attempt_000000000003', '{}'::jsonb,
+		        900, 'active', 'idem-dead-lease-0001',
+		        clock_timestamp() - interval '16 minutes', clock_timestamp() - interval '1 second')`); err != nil {
+		t.Fatalf("seed 死租约：%v", err)
+	}
+
+	got := selectedPoolID(t, db, androidCapabilities(34))
+	if got != "pool_0000000000001" {
+		t.Fatalf("active 但租约已过期（等 reaper 回收）时，池仍应可选，实际 %q", got)
 	}
 }
