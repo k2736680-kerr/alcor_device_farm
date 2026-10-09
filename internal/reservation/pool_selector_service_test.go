@@ -104,6 +104,17 @@ func TestServiceReportsPoolUnavailableWhenNothingIsSelectable(t *testing.T) {
 	if !errors.Is(createErr, ErrPoolUnavailable) {
 		t.Fatalf("应当返回 ErrPoolUnavailable，实际 %v", createErr)
 	}
+	// 关键：必须**显式**声明可重试。上层（api 层 isRetryable -> 错误信封
+	// Retryable 字段 -> Alcor 的失败处理）全靠这个声明来区分
+	// 「稍后会好转」和「配置有问题」。缺了它，一次瞬时的「此刻没有池」
+	// 会被 Alcor 当成运行的永久失败。
+	retryable, ok := createErr.(interface{ IsRetryable() bool })
+	if !ok {
+		t.Fatalf("错误应当实现 IsRetryable()，实际类型 %T", createErr)
+	}
+	if !retryable.IsRetryable() {
+		t.Fatalf("「此刻没有池能服务」是瞬态，必须可重试：%v", createErr)
+	}
 }
 
 // 省略 pool_id 且存在可用池时，必须真的选中它。

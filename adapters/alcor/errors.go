@@ -52,6 +52,16 @@ func MapError(err error) ErrorDecision {
 	if apiError.Code == CodeDeviceCapacityUnavailable || apiError.Code == "CAPACITY_UNAVAILABLE" {
 		return ErrorDecision{Disposition: DispositionRetryCapacity, Retryable: true, Code: CodeDeviceCapacityUnavailable}
 	}
+	// DEVICE_POOL_UNAVAILABLE 有两种性质：
+	//   - Retryable=true  → 此刻没有池能服务（池满 / 设备还在 booting / 宿主临时离线）。
+	//     容量释放后会自行好转，按容量类问题处理，调用方应稍后重试。
+	//     放在 infrastructureCode 判断之前，因为它不在那张表里，
+	//     否则会落到最后的 DispositionFailed。
+	//   - Retryable=false → 配置/部署问题（数据库未配置、池非 active），
+	//     重试无意义，仍按失败处理。
+	if apiError.Code == CodeDevicePoolUnavailable && apiError.Retryable {
+		return ErrorDecision{Disposition: DispositionRetryCapacity, Retryable: true, Code: CodeDevicePoolUnavailable}
+	}
 	if infrastructureCode(apiError.Code) {
 		if apiError.Retryable {
 			return ErrorDecision{Disposition: DispositionRetryInfrastructure, Retryable: true, Code: apiError.Code}

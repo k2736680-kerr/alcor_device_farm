@@ -531,6 +531,7 @@ func TestFarmSelectsPoolWhenAnOnlineHostCanStillBuildItsImage(t *testing.T) {
 		t.Fatalf("应选中 pool_0000000000001，实际 %q", poolID)
 	}
 }
+
 // 跨仓库契约：Alcor 真实发出的预约载荷必须能被农场原样接受并选池。
 //
 // 这不是重复上面的用例，而是锁住两个仓库之间的**接口形状**。Alcor 侧
@@ -871,5 +872,184 @@ func TestFarmStillSelectsPoolWhileActiveLeaseAlreadyExpired(t *testing.T) {
 	got := selectedPoolID(t, db, androidCapabilities(34))
 	if got != "pool_0000000000001" {
 		t.Fatalf("active 但租约已过期（等 reaper 回收）时，池仍应可选，实际 %q", got)
+	}
+}
+
+// P1 回归：池还有余量时，一台设备被有效租约占用不得让整池不可选。
+//
+// 现场形态：池 max_concurrency=2，池里只有一台设备，它已被第 1 个运行的
+// active 租约占用（设备因此不再 ready，A 分支不成立）。此时：
+//   - allocator（scheduler.RunOnce:86-88）认为 1 < 2，**仍有余量**，可以再分配；
+//   - 旧的选择器用「池内任一设备被有效租约持有」判定，直接把整池排除，
+//     自动选池返回 DEVICE_POOL_UNAVAILABLE，第 2 个运行被永久判成 infra_failed。
+//
+// 这与农场自己的设计意图冲突（pool_selector.go 注释：到 max_concurrency 之后
+// 才排队），所以必须让选择器与 allocator 用同一个容量口径。
+func TestFarmSelectsPoolWithSpareConcurrencyWhileOneLeaseIsActive(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	// 关键：max_concurrency=2（还有 1 个余量），而不是 1（已满）。
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 2)
+	// 唯一一台设备已被占用：busy + healthy，所以 A 分支（要 ready）不成立，
+	// 只能靠 B 分支「按需拉起」——判据正是本用例要锁住的地方。
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "busy", "healthy", `{"platformName":"Android","apiLevel":34}`)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_reservations
+			(id, client_id, pool_id, device_id, owner_type, owner_id, requested_capabilities,
+			 lease_seconds, status, idempotency_key, starts_at, expires_at)
+		VALUES ('reservation_spare0000001', 'device_farm_server', 'pool_0000000000001',
+		        'device_00000000001', 'run_attempt', 'attempt_000000000004', '{}'::jsonb,
+		        900, 'active', 'idem-spare-lease-01',
+		        clock_timestamp() - interval '1 minute', clock_timestamp() + interval '14 minutes')`); err != nil {
+		t.Fatalf("seed 有效租约：%v", err)
+	}
+
+	got := selectedPoolID(t, db, androidCapabilities(34))
+	if got != "pool_0000000000001" {
+		t.Fatalf("池 max_concurrency=2 且仅 1 个租约占用时仍有余量，池应可选，实际 %q", got)
+	}
+}
+
+// 反向：同理但池已满（max_concurrency=1，1 个有效租约），池必须仍被拒绝。
+//
+// 与 TestFarmRejectsPoolHeldByLiveReservation 的区别：那条是「设备被持有」，
+// 这条显式把「容量已满」作为拒绝理由，锁住新判据不会放宽过头。
+func TestFarmRejectsPoolWhoseConcurrencyIsExhausted(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 1)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "busy", "healthy", `{"platformName":"Android","apiLevel":34}`)
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO device_reservations
+			(id, client_id, pool_id, device_id, owner_type, owner_id, requested_capabilities,
+			 lease_seconds, status, idempotency_key, starts_at, expires_at)
+		VALUES ('reservation_full00000001', 'device_farm_server', 'pool_0000000000001',
+		        'device_00000000001', 'run_attempt', 'attempt_000000000005', '{}'::jsonb,
+		        900, 'active', 'idem-full-lease-0001',
+		        clock_timestamp() - interval '1 minute', clock_timestamp() + interval '14 minutes')`); err != nil {
+		t.Fatalf("seed 有效租约：%v", err)
+	}
+
+	service := newSelectorService(db)
+	if _, err := service.selectPoolForRequest(context.Background(), testActor(), androidCapabilities(34)); err == nil {
+		t.Fatal("max_concurrency=1 且已有 1 个有效租约时，池已满，不应被选为「可扩容」")
+	}
+}
+
+// P2 回归：请求带 hardware_profile_id 时，「按需拉起」必须校验供给模板能否满足它。
+//
+// 为什么这个用例必要：device_images 表没有 hardware_profile_id 列
+// （migrations/000001_device_domain.up.sql:1-20），该能力只能来自 base 设备的
+// capabilities（warmpool.Controller:1275-1296 优先用 base.capabilities）。
+// 旧的选择器 B 分支只校验镜像的 apiLevel/minSdk，于是：
+//
+//	池被选中 -> 农场按池的 base/默认模板拉起设备 -> 拉起的设备不带该 profile
+//	-> 预约永远匹配不上 -> 最终 PENDING_TIMEOUT。
+//
+// 必须在这里就否决，而不是让调用方拿到一个永远等不到的预约。
+func TestFarmRejectsAutomaticPoolWhoseTemplateCannotSatisfyHardwareProfile(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 2)
+	// 池里没有任何 ready 设备（A 不成立），只能走 B「按需拉起」。
+	// 且没有 base 设备 —— 那么拉起来的设备能力只能由镜像补
+	// （platformName/apiLevel/abi/resolution），**不可能**带 hardware_profile_id。
+	requested := map[string]any{
+		"platformName": "Android", "apiLevel": 34, "hardware_profile_id": "pixel_9",
+	}
+	service := newSelectorService(db)
+	if _, err := service.selectPoolForRequest(context.Background(), testActor(), requested); err == nil {
+		t.Fatal("供给模板无法提供 hardware_profile_id 时，池不应被选中（否则预约会永远 pending）")
+	}
+}
+
+// 正向：base 设备的能力里确实带该 hardware_profile_id 时，池应当可选。
+//
+// 没有这条，「B 分支一律拒绝带 hardware_profile_id 的请求」也能让上一条通过 ——
+// 那就把「能服务的池」也一起拒了，属于放宽过头。
+func TestFarmSelectsAutomaticPoolWhenBaseDeviceSatisfiesHardwareProfile(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorAndroidImage(t, db, 34)
+	seedSelectorPool(t, db, "pool_0000000000001", "android", "image_00000000001", 2)
+	// base 设备：带走该 profile 的能力；它不是 ready，所以 A 不成立，仍走 B。
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"android", "busy", "healthy",
+		`{"platformName":"Android","apiLevel":34,"hardware_profile_id":"pixel_9"}`)
+	if _, err := db.Pool().Exec(context.Background(),
+		`UPDATE device_pools SET base_device_id='device_00000000001' WHERE id='pool_0000000000001'`); err != nil {
+		t.Fatalf("设 base 设备：%v", err)
+	}
+
+	requested := map[string]any{
+		"platformName": "Android", "apiLevel": 34, "hardware_profile_id": "pixel_9",
+	}
+	got := selectedPoolID(t, db, requested)
+	if got != "pool_0000000000001" {
+		t.Fatalf("base 设备能力满足 hardware_profile_id 时池应可选，实际 %q", got)
+	}
+}
+
+// P2 回归：iOS 池的模拟器正在 booting 时，自动选池也必须能选中它。
+//
+// 依据 iossimulator.Service.ReconcileScaleUp 的权威取池条件
+// （internal/iossimulator/service.go:268-280）：iOS 池只要有可用的 base 模板
+// 且无阻塞成员，就能被扩容服务补出设备。
+//
+// 旧的选择器 B 分支只认「默认镜像 + docker 宿主」，iOS 池没有 docker 镜像，
+// 于是模拟器 booting 期间 A（要 ready）和 B 都不成立 → 自动选池返回不可用，
+// IOSExecutor 把它当永久基础设施失败；而显式指定该池能排队等到模拟器 ready。
+// 同一个池，只是「谁挑池」不同，结果却有天壤之别 —— 这正是要修掉的不一致。
+func TestFarmSelectsIOSPoolWhileSimulatorIsBooting(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	// iOS 池：没有默认镜像（iOS 用 base 模板，不用 docker 镜像）。
+	seedSelectorPool(t, db, "pool_0000000000001", "ios", "", 2)
+	// base 模板：不 healthy（不能直接分配），但仍是有效的扩容模板。
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"ios", "booting", "unknown",
+		`{"platformName":"iOS","automationName":"XCUITest","deviceClass":"phone",
+		  "realDevice":false,"runtimeId":"iOS-17-5","deviceTypeId":"iPhone-15","model":"iPhone 15"}`)
+	if _, err := db.Pool().Exec(context.Background(),
+		`UPDATE device_pools SET base_device_id='device_00000000001' WHERE id='pool_0000000000001'`); err != nil {
+		t.Fatalf("设 iOS base 模板：%v", err)
+	}
+
+	got := selectedPoolID(t, db, map[string]any{"platformName": "iOS"})
+	if got != "pool_0000000000001" {
+		t.Fatalf("iOS 模拟器 booting 但 base 模板可用时，池应可选（可扩容），实际 %q", got)
+	}
+}
+
+// 反向：iOS 池存在阻塞成员（quarantined）时，不该被当成「可扩容」。
+//
+// 依据 service.go:275-279：quarantined/stopped 的成员占着真实 CoreSimulator 槽位，
+// 自动删除成功前不应继续扩容。没有这条，「iOS 池一律可选」也能让上一条通过。
+func TestFarmRejectsIOSPoolWithBlockedMember(t *testing.T) {
+	db := openSelectorDatabase(t)
+	seedSelectorHost(t, db, "host_0000000000001", "online")
+	seedSelectorPool(t, db, "pool_0000000000001", "ios", "", 2)
+	seedSelectorDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001",
+		"ios", "booting", "unknown",
+		`{"platformName":"iOS","automationName":"XCUITest","deviceClass":"phone",
+		  "realDevice":false,"runtimeId":"iOS-17-5","deviceTypeId":"iPhone-15","model":"iPhone 15"}`)
+	// 阻塞成员
+	seedSelectorDevice(t, db, "device_00000000002", "pool_0000000000001", "host_0000000000001",
+		"ios", "quarantined", "unhealthy",
+		`{"platformName":"iOS","automationName":"XCUITest","deviceClass":"phone",
+		  "realDevice":false,"runtimeId":"iOS-17-5","deviceTypeId":"iPhone-15","model":"iPhone 15"}`)
+	if _, err := db.Pool().Exec(context.Background(),
+		`UPDATE device_pools SET base_device_id='device_00000000001' WHERE id='pool_0000000000001'`); err != nil {
+		t.Fatalf("设 iOS base 模板：%v", err)
+	}
+
+	service := newSelectorService(db)
+	if _, err := service.selectPoolForRequest(context.Background(), testActor(), map[string]any{"platformName": "iOS"}); err == nil {
+		t.Fatal("iOS 池存在 quarantined 阻塞成员时不应被当成可扩容")
 	}
 }

@@ -466,6 +466,18 @@ func seedReservationPool(t *testing.T, environment *managementEnvironment, statu
 	}
 }
 
+// seedReservationPoolForPlatform 建一个指定平台的 active 池。
+// 用于构造「某平台没有候选池」这种瞬态场景（自动选池按平台过滤候选）。
+func seedReservationPoolForPlatform(t *testing.T, environment *managementEnvironment, id, platform string) {
+	t.Helper()
+	_, err := environment.db.Pool().Exec(context.Background(), `
+        INSERT INTO device_pools (id,name,platform,default_lease_seconds,max_lease_seconds,max_concurrency,status)
+        VALUES ($1,$1,$2,600,3600,2,'active')`, id, platform)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedReservationDevice(t *testing.T, environment *managementEnvironment) {
 	t.Helper()
 	statements := []string{
@@ -487,5 +499,36 @@ func seedReservationDevice(t *testing.T, environment *managementEnvironment) {
 		if _, err := environment.db.Pool().Exec(context.Background(), statement); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// 「此刻选不出池」必须在**响应信封**上标为可重试，否则 Alcor 无法区分
+// 「稍后会好转」和「配置有问题」，只能一律当成运行的永久失败。
+//
+// 这条打真库、走真 HTTP，锁的是三层链路的最后一层（错误信封），
+// 因为只测 MapError 证明不了 API 层真的把 Retryable 透传了出来。
+//
+// 触发方式：请求一个平台，而库里没有任何该平台的 active 池 ——
+// selectPoolForRequest 会返回 PoolSelectionUnavailableError（瞬态）。
+func TestReservationAPIReportsTransientPoolUnavailabilityAsRetryable(t *testing.T) {
+	environment := newManagementEnvironment(t)
+	// 只建一个 ios 池；下面请求 android，于是 android 没有候选池。
+	seedReservationPoolForPlatform(t, environment, "pool_000000000000001", "ios")
+
+	response := environment.request(t, http.MethodPost, "/api/v1/device-reservations", map[string]any{
+		"owner_type": "run_attempt", "owner_id": "attempt_000000000900", "lease_seconds": 600,
+		"requested_capabilities": map[string]any{"platformName": "Android"},
+	}, serviceToken, "transient-pool-api-001")
+
+	assertStatus(t, response, http.StatusConflict)
+	if response.Error == nil {
+		t.Fatal("应当返回错误信封")
+	}
+	if response.Error.Code != "DEVICE_POOL_UNAVAILABLE" {
+		t.Fatalf("错误码应为 DEVICE_POOL_UNAVAILABLE，实际 %q", response.Error.Code)
+	}
+	if !response.Error.Retryable {
+		t.Fatal("「此刻没有池能服务」是瞬态（容量/就绪问题），必须标为可重试；" +
+			"标成不可重试会让 Alcor 把一次瞬时不可用当成运行的永久失败")
 	}
 }

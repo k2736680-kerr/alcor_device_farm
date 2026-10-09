@@ -193,7 +193,15 @@ func (handler *reservationHandler) write(writer http.ResponseWriter, request *ht
 	case errors.Is(err, reservation.ErrConflict):
 		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "CONFLICT", Message: err.Error()}
 	case errors.Is(err, reservation.ErrPoolUnavailable):
-		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "DEVICE_POOL_UNAVAILABLE", Message: err.Error(), Retryable: false}
+		// 不再写死 Retryable:false。
+		//
+		// 「选不出池」有两种性质完全不同的来源：
+		//   1. PoolSelectionUnavailableError —— 此刻没有池能服务该请求
+		//      （池满了 / 设备还在 booting / 宿主临时离线）。容量释放后会自行好转，
+		//      必须标为可重试；否则 Alcor 会把一次瞬时不可用当成运行的永久失败。
+		//   2. 「数据库未配置」「池不是 active」等 —— 配置问题，重试无意义。
+		// 由产生点通过 IsRetryable() 自己声明，这里只负责透传。
+		httpStatus, apiError = http.StatusConflict, httpx.APIError{Code: "DEVICE_POOL_UNAVAILABLE", Message: err.Error(), Retryable: isRetryable(err)}
 	case errors.Is(err, reservation.ErrCapacityUnavailable):
 		httpStatus, apiError = http.StatusServiceUnavailable, httpx.APIError{Code: "DEVICE_CAPACITY_UNAVAILABLE", Message: err.Error(), Retryable: true}
 	case errors.Is(err, reservation.ErrForbidden):

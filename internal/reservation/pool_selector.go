@@ -96,6 +96,21 @@ func (err *PoolSelectionUnavailableError) Is(target error) bool {
 	return target == ErrPoolUnavailable
 }
 
+// IsRetryable 报告「当前选不出池」是**瞬态**，调用方应当稍后重试。
+//
+// 为什么必须显式声明：这个错误只表示「此刻没有任何池能服务这次请求」
+// （selectPoolForRequest 的两个产生点：平台无法识别、候选为空）。
+// 候选为空可能是「池都满了」「设备还在 booting」「宿主临时离线」——
+// 这些都会随容量释放/设备就绪而自行消失，属于可重试的容量类问题。
+//
+// 反面对照：ReservationService 里那些「数据库未配置」「池不是 active」
+// 同样包成 ErrPoolUnavailable，但它们是**配置/部署问题**，重试多少次都一样。
+// 所以不能按错误码一刀切，必须由产生点自己声明是否可重试
+// （api/reservation.go 的写回逻辑会用 isRetryable(err) 读这个接口）。
+func (err *PoolSelectionUnavailableError) IsRetryable() bool {
+	return true
+}
+
 // poolSelectionCursor 让同一平台的多个可用池轮流被选中。
 //
 // 没有它就会永远选中同一个池：那个池到达 max_concurrency 之后新预约只能排队，
@@ -199,50 +214,59 @@ func (service *Service) listSelectablePools(
 		      --      已经过期、只是 reaper 还没走到。这种设备马上就会消失，不该
 		      --      阻止扩容 —— 它不会再被分配给任何人。
 		      --
-		      -- 旧判定只看 lifecycle_status NOT IN ('deleted','stopped')，把第 2 类
-		      -- 也算成「池还占着」，于是 A、B 两个分支都不成立、池被判为不可服务。
-		      -- 现场（生产 2026-10-08）精确到毫秒：
+		      -- 历史（生产 2026-10-08）精确到毫秒：
 		      --   前一次预约 expires_at = 07:24:12.807
 		      --   新请求发起于          = 07:24:12.255   ← 早 551 毫秒
 		      --   前一次预约 released_at = 07:24:43.012   ← 晚 31 秒
 		      --   那台设备被删掉         = 07:25:40
-		      -- 整整 88 秒内，一次本来马上就能扩容的请求会被判死。同一天同一池在
-		      -- 窗口之外调用均正常（201），证明这不是池配置或容量问题。
+		      -- 整整 88 秒内，一次本来马上就能扩容的请求被判死。当时的判定是
+		      -- 「池内任一设备被有效租约持有」（含 active 未过期），比 allocator
+		      -- 严格得多，见下面的容量判据。同一天同一池在窗口之外调用均正常（201），
+		      -- 证明这不是池配置或容量问题。
 		      --
-		      -- 「还在占着」的判据：这台设备是否被一条**仍然有效**的预约持有。
-		      --   - pending 预约      -> 真占用，阻止扩容
-		      --   - active 且未过期    -> 真占用，阻止扩容
-		      --   - active 但已过期    -> 死租约（reaper 还有 grace 期没走到），
-		      --                          不阻止扩容
-		      --   - 只被 expired/released 持有 -> 正在回收，不阻止扩容
-		      --
-		      -- 设备完全没有预约（例如宿主机离线那种不可分配）会落到「无有效持有」，
-		      -- 按上面的表它也不阻止扩容；「池自身不健康」那一类由原有的独立用例
+		      -- 「池自身不健康」那一类由原有的独立用例
 		      -- （TestFarmDoesNotTreatPoolWithUnallocatableDevicesAsEmpty 等）守住，
 		      -- 它们断言池里存在不可分配设备时不该被当成空池。
-		      NOT EXISTS (
-		        SELECT 1
-		        FROM devices d2
-		        JOIN device_pool_devices pd2 ON pd2.device_id = d2.id
-		        WHERE pd2.pool_id = p.id AND pd2.enabled
-		          AND d2.lifecycle_status NOT IN ('deleted','stopped')
-		          AND EXISTS (
-		            SELECT 1
-		            FROM device_reservations r2
-		            WHERE r2.device_id = d2.id
-		              AND (
-		                r2.status = 'pending'
-		                OR (r2.status = 'active' AND r2.expires_at > clock_timestamp())
-		              )
-		          )
-		      )
-		      AND p.default_image_id IS NOT NULL
-		      AND EXISTS (
+		      --
+		      -- 「池还有余量」的判据：把**仍然在用的**租约数与 allocator 的容量上限比。
+		      --
+		      -- 为什么不用「池内任一设备被有效租约持有」（旧写法）：
+		      -- 旧写法与 allocator 的口径不一致。allocator（scheduler.RunOnce）
+		      -- 用 ActiveReservations >= MaxConcurrency 判满，两者必须对齐，
+		      -- 否则会出现「选池说不可用、allocator 其实还能分配」的自相矛盾。
+		      -- max_concurrency=2 的池只要被 1 个租约占用（1 < 2，allocator 认为
+		      -- 仍有余量），旧写法就把整池排除，自动选池直接返回
+		      -- DEVICE_POOL_UNAVAILABLE，第二个并发运行被永久判死。
+		      -- 农场自己的注释也写明意图是「到 max_concurrency 之后才排队」。
+		      --
+		      -- 为什么要带 expires_at：active 但已过期的租约是「死租约」
+		      -- （reaper 有 grace 期还没走到），它不该占着容量 ——
+		      -- 由 TestFarmStillSelectsPoolWhileActiveLeaseAlreadyExpired 锁定。
+		      -- 只按 status='active' 计数会把它算成占用，那个用例就会失败。
+		      (
+		        SELECT count(*) FROM device_reservations r2
+		         WHERE r2.pool_id = p.id
+		           AND r2.status = 'active'
+		           AND r2.expires_at > clock_timestamp()
+		      ) < p.max_concurrency
+		      -- B 的供给来源按平台分叉。判据不同的原因：农场用的是两套扩容实现 ——
+		      --   android -> warmpool.Controller（默认镜像 + docker 宿主）
+		      --   ios     -> iossimulator.Service.ReconcileScaleUp（base 模板 + 容量）
+		      AND (
+		      (
+		        -- ---- Android：默认镜像 + 能建它的 docker/hybrid 宿主 ----
+		        p.platform = 'android'
+		        AND p.default_image_id IS NOT NULL
+		        AND EXISTS (
 		        SELECT 1
 		        FROM device_pool_images pi
 		        JOIN device_images i ON i.id = pi.image_id
 		        JOIN device_hosts h ON h.status = 'online' AND NOT h.draining
 		                         AND h.host_type IN ('docker_emulator','hybrid')
+		        -- 活 base 设备：它的 capabilities 是「按需拉起」时能力的主要来源
+		        -- （warmpool.Controller 会优先用 base.capabilities）。
+		        -- LEFT JOIN + lifecycle<>'deleted' 与 controller.go:1277 一致。
+		        LEFT JOIN devices b ON b.id = p.base_device_id AND b.lifecycle_status <> 'deleted'
 		        WHERE pi.pool_id = p.id AND pi.enabled AND pi.image_id = p.default_image_id
 		          AND i.status = 'ready'
 		          -- 镜像的 apiLevel 必须满足请求的能力要求（精确包含语义）
@@ -257,6 +281,73 @@ func (service *Service) listSelectablePools(
 		            WHERE s.host_id = h.id AND s.image_id = p.default_image_id
 		              AND s.available = false
 		          )
+		          -- 「按需拉起的设备是否满足请求的能力」必须在这里校验，
+		          -- 否则会出现「选池说能服务、拉起来的设备却不匹配」的假通过。
+		          --
+		          -- 拉起来的能力由 warmpool.Controller 决定（controller.go:1273-1296）：
+		          --   capabilities = base.capabilities（有活 base 时）
+		          --   缺失的键再用镜像字段补：platformName/apiLevel/abi/resolution
+		          -- 注意 device_images 表**没有** hardware_profile_id 列
+		          -- （migrations/000001_device_domain.up.sql:1-20），所以
+		          -- hardware_profile_id 只能来自 base.capabilities —— 只校验镜像
+		          -- 的 apiLevel 会漏掉它：请求带 hardware_profile_id 时可能选中一个
+		          -- base profile 不匹配的空池，池被算作可服务，但拉起的设备不带该
+		          -- profile，预约永远匹配不上，最终 PENDING_TIMEOUT。
+		          -- 顺序要紧：jsonb || 是**右边覆盖左边**，而 controller 的语义是
+		          -- 「base 已有的键优先，缺失的才用镜像补」（controller.go:1292-1296
+		          -- 先判断键是否已存在，只有缺失时才赋值）。
+		          -- 所以镜像字段必须在左边、base 在右边，base 才优先。
+		          -- 写成 base || image 会让镜像的 apiLevel 反过来覆盖 base，语义就错了。
+		          AND jsonb_build_object('platformName', 'Android', 'apiLevel', i.api_level,
+		                                 'abi', i.abi, 'resolution', i.resolution)
+		              || COALESCE(b.capabilities, '{}'::jsonb)
+		              @> device_schedulable_capabilities($2::jsonb)
+		        )
+		      )
+		      OR (
+		        -- ---- iOS：base 模板可用 + 无阻塞成员 ----
+		        --
+		        -- 与 iossimulator.Service.ReconcileScaleUp 的取池条件逐条对应
+		        -- （internal/iossimulator/service.go:268-280），那是 iOS 扩容的权威判据。
+		        -- iOS 池**没有** docker 镜像，所以只按 Android 那套条件（要求
+		        -- default_image_id + docker 宿主）判定时，iOS 池在模拟器 booting 期间
+		        -- A、B 皆不成立，自动选池直接返回不可用；而显式指定池能排队等到可用。
+		        p.platform = 'ios'
+		        AND EXISTS (
+		          SELECT 1
+		          FROM devices b
+		          WHERE b.id = p.base_device_id
+		            AND b.lifecycle_status <> 'deleted'
+		            AND b.platform = 'ios'
+		            AND b.device_kind = 'simulator'
+		            AND b.provider_type = 'appium_device_farm_ios'
+		            -- 模板必须能提供 runtime/设备型号（scaleTemplate:359-364）
+		            AND COALESCE(b.capabilities->>'runtimeId', '') <> ''
+		            AND COALESCE(b.capabilities->>'deviceTypeId', '') <> ''
+		            -- 拉起来的 iOS 设备能力由 iossimulator service.go:225-226 决定；
+		            -- 其中只有调度白名单内的键参与匹配，故按这些键比对。
+		            AND jsonb_build_object(
+		                  'platformName', 'iOS', 'automationName', 'XCUITest',
+		                  'deviceClass', 'phone', 'realDevice', false)
+		                || COALESCE(b.capabilities, '{}'::jsonb)
+		                @> device_schedulable_capabilities($2::jsonb)
+		            -- 无阻塞成员：quarantined/stopped，或非过渡态且不 healthy
+		            -- （service.go:275-279 —— 这类成员占着真实 CoreSimulator 槽位，
+		            --   自动删除成功前不该继续扩容）
+		            AND NOT EXISTS (
+		              SELECT 1
+		              FROM device_pool_devices blocked_pd
+		              JOIN devices blocked ON blocked.id = blocked_pd.device_id
+		              WHERE blocked_pd.pool_id = p.id AND blocked_pd.enabled
+		                AND blocked.platform = 'ios'
+		                AND blocked.device_kind = 'simulator'
+		                AND blocked.provider_type = 'appium_device_farm_ios'
+		                AND (blocked.lifecycle_status IN ('quarantined','stopped')
+		                     OR (blocked.lifecycle_status NOT IN ('provisioning','booting','deleted')
+		                         AND blocked.health_status <> 'healthy'))
+		            )
+		        )
+		      )
 		      )
 		    )
 		  )

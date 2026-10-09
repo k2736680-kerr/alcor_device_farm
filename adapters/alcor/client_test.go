@@ -207,3 +207,49 @@ func errorCode(err error) string {
 	}
 	return ""
 }
+
+// DEVICE_POOL_UNAVAILABLE 的两种性质必须被分开，不能被错误码一刀切。
+//
+// 背景：Alcor 侧原先的失败处理是把任何 Reserve 错误都当成运行的永久失败
+// （infra_failed）。而「此刻没有池能服务」是容量类瞬态问题，容量释放后会自行好转，
+// 必须让 Alcor 能够识别并重试；反之「数据库未配置」「池不是 active」重试无意义。
+//
+// 农场因此在产生点用 IsRetryable() 声明性质，API 层透传到错误信封，
+// MapError 再据此分诊。这三层任缺一层，瞬态问题都会被判成永久失败。
+func TestMapErrorSeparatesTransientAndPermanentPoolUnavailability(t *testing.T) {
+	tests := []struct {
+		name        string
+		retryable   bool
+		disposition alcor.AttemptDisposition
+	}{
+		{
+			// 此刻没有池能服务（池满 / 设备 booting / 宿主临时离线）
+			name:        "transient pool unavailability retries as capacity",
+			retryable:   true,
+			disposition: alcor.DispositionRetryCapacity,
+		},
+		{
+			// 配置/部署问题（数据库未配置、池非 active）
+			name:        "permanent pool unavailability fails",
+			retryable:   false,
+			disposition: alcor.DispositionFailed,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := &alcor.APIError{
+				Code:      alcor.CodeDevicePoolUnavailable,
+				Message:   "当前没有可服务该请求的设备池",
+				Retryable: test.retryable,
+			}
+			decision := alcor.MapError(err)
+			if decision.Disposition != test.disposition {
+				t.Fatalf("retryable=%v decision=%#v（期望 disposition=%s）",
+					test.retryable, decision, test.disposition)
+			}
+			if decision.Retryable != test.retryable {
+				t.Fatalf("retryable=%v decision.Retryable=%v", test.retryable, decision.Retryable)
+			}
+		})
+	}
+}
