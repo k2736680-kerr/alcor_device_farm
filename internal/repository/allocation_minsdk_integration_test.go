@@ -229,6 +229,128 @@ func isNotFound(err error) bool {
 	return err != nil && err.Error() == ErrNotFound.Error()
 }
 
+// seedDeletedDevice 造一台「历史已删除」的设备，并把它伪装成完全可分配的样子：
+// health_status='healthy'、宿主机在线，成员行 enabled=true —— 只把
+// lifecycle_status 留成 'deleted'。
+//
+// 为什么必须把 health_status 设成 healthy：分配查询同时要求
+// `d.lifecycle_status='ready'` 和 `d.health_status='healthy'` 两个条件。
+// 如果这里顺手写成 unhealthy，那么即使 lifecycle 判定被删掉，health 判定仍会
+// 拦住设备 —— 用例照样通过，却根本没验证到 deleted 这条判定（假阳性）。
+// 只有让 health 满足、仅 lifecycle 为 deleted，才是真正隔离出这条判定。
+//
+// 线上那 58 台 deleted 设备是刻意保留的审计墓碑（device_pool_devices 只置
+// enabled=false，行不删；6 张表对 devices 全是 ON DELETE RESTRICT）。
+// 墓碑本身不是缺陷，但任何一次改动若让分配查询漏掉 deleted 判定，
+// 它们就会立刻变成可分配设备被分发出去。这个种子就是钉住那条判定。
+func seedDeletedDevice(
+	t *testing.T, db *pgxpool.Pool,
+	deviceID, poolID, hostID, platform string, apiLevel int,
+) {
+	t.Helper()
+	if _, err := db.Exec(context.Background(), `
+		INSERT INTO devices (id, host_id, image_id, device_kind, provider_type, provider_ref, serial,
+		                     lifecycle_mode, platform, lifecycle_status, health_status, capabilities)
+		VALUES ($1, $2, 'image_00000000001', 'emulator', 'docker_emulator', $1, $1,
+		        'clean', $3, 'deleted', 'healthy', $4::jsonb)`,
+		deviceID, hostID, platform,
+		`{"platformName":"Android","apiLevel":`+strconv.Itoa(apiLevel)+`,"abi":"x86_64"}`); err != nil {
+		t.Fatalf("seed deleted device: %v", err)
+	}
+	if _, err := db.Exec(context.Background(), `
+		INSERT INTO device_pool_devices (pool_id, device_id, enabled) VALUES ($1, $2, true)`,
+		poolID, deviceID); err != nil {
+		t.Fatalf("attach deleted device to pool: %v", err)
+	}
+}
+
+// 已删除设备绝不能被分配：即使它的 health 是 healthy、成员行 enabled、
+// 宿主机在线，只有 lifecycle_status='deleted' 这一条不利条件。
+//
+// 这是对线上真实数据形态的直接回归（58 台 deleted 墓碑长期存在）。
+// 反向验证（已实测）：把分配查询里的 `d.lifecycle_status='ready'` 去掉后，
+// 本用例会失败并报「池内只有已删除设备，不该锁到可分配预约」——
+// 说明它是真的在钉这条判定，而不是被 health 判定顺带挡住。
+func TestAllocationNeverPicksDeletedDevice(t *testing.T) {
+	db := openAllocationDatabase(t)
+	seedAllocationHost(t, db, "host_0000000000001", "online")
+	seedAllocationImage(t, db, "image_00000000001", 34)
+	seedAllocationPool(t, db, "pool_0000000000001", "android", 2)
+	seedDeletedDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001", "android", 34)
+
+	seedPendingReservation(t, db, "res_0000000000001", "pool_0000000000001",
+		`{"platformName":"Android"}`)
+
+	ctx := context.Background()
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	repo := ReservationRepository{}
+	reservation, err := repo.LockNextAllocatablePending(ctx, tx)
+	// 池内只有一台已删除设备，因此这条预约不该被判为可分派。
+	if err == nil {
+		t.Fatalf("池内只有已删除设备，不该锁到可分配预约，却拿到 %q", reservation.ID)
+	}
+	if !isNotFound(err) {
+		t.Fatalf("应当是 ErrNotFound，实际 %v", err)
+	}
+
+	// 再直接问分配查询：它也不能选中那台设备。
+	_, err = repo.LockMatchingDevice(ctx, tx, "pool_0000000000001", json.RawMessage(`{"platformName":"Android"}`))
+	if err == nil {
+		t.Fatal("已删除设备绝不能被分配，LockMatchingDevice 却返回了设备")
+	}
+	if err != ErrCapacityUnavailable {
+		t.Fatalf("应当是 ErrCapacityUnavailable，实际 %v", err)
+	}
+}
+
+// 已删除设备即便出现在池里，也不能阻止健康设备被正常分配。
+func TestAllocationIgnoresDeletedDeviceWhenHealthyOneExists(t *testing.T) {
+	db := openAllocationDatabase(t)
+	seedAllocationHost(t, db, "host_0000000000001", "online")
+	seedAllocationImage(t, db, "image_00000000001", 34)
+	seedAllocationPool(t, db, "pool_0000000000001", "android", 2)
+	// 已删除设备排在更前面（created_at 更早），健康设备排在后面。
+	seedDeletedDevice(t, db, "device_00000000001", "pool_0000000000001", "host_0000000000001", "android", 34)
+	seedAllocationDevice(t, db, "device_00000000002", "pool_0000000000001", "host_0000000000001", "android", 34, -30)
+
+	// 让已删除设备的 created_at 早于健康设备：分配按 (created_at,id) 取第一台，
+	// 若判定漏掉 deleted，就会取到这台墓碑。
+	if _, err := db.Exec(context.Background(), `
+		UPDATE devices SET created_at=clock_timestamp()-interval '60 seconds',
+		                   updated_at=clock_timestamp()
+		WHERE id='device_00000000001'`); err != nil {
+		t.Fatalf("backdate deleted device: %v", err)
+	}
+
+	seedPendingReservation(t, db, "res_0000000000001", "pool_0000000000001",
+		`{"platformName":"Android"}`)
+
+	ctx := context.Background()
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	repo := ReservationRepository{}
+	reservation, err := repo.LockNextAllocatablePending(ctx, tx)
+	if err != nil {
+		t.Fatalf("池里有健康设备，应当锁到预约：%v", err)
+	}
+	device, err := repo.LockMatchingDevice(ctx, tx, reservation.PoolID, reservation.RequestedCapabilities)
+	if err != nil {
+		t.Fatalf("应当分到健康设备：%v", err)
+	}
+	if device.ID != "device_00000000002" {
+		t.Fatalf("必须跳过已删除设备，期望 device_00000000002，实际 %q", device.ID)
+	}
+}
+
 // minSDKLowerBoundValue 的取值规则：缺失/非法/非正数都视为不设下限。
 func TestMinSDKLowerBoundValueParsing(t *testing.T) {
 	cases := []struct {
