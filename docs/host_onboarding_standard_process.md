@@ -436,6 +436,49 @@ sudo scripts/onboard-device-host.sh --check-only --server-url http://10.0.80.220
 
 第 4 步的 digest 是唯一身份，第 5 步的决策决定池能否选中该宿主。
 
+### 9.6 一条命令接入（`scripts/install-device-host.sh`）
+
+上面的 8 步已串成一个入口，**它把第 1～4、6、7 步自动化**：
+
+```sh
+# 先预演，看它打算做什么
+sh install-device-host.sh --host 10.0.30.56 --host-id <UUID> --pool-image-id <UUID> --dry-run
+
+# 真正执行（目标机全新、只有密码）
+sh install-device-host.sh \
+  --host 10.0.30.56 \
+  --host-id <控制面 Host UUID> \
+  --pool-image-id <device_images 记录 UUID> \
+  --token-file <服务Token文件> \
+  --ssh-user hadoop --ssh-password '<目标机密码>' \
+  --image-source 10.0.30.54 --image-source-user hadoop --image-source-password '<源机密码>'
+```
+
+**为什么要打成整包分发**：该脚本要求五个同级脚本同行。逐个手拷容易漏，
+所以用 `scripts/package-host-toolkit.sh` 一次产出整齐的一套（含单元模板，
+可用 `--with-agent` 内置 Agent 二进制）：
+
+```sh
+sh package-host-toolkit.sh --with-agent /path/to/device-host-agent
+# 产出 dist/alcor-host-toolkit/ 与 dist/alcor-host-toolkit.tar.gz
+```
+
+**它刻意不做的事**（与 9.2 一致，逐条保留人工判断）：
+
+| 不做 | 原因 |
+|---|---|
+| 新建 `device_images` 记录 | 镜像身份决策会影响调度正确性；复用与否需人工判断 |
+| 删除镜像或负向记录 | 删除会破坏可追溯性与既有调度结论 |
+| 改已有池容量 | 会改变整体调度行为 |
+| 控制面删除 Host | 破坏审计链 |
+
+**两个防「半成品」的设计**（都来自真实踩坑）：
+
+1. 脚本常被拷到 `/tmp` 执行，此时由 `$0` 推导的仓库根是错的（会去找 `/deploy/...`）。
+   现在改为**显式探测** Agent 二进制与单元模板，找不到就直接报错；
+2. 五个同级脚本任一缺失，**在改动任何系统之前**即退出——
+   绝不允许出现「用户建好了、systemd 单元没装上」的状态。
+
 ---
 
 ## 10. 本次（10.0.30.55）实际操作记录
