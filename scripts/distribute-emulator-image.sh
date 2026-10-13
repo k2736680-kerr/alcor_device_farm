@@ -1,24 +1,21 @@
 #!/usr/bin/env sh
-# -*- coding: utf-8 -*-
-"""
-镜像分发：把来源宿主机上的模拟器镜像搬到目标宿主机，并核对 digest。
-
-背景（先读 docs/host_onboarding_standard_process.md §0.3）：
-  * device_images 以 digest 为身份；create 永不 pull；宿主缺该 digest 必然
-    IMAGE_DIGEST_MISMATCH。
-  * docker save/load 后本地 digest 与来源机同一 tag 的 repo digest 可能不同，
-    因此搬运后必须重新核对，并按目标机本地 digest 建立/复用镜像记录。
-
-本脚本只做「搬运 + 核对」，不做：
-  * 修改 device_images / device_host_image_states（那是控制面的事，走既有链路）；
-  * 新建 registry。
-
-用法：
-  scripts/distribute-emulator-image.sh \
-    --source-host 10.0.30.171 --source-user root \
-    --target-host 10.0.30.55 --target-user hadoop \
-    --image 127.0.0.1:5001/alcor/android-emulator:15.0-api35-google_apis-x86_64-sdk9
-"""
+# 镜像分发：把来源宿主机上的模拟器镜像搬到目标宿主机，并核对 digest。
+#
+# 背景（先读 docs/host_onboarding_standard_process.md §0.3）：
+#   * device_images 以 digest 为身份；create 永不 pull；宿主缺该 digest 必然
+#     IMAGE_DIGEST_MISMATCH。
+#   * docker save/load 后本地 digest 与来源机同一 tag 的 repo digest 可能不同，
+#     因此搬运后必须重新核对，并按目标机本地 digest 建立/复用镜像记录。
+#
+# 本脚本只做「搬运 + 核对」，不做：
+#   * 修改 device_images / device_host_image_states（那是控制面的事，走既有链路）；
+#   * 新建 registry。
+#
+# 用法：
+#   scripts/distribute-emulator-image.sh \
+#     --source-host 10.0.30.171 --source-user root \
+#     --target-host 10.0.30.55 --target-user hadoop \
+#     --image 127.0.0.1:5001/alcor/android-emulator:15.0-api35-google_apis-x86_64-sdk9
 set -eu
 
 usage() {
@@ -122,9 +119,12 @@ info "在 ${source_host} 执行 docker save（可能需要数分钟）"
 ssh ${SSH_OPTS} "${source_user}@${source_host}" "mkdir -p '${work_dir}' && docker save -o '${remote_tar}' '${image}'" \
   || fail "docker save failed on ${source_host}"
 
+# 注意：docker save 产生的 tar **不是逐字节确定的** —— 同一镜像在同一台机器上
+# 先后 save 两次，sha256 也可能不同（实测 55 上两次结果不一致）。
+# 因此这里的 sha256 只用于确认「这一次传输完整」，不构成镜像身份。
 source_sha=$(ssh ${SSH_OPTS} "${source_user}@${source_host}" "sha256sum '${remote_tar}' | cut -d' ' -f1") \
   || fail "cannot hash tarball on ${source_host}"
-info "  来源 tar sha256: ${source_sha}"
+info "  来源 tar sha256: ${source_sha}  （仅代表本次传输完整性，不是镜像身份）"
 
 # ---------------------------------------------------------------- 4. 传输
 # 走部署机中转：在这台机器上流式转发，避免占本地磁盘。
@@ -143,9 +143,9 @@ target_sha=$(ssh ${SSH_OPTS} "${target_user}@${target_host}" "sha256sum '${remot
 
 if [ "${source_sha}" != "${target_sha}" ]; then
   ssh ${SSH_OPTS} "${target_user}@${target_host}" "rm -f '${remote_tar}'" || true
-  fail "sha256 mismatch: source=${source_sha} target=${target_sha}"
+  fail "传输完整性校验失败: source=${source_sha} target=${target_sha}"
 fi
-info "  sha256 校验通过: ${target_sha}"
+info "  传输完整性校验通过: ${target_sha}"
 
 # ---------------------------------------------------------------- 6. load
 info "在 ${target_host} 执行 docker load"
@@ -175,17 +175,20 @@ cat <<EOF
   RepoDigests  : ${source_repo_digests:-<none>}
 
 目标 ${target_host}
-  镜像 ID      : ${new_id}
+  ★ 权威 digest : ${new_id}
   RepoDigests  : ${new_repo_digests:-<none>}
 
 $(if [ "${new_id}" != "${source_id}" ]; then
-  echo "注意：目标本地 digest 与来源不同（save/load 的正常现象）。"
-  echo "      若来源是 registry 推送产生的 repo digest，则该 digest 无法通过 save/load 复现。"
+  echo "注意：目标本地 digest 与来源不同。这是 docker save/load 的正常现象，"
+  echo "      不代表镜像内容不同 —— 逐层 DiffID 一致即为同一内容。"
+  echo "      以目标机的 digest（上面 ★ 那行）为准去核对 device_images。"
 fi)
 
 下一步（必须由管理员在控制面完成，本脚本不做）：
-  1. 确认 device_images 中已有 digest ${new_id#sha256:} 的记录；
-     没有则按 ADR-0015 的既有链路登记（不要手工 INSERT）。
+  1. 用上面「★ 权威 digest」核对 device_images：
+       已有同 digest + 同 resource_config 的记录 → 直接复用（推荐）；
+       没有 → 按 ADR-0015 的既有链路登记（不要手工 INSERT）。
+     复用可以避免「同一镜像两条记录」，并让多台宿主互相供给对方的池。
   2. 确认该镜像已 enabled 绑定到目标宿主所在的池（device_pool_images）；
      必要时把池的 default_image_id 指向该记录。
   3. 复核选池自查 SQL，确认该池有一台「可建机」宿主。

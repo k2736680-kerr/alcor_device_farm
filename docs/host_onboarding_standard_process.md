@@ -401,11 +401,40 @@ sudo scripts/onboard-device-host.sh --check-only --server-url http://10.0.80.220
 - 增加可选的镜像对账子命令，直接输出「本机 digest ↔ `device_images` 记录」对照表；
 - 增加与 Alcor/控制面的登记联动（仍需管理员确认后才执行）。
 
-### 9.4 真实测试结论（2026-10-13）
+### 9.4 真实测试结论
 
-在 10.0.30.55 上**清空** `/opt/alcor-device-farm`、`/etc/alcor-device-farm`、
-systemd 单元和 `device-farm` 用户后，脚本**一次执行**即恢复 `online`（心跳 0.6 秒）；
-`--check-only`、fail-fast、幂等三项均真实验证通过。详见 `docs/evidence/DF-071/acceptance.md`。
+**2026-10-13 · 10.0.30.55**（故障恢复演练）：清空 `/opt/alcor-device-farm`、
+`/etc/alcor-device-farm`、systemd 单元和 `device-farm` 用户后，脚本**一次执行**即恢复
+`online`（心跳 0.6 秒）；`--check-only`、fail-fast、幂等三项均真实验证通过。
+详见 `docs/evidence/DF-071/acceptance.md`。
+
+**2026-10-13 · 10.0.30.54**（全新机器首次接入，含真实建机）：
+
+| 项 | 结果 |
+|---|---|
+| 脚本安装 Agent | ✅ `active` + `enabled`，`NRestarts=0` |
+| 发现并修复的缺陷 | ✅ `ProtectHome` 遮住 linuxbrew docker（见第 8 节第 8 条） |
+| 控制面登记 | ✅ Host `53e25d6f`、池 `149c3632`（`android-10.0.30.54`，`0/0`） |
+| 真机建机 | ✅ 设备 `eafe6fce` 在 54 上 `busy/healthy` |
+| 回收 | ✅ 释放后归零，`delete succeeded` |
+
+**结论**：脚本对「全新机器」可用。唯一需要人工判断的是**镜像来源**——
+脚本不搬运镜像，也不新建 `device_images` 记录（见 9.2）。
+详细接入过程、缺陷复现与同机对照实验见 `docs/evidence/host54_onboard_20261013.md`。
+
+### 9.5 接入一台新机器的最小步骤
+
+1. `bootstrap-device-host.sh`（全新机器；已有 docker/KVM 可跳过）
+2. 控制面 `POST /api/v1/device-hosts` 登记，拿到 Host ID
+3. 目标机本地跑 `install-local-image-registry.sh`
+4. 把镜像弄到本机（`distribute-emulator-image.sh` 或直接 build），
+   **以 `docker load` 之后的 digest 为准**
+5. 该 digest 已有 `device_images` 记录 → **复用**；否则新建
+6. `onboard-device-host.sh` 装 Agent
+7. 确认 `status=online`；建池（`total_target=0 / min_ready=0`）；跑选池自查 SQL
+8. 投一个预约做真机验收
+
+第 4 步的 digest 是唯一身份，第 5 步的决策决定池能否选中该宿主。
 
 ---
 
