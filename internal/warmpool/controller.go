@@ -16,6 +16,7 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/phoneprofile"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/poolhost"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/jackc/pgx/v5"
 )
@@ -313,7 +314,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			Scan(&runtimeImage, &digest, &api, &abi); err != nil {
 			return err
 		}
-		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile, true, PoolHostAddressFromName(poolName))
+		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile, true, poolhost.AddressFromPoolName(poolName))
 		if err != nil {
 			return err
 		}
@@ -1382,7 +1383,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}
 		for range missing {
-			hostID, err := lockHostCapacity(ctx, tx, imageID, profile, true, PoolHostAddressFromName(poolName))
+			hostID, err := lockHostCapacity(ctx, tx, imageID, profile, true, poolhost.AddressFromPoolName(poolName))
 			if errors.Is(err, ErrNoCapacity) {
 				result.CapacityMisses++
 				break
@@ -1607,83 +1608,30 @@ func (controller *Controller) recordHostImageOutcomes(ctx context.Context, tx pg
 // is certain to fail (observed in production: a pool correctly excluded for 30
 // minutes came back and stalled a run to PENDING_TIMEOUT). Recovery comes from a
 // newer success overwriting the row, or from an operator re-validating the image.
-// PoolHostAddressFromName 从池名里推导出该池"属于"哪台宿主机。
+// hostAddressExists 判断某个地址是否被农场里**任何**宿主机登记使用。
 //
-// 背景：池名是运维可读的约定（如 `android-10.0.30.54`、`iOS - 10.0.33.68`），
-// 里面带着宿主地址。而宿主选择原先完全不看池，导致「预约指定 54 的池、设备却建到
-// 55」的串台 —— 实测在正式服双向复现（54→55 四次、55→54 一次）。
-//
-// 这里只做一件事：把池名里出现的 IPv4 抽出来作为该池的目标宿主地址。
-// 抽不出来（如测试里的 `default-android`）就返回空，调用方回退到「全农场任选」的
-// 既有行为，不改变任何既有池的语义。
-//
-// 注意：这不是新增数据模型（复用矩阵要求不新增表/字段），只是把池名里**本来就有的**
-// 宿主线索用于调度收窄。地址匹配用 device_hosts.address，与登记时的值一致。
-func PoolHostAddressFromName(name string) string {
-	for i := 0; i < len(name); i++ {
-		// 找一个数字开头的位置，尝试匹配 a.b.c.d
-		if name[i] < '0' || name[i] > '9' {
-			continue
-		}
-		// 左边必须是分隔符或串首，避免把 `abc123.4.5.6` 里的片段当地址
-		if i > 0 {
-			previous := name[i-1]
-			if previous != '-' && previous != ' ' && previous != '_' && previous != '/' {
-				continue
-			}
-		}
-		octets := make([]int, 0, 4)
-		position := i
-		matched := true
-		for len(octets) < 4 {
-			start := position
-			for position < len(name) && name[position] >= '0' && name[position] <= '9' {
-				position++
-			}
-			if start == position {
-				matched = false
-				break
-			}
-			value := 0
-			for _, digit := range name[start:position] {
-				value = value*10 + int(digit-'0')
-				if value > 255 {
-					break
-				}
-			}
-			if value > 255 {
-				matched = false
-				break
-			}
-			octets = append(octets, value)
-			if len(octets) == 4 {
-				break
-			}
-			if position >= len(name) || name[position] != '.' {
-				matched = false
-				break
-			}
-			position++
-		}
-		if !matched || len(octets) != 4 {
-			continue
-		}
-		// 右边必须是边界（串尾或非数字/点），避免匹配到更长数字串的前缀
-		if position < len(name) {
-			next := name[position]
-			if (next >= '0' && next <= '9') || next == '.' {
-				continue
-			}
-		}
-		return fmt.Sprintf("%d.%d.%d.%d", octets[0], octets[1], octets[2], octets[3])
+// 刻意不看 status：目标宿主只是临时离线时，它仍然是"这台池所属的宿主"，
+// 池必须排队等它回来（TestWarmPoolQueuesInsteadOfUsingAnotherHostWhenScopedHostOffline），
+// 而不是回退到别的宿主。只有该地址**根本不存在**时才回退。
+func hostAddressExists(ctx context.Context, tx pgx.Tx, address string) bool {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_hosts WHERE address=$1)`,
+		address).Scan(&exists); err != nil {
+		// 查询失败时保守地按"存在"处理：宁可排队，也不要把设备建到错误的宿主上。
+		return true
 	}
-	return ""
+	return exists
 }
 
 func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile, respectImageState bool, poolHostAddress string) (string, error) {
-	// 池若能从名字里推导出目标宿主地址，就只在该宿主上选；否则全农场任选（既有行为）。
+	// 池若能从名字里推导出目标宿主地址，就只在该宿主上选。
+	//
+	// 但"池名里的地址在农场里找不到对应宿主"是必须处理的边界：改名、写错 IP、
+	// 或那台宿主已被删掉时都会落到这里。此时若坚持收窄，该池会被**永久饿死**
+	// （永远 CapacityMiss，永远建不出设备），比串台更难排查。
+	// 所以先确认该地址在农场里确实存在，不存在就退化成既有行为（全农场任选）。
 	hostScope, hostScopeArgs := "", []any{}
-	if poolHostAddress != "" {
+	if poolHostAddress != "" && hostAddressExists(ctx, tx, poolHostAddress) {
 		hostScope = " AND h.address=$2"
 		hostScopeArgs = append(hostScopeArgs, poolHostAddress)
 	}

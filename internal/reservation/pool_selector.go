@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Ad-Quanta/alcor-device-farm/internal/audit"
+	"github.com/Ad-Quanta/alcor-device-farm/internal/poolhost"
 )
 
 // schedulableCapabilityKeys 与迁移 000014 的
@@ -181,9 +182,19 @@ func (service *Service) listSelectablePools(
 		return nil, err
 	}
 	minSDK := minSDKLowerBound(requested)
+	// 池名里的宿主归属由 Go 侧推导（SQL 不解析 IP），再作为 VALUES 表传入，
+	// 让每个池都能拿到自己的地址。这样选池与建机用的是同一条规则。
+	hostAddresses, err := service.poolHostAddresses(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := service.db.Pool().Query(ctx, `
+		WITH pool_host_addresses(pool_id, address) AS (
+		  SELECT * FROM jsonb_to_recordset($4::jsonb) AS t(pool_id text, address text)
+		)
 		SELECT p.id, p.max_concurrency
 		FROM device_pools p
+		LEFT JOIN pool_host_addresses pha ON pha.pool_id = p.id
 		WHERE p.status = 'active' AND lower(p.platform) = $1
 		  AND (
 		    -- A. 池内已有匹配且可直接分配的活跃设备
@@ -261,8 +272,27 @@ func (service *Service) listSelectablePools(
 		        SELECT 1
 		        FROM device_pool_images pi
 		        JOIN device_images i ON i.id = pi.image_id
+		        -- 宿主归属：池名声明了宿主时，只认那台宿主。
+		        --
+		        -- 这里必须与建机侧（warmpool.lockHostCapacity）用同一条规则，
+		        -- 否则选池说「能服务」、建机却在那台宿主上建不出来，
+		        -- 请求被选中后一直排队，表现为假通过。
+		        -- 判定方式与建机侧一致：只有该地址**确实存在于 device_hosts**
+		        -- 时才收窄；找不到就回退到全农场任选，避免把池饿死。
+		        -- （见 internal/poolhost 与 ADR-0041。）
 		        JOIN device_hosts h ON h.status = 'online' AND NOT h.draining
 		                         AND h.host_type IN ('docker_emulator','hybrid')
+		                         -- 池名里声明的宿主归属：地址由 Go 侧从 p.name 推导，
+		                         -- 通过 pool_host_addresses 逐池传入（见 listSelectablePools）。
+		                         -- 判据与建机侧完全一致：地址为空、或该地址在农场里
+		                         -- 不存在（改名/写错/宿主已删）→ 回退全农场任选；
+		                         -- 否则只认这台宿主。两边必须同规则，否则选池会
+		                         -- 说「能服务」而建机建不出来（见 internal/poolhost）。
+		                         AND (
+		                           COALESCE(pha.address, '') = ''
+		                           OR NOT EXISTS (SELECT 1 FROM device_hosts x WHERE x.address = pha.address)
+		                           OR h.address = pha.address
+		                         )
 		        -- 活 base 设备：它的 capabilities 是「按需拉起」时能力的主要来源
 		        -- （warmpool.Controller 会优先用 base.capabilities）。
 		        -- LEFT JOIN + lifecycle<>'deleted' 与 controller.go:1277 一致。
@@ -351,7 +381,7 @@ func (service *Service) listSelectablePools(
 		      )
 		    )
 		  )
-		ORDER BY p.id`, platformName, encoded, minSDK)
+		ORDER BY p.id`, platformName, encoded, minSDK, hostAddresses)
 	if err != nil {
 		return nil, err
 	}
@@ -368,6 +398,37 @@ func (service *Service) listSelectablePools(
 		return nil, err
 	}
 	return candidates, nil
+}
+
+// poolHostAddresses 为所有活跃池推导「池名里声明的宿主地址」，编码成 jsonb 数组
+// 供 listSelectablePools 逐池使用。
+//
+// 为什么要走这条路：SQL 不解析 IP，而选池要一次对**多个**池求值，无法用单个标量参数
+// 表达"每个池各自的归属"。所以在这里按池推导好，再作为值表传进 SQL —— 推导规则与
+// 建机侧共用 internal/poolhost，保证两侧不会分叉。
+//
+// 推导不出地址的池（如 default-android）值为空串，SQL 侧按"未声明归属"回退。
+func (service *Service) poolHostAddresses(ctx context.Context) ([]byte, error) {
+	rows, err := service.db.Pool().Query(ctx, `SELECT id, name FROM device_pools WHERE status='active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := make([]map[string]string, 0, 8)
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		entries = append(entries, map[string]string{
+			"pool_id": id,
+			"address": poolhost.AddressFromPoolName(name),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(entries)
 }
 
 // selectWeightedPool 按 max_concurrency 加权轮转挑一个池。
