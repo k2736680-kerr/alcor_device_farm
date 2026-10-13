@@ -143,12 +143,98 @@ iOS 宿主机 - 10.0.33.68  | online | age 1.9s
 | 55 | `abc5e576` | ❌ false | 55 确实没有 171 的 digest（正确记录） |
 | 171 | `109cf3d6` | ❌ false | 2026-09-28 历史记录，仍正确 |
 
-## 五、遗留
+## 五、镜像架构：per-host registry（ADR-0040，2026-10-13 补充）
 
-1. **镜像 tag 仍带 `127.0.0.1:5001/` 前缀，但两台机器都没有该 registry**
-   （171 的 `:5000` 是无关的 `vega-face-search` nginx）。当前 `create` 不走 pull，
-   所以不影响建机；但换镜像或 `--pull` 前必须先解决。长期建议在每台宿主常驻本机
-   registry，使 digest 可复现（标准流程 §5.2 方案 C）。
-2. **55 现在是 Ubuntu 24.04 + Docker 29.1.3**（原为 22.04），本轮建机已真实跑通。
-3. `deploy/hosts/.env` 中 `DEVICE_FARM_SERVER_IP=10.0.20.56` 与实际控制面
-   `10.0.80.220` 不符（commit `9cc1621` 已确认该机不存在），待清理。
+### 5.1 问题
+
+`device_images.docker_image` 全部指向 `127.0.0.1:5001/...`，但**该 registry 在任何宿主机上都不存在**：
+55 无监听；171 的 `:5000` 是无关的 `vega-face-search` nginx（`/v2/` 返回 404）。
+官方镜像准备链路 `deploy/docker-emulator/images/prepare.sh` 又**必须 push** 到
+`DEVICE_FARM_ANDROID_PUBLISH_REPOSITORY` 才能取得不可变 digest。
+⇒ 全新宿主机既无处拉镜像，也无法走官方构建链路。
+
+### 5.2 决策：每台宿主机自带一个本机 registry
+
+统一使用 `127.0.0.1:5001` 前缀，只绑定回环、数据存 docker volume、
+`restart unless-stopped`。这样 `device_images.docker_image` 在各宿主间保持一致，
+而 digest 由本机 registry 确定。
+
+安装：`scripts/install-local-image-registry.sh`（幂等；已在 54、55 上实际安装并验证）。
+
+### 5.3 实测结论：digest 跨机可复现
+
+| 步骤 | 10.0.30.54 | 10.0.30.55 |
+|---|---|---|
+| 构建/load 测试镜像 | `ID=sha256:c81401c0…` | `ID=sha256:c81401c0…` |
+| push 后 repo digest | `c81401c0…` | `c81401c0…` |
+| 从 registry 拉回 | `c81401c0…`（稳定） | — |
+
+真实模拟器镜像同样验证：
+
+| 步骤 | 结果 |
+|---|---|
+| 55 上 save → 搬 54 → load | `ID=sha256:4bfbcf34…`（与 55 一致） |
+| 54 上 push 进本机 registry | digest `sha256:4bfbcf34…`（与 55 一致） |
+
+**结论：registry push 产生的 repo digest 等于 image ID，且跨机器可复现。**
+因此镜像分发退化为「`save`/`load` 进本机 registry」，且**同一份内容在任何宿主上都得到相同 digest**。
+
+### 5.4 `docker save` 不是字节确定的（更正）
+
+同一个镜像在 55 上两次 `docker save`，tar 的 sha256 **不同**：
+
+| 时间 | sha256 |
+|---|---|
+| 2026-09-12 | `9681e2c8aac942aa0e5b6f3d84bde272d216ca3e97cff0b39a39c9c3dd081021` |
+| 2026-10-13 | `c545b76d527e13303247f021cff1e8261d676c02417711d77a4081fe7994e7f4` |
+
+⇒ tar 的 sha256 **只能证明单次传输未损坏**，不能用于跨次比对，更不能作为镜像身份。
+**镜像身份必须用 load 后的 image ID / repo digest 判定。**
+
+### 5.5 171 与 54/55 的镜像差异（已查明）
+
+| | 171 | 54 / 55 |
+|---|---|---|
+| image ID | `e1a1d8f5c468` | `4bfbcf348b7d` |
+| repo digest | `e61f195a…` | `4bfbcf34…` |
+| `Created` | 2026-08-26T06:41:18.915775822Z | 同 |
+| 层数 | 28 | 28 |
+| **DiffIDs 逐层比对** | **28/28 完全相同** | |
+| `.Size` | 7,155,557,690 | 7,237,714,980 |
+| 额外 tag | `-audio-inject`（与主 tag **同一 ID**） | 无 |
+
+**主结论：171 与 54/55 的 28 层 DiffID 完全一致，文件系统内容相同。**
+`.Size` 的 82 MB 差异是**本地层记账差异**，不是镜像内容差异；
+`Config` 的差异只是 `None` 与 `False`/`""` 的 JSON 序列化差异。
+
+**决定性的交叉验证**：把 171 的镜像 `save` 出来、传到 54、再 `load`，
+得到的 ID 是 **`4bfbcf34…`（与 54/55 一致）而不是 171 的 `e1a1d8f5c468`**。
+⇒ `e61f195a…` 这个 repo digest **不可由内容复现**，它是 171 上一次 registry 交互留下的
+历史记录，而当时那个 registry 已不存在（171 上 `127.0.0.1:5001` 连接被拒）。
+
+**`-audio-inject` 不是独立变体**：在 171 上与主 tag 指向**同一个 image ID**
+（`e1a1d8f5c468`），只是一个额外的 tag。所以无需为新宿主补齐该变体。
+
+### 5.6 本机 registry 的边界（重要）
+
+`127.0.0.1:5001` 只绑定回环，因此**一个宿主无法从另一个宿主的 registry 拉镜像**（已实测：
+55 → `10.0.30.54:5001` 连接被拒）。这不是缺陷，而是刻意的安全边界，但意味着：
+
+**每台宿主必须各自独立取得镜像**（`save`/`load` 或本机构建），不能靠网络共享。
+
+因此每台宿主自己 `push` 进本机 registry 后得到的 digest 是**该宿主自己的**；
+而 §5.3 已证明同一份内容在不同宿主上 push 会得到**相同** digest，所以
+`device_host_image_states` 的逐宿主记录依然必要（记录的是"这台机器有没有"），
+但 digest 值本身可以一致。
+
+## 六、遗留
+
+1. **171 即将重装**，其上的 `e1a1d8f5c468` 镜像会丢失。由于 54/55 上的
+   `4bfbcf34…` 与之文件系统完全相同，重装后可直接从 54/55 任一台搬运，
+   无需找回 171。
+2. `deploy/hosts/.env` 的陈旧 `10.0.20.56` 已改为 `10.0.80.220`。
+   该文件 ACL 原本只有 `Write, Read, Synchronize`（无 Delete），导致原子替换失败，
+   已补 `Modify` 权限。
+3. 55 现在是 Ubuntu 24.04 + Docker 29.1.3，本轮建机已真实跑通。
+4. 54 上原有 `daemon.json` 含日志轮转（`100m × 5`）与 HTTP 代理
+   （`10.0.30.155:17887`），安装脚本已正确**保留未覆盖**。

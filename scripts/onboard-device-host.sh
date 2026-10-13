@@ -36,6 +36,10 @@ optional:
   --install-root <dir>      安装根目录，默认 /opt/alcor-device-farm
   --env-dir <dir>           配置目录，默认 /etc/alcor-device-farm
   --unit-file <path>        已就绪的 systemd 单元文件（脚本不在仓库检出内时必须提供）
+  --registry-prefix <ref>   本机 registry 的镜像仓库前缀，
+                            默认 127.0.0.1:5001/alcor/android-emulator
+  --android-sdk-root <dir>  Android SDK 根目录，默认 /opt/android-sdk
+  --android-tools-version <v> cmdline-tools 版本，默认 19.0
   --force-env               覆盖已存在的 host-agent.env
   --no-start                只安装，不 enable/start
   --check-only              只做前置检查，不改动系统
@@ -56,6 +60,9 @@ kvm_device="/dev/kvm"
 install_root="${DEVICE_FARM_INSTALL_ROOT:-/opt/alcor-device-farm}"
 env_dir="${DEVICE_FARM_ENV_DIR:-/etc/alcor-device-farm}"
 unit_file=""
+registry_prefix="127.0.0.1:5001/alcor/android-emulator"
+android_sdk_root="/opt/android-sdk"
+android_tools_version="19.0"
 force_env="no"
 do_start="yes"
 check_only="no"
@@ -75,6 +82,9 @@ while [ $# -gt 0 ]; do
     --install-root) install_root="${2:-}"; shift 2 ;;
     --env-dir) env_dir="${2:-}"; shift 2 ;;
     --unit-file) unit_file="${2:-}"; shift 2 ;;
+    --registry-prefix) registry_prefix="${2:-}"; shift 2 ;;
+    --android-sdk-root) android_sdk_root="${2:-}"; shift 2 ;;
+    --android-tools-version) android_tools_version="${2:-}"; shift 2 ;;
     --force-env) force_env="yes"; shift ;;
     --no-start) do_start="no"; shift ;;
     --check-only) check_only="yes"; shift ;;
@@ -239,6 +249,16 @@ else
     echo "DEVICE_FARM_AGENT_COMMAND_TIMEOUT=900s"
     echo "HOME=/var/lib/device-farm"
     echo "DEVICE_FARM_DOCKER_APPIUM_ADDITIONAL_ARGS=--allow-insecure uiautomator2:chromedriver_autodownload"
+    # 0 = 不设固定台数上限，按实时 CPU/内存/磁盘计算（见 host-agent.env.example）。
+    echo "DEVICE_FARM_AGENT_DEVICE_SLOT_LIMIT=0"
+    echo "DEVICE_FARM_DOCKER_DATA_ROOT=/var/lib/docker"
+    # 官方镜像准备链路（ADR-0015 / DF-035）。本机 registry 后就地推送取 digest。
+    echo "DEVICE_FARM_IMAGE_PREPARE_TIMEOUT=2h"
+    echo "DEVICE_FARM_IMAGE_PREPARE_SCRIPT=${install_root}/deploy/docker-emulator/images/build-agent.sh"
+    echo "DEVICE_FARM_SDKMANAGER_BINARY=${android_sdk_root}/cmdline-tools/${android_tools_version}/bin/sdkmanager"
+    echo "DEVICE_FARM_SDKMANAGER_VERSION=${android_tools_version}"
+    echo "DEVICE_FARM_ANDROID_PUBLISH_REPOSITORY=${registry_prefix}"
+    echo "DEVICE_FARM_ADB_BINARY=adb"
   } > "${env_file}"
   chmod 600 "${env_file}"
   chown root:root "${env_file}"
