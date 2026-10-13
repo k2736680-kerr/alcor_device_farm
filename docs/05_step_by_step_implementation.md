@@ -707,6 +707,13 @@ Reservation 释放、Emulator 删除且 Pool 回到零；并发请求不双占�
 `online`；重复执行不覆盖已有配置、不改变生效的 Host ID；缺单元模板时在改动系统前
 失败且不留半成品。通过后单独提交简洁中文 commit。
 
+后续（2026-10-13，全新机器实战）：10.0.30.54 作为**第一台全新机器**接入时，
+暴露出单元模板 `ProtectHome=true` 会遮住 linuxbrew 安装的 docker
+（`/usr/local/bin/docker` → `/home/linuxbrew/...`），导致 Agent 每 5 秒重启。
+脚本已改为先 `readlink -f $(command -v docker)`，落点在 `/home` 下时自动把单元改成
+`ProtectHome=read-only`。54 最终完成真实建机（设备 `eafe6fce` 在 54 上 `busy/healthy`），
+接入全过程与同机对照实验见 `docs/evidence/host54_onboard_20261013.md`。
+
 ## 12. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：
