@@ -15,6 +15,7 @@
 11. [可观测性和告警](observability.md)：指标、Dashboard、告警和故障注入；
 12. [运维手册](operations_runbook.md) 与 [回滚方案](rollback.md)：部署后的维护、备份、升级和恢复；
 13. [宿主机接入标准流程](host_onboarding_standard_process.md)：新增或重装一台 Linux/Docker/KVM 宿主机的完整步骤、机制原因、验证 SQL 和一键脚本设计；
-14. `adr/`：已经确认的架构决策。
+14. [并发分配策略核对](evidence/concurrency_policy_20261013.md)：Android 多机并发如何按每台宿主的实时剩余内存决定开几台，以及与 `max_concurrency`/`max_instances` 的关系；
+15. `adr/`：已经确认的架构决策。
 
 如有冲突，先按三方对齐说明判断所属领域；仍无法判断时停止开发并取得需求方确认，不允许用旧版代码事实或临时实现悄悄改变方案。
