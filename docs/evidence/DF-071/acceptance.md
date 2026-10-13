@@ -227,7 +227,50 @@ iOS 宿主机 - 10.0.33.68  | online | age 1.9s
 `device_host_image_states` 的逐宿主记录依然必要（记录的是"这台机器有没有"），
 但 digest 值本身可以一致。
 
-## 六、遗留
+## 六、多任务并发验证（关键）
+
+### 6.1 场景
+
+现有两个 Android 池，各自 `max_concurrency=1`。**并发投递 4 个不指定池的预约**。
+
+### 6.2 结果
+
+| 观测 | 结果 |
+|---|---|
+| 4 个预约是否被接受 | **全部 201 接受**，按轮转分到两池各 2 个 |
+| 实际建机 | **只有 2 台**（每池 1 台，`create succeeded` on 171 + 55） |
+| 第 3、4 个预约 | 停在 **`pending`**，拿不到设备 |
+| 池占用 vs 上限 | 两池各 1 个 active 租约，均**已达 `max_concurrency=1`** |
+
+### 6.3 结论：`max_concurrency` 是每池的并发上限，超出的请求会静默排队
+
+`POST /api/v1/device-reservations` **接受**请求并返回 `pending`，但农场**不会**
+为超过 `max_concurrency` 的请求建机。这是设计行为（选池 SQL 用它判满，
+见 `pool_selector.go:246-251`），但对「多任务不能出问题」的要求有直接影响：
+
+**⇒ 若要多任务并行，必须把 `max_concurrency` 提到与实际并发数匹配的值。
+否则任务会长时间停在 `pending` 而不报错。**
+
+### 6.4 每池 `max_concurrency` 与宿主数的关系
+
+`max_concurrency` 限制的是**该池同时活跃的租约数**，而池的供给来源是
+「**任意一台** online 的 docker 宿主」（`pool_selector.go:264` 的
+`JOIN device_hosts h ON h.status='online'` **未与池绑定**）。
+
+因此当前拓扑下：
+
+- 池 `android-10.0.30.171` 与 `android-10.0.30.55` 各自 `max_concurrency=1`，
+  合计同时最多 **2 台设备**；
+- 若要把并发提到 N，**同时**需要：① 相应提高各池 `max_concurrency`；
+  ② 保证池的 `default_image_id` 在目标宿主上都可用（否则被 `available=false` 跳过）。
+
+### 6.5 回收验证
+
+4 个预约用 `force=true` 释放后，2 台在途设备由 **reaper 自动清理**：
+`delete succeeded` on 171 与 55，最终**活跃 Android 设备 = 0**，池回到 `0/0`。
+⇒ 即使并发超额，系统也能自愈，不会泄漏设备。
+
+## 七、遗留
 
 1. **171 即将重装**，其上的 `e1a1d8f5c468` 镜像会丢失。由于 54/55 上的
    `4bfbcf34…` 与之文件系统完全相同，重装后可直接从 54/55 任一台搬运，

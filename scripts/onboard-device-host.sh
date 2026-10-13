@@ -148,6 +148,15 @@ getent group docker >/dev/null || fail "docker group does not exist; install Doc
 command -v docker >/dev/null || fail "docker is not installed"
 docker version >/dev/null 2>&1 || fail "cannot talk to the Docker daemon"
 
+# 提前暴露 ProtectHome 冲突：docker 真实路径在 /home 下时，unit 必须放宽该限制。
+docker_real_path=$(readlink -f "$(command -v docker)" 2>/dev/null || echo "")
+case "${docker_real_path}" in
+  /home/*)
+    info "docker 真实路径 ${docker_real_path} 位于 /home 下；"
+    info "  安装时会自动把 unit 的 ProtectHome 放宽为 read-only，否则服务无法启动。"
+    ;;
+esac
+
 if [ -n "${render_device}" ] && [ ! -e "${render_device}" ]; then
   fail "render device ${render_device} does not exist"
 fi
@@ -271,7 +280,34 @@ unit_source="${unit_file:-${repo_unit}}"
   this script is not running from a repository checkout and no --unit-file was given.
   Pass --unit-file /path/to/alcor-device-host-agent.service"
 [ -f "${unit_source}" ] || fail "unit file ${unit_source} not found"
-install -m 0644 "${unit_source}" /etc/systemd/system/alcor-device-host-agent.service
+
+# 模板带 ProtectHome=true，它会遮住整个 /home。若 docker 的真实二进制位于
+# /home 之下（常见于 linuxbrew 安装：/usr/local/bin/docker -> /home/linuxbrew/...），
+# 即使 /usr/local/bin 在 PATH 里，符号链接目标也不可达，Agent 会以
+# "exec: docker: executable file not found in $PATH" 反复重启。
+#
+# 这里解析出 docker 的最终落点：只要它在 /home 下，就必须放宽 ProtectHome，
+# 否则装完就是死的。选择 read-only 而非 false：保留大部分隔离，只放开 /home 的读。
+docker_real=$(readlink -f "$(command -v docker)" 2>/dev/null || echo "")
+protect_home_line="ProtectHome=true"
+protect_home_note=""
+case "${docker_real}" in
+  /home/*)
+    protect_home_line="ProtectHome=read-only"
+    protect_home_note="docker 真实路径 ${docker_real} 位于 /home 下，已把 ProtectHome 放宽为 read-only"
+    ;;
+esac
+
+install -d -m 0755 /etc/systemd/system
+if [ "${protect_home_line}" = "ProtectHome=true" ]; then
+  install -m 0644 "${unit_source}" /etc/systemd/system/alcor-device-host-agent.service
+else
+  # 逐行替换，保留模板其余内容不变。
+  sed "s|^ProtectHome=.*|${protect_home_line}|" "${unit_source}" \
+    > /etc/systemd/system/alcor-device-host-agent.service
+  chmod 0644 /etc/systemd/system/alcor-device-host-agent.service
+  info "注意：${protect_home_note}"
+fi
 systemctl daemon-reload
 
 if [ "${do_start}" = "yes" ]; then

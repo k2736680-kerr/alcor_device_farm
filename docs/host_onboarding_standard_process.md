@@ -326,6 +326,26 @@ docker image inspect <image-ref> --format 'ID={{.Id}} RepoDigests={{.RepoDigests
 5. **负向记录不会自愈**：`available=false` 永久有效，会让调度器跳过该宿主。
 6. **STF 同步间隔必须 < reconcile 宽限期（30s）**，当前是 20s + `AccuracySec=1s`。
 7. **`PUT /device-pools` 是全量替换**，漏字段会被清掉。
+8. **`ProtectHome=true` 会把 linuxbrew 装的 docker 一起遮住**（2026-10-13 在 54 上实测）。
+   症状：Agent 每 5 秒重启一次，日志反复出现
+   `provider discover: Docker Engine is unavailable: docker command failed: exec: "docker": executable file not found in $PATH`。
+   根因：`/usr/local/bin/docker` 是指向 `/home/linuxbrew/.linuxbrew/bin/docker` 的符号链接，
+   而 `ProtectHome` 让 `/home` 不可见，符号链接目标随之失效。
+   对照实测（同一台机器，只改这一行）：
+
+   | 设置 | `command -v docker` |
+   |---|---|
+   | `ProtectHome=false` | `/usr/local/bin/docker` ✅ |
+   | `ProtectHome=read-only` | 解析成功，`docker version` 返回版本 ✅ |
+   | `ProtectHome=true` | **找不到** ❌ |
+
+   ⇒ `onboard-device-host.sh` 会先 `readlink -f $(command -v docker)`，
+   落点在 `/home` 下时自动把单元改成 `ProtectHome=read-only`。
+9. **管理 API（`/api/v1/*`）不在 18182 上**。`18182` 是 Agent 内部 API，只服务
+   `/internal/v1/*`（未授权返回 **401**）。管理 API 经 **18180 的 HTTPS 网关**转发到
+   `device-farm-server:8080`。用错端口会得到 nginx 的 `400 Bad Request`，极易误判为鉴权问题。
+10. **`GET /api/v1/device-hosts` 需要分页参数**（其余 list 端点多数有默认值）。
+    在 shell 里 `curl` 带 `&` 的 URL 必须整体加引号，否则会被截断。
 
 ---
 
