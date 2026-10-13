@@ -690,6 +690,23 @@ replacement，历史 Device 保留为 deleted；长期隔离设备不产生 dele
 正式发布后从 Alcor UI 投递 APK，证明 Reservation 触发创建、任务独占、Runner 完成、
 Reservation 释放、Emulator 删除且 Pool 回到零；并发请求不双占且不突破 Pool 上限。
 
+### DF-071 宿主机一键接入脚本与标准流程
+
+状态：completed。
+
+实施：按 ADR-0039 把「接入一台 Linux/Docker/KVM 宿主机」固化为
+`scripts/onboard-device-host.sh`，并在 `docs/host_onboarding_standard_process.md` 记录机制
+原因、验证 SQL 与真实踩坑。脚本只做前置检查、系统用户与目录、`host-agent.env`、systemd
+单元和自检；**不登记 Host、不动镜像、不动池容量**，这三项继续由管理员显式决定。
+
+产出：ADR-0039、`scripts/onboard-device-host.sh`、
+`docs/host_onboarding_standard_process.md`、`docs/evidence/DF-071/`。
+
+验收：真实宿主 `--check-only` 通过且不改动系统；清空 `/opt/alcor-device-farm`、
+`/etc/alcor-device-farm`、systemd 单元和 `device-farm` 用户后，一条命令恢复该宿主
+`online`；重复执行不覆盖已有配置、不改变生效的 Host ID；缺单元模板时在改动系统前
+失败且不留半成品。通过后单独提交简洁中文 commit。
+
 ## 12. 单任务完成定义
 
 每个 DF 任务只有同时满足以下条件才能改为 `completed`：

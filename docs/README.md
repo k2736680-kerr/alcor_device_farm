@@ -14,6 +14,7 @@
 10. [MVP 验收方案](07_acceptance_test_plan.md)：阶段 Gate、测试用例、非功能指标和最终签收；
 11. [可观测性和告警](observability.md)：指标、Dashboard、告警和故障注入；
 12. [运维手册](operations_runbook.md) 与 [回滚方案](rollback.md)：部署后的维护、备份、升级和恢复；
-13. `adr/`：已经确认的架构决策。
+13. [宿主机接入标准流程](host_onboarding_standard_process.md)：新增或重装一台 Linux/Docker/KVM 宿主机的完整步骤、机制原因、验证 SQL 和一键脚本设计；
+14. `adr/`：已经确认的架构决策。
 
 如有冲突，先按三方对齐说明判断所属领域；仍无法判断时停止开发并取得需求方确认，不允许用旧版代码事实或临时实现悄悄改变方案。

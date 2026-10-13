@@ -92,6 +92,7 @@ DaFit项目后续只增加Farm运行适配，不改变上述职责：外部指�
 -Phone 硬件模板目录和受控创建向导；硬件模板只描述 Android SDK `avdmanager` 可识别的 Phone Profile，创建仍复用既有 Host Command、Host Agent、Docker Emulator Provider、容量预检和 ADB/STF/Appium 健康链路；
 -长期设备保留、Pool 基础设备和直接删除；复用现有 Reservation/STF release、Device 状态机、Warm Pool、Host Command 与 Docker Provider，不新增业务设备快照、Appium 执行或 Docker 直连；
 -Android Emulator 的 CPU/内存无损改配；复用现有 `RestartWithProfile`、持久化 Host Command、容量预检、健康门禁和设备域审计，只新增受控 API、异步状态与 Console 分流，不接受镜像、数据盘或任意容器参数；
+-宿主机一键接入脚本与标准流程；只编排既有前置检查、`device-farm` 系统用户、`host-agent.env`、既有 systemd 单元和自检，不登记 Host（走既有 Host API）、不搬运镜像（走 ADR-0015 既有链路）、不改池容量（走既有 Pool API），也不新建远程执行通道；
 -仅用于端到端证明的DaFit Harness。
 
 ## 5. 名称相近但职责不同的能力
