@@ -56,7 +56,9 @@ optional（默认值已按现有农场填好）：
   --ssh-password <p>         目标机 SSH 密码（未装密钥时）
   --agent-binary <path>      device-host-agent 二进制
   --unit-file <path>         systemd 单元模板
-  --concurrency <n>          池上限，默认 1
+  --concurrency <n>          池上限安全网，默认 8
+                             （单机实际开几台由该机实时剩余内存决定；
+                              设小了会成为瓶颈，见 docs/evidence/concurrency_policy_20261013.md）
   --skip-bootstrap           跳过第 0 步
   --skip-image               跳过第 2 步（镜像已在目标机）
   --dry-run                  只打印将执行的步骤
@@ -80,7 +82,7 @@ ssh_user="hadoop"
 ssh_password=""
 agent_binary=""
 unit_file=""
-concurrency="1"
+concurrency="8"
 skip_bootstrap="no"
 skip_image="no"
 dry_run="no"
@@ -360,6 +362,8 @@ fi
 step "6/7 建池（按需：total_target=0 / min_ready=0）"
 if [ -n "${token_file}" ] && [ -f "${token_file}" ] && [ -n "${pool_image_id}" ]; then
   _tok=$(cat "${token_file}")
+
+  # 先建池（拿到 pool id；此时 max_concurrency 已是安全网值）。
   _body=$(printf '{"name":"%s","platform":"android","default_lease_seconds":1800,"max_lease_seconds":7200,"max_concurrency":%s,"total_target":0,"min_ready":0,"default_image_id":"%s","reason":"一键接入 %s"}' \
     "${pool_name}" "${concurrency}" "${pool_image_id}" "${host}")
   _resp=$(curl -sSk -m 25 -X POST -H "Authorization: Bearer ${_tok}" \
@@ -369,6 +373,43 @@ if [ -n "${token_file}" ] && [ -f "${token_file}" ] && [ -n "${pool_image_id}" ]
     *'"error":null'*|*'"id"'*) info "池 ${pool_name} 已就绪" ;;
     *) info "建池返回（请确认）: ${_resp}" ;;
   esac
+
+  # 取池 id（用于绑定镜像）。
+  #
+  # 注意：不能用 `sed 's/.*"id":"...".*/\1/'` —— 该正则是贪婪的，整行只有一个
+  # 匹配时会取到**最后一个** id（实测把别台服务器的池 id 取了出来），
+  # 会造成"绑错池"的静默故障。这里用 grep -o 取第一个匹配，语义更明确。
+  _pool_id=$(printf '%s' "${_resp}" | grep -o '"id":"[0-9a-f-]\{36\}"' | head -1 | cut -d'"' -f4)
+  if [ -z "${_pool_id}" ]; then
+    # 兜底：按名字在池列表里找回该池 id（同样只用 grep -o 取精确片段）。
+    _pool_id=$(curl -sSk -m 25 -H "Authorization: Bearer ${_tok}" \
+      "${server_url}/api/v1/device-pools?page=1&page_size=200" \
+      | tr '{' '\n' | grep -F "\"name\":\"${pool_name}\"" \
+      | grep -o '"id":"[0-9a-f-]\{36\}"' | head -1 | cut -d'"' -f4)
+  fi
+
+  if [ -n "${_pool_id}" ]; then
+    # 再绑定镜像并放开实例上限。
+    #   ⚠️ 顺序关键：SetPoolImage 强制 min_ready == max_instances，且写入会回写
+    #   池级 total_target/min_ready。因此必须在池的 0/0 设置之后不再改镜像，
+    #   否则池会被抬成常驻热备，破坏"按需清空"。
+    #   这里先建池（0/0）已生效；随后设镜像 min_ready=max_instances=<安全网>，
+    #   会回写池级——所以最后再补一次池的 0/0。
+    _pi_body=$(printf '{"min_ready":%s,"max_instances":%s,"enabled":true,"reason":"一键接入放开镜像实例上限"}' \
+      "${concurrency}" "${concurrency}")
+    curl -sSk -m 25 -X PUT -H "Authorization: Bearer ${_tok}" \
+      -H 'Content-Type: application/json' \
+      -d "${_pi_body}" "${server_url}/api/v1/device-pools/${_pool_id}/images/${pool_image_id}" \
+      -o /dev/null -w '绑定镜像 http=%{http_code}\n' || info "镜像绑定失败（可后续手工补）"
+
+    # 复核并确保池回到 0/0（抵御上面 PUT 的回写）。
+    curl -sSk -m 25 -X PUT -H "Authorization: Bearer ${_tok}" \
+      -H 'Content-Type: application/json' \
+      -d "${_body}" "${server_url}/api/v1/device-pools/${_pool_id}" \
+      -o /dev/null -w '池 0/0 复核 http=%{http_code}\n' || true
+  else
+    info "未能取到池 id；请手工确认 device_pool_images 绑定"
+  fi
 else
   info "未提供 token 或 --pool-image-id；跳过建池"
 fi

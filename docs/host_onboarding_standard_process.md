@@ -305,12 +305,18 @@ docker image inspect <image-ref> --format 'ID={{.Id}} RepoDigests={{.RepoDigests
 | 投递任务 | pending Reservation 出现 |
 | 按需创建 | `device_host_commands` 新增 `create`（`leased`→`succeeded`），宿主上出现容器 |
 | 设备就绪 | `devices.lifecycle_status='ready'`、`health_status='healthy'` |
-| STF 可见 | 171 sync timer 日志 `connected=N`；STF `/api/v1/devices` 该 serial `present=true/ready=true` |
+| STF 可见 | 171 sync timer 日志 `connected=N`；`docker exec alcor-device-farm-stf-stf-adb-1 adb devices -l` 中该 serial 为 `device`；控制面 `devices.health_reason='STF visibility recovered'` 且 `consecutive_failures=0` |
 | 任务结束 | Reservation `released` |
 | 资源释放 | `delete` 命令 succeeded；设备 `deleted`；**池回到 0**；宿主容器消失 |
 
 > 验收必须证明：**空闲时不留常驻设备**（AT-EMU-016），且不突破
 > Pool `total_target`/`max_concurrency`、镜像和宿主容量上限。
+
+> **STF 判定的权威口径**：不要用 STF 的 `/api/v1/devices`（需用户令牌，会 401）。
+> 用**两个**可靠信号：① 171 的 `stf-adb` 容器内 `adb devices -l` 显示 `device` 状态；
+> ② 控制面 `devices.health_reason='STF visibility recovered'` 且 `consecutive_failures=0`。
+> 新宿主机**无需任何 STF 侧改动**——171 的 timer 会自动发现新设备的 `adb_endpoint` 并接入
+> （ADR-0037 决策 3）。详见 `docs/evidence/stf_usability_20261013.md`。
 
 ---
 
@@ -435,6 +441,32 @@ sudo scripts/onboard-device-host.sh --check-only --server-url http://10.0.80.220
 8. 投一个预约做真机验收
 
 第 4 步的 digest 是唯一身份，第 5 步的决策决定池能否选中该宿主。
+
+#### 9.5.1 建池时并发上限怎么设（2026-10-13 定）
+
+**单机开几台由每台宿主的实时剩余内存决定**，不由池的计数决定。因此建池时：
+
+| 层级 | 字段 | 建议值 | 理由 |
+|---|---|---|---|
+| 池 | `total_target` | `0` | 按需：空闲清空 |
+| 池 | `min_ready` | `0` | 不保温 |
+| 池 | `max_concurrency` | 足够大（如 8） | **安全网**，不让它成为瓶颈 |
+| 镜像 | `max_instances` | 同上 | **安全网** |
+
+真正的约束在 `internal/capacity/capacity.go`：按该机
+`min(账面可用, 实时可用)` 减预留（CPU 1 核 / 内存 2048MB / 磁盘 4096MB）后
+除以单台规格。**因此大内存机器自动多开、小内存机器自动少开，无需逐台配置。**
+
+> ⚠️ **设置顺序有讲究**：`SetPoolImage` 强制 `min_ready == max_instances`，
+> 且写入会**回写池级 `total_target`/`min_ready`**。必须
+> **先** `PUT /device-pools/{id}/images/{image_id}`（设 `max_instances`），
+> **后** `PUT /device-pools/{id}`（设 `total_target=0 / min_ready=0 / max_concurrency=N`）。
+> 顺序颠倒会把池级 `min_ready` 抬成 `max_instances`，导致池常驻热备、**破坏按需清空**。
+>
+> 实测：15GB 级宿主在 `container_memory_mb=5120` + 预留 2048MB 下，
+> 空闲 available ≈ 11.5~13.4GB → 可开 2 台；已跑 1 台后降到 ≈ 6.8GB → 第 2 台被
+> 宿主以 `INSUFFICIENT_HOST_RESOURCES` 拒绝并自动回收。
+> 详见 `docs/evidence/concurrency_policy_20261013.md`。
 
 ### 9.6 一条命令接入（`scripts/install-device-host.sh`）
 

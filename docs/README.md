@@ -16,6 +16,7 @@
 12. [运维手册](operations_runbook.md) 与 [回滚方案](rollback.md)：部署后的维护、备份、升级和恢复；
 13. [宿主机接入标准流程](host_onboarding_standard_process.md)：新增或重装一台 Linux/Docker/KVM 宿主机的完整步骤、机制原因、验证 SQL 和一键脚本设计；
 14. [并发分配策略核对](evidence/concurrency_policy_20261013.md)：Android 多机并发如何按每台宿主的实时剩余内存决定开几台，以及与 `max_concurrency`/`max_instances` 的关系；
-15. `adr/`：已经确认的架构决策。
+15. [STF 可用性实测](evidence/stf_usability_20261013.md)：新增宿主机（54/55）上的模拟器能否被 171 的 STF 看到并远控，以及接入机制与排障要点；
+16. `adr/`：已经确认的架构决策。
 
 如有冲突，先按三方对齐说明判断所属领域；仍无法判断时停止开发并取得需求方确认，不允许用旧版代码事实或临时实现悄悄改变方案。
