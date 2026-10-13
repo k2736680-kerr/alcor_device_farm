@@ -96,7 +96,7 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | 控制面 iOS 隧道与 TLS Gateway | 220 预部署的 iOS 远控入口 | 固定版本 SSH tunnel sidecar 与独立 Nginx TLS Gateway；18181 只提供 HTTPS iOS Gateway，Server 8081 仅 Compose 内部可达，18182 仍是 Host Agent 私网 API；不改变 171/NPS，不新增业务对象 |
 | 多宿主机接入与登记 | 后台新增 Linux/macOS Host 的设备域入口 | Console 调用既有 Host 创建 API，登记后由 Agent 主动 heartbeat；安装提示不携带 Token，Server 不 SSH/Docker 直连远端，不新增表或注册协议 |
 | 宿主机接入引导与预检 | 登记后按平台完成 Agent 配置并确认在线 | Console 只展示脱敏配置项和现有安装/预检命令；安装、Secret 注入和启动仍在目标主机本地完成 |
-| 池与宿主机的调度归属 | 多台 Android 宿主机各有独立 Pool（`android-<宿主IP>`），用户按"每台服务器的实际内存"规划并发 | 调度从池名推导目标宿主地址并按 `device_hosts.address` 收窄候选宿主，保持"预约指定哪台就只在那台建"；推导不出时回退全农场任选；**不新增表/字段/API**（ADR-0041） |
+| 池与宿主机的调度归属 | 多台宿主机与设备池**一对一**：`android-<宿主IP>` ↔ `device_hosts.address`，iOS 同理。用户按"每台服务器的实际内存"规划并发 | 建机时按各宿主**实时空闲内存**挑宿主（不按池名收窄，允许溢出到其他空闲宿主）；设备归属的池由**实际宿主的 address** 推导，保证「归属池 = 宿主机」。宿主机↔池是一对一，故按地址匹配池名即可，**不新增表/字段/API**（ADR-0042） |
 
 新版方案未确定设备农场最终是否与 Alcor 合仓，因此当前目录不预设迁入旧 `eval_server/internal/devicefarm`，也不预设永远不能合仓。第六阶段只以稳定 API 契约作为必需边界。
 

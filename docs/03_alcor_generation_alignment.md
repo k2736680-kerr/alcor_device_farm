@@ -38,7 +38,7 @@
 - Appium 2/UiAutomator2 复用，设备农场只管理 Endpoint 和健康；
 - 超时、重试、隔离、重建、人工释放和审计事件；
 - 控制台设置 Pool 总目标后，由设备域按 Host 实际 CPU、内存、磁盘和设备规格自动扩容或安全缩容；
-- Pool 与宿主机的调度归属：多台 Android 宿主机各有独立 Pool 时，建机只能落在该 Pool 所属宿主机上（从池名推导目标地址并按 `device_hosts.address` 收窄）；该规则纯属设备域内部调度，不改变 Alcor 可见的 Device/Reservation 语义，也不新增表或 API（ADR-0041）；
+- Pool 与宿主机的调度归属：宿主机与 Pool **一对一**（`android-<宿主IP>` ↔ `device_hosts.address`）。建机时按各宿主**实时空闲内存**挑宿主，允许溢出到其他空闲宿主；设备归属的 Pool 由**实际宿主的 address** 推导，保证「归属 Pool = 宿主机」，使设备可追溯到它真正运行的机器（ADR-0042）；
 - Android 13～16 镜像目录、Image 默认运行规格、Device 规格覆盖和空闲 Emulator 受控重装；
 - 隔离或已停止设备可由 Device Farm 管理员通过设备域 Host Command 受控删除；该动作不创建 Alcor Run/Result，也不绕过目标容量；
 - Android CPU/内存无损改配属于 Device 管理运维动作，只更新设备域有效规格；新版 Alcor 不新增对应业务对象，也不感知 Host Command、Docker 容器或数据卷；

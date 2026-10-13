@@ -16,7 +16,6 @@ import (
 	"github.com/Ad-Quanta/alcor-device-farm/internal/identifier"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/paging"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/phoneprofile"
-	"github.com/Ad-Quanta/alcor-device-farm/internal/poolhost"
 	"github.com/Ad-Quanta/alcor-device-farm/internal/runtimeprofile"
 	"github.com/jackc/pgx/v5"
 )
@@ -287,9 +286,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			return err
 		}
 		var status domain.PoolStatus
-		var poolName string
-		if err := tx.QueryRow(ctx, `SELECT status,name FROM device_pools WHERE id=$1 AND platform='android' FOR UPDATE`, input.PoolID).
-			Scan(&status, &poolName); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status FROM device_pools WHERE id=$1 AND platform='android' FOR UPDATE`, input.PoolID).Scan(&status); err != nil {
 			return err
 		}
 		// The Pool row serializes concurrent create submissions. Recheck after
@@ -314,7 +311,7 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 			Scan(&runtimeImage, &digest, &api, &abi); err != nil {
 			return err
 		}
-		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile, true, poolhost.AddressFromPoolName(poolName))
+		hostID, err := lockHostCapacity(ctx, tx, input.ImageID, input.RuntimeProfile, true)
 		if err != nil {
 			return err
 		}
@@ -327,12 +324,14 @@ func (controller *Controller) Provision(ctx context.Context, input ProvisionInpu
 		for key, value := range input.RuntimeProfile.Map() {
 			capabilities[key] = value
 		}
-		deviceID, commandID, err := controller.createDeviceCommand(ctx, tx, input.PoolID, input.ImageID, runtimeImage, digest, hostID, capabilities, input.RuntimeProfile, input.IdempotencyKey)
+		deviceID, commandID, attributedPoolID, err := controller.createDeviceCommand(ctx, tx, input.PoolID, input.ImageID, runtimeImage, digest, hostID, capabilities, input.RuntimeProfile, input.IdempotencyKey)
 		if err != nil {
 			return err
 		}
+		// total_target（该池的温度计）必须记在**归属池**上，与设备成员关系一致，
+		// 否则溢出时会把计数记到设备并不在的那个池（ADR-0042）。
 		if _, err := tx.Exec(ctx, `UPDATE device_pools SET total_target=total_target+1,
-			base_device_id=COALESCE(base_device_id,$2),updated_at=clock_timestamp() WHERE id=$1`, input.PoolID, deviceID); err != nil {
+			base_device_id=COALESCE(base_device_id,$2),updated_at=clock_timestamp() WHERE id=$1`, attributedPoolID, deviceID); err != nil {
 			return err
 		}
 		result.ID, result.DeviceID, result.CommandID, result.HostID = commandID, deviceID, commandID, hostID
@@ -1211,10 +1210,7 @@ func (controller *Controller) reconcileImageValidation(ctx context.Context, imag
 		if err != nil {
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}
-		// 镜像校验刻意不按池收窄：一个镜像可被多个池共用，且校验失败恰恰
-// 发生在"目标宿主上还没有该镜像"时 —— 若按池限定，池与镜像同时待建时
-// 会互相等待成死锁。校验只关心"农场里有哪台宿主能证明这个镜像可用"。
-		hostID, err := lockHostCapacity(ctx, tx, imageID, profile, false, "")
+		hostID, err := lockHostCapacity(ctx, tx, imageID, profile, false)
 		if errors.Is(err, ErrNoCapacity) {
 			return nil
 		}
@@ -1274,10 +1270,10 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
 		var minReady, totalTarget, maxConcurrency, imageMaxInstances int
 		var apiLevel int
-		var runtimeImage, digest, abi, resolution, poolName string
+		var runtimeImage, digest, abi, resolution string
 		var baseCapabilities, baseRuntimeProfile []byte
 		if err := tx.QueryRow(ctx, `SELECT p.min_ready,p.total_target,p.max_concurrency,pi.max_instances,
-			i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,p.name,
+			i.docker_image,i.docker_digest,i.api_level,i.abi,i.resolution,
 			COALESCE(b.capabilities,jsonb_build_object('platformName','Android','apiLevel',i.api_level,'abi',i.abi,'resolution',i.resolution)),
 			COALESCE(b.runtime_profile_override,i.resource_config,'{}'::jsonb)
 			FROM device_pools p LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
@@ -1285,7 +1281,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id)
 			WHERE p.id=$1 AND p.platform='android' AND COALESCE(b.image_id,p.default_image_id)=$2 AND pi.enabled AND p.status='active' AND i.status='ready'
 			FOR UPDATE OF p`, poolID, imageID).Scan(&minReady, &totalTarget, &maxConcurrency, &imageMaxInstances,
-			&runtimeImage, &digest, &apiLevel, &abi, &resolution, &poolName, &baseCapabilities, &baseRuntimeProfile); err != nil {
+			&runtimeImage, &digest, &apiLevel, &abi, &resolution, &baseCapabilities, &baseRuntimeProfile); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -1383,7 +1379,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			return fmt.Errorf("invalid image runtime profile: %w", err)
 		}
 		for range missing {
-			hostID, err := lockHostCapacity(ctx, tx, imageID, profile, true, poolhost.AddressFromPoolName(poolName))
+			hostID, err := lockHostCapacity(ctx, tx, imageID, profile, true)
 			if errors.Is(err, ErrNoCapacity) {
 				result.CapacityMisses++
 				break
@@ -1391,7 +1387,7 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			if err != nil {
 				return err
 			}
-			if _, _, err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities, profile, ""); err != nil {
+			if _, _, _, err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities, profile, ""); err != nil {
 				return err
 			}
 			result.DevicesCreated++
@@ -1509,35 +1505,93 @@ func (controller *Controller) quarantineCreateResult(
 	return err
 }
 
-func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any, profile runtimeprofile.Profile, provisioningKey string) (string, string, error) {
+// resolvePoolForHost 由设备实际所在的宿主机推导它应该归属的池（ADR-0042）。
+//
+// 前提：宿主机与池**一对一**，池名形如 `android-<宿主IP>`（iOS 为 `iOS - <宿主IP>`）。
+// 已实测确认该一对一关系成立（2026-10-13）。
+//
+// 返回 (池 id, 是否推导成功)：
+//   - 该宿主没有同名池（新增宿主未建池、池被改名）时返回 ok=false，
+//     调用方保留原 poolID —— 不能因为归属推导失败就让设备建不出来。
+//   - platform 限定平台，避免跨平台误匹配（如 iOS 池名里也有 IP）。
+func resolvePoolForHost(ctx context.Context, tx pgx.Tx, hostID, platform string) (string, bool) {
+	if hostID == "" {
+		return "", false
+	}
+	var poolID string
+	err := tx.QueryRow(ctx, `SELECT p.id
+		FROM device_hosts h
+		JOIN device_pools p ON p.name = CASE WHEN p.platform='ios'
+		                                     THEN 'iOS - '||h.address
+		                                     ELSE 'android-'||h.address END
+		WHERE h.id=$1 AND p.platform=$2 AND p.status='active'
+		ORDER BY p.created_at LIMIT 1`, hostID, platform).Scan(&poolID)
+	if err != nil {
+		return "", false
+	}
+	return poolID, true
+}
+
+// poolPlatformOrDefault 取该池的平台；取不到时按 android 处理（Android 侧默认）。
+//
+// 用途：resolvePoolForHost 需要平台来拼池名（Android 用 `android-<ip>`，
+// iOS 用 `iOS - <ip>`）。这里读的是调用方传入池的平台，而不是宿主的平台 ——
+// 调用方池与设备平台一致（建机路径已保证），读取它最省事且不需要额外查询。
+func (controller *Controller) poolPlatformOrDefault(poolID string) string {
+	if controller == nil || controller.db == nil || poolID == "" {
+		return "android"
+	}
+	var platform string
+	if err := controller.db.Pool().QueryRow(context.Background(),
+		`SELECT platform FROM device_pools WHERE id=$1`, poolID).Scan(&platform); err != nil || platform == "" {
+		return "android"
+	}
+	return platform
+}
+
+func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx, poolID, imageID, runtimeImage, digest, hostID string, capabilities map[string]any, profile runtimeprofile.Profile, provisioningKey string) (string, string, string, error) {
 	deviceID, err := controller.newID()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	commandID, err := controller.newID()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	providerRef := "emulator-" + deviceID
 	serial := "pending-" + deviceID
 	encodedCapabilities, err := json.Marshal(capabilities)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	encodedProfile, err := json.Marshal(profile.Map())
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	name := "Android设备-" + deviceID[len(deviceID)-6:]
 	if _, err := tx.Exec(ctx, `INSERT INTO devices
 		(id,name,host_id,image_id,device_kind,provider_type,provider_ref,lifecycle_mode,serial,capabilities,runtime_profile_override,lifecycle_status,health_status)
 		VALUES($1,$2,$3,$4,'emulator','docker_emulator',$5,'clean',$6,$7::jsonb,$8::jsonb,'provisioning','unknown')`,
 		deviceID, name, hostID, imageID, providerRef, serial, encodedCapabilities, encodedProfile); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, poolID, deviceID); err != nil {
-		return "", "", err
+	// 归属池必须等于设备**实际运行**的那台宿主机对应的池（ADR-0042）。
+	//
+	// hostID 与 poolID 来自两个独立的决定：hostID 是刚按各宿主实时空闲内存
+	// 挑出来的，poolID 是调用方（预约时选池）传进来的。当目标宿主容量不足、
+	// 调度溢出到另一台空闲宿主时，两者就会不一致 —— 设备跑在 A 机器上、
+	// 归属却记在 B 池下，追溯时看不到它真正在哪台机器。
+	//
+	// 宿主机与池一对一（android-<宿主IP>），所以按 address 匹配池名即可，
+	// 不需要新增字段。推导不到时保留原 poolID，避免因此建不出设备。
+	attributedPoolID := poolID
+	if resolved, ok := resolvePoolForHost(ctx, tx, hostID, controller.poolPlatformOrDefault(poolID)); ok {
+		attributedPoolID = resolved
 	}
+	if _, err := tx.Exec(ctx, `INSERT INTO device_pool_devices(pool_id,device_id,enabled) VALUES($1,$2,true)`, attributedPoolID, deviceID); err != nil {
+		return "", "", "", err
+	}
+	poolID = attributedPoolID
 	payloadMap := map[string]any{"device_id": deviceID, "pool_id": poolID, "image_id": imageID, "provider_ref": providerRef,
 		"docker_image": runtimeImage, "docker_digest": digest, "capabilities": capabilities, "runtime_profile": profile.Map()}
 	if provisioningKey != "" {
@@ -1545,7 +1599,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	}
 	payload, err := json.Marshal(payloadMap)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	keyHash := sha256.Sum256([]byte(poolID + "\x00" + imageID + "\x00" + deviceID))
 	idempotencyKey := "warm-" + hex.EncodeToString(keyHash[:16])
@@ -1556,7 +1610,7 @@ func (controller *Controller) createDeviceCommand(ctx context.Context, tx pgx.Tx
 	_, err = tx.Exec(ctx, `INSERT INTO device_host_commands
 		(id,host_id,command_type,payload,status,max_attempts,idempotency_key)
 		VALUES($1,$2,'create',$3::jsonb,'pending',3,$4)`, commandID, hostID, payload, idempotencyKey)
-	return deviceID, commandID, err
+	return deviceID, commandID, poolID, err
 }
 
 // recordHostImageOutcomes folds recent create outcomes into
@@ -1608,33 +1662,7 @@ func (controller *Controller) recordHostImageOutcomes(ctx context.Context, tx pg
 // is certain to fail (observed in production: a pool correctly excluded for 30
 // minutes came back and stalled a run to PENDING_TIMEOUT). Recovery comes from a
 // newer success overwriting the row, or from an operator re-validating the image.
-// hostAddressExists 判断某个地址是否被农场里**任何**宿主机登记使用。
-//
-// 刻意不看 status：目标宿主只是临时离线时，它仍然是"这台池所属的宿主"，
-// 池必须排队等它回来（TestWarmPoolQueuesInsteadOfUsingAnotherHostWhenScopedHostOffline），
-// 而不是回退到别的宿主。只有该地址**根本不存在**时才回退。
-func hostAddressExists(ctx context.Context, tx pgx.Tx, address string) bool {
-	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_hosts WHERE address=$1)`,
-		address).Scan(&exists); err != nil {
-		// 查询失败时保守地按"存在"处理：宁可排队，也不要把设备建到错误的宿主上。
-		return true
-	}
-	return exists
-}
-
-func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile, respectImageState bool, poolHostAddress string) (string, error) {
-	// 池若能从名字里推导出目标宿主地址，就只在该宿主上选。
-	//
-	// 但"池名里的地址在农场里找不到对应宿主"是必须处理的边界：改名、写错 IP、
-	// 或那台宿主已被删掉时都会落到这里。此时若坚持收窄，该池会被**永久饿死**
-	// （永远 CapacityMiss，永远建不出设备），比串台更难排查。
-	// 所以先确认该地址在农场里确实存在，不存在就退化成既有行为（全农场任选）。
-	hostScope, hostScopeArgs := "", []any{}
-	if poolHostAddress != "" && hostAddressExists(ctx, tx, poolHostAddress) {
-		hostScope = " AND h.address=$2"
-		hostScopeArgs = append(hostScopeArgs, poolHostAddress)
-	}
+func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested runtimeprofile.Profile, respectImageState bool) (string, error) {
 	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT h.id,h.capacity,h.used_capacity,h.last_heartbeat_at,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('profile',COALESCE(d.runtime_profile_override,d.capabilities),'image_id',d.image_id))
 			FROM devices d WHERE d.host_id=h.id AND %s),'[]'::jsonb),
@@ -1644,9 +1672,8 @@ func lockHostCapacity(ctx context.Context, tx pgx.Tx, imageID string, requested 
 			AND c.status='succeeded' AND c.payload->>'image_id'=$1),
 		COALESCE((SELECT s.available FROM device_host_image_states s
 			WHERE s.host_id=h.id AND s.image_id=$1),true)
-		FROM device_hosts h WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')%s
-		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate, hostScope),
-		append([]any{imageID}, hostScopeArgs...)...)
+		FROM device_hosts h WHERE h.status='online' AND NOT h.draining AND h.host_type IN ('docker_emulator','hybrid')
+		ORDER BY h.id FOR UPDATE OF h SKIP LOCKED`, slotOccupyingDevicePredicate), imageID)
 	if err != nil {
 		return "", err
 	}
