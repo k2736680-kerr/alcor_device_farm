@@ -156,7 +156,7 @@ func TestAllocationSkipsDeviceBelowMinSdk(t *testing.T) {
 		t.Fatalf("应当能锁到这条 pending 预约（池里有 API 34 设备）：%v", err)
 	}
 
-	device, err := repo.LockMatchingDevice(ctx, tx, reservation.PoolID, reservation.RequestedCapabilities)
+	device, err := repo.LockMatchingDevice(ctx, tx, reservation.RequestedCapabilities)
 	if err != nil {
 		t.Fatalf("应当分到 API 34 的设备：%v", err)
 	}
@@ -187,7 +187,7 @@ func TestAllocationWithoutMinSdkDoesNotRestrict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("没有下限限制时应能锁到预约：%v", err)
 	}
-	device, err := repo.LockMatchingDevice(ctx, tx, reservation.PoolID, reservation.RequestedCapabilities)
+	device, err := repo.LockMatchingDevice(ctx, tx, reservation.RequestedCapabilities)
 	if err != nil {
 		t.Fatalf("没有下限时 API 30 设备应当可用：%v", err)
 	}
@@ -299,7 +299,7 @@ func TestAllocationNeverPicksDeletedDevice(t *testing.T) {
 	}
 
 	// 再直接问分配查询：它也不能选中那台设备。
-	_, err = repo.LockMatchingDevice(ctx, tx, "pool_0000000000001", json.RawMessage(`{"platformName":"Android"}`))
+	_, err = repo.LockMatchingDevice(ctx, tx, json.RawMessage(`{"platformName":"Android"}`))
 	if err == nil {
 		t.Fatal("已删除设备绝不能被分配，LockMatchingDevice 却返回了设备")
 	}
@@ -342,7 +342,7 @@ func TestAllocationIgnoresDeletedDeviceWhenHealthyOneExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("池里有健康设备，应当锁到预约：%v", err)
 	}
-	device, err := repo.LockMatchingDevice(ctx, tx, reservation.PoolID, reservation.RequestedCapabilities)
+	device, err := repo.LockMatchingDevice(ctx, tx, reservation.RequestedCapabilities)
 	if err != nil {
 		t.Fatalf("应当分到健康设备：%v", err)
 	}

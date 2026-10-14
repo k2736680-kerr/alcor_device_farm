@@ -96,7 +96,8 @@ Android 第一版已经在 `master@106e9dd` 和 Tag `archive/android-baseline-20
 | 控制面 iOS 隧道与 TLS Gateway | 220 预部署的 iOS 远控入口 | 固定版本 SSH tunnel sidecar 与独立 Nginx TLS Gateway；18181 只提供 HTTPS iOS Gateway，Server 8081 仅 Compose 内部可达，18182 仍是 Host Agent 私网 API；不改变 171/NPS，不新增业务对象 |
 | 多宿主机接入与登记 | 后台新增 Linux/macOS Host 的设备域入口 | Console 调用既有 Host 创建 API，登记后由 Agent 主动 heartbeat；安装提示不携带 Token，Server 不 SSH/Docker 直连远端，不新增表或注册协议 |
 | 宿主机接入引导与预检 | 登记后按平台完成 Agent 配置并确认在线 | Console 只展示脱敏配置项和现有安装/预检命令；安装、Secret 注入和启动仍在目标主机本地完成 |
-| 池与宿主机的调度归属 | 多台宿主机与设备池**一对一**：`android-<宿主IP>` ↔ `device_hosts.address`，iOS 同理。用户按"每台服务器的实际内存"规划并发 | 建机时按各宿主**实时空闲内存**挑宿主（不按池名收窄，允许溢出到其他空闲宿主）；设备归属的池由**实际宿主的 address** 推导，保证「归属池 = 宿主机」。宿主机↔池是一对一，故按地址匹配池名即可，**不新增表/字段/API**（ADR-0042） |
+| 池与宿主机的调度归属 | 多台宿主机与设备池**一对一**：`android-<宿主IP>` ↔ `device_hosts.address`，iOS 同理。用户按"每台服务器的实际内存"规划并发。**池不承载独立调度信息**，只是"选中哪台机器"的结果属性 | 预约**不受池约束**：农场按各宿主**实时空闲内存**选机器，挑中谁就用谁对应的池接收并建机（`resolvePoolForHost`）；设备归属的池由**实际宿主的 address** 推导，保证「归属池 = 宿主机」。内存是唯一真闸门，`max_concurrency` 退为运维安全上限。全部宿主满载时**原地排队**（不建机、不溢出），有空闲立刻分配，上限 30 分钟。宿主机↔池是一对一，故按地址匹配池名即可，**不新增表/字段/API**（ADR-0042 决策 2 保留，决策 1 措辞由 ADR-0043 取代） |
+| 预约满载排队 | 容量不足时 Alcor 侧保持等待、不误标失败 | 预约保持 `pending`，每轮重扫；队列为**全局一条**（不按池切分），任一宿主有空闲即可分配；`lease.pending_timeout` 上限 30 分钟，超时失败码 `PENDING_TIMEOUT` 并提示「等不到虚拟机，需要检查」（ADR-0043，兑现 `docs/04:162`、`docs/05:152` 既有语义） |
 
 新版方案未确定设备农场最终是否与 Alcor 合仓，因此当前目录不预设迁入旧 `eval_server/internal/devicefarm`，也不预设永远不能合仓。第六阶段只以稳定 API 契约作为必需边界。
 

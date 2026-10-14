@@ -76,7 +76,21 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 		if err != nil {
 			return err
 		}
-		policy, err := scheduler.repo.LockPoolPolicy(ctx, tx, reservation.PoolID)
+		// 先按平台 + 能力锁一台 ready 设备，再按**它的实际宿主**取池策略。
+		// 并发上限必须按设备所在宿主的池算（ADR-0043）：预约的 pool_id 不再决定
+		// 设备落在哪台宿主，用预约的池卡并发会拿一个与设备无关的上限。
+		device, err := scheduler.repo.LockMatchingDevice(ctx, tx, reservation.RequestedCapabilities)
+		if errors.Is(err, repository.ErrCapacityUnavailable) {
+			return ErrCapacityUnavailable
+		}
+		if err != nil {
+			return err
+		}
+		policy, err := scheduler.repo.LockPoolPolicyForHost(ctx, tx, device.HostID, device.ID)
+		if errors.Is(err, repository.ErrNotFound) {
+			// 该宿主没有对应池（例如新接入但还没建池）：不可分配，留待运维补齐。
+			return ErrCapacityUnavailable
+		}
 		if err != nil {
 			return err
 		}
@@ -85,13 +99,6 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 		}
 		if policy.ActiveReservations >= policy.MaxConcurrency {
 			return ErrCapacityUnavailable
-		}
-		device, err := scheduler.repo.LockMatchingDevice(ctx, tx, reservation.PoolID, reservation.RequestedCapabilities)
-		if errors.Is(err, repository.ErrCapacityUnavailable) {
-			return ErrCapacityUnavailable
-		}
-		if err != nil {
-			return err
 		}
 
 		now, err := database.ClockNow(ctx, tx)
@@ -149,7 +156,7 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) (Assignment, error) {
 		if reservation.Status != domain.ReservationPending || reservation.DeviceID == nil || *reservation.DeviceID != selected.device.ID {
 			return repository.ErrNotFound
 		}
-		policy, err := scheduler.repo.LockPoolPolicy(ctx, tx, reservation.PoolID)
+		policy, err := scheduler.repo.LockPoolPolicyForHost(ctx, tx, selected.device.HostID, selected.device.ID)
 		if err != nil {
 			return err
 		}

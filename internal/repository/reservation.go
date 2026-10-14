@@ -209,6 +209,10 @@ func (ReservationRepository) LockNextPending(ctx context.Context, tx pgx.Tx) (Re
 // LockNextAllocatablePending keeps FIFO ordering among reservations that have
 // a matching device right now. An unmatched old request therefore stays
 // pending without blocking a later request that the farm can satisfy.
+//
+// 队列是**全局一条**：不按 pool_id 切分（ADR-0043）。池与宿主机一对一，池在
+// 分配链路里不承载独立信息；一旦按池切分，某台宿主空闲而预约落在别的池时
+// 就永远匹配不上（"55 空转却在等 54"）。匹配只按平台 + 请求能力 + 设备可用性。
 func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx pgx.Tx) (ReservationRecord, error) {
 	// 先把待分配预约的请求能力与下限读出来：下限不在
 	// device_schedulable_capabilities() 的白名单里，必须单独比较。
@@ -225,7 +229,7 @@ func (ReservationRepository) LockNextAllocatablePending(ctx context.Context, tx 
               JOIN device_pool_devices pd ON pd.device_id = d.id
               JOIN device_hosts h ON h.id = d.host_id
               JOIN device_pools p ON p.id = pd.pool_id
-              WHERE pd.pool_id = r.pool_id AND pd.enabled AND p.status = 'active'
+              WHERE pd.enabled AND p.status = 'active'
 				AND p.platform = d.platform
                 AND h.status = 'online' AND NOT h.draining
                 AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
@@ -905,7 +909,68 @@ func (ReservationRepository) LockPoolPolicy(ctx context.Context, tx pgx.Tx, pool
 	return policy, nil
 }
 
-func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, poolID string, capabilities json.RawMessage) (DeviceAssignment, error) {
+// LockPoolPolicyForHost 按**设备实际所在宿主**取池策略（ADR-0043）。
+//
+// 预约的 pool_id 不再决定设备落在哪台宿主（池跟随机器），所以并发上限必须按
+// 设备真实宿主的池来算，否则会拿一个与设备无关的池去卡并发。
+//
+// 宿主与池一对一，故先按 `device_hosts.address` 匹配池名（`android-<ip>`）。
+// 匹配不到时（历史/测试数据里池名未按地址命名）回退到该宿主上线设备的
+// membership 池 —— 那是这台宿主的真实归属池，语义与按名匹配等价。
+func (ReservationRepository) LockPoolPolicyForHost(ctx context.Context, tx pgx.Tx, hostID, deviceID string) (PoolPolicy, error) {
+	var policy PoolPolicy
+	err := tx.QueryRow(ctx, `
+		SELECT p.status, p.platform, p.max_lease_seconds, p.max_concurrency, p.fresh_vm_per_run
+		FROM device_pools p
+		WHERE p.status = 'active' AND p.id = COALESCE(
+			(SELECT p2.id FROM device_hosts h
+			 JOIN device_pools p2 ON p2.status = 'active'
+			   AND p2.name = CASE WHEN p2.platform = 'ios' THEN 'iOS - ' || h.address
+			                      ELSE 'android-' || h.address END
+			 WHERE h.id = $1
+			 ORDER BY p2.created_at LIMIT 1),
+			(SELECT pd.pool_id FROM device_pool_devices pd
+			 JOIN device_pools p3 ON p3.id = pd.pool_id AND p3.status = 'active'
+			 WHERE pd.device_id = $2 AND pd.enabled
+			 ORDER BY pd.created_at LIMIT 1))
+		ORDER BY p.created_at
+		LIMIT 1
+		FOR UPDATE`, hostID, deviceID).Scan(
+		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.FreshVMPerRun,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PoolPolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return PoolPolicy{}, fmt.Errorf("lock pool policy for host: %w", err)
+	}
+	// 按**该宿主实际归属的池**统计活跃租约：池与宿主一对一，所以这就是这台宿主
+	// 当前的并发占用，而不是"预约时写了哪个池"。
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM device_reservations r
+		WHERE r.status = 'active' AND r.pool_id = (
+			SELECT COALESCE(
+				(SELECT p2.id FROM device_hosts h
+				 JOIN device_pools p2 ON p2.status = 'active'
+				   AND p2.name = CASE WHEN p2.platform = 'ios' THEN 'iOS - ' || h.address
+				                      ELSE 'android-' || h.address END
+				 WHERE h.id = $1
+				 ORDER BY p2.created_at LIMIT 1),
+				(SELECT pd.pool_id FROM device_pool_devices pd
+				 JOIN device_pools p3 ON p3.id = pd.pool_id AND p3.status = 'active'
+				 WHERE pd.device_id = $2 AND pd.enabled
+				 ORDER BY pd.created_at LIMIT 1)))`, hostID, deviceID).Scan(&policy.ActiveReservations); err != nil {
+		return PoolPolicy{}, fmt.Errorf("count active host reservations: %w", err)
+	}
+	return policy, nil
+}
+
+// LockMatchingDevice 按平台 + 请求能力 + 设备可用性选一台 ready 设备。
+//
+// 不按 pool_id 过滤（ADR-0043）：池与宿主机一对一，池在分配链路里只是"选中哪台
+// 机器"的结果属性。按池过滤会让落在别的池的预约看不到这台宿主上的空闲设备。
+// 仍保留 "至少属于某个启用且 active 的池" 这一约束 —— 未入池的设备不应被分配。
+func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, capabilities json.RawMessage) (DeviceAssignment, error) {
 	if len(capabilities) == 0 {
 		capabilities = json.RawMessage(`{}`)
 	}
@@ -918,24 +983,24 @@ func (ReservationRepository) LockMatchingDevice(ctx context.Context, tx pgx.Tx, 
         JOIN device_pool_devices pd ON pd.device_id = d.id
         JOIN device_hosts h ON h.id = d.host_id
         JOIN device_pools p ON p.id = pd.pool_id
-        WHERE pd.pool_id = $1 AND pd.enabled
+        WHERE pd.enabled AND p.status = 'active'
           AND p.platform = d.platform
           AND h.status = 'online' AND NOT h.draining
           AND d.lifecycle_status = 'ready' AND d.health_status = 'healthy'
-          AND (NOT $2::jsonb ? '`+TargetDeviceCapability+`'
-               OR d.id = $2::jsonb->>'`+TargetDeviceCapability+`')
-		  AND (NOT $2::jsonb ? 'platformName' OR lower($2::jsonb->>'platformName') = p.platform)
-		  AND d.capabilities @> device_schedulable_capabilities($2::jsonb)
+          AND (NOT $1::jsonb ? '`+TargetDeviceCapability+`'
+               OR d.id = $1::jsonb->>'`+TargetDeviceCapability+`')
+		  AND (NOT $1::jsonb ? 'platformName' OR lower($1::jsonb->>'platformName') = p.platform)
+		  AND d.capabilities @> device_schedulable_capabilities($1::jsonb)
 		  -- androidMinSdkLevel 是「>=」下限，不在此函数白名单里（送进去会被丢弃），
 		  -- 必须与选池阶段（pool_selector.go）用同一口径显式比较。
 		  -- 少了这一条：池内 API 30 + API 34 设备并存时，会选中 API 34 证明池可用，
 		  -- 却可能把 API 30 设备分配给 minSdk 34 的运行 —— 装包必失败。
-		  AND (COALESCE(NULLIF($2::jsonb->>'androidMinSdkLevel', '')::int, 0) = 0
+		  AND (COALESCE(NULLIF($1::jsonb->>'androidMinSdkLevel', '')::int, 0) = 0
 		       OR COALESCE(NULLIF(d.capabilities->>'apiLevel', '')::int, 0)
-		          >= COALESCE(NULLIF($2::jsonb->>'androidMinSdkLevel', '')::int, 0))
+		          >= COALESCE(NULLIF($1::jsonb->>'androidMinSdkLevel', '')::int, 0))
         ORDER BY d.created_at, d.id
         FOR UPDATE OF d SKIP LOCKED
-        LIMIT 1`, poolID, capabilities).Scan(
+        LIMIT 1`, capabilities).Scan(
 		&device.ID, &device.HostID, &device.Platform, &device.DeviceKind, &device.LifecycleMode,
 		&device.Lifecycle, &device.Health, &device.Serial, &device.STFSerial,
 		&device.ADBEndpoint, &device.AppiumEndpoint, &device.AppiumUDID,

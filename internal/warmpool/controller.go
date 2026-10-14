@@ -1339,14 +1339,18 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			return err
 		}
 		var pendingDemand, activeDemand int
+		// 需求按**能力**统计，不按 pool_id（ADR-0043）：预约不再绑定池，池由选中的
+		// 宿主决定。若仍按 pool_id=$1 统计，落在别的池的预约不会推动本池扩容 ——
+		// 于是"55 空闲却没人推动它、预约干等 54"。改为全局需求后，每一轮 reconcile
+		// 都会看见所有待分配预约，任一宿主有空闲即可被建机满足。
 		if err := tx.QueryRow(ctx, `SELECT
 			count(*) FILTER (WHERE status='pending' AND NOT requested_capabilities ? '_device_farm_target_device_id'),
 			count(*) FILTER (WHERE status='active')
 			FROM device_reservations
-			WHERE pool_id=$1 AND status IN ('pending','active')
-			AND $2::jsonb @> device_schedulable_capabilities(requested_capabilities)
+			WHERE status IN ('pending','active')
+			AND $1::jsonb @> device_schedulable_capabilities(requested_capabilities)
 			AND (NOT requested_capabilities ? 'platformName' OR lower(requested_capabilities->>'platformName')='android')`,
-			poolID, capabilitiesJSON).Scan(&pendingDemand, &activeDemand); err != nil {
+			capabilitiesJSON).Scan(&pendingDemand, &activeDemand); err != nil {
 			return err
 		}
 		// Fixed targets keep a warm baseline. Demand above that baseline is the

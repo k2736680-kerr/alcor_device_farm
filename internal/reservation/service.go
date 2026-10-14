@@ -651,7 +651,7 @@ func (service *Service) ReapStalePendingOnce(ctx context.Context, timeout, claim
 		}
 		if err := service.repo.InsertAudit(ctx, tx, auditID, reaperActor().Type, reaperActor().ID,
 			"fail_stale_pending_reservation", current.ID, requestID,
-			"预约长时间未能分配设备，已超时失败"); err != nil {
+			"等不到虚拟机，需要检查：预约在等待上限内未能分配到设备"); err != nil {
 			return err
 		}
 		result, err = service.repo.Get(ctx, tx, current.ID)
@@ -968,14 +968,17 @@ func (service *Service) closeActiveLocked(
 	if err := sessionState.Transition(domain.SessionClosed, reason, now); err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	// Lock order is reservation -> pool -> device, matching the scheduler
-	// (LockNextAllocatablePending -> LockPoolPolicy -> LockMatchingDevice) so the
-	// two paths can never take the same pair of rows in opposite order.
-	policy, err := service.repo.LockPoolPolicy(ctx, tx, current.PoolID)
+	// Lock order is reservation -> device -> pool-for-host, matching the scheduler
+	// (LockNextAllocatablePending -> LockMatchingDevice -> LockPoolPolicyForHost)
+	// so the two paths can never take the same pair of rows in opposite order.
+	//
+	// 必须按**设备实际所在宿主**取策略（ADR-0043）：预约的 pool_id 不再决定设备
+	// 落在哪台宿主，用预约的池会读到与这台设备无关的 fresh_vm_per_run / 租约上限。
+	device, err := service.repo.LockDevice(ctx, tx, *current.DeviceID)
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	device, err := service.repo.LockDevice(ctx, tx, *current.DeviceID)
+	policy, err := service.repo.LockPoolPolicyForHost(ctx, tx, device.HostID, device.ID)
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}

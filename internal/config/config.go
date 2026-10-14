@@ -136,7 +136,7 @@ func Default() Config {
 			SchedulerInterval: 250 * time.Millisecond,
 			ReaperInterval:    time.Second,
 			GracePeriod:       30 * time.Second,
-			PendingTimeout:    10 * time.Minute,
+			PendingTimeout:    30 * time.Minute,
 			PendingClaimGrace: 30 * time.Second,
 		},
 		Reconcile: ReconcileConfig{Interval: 2 * time.Second, HostTimeout: 30 * time.Second,

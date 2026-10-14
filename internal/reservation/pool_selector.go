@@ -261,8 +261,16 @@ func (service *Service) listSelectablePools(
 		        SELECT 1
 		        FROM device_pool_images pi
 		        JOIN device_images i ON i.id = pi.image_id
+		        -- 宿主必须是**本池的那台**（池与宿主一对一，ADR-0043）。
+		        -- 原实现只判 host_type，不限定是否本池宿主：一对一部署下结论碰巧相同，
+		        -- 但一旦出现第二台同镜像宿主，就会把别的池的宿主算成本池的供给。
+		        -- 池名未按地址命名时（历史/测试数据）跳过此约束，退化为原有行为。
 		        JOIN device_hosts h ON h.status = 'online' AND NOT h.draining
 		                         AND h.host_type IN ('docker_emulator','hybrid')
+		                         AND (
+		                           p.name NOT LIKE 'android-10.%'
+		                           OR p.name = 'android-' || h.address
+		                         )
 		        -- 活 base 设备：它的 capabilities 是「按需拉起」时能力的主要来源
 		        -- （warmpool.Controller 会优先用 base.capabilities）。
 		        -- LEFT JOIN + lifecycle<>'deleted' 与 controller.go:1277 一致。
@@ -280,6 +288,42 @@ func (service *Service) listSelectablePools(
 		            SELECT 1 FROM device_host_image_states s
 		            WHERE s.host_id = h.id AND s.image_id = p.default_image_id
 		              AND s.available = false
+		          )
+		          -- 宿主必须**真的还有内存**再开一台（ADR-0043）。
+		          -- 原实现完全不看宿主容量：只要"存在一台 online docker 宿主"就把池算作
+		          -- 可服务，于是一台已满的宿主也会被选中，预约必然排队到超时。
+		          -- 判据与 warmpool.lockHostCapacity / capacity.Evaluate 同口径：
+		          -- 内存需求取镜像 resource_config 的 ramMb（与 controller 建机时用的
+		          -- profile 一致），预留 2048MB（capacity.DefaultReserveMemoryMB）。
+		          --
+		          -- 三种情况：
+		          --   1. 有 dynamic_v1 且心跳新鲜 -> 严格按实时可用内存判；
+		          --   2. 有 dynamic_v1 但心跳过期 -> 容量数据不可信，**保守排除**，
+		          --      与 lockHostCapacity 的 30s 心跳门槛一致（该宿主压根不会被建机）；
+		          --   3. 从未上报容量（新接入宿主/历史数据）-> 不阻塞，交由建机阶段的
+		          --      lockHostCapacity 兜底。这条保证一键接入的宿主在首个心跳到达前
+		          --      池仍可选，不会因为"缺容量字段"被静默判死。
+		          AND (
+		            CASE
+		              WHEN h.capacity->>'resource_model' = 'dynamic_v1' THEN
+		                h.capacity->>'collected_at' IS NOT NULL
+		                AND (h.capacity->>'collected_at')::timestamptz > clock_timestamp() - interval '30 seconds'
+		                AND (h.last_heartbeat_at IS NULL
+		                     OR h.last_heartbeat_at > clock_timestamp() - interval '30 seconds')
+		                AND COALESCE((h.capacity->>'memory_available_mb')::bigint, 0) >=
+		                    2048 + GREATEST(COALESCE((i.resource_config->>'ramMb')::bigint, 5120), 2048)
+		              WHEN h.capacity IS NULL OR h.capacity = '{}'::jsonb THEN
+		                true
+		              ELSE
+		                -- 非动态容量的旧 Agent：退化为 device_slots 判据（与
+		                -- lockHostCapacity 的非 dynamic 分支一致，不超已用槽位）。
+		                COALESCE((h.capacity->>'device_slots')::int, 0)
+		                  > COALESCE((h.used_capacity->>'device_slots')::int, 0)
+		                  + (SELECT count(*) FROM device_pool_devices pd2
+		                     JOIN devices d2 ON d2.id = pd2.device_id
+		                     WHERE d2.host_id = h.id AND pd2.enabled
+		                       AND d2.lifecycle_status IN ('provisioning','booting','ready'))
+		            END
 		          )
 		          -- 「按需拉起的设备是否满足请求的能力」必须在这里校验，
 		          -- 否则会出现「选池说能服务、拉起来的设备却不匹配」的假通过。

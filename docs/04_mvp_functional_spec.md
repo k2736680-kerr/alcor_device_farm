@@ -149,7 +149,7 @@ stopped → deleted
 
 ### 4.5 设备池与按资源动态扩缩容
 
-设备池是预约和调度使用的逻辑分组，不等于自动创建模拟器的资源池。它保存默认租期、最大未来续约窗口、最大并发、启停状态和设备成员关系。按 ADR-0023，`max_lease_seconds` 是相对数据库当前时间的有限滑动安全窗口，不是从 `starts_at` 起计算的任务总寿命；执行方存活时可持续续约，失联后仍由 Reaper 有界回收。
+设备池**代表一台宿主机**：宿主机与池一对一（池名 = `android-<宿主IP>`，iOS 为 `iOS - <宿主IP>`），因此**池不承载独立于宿主机的能力**。它保存默认租期、最大未来续约窗口、最大并发（运维安全上限）、启停状态和设备成员关系。按 ADR-0023，`max_lease_seconds` 是相对数据库当前时间的有限滑动安全窗口，不是从 `starts_at` 起计算的任务总寿命；执行方存活时可持续续约，失联后仍由 Reaper 有界回收。
 
 MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行一台，但代码和接口不得把一台作为固定上限：
 
@@ -159,8 +159,9 @@ MVP 只配置一个默认 Android 设备池。当前测试环境可以只运行�
 - 自动创建必须经 Host Agent 执行 Docker Provider，不能由 Server 直连 Docker 或创建 Mock 设备；
 - 多 Server 使用 PostgreSQL 行锁重新计算缺口，避免超额创建；
 - 创建失败按有上限退避重试，设备只有通过 ADB、boot 和 Appium 健康检查后才计入 ready；
-- 第二个 Reservation 在 Pool 并发、目标或 Host 实际资源不足时保持 pending/capacity unavailable，不因请求压力超建；
-- Host Agent 上报实际 CPU、内存和 Docker 数据盘，Server 按每台有效规格、已有设备和在途命令计算剩余容量；可选 `device_slots` 只能作为安全上限，不能由目标数反向抬高；
+- 第二个 Reservation 在 Pool 并发、目标或 Host 实际资源不足时保持 pending/capacity unavailable，不因请求压力超建；**满载时不溢出到其他宿主，也不创建任何虚拟机**，原地排队等待；
+- Host Agent 上报实际 CPU、内存和 Docker 数据盘，Server 按每台有效规格、已有设备和在途命令计算剩余容量；可选 `device_slots` 只能作为安全上限，不能由目标数反向抬高；**宿主实时可用内存是能否再建虚机的唯一真闸门**，`max_concurrency` 只是运维安全上限（ADR-0043）；
+- 满载排队上限 30 分钟（`lease.pending_timeout`）。队列是**全局一条**：任一宿主释放出容量即分配给排队最久的预约，不要求预约与释放的宿主同池。超时以 `PENDING_TIMEOUT` 失败并提示「等不到虚拟机，需要检查」；
 - 控制台显示当前规格最多可新增台数以及 CPU、内存、磁盘中最先达到的限制，不要求管理员登录 Host 修改 Agent 配置；
 - Controller 在目标降低时删除超出的最旧空闲 Emulator，保留最新实例；占用中、回收中或仍有其他 Pool membership 的设备不得被自动删除；
 - 自动删除走持久化 delete Host Command 和 Agent/Docker Provider，成功后 Device 标记为 `deleted` 并保留历史，失败则隔离和告警；
@@ -187,7 +188,7 @@ active  → force_released
 
 - `owner_type`：`run_attempt`（新版 Alcor 自动执行）、`manual`（人工调试）或 `test_run`（DaFit 联调）；
 - `owner_id`：UUID/ULID 字符串；
-- `pool_id`；
+- `pool_id`（**可省略**：省略=由农场按各宿主**实时空闲内存**自选；显式指定**仅用于追溯/展示，不限制分配宿主**，见 ADR-0043）；
 - 可选 `requested_device_id`：由 Alcor 的具体设备选择产生，只收窄到该 Pool 的明确 Device；目标正在使用时继续排队，禁止回退到同 Pool 其他设备；
 - required capabilities；
 - lease seconds；
@@ -196,12 +197,14 @@ active  → force_released
 
 Scheduler 按以下顺序执行：
 
-1. PostgreSQL 领取 pending reservation；
-2. 使用 `FOR UPDATE SKIP LOCKED` 选择满足能力的 ready device；
+1. PostgreSQL 领取 pending reservation（**全局 FIFO，不按 Pool 切分队列**）；
+2. 使用 `FOR UPDATE SKIP LOCKED` 选择满足能力的 ready device（**不按 Pool 过滤**；机器与 Pool 由宿主实时空闲内存决定，池跟随机器）；
 3. 在事务内建立唯一 active reservation 并将设备改为 reserved；
 4. 事务外调用 STF claim 和连接健康检查；
 5. 成功后创建 Device Session、将设备改为 busy 并激活连接信息；
 6. 失败时执行补偿，关闭预约并按错误类型恢复或隔离设备。
+
+当没有任何宿主剩余容量时，第 1 步仍可领取预约但第 2 步找不到设备：预约保持 `pending` 并原地排队（不建机、不溢出），每轮重扫，任一宿主释放容量即分配；超过 `lease.pending_timeout`（30 分钟）以 `PENDING_TIMEOUT` 失败并提示「等不到虚拟机，需要检查」。
 
 同一个设备任何时刻最多一个 active reservation。相同客户端和幂等键必须返回同一预约，不得重复占用。
 
