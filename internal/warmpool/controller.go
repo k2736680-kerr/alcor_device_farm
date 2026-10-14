@@ -407,6 +407,15 @@ func (controller *Controller) RunOnce(ctx context.Context) (Result, error) {
 	}
 	rows.Close()
 	result.Configurations = len(keys)
+	// 全局需求扩容只跑一次（ADR-0043 修订）：一个待分配预约最多建一台，宿主由
+	// lockHostCapacity 按实时内存挑，池归属跟随实际宿主。放在每池 reconcile 之前，
+	// 这样本轮的建机结果能立即被下面的固定基线/缩容逻辑看见。
+	created, demandMisses, demandErr := controller.reconcileAndroidDemand(ctx)
+	if demandErr != nil {
+		return result, demandErr
+	}
+	result.DevicesCreated += created
+	result.CapacityMisses += demandMisses
 	for _, key := range keys {
 		partial, err := controller.reconcile(ctx, key[0], key[1])
 		if err != nil {
@@ -1265,6 +1274,137 @@ func transitionImage(ctx context.Context, tx pgx.Tx, imageID string, from, to do
 	return nil
 }
 
+// reconcileAndroidDemand 是全局需求扩容的唯一入口，每个 RunOnce 只跑一次。
+//
+// 之前把「全局 pending 需求」放进每池的 reconcile 里，导致同一个预约被每个池
+// 各建一台（每个池都独立看到全局 pending，又都调用 lockHostCapacity 挑一台宿主）：
+// 一个预约会重复建机，并且可能跨宿主、跨镜像乱建。这与「池=宿主机、农场按空闲
+// 内存挑机器、预约的 pool_id 只是追溯」的语义相悖（ADR-0043）。
+//
+// 这里按「可调度能力」把待分配预约分组，每组只按它的缺口（预约数 - 已在建设备数）
+// 建机，避免重复建机；能力匹配复用 device_schedulable_capabilities 的 SQL 语义，
+// 宿主由 lockHostCapacity 按实时内存挑，池归属跟随实际宿主。
+func (controller *Controller) reconcileAndroidDemand(ctx context.Context) (created, capacityMisses int, err error) {
+	if controller == nil || controller.db == nil {
+		return 0, 0, errors.New("warm pool database is not configured")
+	}
+	err = controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
+		// 1. 按可调度能力分组待分配预约，并算每组的在建设备数，得到缺口。
+		//    在建设备 = provisioning/booting/ready 且能力能服务该组（跨 RunOnce 去重）。
+		rows, err := tx.Query(ctx, `SELECT g.caps, g.pending_count, COALESCE(d.in_flight, 0)
+			FROM (
+			  SELECT device_schedulable_capabilities(requested_capabilities) AS caps,
+			         count(*) AS pending_count
+			  FROM device_reservations
+			  WHERE status='pending'
+			    AND NOT requested_capabilities ? '_device_farm_target_device_id'
+			    AND (NOT requested_capabilities ? 'platformName'
+			         OR lower(requested_capabilities->>'platformName')='android')
+			  GROUP BY 1
+			) g
+			LEFT JOIN LATERAL (
+			  SELECT count(*) AS in_flight FROM devices d
+			  WHERE d.lifecycle_status IN ('provisioning','booting','ready')
+			    AND d.platform='android' AND d.device_kind='emulator'
+			    AND d.provider_type='docker_emulator'
+			    AND d.capabilities @> g.caps
+			) d ON true
+			ORDER BY g.caps`)
+		if err != nil {
+			return err
+		}
+		type demandGroup struct {
+			caps    []byte
+			deficit int
+		}
+		var groups []demandGroup
+		for rows.Next() {
+			var caps []byte
+			var pending, inFlight int
+			if err := rows.Scan(&caps, &pending, &inFlight); err != nil {
+				rows.Close()
+				return err
+			}
+			if pending > inFlight {
+				groups = append(groups, demandGroup{caps: caps, deficit: pending - inFlight})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		// 2. 对每个有缺口的组，按缺口建机。同组预约能力相同，用同一个池/镜像即可；
+		//    lockHostCapacity 按实时内存挑宿主（可能分散到多台）。每个 config 受其池
+		//    max_concurrency 上限约束（运维安全网），到顶后换下一个 config。
+		for _, group := range groups {
+			for remaining := group.deficit; remaining > 0; remaining-- {
+				var poolID, imageID, runtimeImage, digest string
+				var capabilitiesJSON, baseProfileJSON []byte
+				// 镜像字段在左、base 在右：base 已有的键优先（与 reconcile / pool_selector
+				// 的合并语义一致，避免镜像字段覆盖 base 的 hardware_profile_id 等）。
+				err := tx.QueryRow(ctx, `SELECT p.id, COALESCE(b.image_id,p.default_image_id),
+					i.docker_image, i.docker_digest,
+					jsonb_build_object('platformName','Android','apiLevel',i.api_level,
+					                   'abi',i.abi,'resolution',i.resolution)
+					  || COALESCE(b.capabilities,'{}'::jsonb),
+					COALESCE(b.runtime_profile_override, i.resource_config, '{}'::jsonb)
+					FROM device_pools p
+					LEFT JOIN devices b ON b.id=p.base_device_id AND b.lifecycle_status<>'deleted'
+					JOIN device_pool_images pi ON pi.pool_id=p.id
+					  AND pi.image_id=COALESCE(b.image_id,p.default_image_id) AND pi.enabled
+					JOIN device_images i ON i.id=COALESCE(b.image_id,p.default_image_id) AND i.status='ready'
+					WHERE p.status='active' AND p.platform='android'
+					  AND (jsonb_build_object('platformName','Android','apiLevel',i.api_level,
+					                         'abi',i.abi,'resolution',i.resolution)
+					       || COALESCE(b.capabilities,'{}'::jsonb))
+					      @> $1::jsonb
+					  AND NOT (p.max_concurrency > 0 AND (
+					    SELECT count(*) FROM device_pool_devices pd2
+					    JOIN devices d2 ON d2.id=pd2.device_id
+					    WHERE pd2.pool_id=p.id AND pd2.enabled AND d2.lifecycle_status<>'deleted'
+					  ) >= p.max_concurrency)
+					ORDER BY p.id LIMIT 1`, group.caps).
+					Scan(&poolID, &imageID, &runtimeImage, &digest, &capabilitiesJSON, &baseProfileJSON)
+				if errors.Is(err, pgx.ErrNoRows) {
+					capacityMisses++
+					break
+				}
+				if err != nil {
+					return err
+				}
+				var capabilities map[string]any
+				if err := json.Unmarshal(capabilitiesJSON, &capabilities); err != nil {
+					return err
+				}
+				var baseProfile map[string]any
+				if err := json.Unmarshal(baseProfileJSON, &baseProfile); err != nil {
+					return err
+				}
+				profile, err := runtimeprofile.Parse(baseProfile)
+				if err != nil {
+					return err
+				}
+				hostID, err := lockHostCapacity(ctx, tx, imageID, profile, true)
+				if errors.Is(err, ErrNoCapacity) {
+					capacityMisses++
+					break
+				}
+				if err != nil {
+					return err
+				}
+				if _, _, _, err := controller.createDeviceCommand(ctx, tx, poolID, imageID, runtimeImage, digest, hostID, capabilities, profile, ""); err != nil {
+					return err
+				}
+				created++
+			}
+		}
+		return nil
+	})
+	return created, capacityMisses, err
+}
+
 func (controller *Controller) reconcile(ctx context.Context, poolID, imageID string) (Result, error) {
 	result := Result{}
 	err := controller.db.WithinTx(ctx, func(tx pgx.Tx) error {
@@ -1296,10 +1436,6 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 				capabilities[key] = value
 			}
 		}
-		capabilitiesJSON, err := json.Marshal(capabilities)
-		if err != nil {
-			return err
-		}
 		ready, invalid, err := controller.completeSuccessfulCreates(ctx, tx, poolID)
 		if err != nil {
 			return err
@@ -1327,37 +1463,44 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 		if err != nil {
 			return err
 		}
-		var activeInstances, readyOrCreating, defaultReadyOrCreating int
+		var activeInstances, readyOrCreating int
 		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT
 			count(*) FILTER (WHERE %s),
-			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready')),
-			count(*) FILTER (WHERE d.image_id=$2 AND d.lifecycle_status IN ('provisioning','booting','ready'))
+			count(*) FILTER (WHERE d.lifecycle_status IN ('provisioning','booting','ready'))
 			FROM device_pool_devices pd JOIN devices d ON d.id=pd.device_id
 			JOIN device_hosts h ON h.id=d.host_id
 			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator' AND d.provider_type='docker_emulator'`,
-			slotOccupyingDevicePredicate), poolID, imageID).Scan(&activeInstances, &readyOrCreating, &defaultReadyOrCreating); err != nil {
+			slotOccupyingDevicePredicate), poolID).Scan(&activeInstances, &readyOrCreating); err != nil {
 			return err
 		}
-		var pendingDemand, activeDemand int
-		// 需求按**能力**统计，不按 pool_id（ADR-0043）：预约不再绑定池，池由选中的
-		// 宿主决定。若仍按 pool_id=$1 统计，落在别的池的预约不会推动本池扩容 ——
-		// 于是"55 空闲却没人推动它、预约干等 54"。改为全局需求后，每一轮 reconcile
-		// 都会看见所有待分配预约，任一宿主有空闲即可被建机满足。
-		if err := tx.QueryRow(ctx, `SELECT
-			count(*) FILTER (WHERE status='pending' AND NOT requested_capabilities ? '_device_farm_target_device_id'),
-			count(*) FILTER (WHERE status='active')
-			FROM device_reservations
-			WHERE status IN ('pending','active')
-			AND $1::jsonb @> device_schedulable_capabilities(requested_capabilities)
-			AND (NOT requested_capabilities ? 'platformName' OR lower(requested_capabilities->>'platformName')='android')`,
-			capabilitiesJSON).Scan(&pendingDemand, &activeDemand); err != nil {
+		// 待分配预约的扩容已挪到 reconcileAndroidDemand 全局处理一次。这里只保留
+		// 固定基线（total_target/min_ready）的扩容与缩容，以及「活跃/待分配设备不得
+		// 被缩掉」的保护：本池应保留 = max(固定目标, 活跃占用 + 为待分配准备的就绪/在建)。
+		// 「为待分配准备」以全局 pending 数为上限，保证没有需求时残留的就绪设备会被清空。
+		var busyCount int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_pool_devices pd
+			JOIN devices d ON d.id=pd.device_id
+			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator'
+			  AND d.provider_type='docker_emulator' AND d.lifecycle_status IN ('busy','reserved')`,
+			poolID).Scan(&busyCount); err != nil {
 			return err
 		}
-		// Fixed targets keep a warm baseline. Demand above that baseline is the
-		// number of active leases plus unassigned reservations, bounded by the
-		// pool and image limits.
-		demandTarget := min(activeDemand+pendingDemand, min(maxConcurrency, imageMaxInstances))
-		keepInstances := max(totalTarget, demandTarget)
+		var globalPendingCount int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_reservations
+			WHERE status='pending'
+			  AND NOT requested_capabilities ? '_device_farm_target_device_id'
+			  AND (NOT requested_capabilities ? 'platformName'
+			       OR lower(requested_capabilities->>'platformName')='android')`).Scan(&globalPendingCount); err != nil {
+			return err
+		}
+		// 本池应保留 = max(固定目标, 需求占用)。需求占用 = 活跃占用 + 为待分配准备的就绪/在建，
+		// 以全局 pending 数为上限（保证无需求时残留就绪设备会被清空），再以 max_concurrency
+		// 为运维安全网封顶（与旧语义一致：池的并发上限不因需求无限上冲）。
+		demandKeep := busyCount + min(readyOrCreating, globalPendingCount)
+		if maxConcurrency > 0 {
+			demandKeep = min(demandKeep, maxConcurrency)
+		}
+		keepInstances := max(totalTarget, demandKeep)
 		if activeInstances > keepInstances {
 			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, activeInstances-keepInstances)
 			if err != nil {
@@ -1366,7 +1509,8 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			result.DeletesQueued += queued
 			return nil
 		}
-		missing := min(max(minReady-readyOrCreating, pendingDemand-defaultReadyOrCreating), keepInstances-activeInstances)
+		// 固定基线的扩容：min_ready 缺口，且不超过 keepInstances。
+		missing := min(max(minReady-readyOrCreating, 0), keepInstances-activeInstances)
 		if missing <= 0 {
 			return nil
 		}

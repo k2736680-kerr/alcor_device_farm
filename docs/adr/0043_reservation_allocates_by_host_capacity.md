@@ -64,9 +64,17 @@
 2. **队列是全局一条，不是每池一条。** 去掉三处 `pool_id` 硬过滤：
    - `repository/reservation.go:228`（`LockNextAllocatablePending` 的 `EXISTS` 闸门）
    - `repository/reservation.go:921`（`LockMatchingDevice` 的设备筛选）
-   - `warmpool/controller.go:1346`（`pendingDemand` 的池级统计）
+   - `warmpool/controller.go` 的 `pendingDemand` 池级统计
 
    匹配条件改为**平台 + 请求能力 + 设备可用性**，与池无关。
+
+   **配套修复（重复建机）**：把「按池各算一遍全局 pending」的扩容从每池
+   `reconcile` 里抽出来，收敛成一个全局入口 `reconcileAndroidDemand`。否则全局
+   pending 会被每个池各建一台 —— 一个预约会重复建 2+ 台，还可能跨宿主、跨镜像乱建
+   （这正是「明明是 54 的预约、却建到别的 IP」的机制）。新逻辑按「可调度能力」把
+   待分配预约分组，每组只按 `预约数 - 已在建设备数` 的缺口建机，宿主由
+   `lockHostCapacity` 按实时内存挑、池归属跟随实际宿主；`max_concurrency` 仍是每池
+   运维安全网（封顶不冲）。
 
 3. **内存是唯一的真闸门，`max_concurrency` 退为运维安全上限。**
    `capacity.Evaluate`（预留 1 CPU / 2048MB / 4096MB 磁盘后按实时可用内存计算）
