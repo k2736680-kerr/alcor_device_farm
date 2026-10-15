@@ -62,6 +62,24 @@
 
 全量结果：warmpool / reservation / scheduler / repository / reaper / capacity 全部 PASS，0 失败。
 
-## 生产验证
+## 生产验证（2026-10-15，10.0.80.220）
 
-（部署后填写：镜像 tag、正常链路预约→释放→缩容、宿主 docker ps 物理容器为空的证据。）
+部署：`alcor-device-farm:release-fix-20261014`（`DEVICE_FARM_COMMIT=49a1474`），healthy。
+
+E2E 全链路（预约 → 建机 → 分配 → 释放 → 缩容 → 物理删除）：
+
+| 步骤 | 结果 |
+|---|---|
+| 预约 362b5992（api35，不指定池） | pending，pool_id=149c3632（池 54，追溯字段） |
+| 建机 | 只建 1 台，device=40426e82，宿主 **10.0.30.54**，无重复建机 |
+| 分配 | 设备 ready → 预约 active（busy），耗时约 2 分钟 |
+| 释放 | API 返回 released |
+| 缩容 | ready → stopped → deleted，约 60 秒（total_target=0） |
+| membership | 删除确认后关闭，最终 enabled 成员 0 |
+| 命令 | create:succeeded + delete:succeeded（各 1 条） |
+| 物理删除 | agent 在 10.0.30.54 回报 `{"deleted":true,"provider_ref":"emulator-40426e82..."}` |
+| STF | 96 台在架设备中无 40426e82（容器确实被删） |
+| 终态 | live=0，open_res=0，enabled members=0，无 pending 命令 |
+
+结论：本轮复核发现的异常路径已修复并有真实库回归；正常链路生产端到端验证通过，
+数据库状态、宿主 agent 物理执行结果、STF 三者一致，资源真实释放。
