@@ -978,9 +978,9 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	policy, err := service.repo.LockPoolPolicyForHost(ctx, tx, device.HostID, device.ID)
-	if err != nil {
-		return repository.ReservationRecord{}, err
+	policy, policyErr := service.repo.LoadPoolPolicyForRelease(ctx, tx, device.HostID, device.ID)
+	if policyErr != nil && !errors.Is(policyErr, repository.ErrNotFound) {
+		return repository.ReservationRecord{}, policyErr
 	}
 	deviceState, err := domain.RestoreDevice(device.ID, device.Lifecycle, device.Health)
 	if err != nil {
@@ -989,10 +989,13 @@ func (service *Service) closeActiveLocked(
 	// A quarantined device keeps its lifecycle: it is already outside the
 	// schedulable set and the reconciler owns its recovery, so re-labeling it
 	// 'recycling' here would strip the administrator's quarantine signal.
-	recycle := policy.FreshVMPerRun && device.Platform == "android" &&
-		device.DeviceKind == "emulator" && deviceState.Lifecycle() != domain.DeviceQuarantined
+	recycle := policyErr == nil && policy.FreshVMPerRun && device.Platform == "android" &&
+		device.DeviceKind == "emulator" && deviceState.Lifecycle() != domain.DeviceQuarantined &&
+		deviceState.Health() == domain.HealthHealthy
 	target, deviceReason := domain.DeviceReady, "reservation released; device data retained"
-	if recycle {
+	if deviceState.Health() != domain.HealthHealthy {
+		target, deviceReason = domain.DeviceQuarantined, "reservation released; unhealthy device quarantined"
+	} else if recycle {
 		target, deviceReason = domain.DeviceRecycling, "reservation released; pool requires a fresh VM for the next run"
 	}
 	// Reconciler/Host heartbeats may have already converged the device to the
@@ -1008,7 +1011,7 @@ func (service *Service) closeActiveLocked(
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}
-	closed, err := service.repo.CloseActive(ctx, tx, current.ID, *current.DeviceID, terminal, recycle, now)
+	closed, err := service.repo.CloseActive(ctx, tx, current.ID, *current.DeviceID, terminal, recycle, target, now)
 	if err != nil {
 		return repository.ReservationRecord{}, err
 	}

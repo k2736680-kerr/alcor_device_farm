@@ -754,6 +754,7 @@ func (ReservationRepository) CloseActive(
 	reservationID, deviceID string,
 	terminal domain.ReservationStatus,
 	recycle bool,
+	releaseLifecycle domain.DeviceLifecycleStatus,
 	closedAt time.Time,
 ) (ReservationRecord, error) {
 	if _, err := tx.Exec(ctx, `
@@ -780,6 +781,7 @@ func (ReservationRepository) CloseActive(
 			lifecycle_status=CASE
 				WHEN lifecycle_status='quarantined' THEN lifecycle_status
 				WHEN $3::boolean THEN 'recycling'
+				WHEN $4::text='quarantined' THEN 'quarantined'
 				ELSE 'ready' END,
 			lifecycle_mode=CASE WHEN $3::boolean THEN 'rebuild' ELSE lifecycle_mode END,
 			updated_at=$2::timestamptz
@@ -787,7 +789,7 @@ func (ReservationRepository) CloseActive(
 		-- Updating ready to ready is deliberate here: the affected-row check must
 		-- still prove that the bound device exists before the reservation closes.
 		WHERE id=$1 AND lifecycle_status IN ('ready','busy','reserved','recycling','quarantined')`,
-		deviceID, closedAt, recycle)
+		deviceID, closedAt, recycle, releaseLifecycle)
 	if err != nil {
 		return ReservationRecord{}, fmt.Errorf("release retained device: %w", err)
 	}
@@ -917,6 +919,34 @@ func (ReservationRepository) LockPoolPolicy(ctx context.Context, tx pgx.Tx, pool
 // 宿主与池一对一，故先按 `device_hosts.address` 匹配池名（`android-<ip>`）。
 // 匹配不到时（历史/测试数据里池名未按地址命名）回退到该宿主上线设备的
 // membership 池 —— 那是这台宿主的真实归属池，语义与按名匹配等价。
+// LoadPoolPolicyForRelease loads the policy needed to decide the release lifecycle.
+// Unlike allocation policy, release must continue to work when the pool is paused,
+// draining, or already removed from the active scheduling set.
+func (ReservationRepository) LoadPoolPolicyForRelease(ctx context.Context, tx pgx.Tx, hostID, deviceID string) (PoolPolicy, error) {
+	var policy PoolPolicy
+	err := tx.QueryRow(ctx, `
+		SELECT p.status, p.platform, p.max_lease_seconds, p.max_concurrency, p.fresh_vm_per_run
+		FROM device_pools p
+		WHERE p.id = COALESCE(
+			(SELECT p2.id FROM device_hosts h
+			 JOIN device_pools p2 ON p2.name = CASE WHEN p2.platform = 'ios' THEN 'iOS - ' || h.address
+			                                      ELSE 'android-' || h.address END
+			 WHERE h.id = $1 ORDER BY (p2.status='active') DESC,p2.created_at LIMIT 1),
+			(SELECT pd.pool_id FROM device_pool_devices pd
+			 JOIN device_pools p3 ON p3.id = pd.pool_id
+			 WHERE pd.device_id = $2 ORDER BY pd.enabled DESC,pd.created_at LIMIT 1))
+		ORDER BY (p.status='active') DESC,p.created_at
+		LIMIT 1`, hostID, deviceID).Scan(
+		&policy.Status, &policy.Platform, &policy.MaxLeaseSeconds, &policy.MaxConcurrency, &policy.FreshVMPerRun)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PoolPolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return PoolPolicy{}, fmt.Errorf("load pool policy for release: %w", err)
+	}
+	return policy, nil
+}
+
 func (ReservationRepository) LockPoolPolicyForHost(ctx context.Context, tx pgx.Tx, hostID, deviceID string) (PoolPolicy, error) {
 	var policy PoolPolicy
 	err := tx.QueryRow(ctx, `
@@ -947,19 +977,10 @@ func (ReservationRepository) LockPoolPolicyForHost(ctx context.Context, tx pgx.T
 	// 按**该宿主实际归属的池**统计活跃租约：池与宿主一对一，所以这就是这台宿主
 	// 当前的并发占用，而不是"预约时写了哪个池"。
 	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM device_reservations r
-		WHERE r.status = 'active' AND r.pool_id = (
-			SELECT COALESCE(
-				(SELECT p2.id FROM device_hosts h
-				 JOIN device_pools p2 ON p2.status = 'active'
-				   AND p2.name = CASE WHEN p2.platform = 'ios' THEN 'iOS - ' || h.address
-				                      ELSE 'android-' || h.address END
-				 WHERE h.id = $1
-				 ORDER BY p2.created_at LIMIT 1),
-				(SELECT pd.pool_id FROM device_pool_devices pd
-				 JOIN device_pools p3 ON p3.id = pd.pool_id AND p3.status = 'active'
-				 WHERE pd.device_id = $2 AND pd.enabled
-				 ORDER BY pd.created_at LIMIT 1)))`, hostID, deviceID).Scan(&policy.ActiveReservations); err != nil {
+		SELECT count(*)
+		FROM device_reservations r
+		JOIN devices d ON d.id=r.device_id
+		WHERE r.status = 'active' AND d.host_id = $1`, hostID).Scan(&policy.ActiveReservations); err != nil {
 		return PoolPolicy{}, fmt.Errorf("count active host reservations: %w", err)
 	}
 	return policy, nil

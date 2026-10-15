@@ -634,15 +634,17 @@ func (controller *Controller) reconcileScaleDownDeletes(ctx context.Context) (Re
 					adb_endpoint=NULL,appium_endpoint=NULL,stf_serial=NULL,updated_at=$3 WHERE id=$1`, deviceID, reason, now); err != nil {
 					return err
 				}
+				// 物理删除确认后才关闭池归属（所有 delete 来源统一在这里收尾）：
+				// queueScaleDown 排命令时不再预先取消 membership，避免失败时孤儿化。
+				if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$2
+					WHERE device_id=$1 AND enabled`, deviceID, now); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `UPDATE device_pools SET base_device_id=NULL,updated_at=$2
+					WHERE base_device_id=$1`, deviceID, now); err != nil {
+					return err
+				}
 				if operationSource == failedCreateCleanupSource || operationSource == quarantinedCleanupSource {
-					if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$2
-						WHERE device_id=$1 AND enabled`, deviceID, now); err != nil {
-						return err
-					}
-					if _, err := tx.Exec(ctx, `UPDATE device_pools SET base_device_id=NULL,updated_at=$2
-						WHERE base_device_id=$1`, deviceID, now); err != nil {
-						return err
-					}
 					if operationSource == failedCreateCleanupSource {
 						if _, err := tx.Exec(ctx, `UPDATE device_provisioning_jobs
 						SET status='failed',error_stage='device_creation',error_code='EMULATOR_CREATE_FAILED',updated_at=$2
@@ -793,10 +795,13 @@ func (controller *Controller) queueScaleDown(
 			"scale-down-"+hex.EncodeToString(hash[:16])); err != nil {
 			return queued, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE device_pool_devices SET enabled=false,updated_at=$3
-			WHERE pool_id=$1 AND device_id=$2 AND enabled`, poolID, current.ID, now); err != nil {
-			return queued, err
-		}
+		// 物理删除成功之前必须保留池归属（pd.enabled 保持 true）：
+		// 若在排入 delete 命令时就取消 membership，一旦 delete 失败/超时，该设备
+		// 会变成没有任何池负责的孤儿——queueQuarantinedCleanup / queueScaleDown
+		// 都要求 pd.enabled，之后没有任何循环能找到它再清理，容器与宿主槽位
+		// 永久泄漏。membership 只在 reconcileScaleDownDeletes 确认 deleted=true
+		// 后才关闭。隔离/停止状态已经把设备移出调度，保留 membership 不会让
+		// 它被重新分配。
 		if target == 0 {
 			if _, err := tx.Exec(ctx, `UPDATE device_pools SET base_device_id=NULL,updated_at=$3
 				WHERE id=$1 AND base_device_id=$2`, poolID, current.ID, now); err != nil {
@@ -1501,16 +1506,31 @@ func (controller *Controller) reconcile(ctx context.Context, poolID, imageID str
 			demandKeep = min(demandKeep, maxConcurrency)
 		}
 		keepInstances := max(totalTarget, demandKeep)
-		if activeInstances > keepInstances {
-			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, activeInstances-keepInstances)
+		// 已排入 delete 命令（pending/leased）的设备视为「正在离开」，从占位数中扣除
+		// 后再算超量。membership 现在保留到物理删除确认（不再排命令时预先取消），
+		// 所以不扣除的话：并发的第二个控制器会看到 stale 的占位数，对正常设备多排
+		// 一条 delete（TestConcurrentControllersQueueOneDeletePerExcessDevice 回归）。
+		var pendingDeleteCount int
+		if err := tx.QueryRow(ctx, `SELECT count(DISTINCT d.id) FROM device_pool_devices pd
+			JOIN devices d ON d.id=pd.device_id
+			WHERE pd.pool_id=$1 AND pd.enabled AND d.device_kind='emulator'
+			  AND d.provider_type='docker_emulator'
+			  AND EXISTS (SELECT 1 FROM device_host_commands c
+			    WHERE c.command_type='delete' AND c.payload->>'device_id'=d.id
+			      AND c.status IN ('pending','leased'))`, poolID).Scan(&pendingDeleteCount); err != nil {
+			return err
+		}
+		effectiveActive := activeInstances - pendingDeleteCount
+		if effectiveActive > keepInstances {
+			queued, err := controller.queueScaleDown(ctx, tx, poolID, "android", keepInstances, effectiveActive-keepInstances)
 			if err != nil {
 				return err
 			}
 			result.DeletesQueued += queued
 			return nil
 		}
-		// 固定基线的扩容：min_ready 缺口，且不超过 keepInstances。
-		missing := min(max(minReady-readyOrCreating, 0), keepInstances-activeInstances)
+		// 固定基线的扩容：min_ready 缺口，且不超过 keepInstances（按有效占位数）。
+		missing := min(max(minReady-readyOrCreating, 0), keepInstances-effectiveActive)
 		if missing <= 0 {
 			return nil
 		}
@@ -1960,8 +1980,14 @@ func (controller *Controller) queueQuarantinedCleanup(ctx context.Context, tx pg
 		AND NOT EXISTS (SELECT 1 FROM device_reservations r WHERE r.device_id=d.id AND r.status IN ('pending','active'))
 		AND NOT EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=d.id AND s.status IN ('starting','active','closing'))
 		AND NOT EXISTS (SELECT 1 FROM device_host_commands c WHERE c.payload->>'device_id'=d.id AND c.status IN ('pending','leased'))
+		-- 只有真正在飞的清理命令（pending/leased）才阻止重试。历史 failed/timed_out
+		-- 命令不得永久阻挡——否则一次删除失败会把设备永远钉在 quarantined，没有任何
+		-- 路径再清理它（这正是“释放假解决”的孤儿泄漏）。失败命令在
+		-- reconcileScaleDownDeletes 被结算（设备置 unhealthy/quarantined）后，下一轮
+		-- 重新排一条清理命令，靠 host agent 幂等 key 与行锁避免并发重复。
 		AND NOT EXISTS (SELECT 1 FROM device_host_commands cleanup WHERE cleanup.command_type='delete'
-			AND cleanup.payload->>'device_id'=d.id AND cleanup.payload->>'operation_source' IN ($2,$3))
+			AND cleanup.payload->>'device_id'=d.id AND cleanup.payload->>'operation_source' IN ($2,$3)
+			AND cleanup.status IN ('pending','leased'))
 		FOR UPDATE OF d`, poolID, failedCreateCleanupSource, quarantinedCleanupSource)
 	if err != nil {
 		return 0, err
@@ -2020,8 +2046,10 @@ func (controller *Controller) cleanupFailedCreates(ctx context.Context, tx pgx.T
 			AND c.payload->>'device_id'=d.id AND c.status IN ('failed','timed_out'))
 		AND NOT EXISTS (SELECT 1 FROM device_host_commands succeeded WHERE succeeded.command_type='create'
 			AND succeeded.payload->>'device_id'=d.id AND succeeded.status='succeeded')
+		-- 同上：失败/超时的清理命令允许重试，只允许 pending/leased 阻止并发重排。
 		AND NOT EXISTS (SELECT 1 FROM device_host_commands cleanup WHERE cleanup.command_type='delete'
-			AND cleanup.payload->>'device_id'=d.id AND cleanup.payload->>'operation_source'=$2)
+			AND cleanup.payload->>'device_id'=d.id AND cleanup.payload->>'operation_source'=$2
+			AND cleanup.status IN ('pending','leased'))
 		FOR UPDATE OF d`, poolID, failedCreateCleanupSource)
 	if err != nil {
 		return 0, 0, err
